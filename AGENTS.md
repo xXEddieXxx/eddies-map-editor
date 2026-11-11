@@ -52,6 +52,7 @@ All code is in `src/main/java/eddies/mapeditor`, the tests in `src/test/java/edd
 | `MapPicture`                  | Finds territories (areas between dark lines, blue = sea) and neighbours in a picture            |
 | `MapCanvas`, `MapView`, `MapLegend`, `MapMode`, `MapViewsButton` | The map on screen, its views and legend                      |
 | `MapChecks`, `FileLint`       | Problems of the map; checks of files as they are typed                                         |
+| `XmlTextArea`                 | Text in Files and Notes: XML and HTML in colors, Enter keeps the indentation                   |
 | `Form`, `Panels`, `Help`, `MakerIcon`, `SearchList`, `MakerResources`, `Theme` | Shared UI pieces; `Theme`: colors and styles     |
 | `Builders`                    | `toBuilder()` for the XML model, for TripleA versions without it                                |
 

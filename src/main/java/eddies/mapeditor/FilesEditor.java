@@ -1,11 +1,11 @@
 package eddies.mapeditor;
 
 import games.strategy.engine.ClientFileSystemHelper;
+import games.strategy.engine.framework.ui.GameNotesView;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
-import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Image;
@@ -92,17 +92,27 @@ final class FilesEditor implements Editor {
   private final JLabel fileLabel = new JLabel(" ");
   private final JButton save = new JButton("Save file");
   private final JButton revert = new JButton("Revert");
-  private final JTextArea text = new JTextArea();
+  private final XmlTextArea text = new XmlTextArea();
+  // an HTML file as the game shows it, right of its text
+  private final GameNotesView htmlPreview = new GameNotesView();
   // one for the text area, which every file shares
   private final LineNumbers lineNumbers = new LineNumbers(text);
   private final DefaultListModel<Lint> problems = new DefaultListModel<>();
   private final JList<Lint> problemList = new JList<>(problems);
   private final JLabel problemsTitle = Theme.newSectionLabel("Problems");
-  private final Timer lintLater = new Timer(600, e -> lint());
+  // a pause in typing: check the text and show an HTML file again
+  private final Timer lintLater =
+      new Timer(
+          600,
+          e -> {
+            previewHtml();
+            lint();
+          });
   private @Nullable Path open;
   private boolean editable;
   private boolean dirty;
   private boolean filling;
+  private boolean html;
   // counts the edits, so a check of an older text is not shown
   private int edits;
 
@@ -181,8 +191,6 @@ final class FilesEditor implements Editor {
     treeColumn.add(SwingComponents.newJScrollPane(tree), BorderLayout.CENTER);
     treeColumn.add(treeButtons, BorderLayout.SOUTH);
 
-    text.setFont(new Font(Font.MONOSPACED, Font.PLAIN, text.getFont().getSize()));
-    text.setTabSize(2);
     text.getDocument().addDocumentListener(new Typed());
     save.addActionListener(e -> saveFile());
     revert.addActionListener(e -> Optional.ofNullable(open).ifPresent(this::showFile));
@@ -351,6 +359,13 @@ final class FilesEditor implements Editor {
       final boolean small = Files.size(file) <= MAX_EDITED_SIZE;
       editable = ofThisMap && small;
       filling = true;
+      final String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
+      html = name.matches(".*\\.html?");
+      if (html || name.endsWith(".xml")) {
+        text.colorAsXml();
+      } else {
+        text.colorAsPlain();
+      }
       text.setText(Files.readString(file, StandardCharsets.UTF_8));
       text.setCaretPosition(0);
       text.setEditable(editable);
@@ -375,7 +390,14 @@ final class FilesEditor implements Editor {
       below.setVisible(FileLint.isChecked(file.getFileName().toString()));
       final JPanel editor = new JPanel(new BorderLayout(0, 8));
       editor.add(bar, BorderLayout.NORTH);
-      editor.add(scroll, BorderLayout.CENTER);
+      if (html) {
+        htmlPreview.setText(text.getText());
+        editor.add(
+            Panels.textAndPreview(scroll, SwingComponents.newJScrollPane(htmlPreview)),
+            BorderLayout.CENTER);
+      } else {
+        editor.add(scroll, BorderLayout.CENTER);
+      }
       editor.add(below, BorderLayout.SOUTH);
       fileSlot.add(editor, BorderLayout.CENTER);
       updateButtons();
@@ -444,6 +466,14 @@ final class FilesEditor implements Editor {
   private void updateButtons() {
     save.setEnabled(editable && dirty);
     revert.setEnabled(editable && dirty);
+  }
+
+  /** Shows the typed HTML beside it, where the reader was in it; called when typing pauses. */
+  void previewHtml() {
+    if (!html) {
+      return;
+    }
+    Panels.showKeepingPlace(htmlPreview, text.getText());
   }
 
   /** Checks the text in the background; a check of a text changed since is dropped. */
@@ -675,14 +705,13 @@ final class FilesEditor implements Editor {
   }
 
   /** The line numbers left of the text, as editors for code show them. */
-  private static final class LineNumbers extends JComponent {
+  static final class LineNumbers extends JComponent {
     @Serial private static final long serialVersionUID = 1L;
 
     private final JTextArea text;
 
     LineNumbers(final JTextArea text) {
       this.text = text;
-      setFont(text.getFont());
       setForeground(Theme.getSecondaryTextColor());
       text.getDocument()
           .addDocumentListener(
@@ -711,7 +740,7 @@ final class FilesEditor implements Editor {
 
     @Override
     public Dimension getPreferredSize() {
-      final FontMetrics metrics = getFontMetrics(getFont());
+      final FontMetrics metrics = getFontMetrics(text.getFont());
       final int digits = String.valueOf(Math.max(1, text.getLineCount())).length();
       return new Dimension(
           metrics.charWidth('0') * (digits + 2), metrics.getHeight() * text.getLineCount());
@@ -719,7 +748,9 @@ final class FilesEditor implements Editor {
 
     @Override
     protected void paintComponent(final Graphics g) {
-      final FontMetrics metrics = g.getFontMetrics(getFont());
+      // the text's font and metrics, as the text places its lines with them
+      final FontMetrics metrics = text.getFontMetrics(text.getFont());
+      g.setFont(text.getFont());
       final int lineHeight = metrics.getHeight();
       final Rectangle shown = g.getClipBounds();
       final int first = Math.max(0, shown.y / lineHeight);

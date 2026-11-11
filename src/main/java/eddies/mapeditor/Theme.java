@@ -1,8 +1,10 @@
 package eddies.mapeditor;
 
 import com.formdev.flatlaf.FlatClientProperties;
+import com.formdev.flatlaf.FlatLaf;
 import java.awt.Color;
 import java.awt.Font;
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import javax.swing.AbstractButton;
@@ -33,6 +35,15 @@ class Theme {
 
   static Color getSeparatorColor() {
     return themeColor("Separator.foreground");
+  }
+
+  /** An XML file's tags, attribute names, values and comments, for a light or dark theme. */
+  static List<Color> getXmlColors() {
+    return FlatLaf.isLafDark()
+        ? List.of(
+            new Color(0x79b8ff), new Color(0xffab70), new Color(0x85e89d), new Color(0x6a737d))
+        : List.of(
+            new Color(0x0550ae), new Color(0x953800), new Color(0x116329), new Color(0x6e7781));
   }
 
   // a ColorUIResource, so a theme change gives the component the new theme's color

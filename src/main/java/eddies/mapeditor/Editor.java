@@ -21,7 +21,7 @@ interface Editor {
   /** The right side: the tool's lists and settings. */
   JComponent page();
 
-  /** The middle for this tool when it is not the map, eg the notes as the game shows them. */
+  /** The middle for this tool when it is not the map, eg the file open in Files. */
   default Optional<JComponent> preview() {
     return Optional.empty();
   }
