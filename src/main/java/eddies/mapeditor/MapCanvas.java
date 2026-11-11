@@ -1,8 +1,6 @@
 package eddies.mapeditor;
 
 import games.strategy.triplea.Constants;
-import games.strategy.triplea.image.UnitImageFactory;
-import games.strategy.triplea.ui.mapdata.MapData;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Cursor;
@@ -16,7 +14,9 @@ import java.awt.Point;
 import java.awt.Polygon;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
+import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseWheelEvent;
@@ -24,10 +24,12 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.Serial;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
@@ -35,9 +37,11 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import javax.imageio.ImageIO;
+import javax.swing.AbstractAction;
 import javax.swing.JComponent;
 import javax.swing.JScrollPane;
 import javax.swing.JViewport;
+import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 import javax.swing.ToolTipManager;
@@ -45,11 +49,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.Initialize.UnitInitialize.UnitPlacement;
 import org.triplea.map.data.elements.Map.Connection;
+import eddies.mapeditor.MapFiles.Marker;
 
 /**
  * The map of the map maker: the territories by their outlines, colored by the chosen {@link
  * MapMode}. A click picks a territory, dragging with any mouse button moves the map, Ctrl and the
- * mouse wheel zoom, as in the game.
+ * mouse wheel zoom, as in the game. While places are edited, the selected territory's show above
+ * it, {@link #editPlaces}.
  */
 @Slf4j
 final class MapCanvas extends JComponent {
@@ -70,6 +76,8 @@ final class MapCanvas extends JComponent {
   // squares of the screen drawn once, 1 MB each at 100 %, 4 MB at 200 %: enough for a big screen
   private static final int LAYER_SIZE = 512;
   private static final int LAYER_SQUARES_KEPT = 32;
+  // the radius of a marker's dot while places are edited, in pixels of the screen
+  private static final int PLACE_DOT = 6;
 
   private final transient MapProject project;
   // the tiles seen last, enough for a screen at any zoom; a big map has far more than fit memory
@@ -86,18 +94,30 @@ final class MapCanvas extends JComponent {
   private transient @Nullable MapFiles filesSeen;
   private final transient Map<String, Rectangle> bounds = new HashMap<>();
   private final transient Map<String, List<Point>> unitPlaces = new HashMap<>();
-  private transient @Nullable Map<String, List<Point>> savedUnitPlaces;
   private final transient Map<String, Optional<Image>> unitPictures = new HashMap<>();
   // the picture made smaller once, for a zoom at which the screen holds more tiles than are kept
   private transient @Nullable BufferedImage overview;
   private transient List<Object> overviewOf = List.of();
   private MapMode mode = MapMode.GAME;
-  // the map's units.scale, as the files have it
-  private double unitsScale = 1;
+  // the size of a unit on the map, as the files have it
+  private Dimension unitSize = new Dimension();
   private double zoom = 0.5;
   private boolean showPicture = true;
   private @Nullable String selected;
   private transient Consumer<String> onClick = territory -> {};
+  // the selected territory's places shown to move, add and remove
+  private boolean editingPlaces;
+  // the place being dragged and how far, in pixels of the screen
+  private transient @Nullable Place dragged;
+  private Point draggedBy = new Point();
+  // where the mouse is over the map, for the Delete key; empty once it left or the map moved
+  private Optional<Point> hovered = Optional.empty();
+
+  /**
+   * A place the game draws something at in the selected territory: units, by their place in the
+   * order, or a marker.
+   */
+  private record Place(Optional<Marker> marker, int index, Point at) {}
 
   /**
    * What the squares of the screen show; the files and the small picture compare as the same
@@ -149,6 +169,23 @@ final class MapCanvas extends JComponent {
     addMouseListener(mouse);
     addMouseMotionListener(mouse);
     addMouseWheelListener(mouse);
+    // Delete removes the unit place under the mouse; a focused text field keeps its own Delete
+    getInputMap(WHEN_IN_FOCUSED_WINDOW)
+        .put(KeyStroke.getKeyStroke(KeyEvent.VK_DELETE, 0), "removePlace");
+    getActionMap()
+        .put(
+            "removePlace",
+            new AbstractAction() {
+              @Serial private static final long serialVersionUID = 1L;
+
+              @Override
+              public void actionPerformed(final ActionEvent e) {
+                hovered
+                    .flatMap(MapCanvas.this::placeAt)
+                    .filter(place -> place.marker().isEmpty())
+                    .ifPresent(place -> removeUnitPlace(place.index()));
+              }
+            });
   }
 
   /** A map that forgets the entries used least recently beyond this many. */
@@ -183,6 +220,21 @@ final class MapCanvas extends JComponent {
     this.onClick = onClick;
   }
 
+  /**
+   * Shows the selected territory's places: dragging one moves it, a click into the territory adds
+   * a place for units, a right-click removes one.
+   */
+  void editPlaces() {
+    editingPlaces = true;
+    repaint();
+  }
+
+  void stopEditingPlaces() {
+    editingPlaces = false;
+    dragged = null;
+    repaint();
+  }
+
   void setSelected(@Nullable final String territory) {
     selected = territory;
     repaint();
@@ -210,7 +262,18 @@ final class MapCanvas extends JComponent {
   @Override
   @Nullable
   public String getToolTipText(final MouseEvent event) {
-    return territoryAt(event.getPoint()).orElse(null);
+    return placeAt(event.getPoint())
+        .map(
+            place ->
+                place
+                    .marker()
+                    .map(marker -> marker.getLabel() + ": drag to move")
+                    .orElse(
+                        "Units "
+                            + (place.index() + 1)
+                            + ": drag to move, right-click or Delete removes"))
+        .or(() -> territoryAt(event.getPoint()))
+        .orElse(null);
   }
 
   private Optional<String> territoryAt(final Point point) {
@@ -265,7 +328,120 @@ final class MapCanvas extends JComponent {
                 (int) Math.ceil(visible.width / zoom),
                 (int) Math.ceil(visible.height / zoom)))
         .forEach(territory -> paintBadges(g, territory));
+    places().forEach(place -> paintPlace(g, place));
     g.dispose();
+  }
+
+  /** The selected territory's places while they are edited, the units' in their order first. */
+  private List<Place> places() {
+    if (!editingPlaces
+        || selected == null
+        || !project.getFiles().polygons().containsKey(selected)) {
+      return List.of();
+    }
+    final String territory = selected;
+    final List<Place> places = new ArrayList<>();
+    final List<Point> units = unitPlacesOf(territory);
+    for (int i = 0; i < units.size(); i++) {
+      places.add(new Place(Optional.empty(), i, units.get(i)));
+    }
+    final Game game = project.game();
+    for (final Marker marker : Marker.values()) {
+      if (marker.isOn(game, territory)) {
+        places.add(
+            new Place(
+                Optional.of(marker),
+                0,
+                project.getFiles().markerPlace(game, marker, territory)));
+      }
+    }
+    return places;
+  }
+
+  /** The place on the screen, moved while it is dragged: a unit's square or a marker's dot. */
+  private Rectangle onScreen(final Place place) {
+    final Point by = place.equals(dragged) ? draggedBy : new Point();
+    final int x = (int) (place.at().x * zoom) + by.x;
+    final int y = (int) (place.at().y * zoom) + by.y;
+    return place.marker().isPresent()
+        ? new Rectangle(x - PLACE_DOT, y - PLACE_DOT, 2 * PLACE_DOT, 2 * PLACE_DOT)
+        : new Rectangle(
+            x,
+            y,
+            (int) Math.round(unitSize.width * zoom),
+            (int) Math.round(unitSize.height * zoom));
+  }
+
+  /** The place at the point on the screen, the markers above the units. */
+  private Optional<Place> placeAt(final Point point) {
+    final List<Place> places = places();
+    for (int i = places.size() - 1; i >= 0; i--) {
+      if (onScreen(places.get(i)).contains(point)) {
+        return Optional.of(places.get(i));
+      }
+    }
+    return Optional.empty();
+  }
+
+  /** Moves the place by so many pixels of the screen, as one step. */
+  private void move(final Place place, final Point by) {
+    final String territory = Objects.requireNonNull(selected);
+    final Point to =
+        new Point(
+            place.at().x + (int) Math.round(by.x / zoom),
+            place.at().y + (int) Math.round(by.y / zoom));
+    if (place.marker().isPresent()) {
+      project.setMarkerPlace(place.marker().get(), territory, to);
+    } else {
+      final List<Point> moved = new ArrayList<>(unitPlacesOf(territory));
+      moved.set(place.index(), to);
+      project.setUnitPlaces(territory, moved);
+    }
+  }
+
+  /** A place for units after the others, centered at the point on the screen. */
+  private void addUnitPlace(final Point point) {
+    final String territory = Objects.requireNonNull(selected);
+    final List<Point> added = new ArrayList<>(unitPlacesOf(territory));
+    added.add(
+        new Point(
+            (int) Math.round(point.x / zoom) - unitSize.width / 2,
+            (int) Math.round(point.y / zoom) - unitSize.height / 2));
+    project.setUnitPlaces(territory, added);
+  }
+
+  /** Removes the place for units; the last one stays, as the game needs one. */
+  private void removeUnitPlace(final int index) {
+    final String territory = Objects.requireNonNull(selected);
+    final List<Point> removed = new ArrayList<>(unitPlacesOf(territory));
+    removed.remove(index);
+    project.setUnitPlaces(territory, removed);
+  }
+
+  /** A unit's square with its number in the order, or a marker's dot with what it marks. */
+  private void paintPlace(final Graphics2D g, final Place place) {
+    final Rectangle shown = onScreen(place);
+    final Color accent = Theme.getAccentColor();
+    g.setStroke(new BasicStroke(2));
+    if (place.marker().isEmpty()) {
+      g.setColor(withAlpha(Color.WHITE, 0x66));
+      g.fill(shown);
+      g.setColor(accent);
+      g.draw(shown);
+      paintBadge(g, String.valueOf(place.index() + 1), shown.x + 10, shown.y + 10);
+    } else {
+      g.setColor(accent);
+      g.fillOval(shown.x, shown.y, shown.width, shown.height);
+      g.setColor(Color.WHITE);
+      g.drawOval(shown.x, shown.y, shown.width, shown.height);
+      final String label = place.marker().get().getLabel();
+      g.setFont(getFont().deriveFont(Font.BOLD, 12f));
+      paintBadge(
+          g,
+          label,
+          shown.x + shown.width + 4 + (g.getFontMetrics().stringWidth(label) + 12) / 2,
+          (int) shown.getCenterY());
+    }
   }
 
   /** One square of the screen's colors and outlines, at the square's place in the map. */
@@ -310,8 +486,7 @@ final class MapCanvas extends JComponent {
       filesSeen = project.getFiles();
       bounds.clear();
       unitPlaces.clear();
-      savedUnitPlaces = null;
-      unitsScale = unitsScale(filesSeen);
+      unitSize = filesSeen.unitSize();
       unitPictures.clear();
     }
   }
@@ -523,12 +698,11 @@ final class MapCanvas extends JComponent {
     final Look look = look(territory);
     final int x = (int) (look.center().x * zoom);
     final int y = (int) (look.center().y * zoom);
-    // the map's units.scale too, as its place.txt is laid out for units of that size
-    final int unitSize =
-        (int) Math.round(UnitImageFactory.DEFAULT_UNIT_ICON_SIZE * unitsScale * zoom);
+    // the map's unit size, as its place.txt is laid out for units of that size
+    final int size = (int) Math.round(unitSize.width * zoom);
     final boolean showsUnits = mode == MapMode.GAME || mode == MapMode.UNITS;
-    if (showsUnits && unitSize >= MIN_UNIT_SIZE) {
-      paintUnits(g, territory, look.units(), unitSize);
+    if (showsUnits && size >= MIN_UNIT_SIZE) {
+      paintUnits(g, territory, look.units(), size);
     } else {
       final String text =
           switch (mode) {
@@ -545,15 +719,6 @@ final class MapCanvas extends JComponent {
     if (look.changed()) {
       g.setColor(Theme.getAccentColor());
       g.fillOval(x - 4, y + 10, 8, 8);
-    }
-  }
-
-  private static double unitsScale(final MapFiles files) {
-    try {
-      return Double.parseDouble(files.properties().getProperty(MapData.PROPERTY_UNITS_SCALE, "1"));
-    } catch (final NumberFormatException e) {
-      // the game takes such a map's units at their size too
-      return 1;
     }
   }
 
@@ -603,22 +768,9 @@ final class MapCanvas extends JComponent {
     }
   }
 
-  /** Where the game draws the territory's units: from the map's place.txt, else found inside it. */
+  /** Where the game draws the territory's units, {@link MapFiles#unitPlaces}, once per change. */
   private List<Point> unitPlacesOf(final String territory) {
-    return unitPlaces.computeIfAbsent(
-        territory,
-        t -> {
-          final MapFiles files = project.getFiles();
-          if (savedUnitPlaces == null) {
-            savedUnitPlaces = project.getFolder().map(MapFiles::savedUnitPlaces).orElse(Map.of());
-          }
-          final List<Point> saved =
-              savedUnitPlaces.getOrDefault(files.renames().getOrDefault(t, t), List.of());
-          return saved.isEmpty()
-              ? MapFiles.placesInside(
-                  files.polygons().getOrDefault(t, List.of()), files.centers().get(t))
-              : saved;
-        });
+    return unitPlaces.computeIfAbsent(territory, project.getFiles()::unitPlaces);
   }
 
   private Optional<Image> unitPicture(@Nullable final String owner, final String unitType) {
@@ -669,6 +821,7 @@ final class MapCanvas extends JComponent {
   }
 
   private void zoomAt(final Point at, final double factor) {
+    hovered = Optional.empty();
     final double before = zoom;
     final double newZoom = Math.clamp(zoom * factor, 0.1, 3.0);
     if (getParent() instanceof JViewport viewport) {
@@ -714,26 +867,64 @@ final class MapCanvas extends JComponent {
 
     @Override
     public void mousePressed(final MouseEvent e) {
-      // any button moves the map; a left click without moving picks a territory
+      // any button moves the map, but a place grabbed; a left click without moving picks a
+      // territory
       dragFrom = e.getLocationOnScreen();
+      dragged = SwingUtilities.isLeftMouseButton(e) ? placeAt(e.getPoint()).orElse(null) : null;
+      draggedBy = new Point();
     }
 
     @Override
     public void mouseReleased(final MouseEvent e) {
+      if (dragged != null && !draggedBy.equals(new Point())) {
+        move(dragged, draggedBy);
+      }
+      dragged = null;
       dragFrom = null;
       setCursor(Cursor.getDefaultCursor());
     }
 
     @Override
     public void mouseClicked(final MouseEvent e) {
-      if (SwingUtilities.isLeftMouseButton(e)) {
-        territoryAt(e.getPoint()).ifPresent(onClick);
+      final Optional<Place> place = placeAt(e.getPoint());
+      final Optional<String> territory = territoryAt(e.getPoint());
+      if (place.isPresent()) {
+        if (SwingUtilities.isRightMouseButton(e) && place.get().marker().isEmpty()) {
+          removeUnitPlace(place.get().index());
+        }
+      } else if (SwingUtilities.isLeftMouseButton(e)) {
+        if (editingPlaces && territory.isPresent() && territory.get().equals(selected)) {
+          addUnitPlace(e.getPoint());
+        } else {
+          territory.ifPresent(onClick);
+        }
+      }
+    }
+
+    @Override
+    public void mouseExited(final MouseEvent e) {
+      hovered = Optional.empty();
+    }
+
+    @Override
+    public void mouseMoved(final MouseEvent e) {
+      hovered = Optional.of(e.getPoint());
+      if (editingPlaces) {
+        setCursor(
+            placeAt(e.getPoint()).isPresent()
+                ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                : Cursor.getDefaultCursor());
       }
     }
 
     @Override
     public void mouseDragged(final MouseEvent e) {
-      if (dragFrom != null && getParent() instanceof JViewport viewport) {
+      hovered = Optional.empty();
+      if (dragged != null && dragFrom != null) {
+        final Point now = e.getLocationOnScreen();
+        draggedBy = new Point(now.x - dragFrom.x, now.y - dragFrom.y);
+        repaint();
+      } else if (dragFrom != null && getParent() instanceof JViewport viewport) {
         setCursor(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));
         final Point now = e.getLocationOnScreen();
         final Point view = viewport.getViewPosition();
@@ -750,6 +941,7 @@ final class MapCanvas extends JComponent {
 
     @Override
     public void mouseWheelMoved(final MouseWheelEvent e) {
+      hovered = Optional.empty();
       if ((e.getModifiersEx() & InputEvent.CTRL_DOWN_MASK) != 0) {
         zoomAt(e.getPoint(), e.getWheelRotation() < 0 ? 1.15 : 1 / 1.15);
       } else if (getParent() instanceof JViewport viewport

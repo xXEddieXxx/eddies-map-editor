@@ -45,7 +45,8 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
     PLAYTEST,
     SAVE,
     MENU,
-    RESOURCES
+    RESOURCES,
+    MAP_LOOK
   }
 
   /** The icon at the size of the text around it. */
@@ -173,6 +174,13 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
         g.drawPolyline(new int[] {8, 4, 1, 1, 4, 8}, new int[] {4, 2, 2, 13, 13, 15}, 6);
         g.drawPolyline(new int[] {8, 12, 15, 15, 12, 8}, new int[] {4, 2, 2, 13, 13, 15}, 6);
         g.drawLine(8, 4, 8, 15);
+      }
+      case MAP_LOOK -> {
+        // a painter's palette
+        g.drawOval(1, 2, 14, 12);
+        g.fillOval(4, 5, 3, 3);
+        g.fillOval(8, 4, 3, 3);
+        g.fillOval(10, 8, 3, 3);
       }
       default -> throw new IllegalStateException("Unknown icon: " + glyph);
     }

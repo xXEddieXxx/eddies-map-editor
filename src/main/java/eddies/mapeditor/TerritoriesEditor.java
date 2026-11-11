@@ -59,6 +59,8 @@ final class TerritoriesEditor implements Editor {
       new Brush(
           "Copy units of the chosen territory",
           (g, t) -> copySource == null ? g : MapXml.withUnitsCopied(g, copySource, t));
+  // shows the chosen territory's places on the map to move; a click then only selects
+  private final Brush movePlaces = new Brush("Move places", null);
   private boolean refilling;
   private @Nullable String selected;
   private boolean editingHere;
@@ -131,7 +133,8 @@ final class TerritoriesEditor implements Editor {
     return "Each territory with its owner, value, capital, victory city and starting units. Click"
         + " one on the map or in the list to change it here, or pick a brush above the map and"
         + " paint owners, values or units onto it: the copy brush copies the units of the territory"
-        + " chosen when it is picked.";
+        + " chosen when it is picked. Move places shows where the game draws the chosen"
+        + " territory's units, name and markers, to move them.";
   }
 
   @Override
@@ -150,8 +153,13 @@ final class TerritoriesEditor implements Editor {
                 + " owner or a value onto each territory clicked, owners only on land. Copy units"
                 + " gives each territory clicked the starting units of the territory chosen"
                 + " before, the copied nation's units turned to the new owner's; Clear units"
-                + " takes them away."));
+                + " takes them away. Move places shows the chosen territory's places: drag one"
+                + " to move it, click into the territory to add a place for units, right-click"
+                + " one or press Delete over it to remove it."));
     map.useFor(MapMode.GAME, tools, this::clickOnMap);
+    if (movePlaces.equals(brush.getSelectedItem())) {
+      map.editPlaces();
+    }
     map.select(selected);
   }
 
@@ -212,6 +220,7 @@ final class TerritoriesEditor implements Editor {
     }
     brushes.add(copyUnits);
     brushes.add(new Brush("Clear units", (g, t) -> MapXml.withTerritoryUnits(g, t, List.of())));
+    brushes.add(movePlaces);
     // by title, as nations come and go
     final List<String> shown =
         IntStream.range(0, brush.getItemCount()).mapToObj(i -> brush.getItemAt(i).title()).toList();
@@ -228,6 +237,11 @@ final class TerritoriesEditor implements Editor {
   private void brushChosen() {
     if (refilling) {
       return;
+    }
+    if (movePlaces.equals(brush.getSelectedItem())) {
+      map.editPlaces();
+    } else {
+      map.stopEditingPlaces();
     }
     if (brush.getSelectedItem() != copyUnits) {
       copyFrom.setText(" ");
@@ -336,6 +350,16 @@ final class TerritoriesEditor implements Editor {
       inspector.row(unitRow(territory, units));
     }
     inspector.row(addUnitsRow(territory, owner.orElse(null)));
+
+    inspector.section(
+        "Places",
+        "Where the game draws the units, the name, the value, the capital's flag and the victory"
+            + " city marker. Pick Move places above the map to move them; the game fills the places"
+            + " for units in their order. Find again finds them inside the territory.");
+    final JButton findPlaces = new JButton("Find again");
+    findPlaces.setToolTipText("Finds the territory's places again inside its border");
+    findPlaces.addActionListener(e -> project.findPlacesAgain(territory));
+    inspector.row(findPlaces);
 
     inspector.section(
         "Neighbours", "The territories units can move to from here. Change them in Connections.");

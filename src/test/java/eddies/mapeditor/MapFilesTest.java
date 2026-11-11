@@ -3,10 +3,13 @@ package eddies.mapeditor;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.awt.Color;
+import java.awt.Dimension;
 import java.awt.Graphics2D;
+import java.awt.Point;
 import java.awt.Polygon;
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -17,6 +20,7 @@ final class MapFilesTest {
   // the areas of MapPictureTest.givenPicture, as Find territories names them
   private static final String TOP_LEFT = "Territory 1";
   private static final String TOP_RIGHT = "Territory 2";
+  private static final String UNCHANGED = "Territory 3";
 
   private static MapFiles givenFilesOfPicture() {
     final BufferedImage picture = MapPictureTest.givenPicture();
@@ -118,6 +122,40 @@ final class MapFilesTest {
     assertThat(bounds(redrawn.files(), island).width)
         .as("still the island's small outline")
         .isLessThan(40);
+  }
+
+  @DisplayName("Found places for units follow the map's units.scale: half size, a 24 pixel grid")
+  @Test
+  void foundPlacesFollowUnitScale() {
+    final MapFiles files = givenFilesOfPicture().withProperty("units.scale", "0.5");
+
+    final List<Point> places = files.unitPlaces(TOP_LEFT);
+
+    assertThat(files.unitSize()).as("a unit at half size").isEqualTo(new Dimension(24, 24));
+    assertThat(places)
+        .as("on a grid of half units through the first")
+        .allMatch(p -> (p.x - places.getFirst().x) % 24 == 0)
+        .allMatch(p -> (p.y - places.getFirst().y) % 24 == 0)
+        .anyMatch(p -> Math.abs(p.x - places.getFirst().x) == 24);
+  }
+
+  @DisplayName("A redrawn border finds the places of its territories again; the others keep theirs")
+  @Test
+  void redrawnBorderFindsPlacesAgain() {
+    final Point set = new Point(1, 1);
+    final MapFiles files =
+        givenFilesOfPicture()
+            .withUnitPlaces(TOP_LEFT, List.of(set))
+            .withUnitPlaces(UNCHANGED, List.of(set));
+    final BufferedImage moved = givenPictureWithBorderAt(299);
+
+    final MapFiles redrawn = files.withBordersFrom(moved, MapPicture.detect(moved)).files();
+
+    assertThat(redrawn.unitPlaces(TOP_LEFT))
+        .as("found inside the moved border")
+        .doesNotContain(set)
+        .allMatch(place -> bounds(redrawn, TOP_LEFT).contains(place));
+    assertThat(redrawn.unitPlaces(UNCHANGED)).as("a border not moved").containsExactly(set);
   }
 
   @DisplayName("Imported pictures belong to the nation; taking them back keeps other nations'")

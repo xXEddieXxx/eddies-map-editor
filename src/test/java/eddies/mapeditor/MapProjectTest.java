@@ -212,7 +212,8 @@ final class MapProjectTest {
             Optional.empty(),
             Map.of(),
             Map.of(),
-            Map.of()));
+            Optional.empty(),
+            MapFiles.Places.none()));
   }
 
   @DisplayName("Renaming a territory renames its outline and center; undo takes both back")

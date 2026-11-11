@@ -212,6 +212,16 @@ final class MapView extends JPanel {
     editorTools.revalidate();
     editorTools.repaint();
     canvas.onTerritoryClick(onClick);
+    canvas.stopEditingPlaces();
+  }
+
+  /** Shows the selected territory's places to edit, {@link MapCanvas#editPlaces}. */
+  void editPlaces() {
+    canvas.editPlaces();
+  }
+
+  void stopEditingPlaces() {
+    canvas.stopEditingPlaces();
   }
 
   void select(@Nullable final String territory) {

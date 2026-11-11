@@ -178,7 +178,9 @@ final class NewMapTest {
         .as("the map's own picture of the unit, read from its units folder")
         .contains(0xFF123456);
     assertThat(none).as("a unit type neither map nor game has a picture of").isEmpty();
-    assertThat(MapFiles.savedUnitPlaces(project.getFolder().orElseThrow()))
+    assertThat(
+            PointFileReaderWriter.readOneToManyPlacements(
+                project.getFolder().orElseThrow().resolve("place.txt")))
         .as("place.txt as saved, for every territory")
         .containsKeys("Territory 1", "Territory 4");
   }

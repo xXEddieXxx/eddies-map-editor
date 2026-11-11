@@ -46,10 +46,15 @@ Each release names the TripleA release it was tested with.
   `centers.txt`, `place.txt`, `map.properties`, tiles, flags and unit pictures.
 - **Territories:** find them in the picture (areas between dark lines; blue areas are sea zones).
   Rename them one at a time or many at once. Set owners, PUs, capitals, victory cities and starting
-  units, or paint them on the map with brushes.
+  units, or paint them on the map with brushes. *Move places* shows where the game draws a
+  territory's units, name, PUs, capital flag and victory city marker: drag them, add or remove
+  places for units (right-click or Delete).
 - **Redraw borders:** draw new borders into the map's picture in any paint program, then choose
-  *Picture ▾ → Redraw borders from a picture…*. Names, owners and units stay.
+  *Picture ▾ → Redraw borders from a picture…*. Names, owners and units stay;
+  territories whose border moved get their places found again.
 - **Connections, nations, units, game options, turn order and game notes,** each in its own tool.
+- **Map look:** unit size, scrolling, what the map shows (map.properties), and a relief picture
+  cut into relief tiles.
 - **Unit pictures:** upload a picture for a unit type, or import a whole folder of pictures for one
   nation, for example another map's `units/Germans`.
 - **The map as the game shows it:** owners, values, units and connections views, with a legend.

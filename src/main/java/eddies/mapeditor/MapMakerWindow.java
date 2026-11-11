@@ -671,7 +671,11 @@ with map.yml, the game file, its notes and map.properties.
     toolGroups =
         List.of(
             List.of(overviewEditor, new NotesEditor(opened)),
-            List.of(territories, new ConnectionsEditor(opened, map), new NationsEditor(opened)),
+            List.of(
+                territories,
+                new ConnectionsEditor(opened, map),
+                new NationsEditor(opened),
+                new MapLookEditor(opened)),
             List.of(RulesEditors.newGameOptions(opened), RulesEditors.newTurnOrder(opened)),
             List.of(new UnitsEditor(opened)));
     toolGroups.stream().flatMap(List::stream).forEach(this::addEditor);

@@ -21,19 +21,24 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import javax.annotation.Nullable;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.triplea.io.FileUtils;
 import org.triplea.java.ColorUtils;
@@ -56,8 +61,9 @@ import eddies.mapeditor.MapPicture.DetectedTerritory;
  *     on the next save
  * @param nationUnitPictures the pictures imported for one nation's units, before {@code
  *     unitPictures} for that nation
- * @param renames the territories renamed since the last save, their name now to their name in the
- *     folder's files, so a save finds the points those files keep for them
+ * @param relief a relief picture loaded since the last save, cut into reliefTiles on the next
+ * @param places where the game draws units, names, values and markers, read from the folder when
+ *     the map opened and changed since; {@link Places}
  */
 @Slf4j
 record MapFiles(
@@ -68,15 +74,12 @@ record MapFiles(
     Optional<BufferedImage> picture,
     Map<String, UnitPicture> unitPictures,
     Map<NationUnit, BufferedImage> nationUnitPictures,
-    Map<String, String> renames) {
+    Optional<BufferedImage> relief,
+    Places places) {
 
   private static final String POLYGONS = "polygons.txt";
   private static final String CENTERS = "centers.txt";
   private static final String PLACEMENTS = "place.txt";
-  private static final String NAME_PLACES = "name_place.txt";
-  private static final String PU_PLACES = "pu_place.txt";
-  private static final String CAPITALS = "capitols.txt";
-  private static final String VICTORY_CITIES = "vc.txt";
   // the game's default map font and the sizes of its capital flags and victory city marker
   // shortcut: a map with another map font or other flag sizes gets its names and flags slightly
   // off center; read the font from map.properties and the flag size from its flags when that shows
@@ -107,7 +110,8 @@ record MapFiles(
         Optional.empty(),
         Map.of(),
         Map.of(),
-        Map.of());
+        Optional.empty(),
+        Places.none());
   }
 
   private static MapFiles read(final Path folder) {
@@ -121,7 +125,8 @@ record MapFiles(
           Optional.empty(),
           Map.of(),
           Map.of(),
-          Map.of());
+          Optional.empty(),
+          Places.read(folder));
     } catch (final IOException e) {
       log.warn("Could not read the outlines of the map in {}", folder, e);
       return none();
@@ -139,15 +144,9 @@ record MapFiles(
   }
 
   /**
-   * The files with the territory's outlines and center under its new name, in their place, and the
-   * rename kept for the next save.
+   * The files with the territory's outlines, center and places under its new name, in their place.
    */
   MapFiles withRenamed(final String old, final String renamed) {
-    final Map<String, String> chained = new LinkedHashMap<>(renames);
-    final String inFolder = Optional.ofNullable(chained.remove(old)).orElse(old);
-    if (!inFolder.equals(renamed)) {
-      chained.put(renamed, inFolder);
-    }
     return new MapFiles(
         folder,
         renamedKey(polygons, old, renamed),
@@ -156,39 +155,8 @@ record MapFiles(
         picture,
         unitPictures,
         nationUnitPictures,
-        chained);
-  }
-
-  /**
-   * These files once the folder's files hold the names of a save that made these renames: an
-   * earlier or later step's renames then lead to the names saved.
-   *
-   * @param saved the renames the save wrote, {@link #renames} of the files saved
-   */
-  MapFiles afterSaving(final Map<String, String> saved) {
-    if (saved.isEmpty()) {
-      return this;
-    }
-    final Map<String, String> savedNameOf = new HashMap<>();
-    saved.forEach((now, before) -> savedNameOf.put(before, now));
-    final Map<String, String> rebased = new LinkedHashMap<>();
-    // this step's own territories: a name only the saved step had would turn into a wrong mapping
-    for (final String name : polygons.keySet()) {
-      final String inOldFolder = renames.getOrDefault(name, name);
-      final String inFolder = savedNameOf.getOrDefault(inOldFolder, inOldFolder);
-      if (!inFolder.equals(name)) {
-        rebased.put(name, inFolder);
-      }
-    }
-    return new MapFiles(
-        folder,
-        polygons,
-        centers,
-        properties,
-        picture,
-        unitPictures,
-        nationUnitPictures,
-        Map.copyOf(rebased));
+        relief,
+        places.renamed(old, renamed));
   }
 
   private static <T> Map<String, T> renamedKey(
@@ -211,7 +179,8 @@ record MapFiles(
         Optional.of(image),
         unitPictures,
         nationUnitPictures,
-        renames);
+        relief,
+        places);
   }
 
   /** The files with the picture and the outlines and centers found in it, the map of its size. */
@@ -232,14 +201,16 @@ record MapFiles(
         pictured.picture,
         unitPictures,
         nationUnitPictures,
-        Map.of());
+        relief,
+        places);
   }
 
   /**
    * The files with the picture, each territory's borders redrawn from it: each of its outlines
    * becomes the outline of the area in the picture that covers most of it and no territory before
    * took, so names, owners, units and neighbours stay. An outline keeps its border where no such
-   * area is found, eg after the border between two territories was rubbed out.
+   * area is found, eg after the border between two territories was rubbed out. A territory whose
+   * border changed noticeably gets its places found again, the others keep theirs.
    */
   Redrawn withBordersFrom(final BufferedImage image, final DetectedMap detected) {
     final Map<String, List<Polygon>> outlines = new LinkedHashMap<>();
@@ -274,6 +245,11 @@ record MapFiles(
           }
         });
     final MapFiles pictured = withPicture(image);
+    final List<String> changed =
+        outlines.keySet().stream()
+            .filter(t -> !kept.contains(t))
+            .filter(t -> overlap(polygons.get(t), outlines.get(t)) < SAME_BORDER)
+            .toList();
     return new Redrawn(
         new MapFiles(
             folder,
@@ -283,11 +259,10 @@ record MapFiles(
             pictured.picture,
             unitPictures,
             nationUnitPictures,
-            renames),
-        outlines.keySet().stream()
-            .filter(t -> !kept.contains(t))
-            .filter(t -> overlap(polygons.get(t), outlines.get(t)) < SAME_BORDER)
-            .toList(),
+            relief,
+            // places the old border held may lie outside the new one: found again in it
+            places.without(changed)),
+        changed,
         List.copyOf(kept));
   }
 
@@ -387,7 +362,8 @@ record MapFiles(
         picture,
         unitPictures,
         nationUnitPictures,
-        renames);
+        relief,
+        places);
   }
 
   MapFiles withNationColor(final String nation, final Color color) {
@@ -396,21 +372,78 @@ record MapFiles(
         PlayerColors.PROPERTY_COLOR_PREFIX + nation,
         String.format(Locale.ROOT, "%06X", color.getRGB() & 0xFFFFFF));
     return new MapFiles(
-        folder, polygons, centers, colored, picture, unitPictures, nationUnitPictures, renames);
+        folder,
+        polygons,
+        centers,
+        colored,
+        picture,
+        unitPictures,
+        nationUnitPictures,
+        relief,
+        places);
+  }
+
+  MapFiles withRelief(final BufferedImage image) {
+    return new MapFiles(
+        folder,
+        polygons,
+        centers,
+        properties,
+        picture,
+        unitPictures,
+        nationUnitPictures,
+        Optional.of(image),
+        places);
+  }
+
+  /** With the map.properties entry set, or removed for an empty value, eg units.scale. */
+  MapFiles withProperty(final String name, final String value) {
+    final Properties changed = copyOfProperties();
+    if (value.isEmpty()) {
+      changed.remove(name);
+    } else {
+      changed.setProperty(name, value);
+    }
+    return new MapFiles(
+        folder,
+        polygons,
+        centers,
+        changed,
+        picture,
+        unitPictures,
+        nationUnitPictures,
+        relief,
+        places);
   }
 
   MapFiles withoutNationColor(final String nation) {
     final Properties uncolored = copyOfProperties();
     uncolored.remove(PlayerColors.PROPERTY_COLOR_PREFIX + nation);
     return new MapFiles(
-        folder, polygons, centers, uncolored, picture, unitPictures, nationUnitPictures, renames);
+        folder,
+        polygons,
+        centers,
+        uncolored,
+        picture,
+        unitPictures,
+        nationUnitPictures,
+        relief,
+        places);
   }
 
   MapFiles withUnitPicture(final String unitType, final UnitPicture unitPicture) {
     final Map<String, UnitPicture> pictures = new LinkedHashMap<>(unitPictures);
     pictures.put(unitType, unitPicture);
     return new MapFiles(
-        folder, polygons, centers, properties, picture, pictures, nationUnitPictures, renames);
+        folder,
+        polygons,
+        centers,
+        properties,
+        picture,
+        pictures,
+        nationUnitPictures,
+        relief,
+        places);
   }
 
   /** The files without the unit type's uploaded picture: its units look as the game draws them. */
@@ -418,7 +451,15 @@ record MapFiles(
     final Map<String, UnitPicture> pictures = new LinkedHashMap<>(unitPictures);
     pictures.remove(unitType);
     return new MapFiles(
-        folder, polygons, centers, properties, picture, pictures, nationUnitPictures, renames);
+        folder,
+        polygons,
+        centers,
+        properties,
+        picture,
+        pictures,
+        nationUnitPictures,
+        relief,
+        places);
   }
 
   /**
@@ -432,7 +473,15 @@ record MapFiles(
     }
     byUnit.forEach((unit, image) -> pictures.put(new NationUnit(nation, unit), image));
     return new MapFiles(
-        folder, polygons, centers, properties, picture, unitPictures, pictures, renames);
+        folder,
+        polygons,
+        centers,
+        properties,
+        picture,
+        unitPictures,
+        pictures,
+        relief,
+        places);
   }
 
   /** A unit type as one nation's units show it. */
@@ -474,65 +523,106 @@ record MapFiles(
             folder.get().resolve(CENTERS),
             file -> PointFileReaderWriter.writeOneToOne(file, centers));
       }
-      // place.txt, where the game draws each territory's units, which it needs for every territory
-      writeKeeping(
-          folder.get().resolve(PLACEMENTS),
-          polygons.keySet(),
-          territory ->
-              Tuple.of(
-                  placesInside(polygons.get(territory), centers.get(territory)), Boolean.FALSE),
-          PointFileReaderWriter::readOneToManyPlacements,
-          PointFileReaderWriter::writeOneToManyPlacements);
     }
   }
 
   /**
-   * Writes a file of points by territory for these territories: points a map has already, maybe set
-   * by hand, stay, also under a territory's new name; missing ones are found, points of other
-   * territories are left out. A file left with no territory is removed.
+   * Writes where the game draws each territory's units, each capital's flag and each victory city's
+   * marker, and for a map that places its names itself (with name_place.txt) also the names and
+   * values, {@link #writeNamePlaces}; without a folder or outlines, none.
+   */
+  void writePlaces(final Game game, final Places saved) throws IOException {
+    if (folder.isEmpty() || !hasOutlines()) {
+      return;
+    }
+    // place.txt, which the game needs for every territory
+    writeKeeping(
+        PLACEMENTS,
+        polygons.keySet(),
+        places.units(),
+        saved.units(),
+        t -> Tuple.of(unitPlaces(t), Boolean.FALSE),
+        PointFileReaderWriter::readOneToManyPlacements,
+        PointFileReaderWriter::writeOneToManyPlacements);
+    // the game reads the names' and the values' places each on their own
+    for (final Marker marker : List.of(Marker.NAME, Marker.VALUE)) {
+      if (!places.markers(marker).isEmpty()
+          || Files.exists(folder.get().resolve(marker.file))) {
+        writeMarkers(game, marker, saved);
+      }
+    }
+    writeMarkers(game, Marker.CAPITAL, saved);
+    writeMarkers(game, Marker.VICTORY_CITY, saved);
+  }
+
+  /**
+   * Writes name_place.txt and pu_place.txt: each territory's name centered above the units around
+   * its center, and below it the value of land that gives PUs. Without them the game finds a place
+   * for the name itself and draws the value below it; a map made here gets them, an opened map
+   * keeps its way until a name or value is moved.
+   *
+   * @param saved the places as last saved, {@link #writeKeeping}
+   */
+  void writeNamePlaces(final Game game, final Places saved) throws IOException {
+    if (folder.isPresent() && hasOutlines()) {
+      writeMarkers(game, Marker.NAME, saved);
+      writeMarkers(game, Marker.VALUE, saved);
+    }
+  }
+
+  private void writeMarkers(final Game game, final Marker marker, final Places saved)
+      throws IOException {
+    writeKeeping(
+        marker.file,
+        territories(t -> marker.isOn(game, t)),
+        places.markers(marker),
+        saved.markers(marker),
+        t -> foundMarker(game, marker, t),
+        PointFileReaderWriter::readOneToOne,
+        PointFileReaderWriter::writeOneToOne);
+  }
+
+  /**
+   * Writes a file of points by territory. For these territories: a place changed here since the
+   * last save, else the file's, maybe set by hand meanwhile, else the one here, else a found one.
+   * Lines of territories the map maker does not know stay, unless a rename here took them. Written
+   * only when that changes the file; a file left with no territory is removed.
+   *
+   * @param had the places here
+   * @param saved the places as last saved
    */
   private <T> void writeKeeping(
-      final Path file,
+      final String fileName,
       final Collection<String> territories,
+      final Map<String, T> had,
+      final Map<String, T> saved,
       final Function<String, T> found,
       final PointsReader<T> reader,
       final PointsWriter<T> writer)
       throws IOException {
+    final Path file = folder.orElseThrow().resolve(fileName);
     final Map<String, T> before = Files.exists(file) ? reader.read(file) : Map.of();
     final Map<String, T> after = new LinkedHashMap<>();
     for (final String territory : territories) {
-      final String inFile = renames.getOrDefault(territory, territory);
-      after.put(
-          territory,
-          // the own name too: after a save that failed halfway the file may hold it already
-          before.containsKey(inFile)
-              ? before.get(inFile)
-              : before.containsKey(territory) ? before.get(territory) : found.apply(territory));
+      // a place taken away here, eg found again, is found
+      final Optional<T> chosen =
+          Objects.equals(had.get(territory), saved.get(territory))
+              ? Optional.ofNullable(before.get(territory))
+                  .or(() -> Optional.ofNullable(had.get(territory)))
+              : Optional.ofNullable(had.get(territory));
+      after.put(territory, chosen.orElseGet(() -> found.apply(territory)));
     }
+    before.forEach(
+        (territory, points) -> {
+          if (!polygons.containsKey(territory)
+              && !(saved.containsKey(territory) && !had.containsKey(territory))) {
+            after.put(territory, points);
+          }
+        });
     if (after.isEmpty()) {
       MapFolder.remove(file);
     } else if (!after.equals(before)) {
       MapFolder.replace(file, written -> writer.write(written, after));
-    }
-  }
-
-  /**
-   * Where the game draws each territory's units, by the name in the map folder's place.txt; none
-   * without the file or when it cannot be read.
-   */
-  static Map<String, List<Point>> savedUnitPlaces(final Path mapFolder) {
-    final Path file = mapFolder.resolve(PLACEMENTS);
-    if (!Files.exists(file)) {
-      return Map.of();
-    }
-    try {
-      final Map<String, List<Point>> places = new HashMap<>();
-      PointFileReaderWriter.readOneToManyPlacements(file)
-          .forEach((territory, points) -> places.put(territory, points.getFirst()));
-      return places;
-    } catch (final IOException expected) {
-      // the map maker then shows units at places it finds itself
-      return Map.of();
     }
   }
 
@@ -547,73 +637,206 @@ record MapFiles(
   }
 
   /**
-   * Writes where the game draws each capital's flag and each victory city's marker, and for a map
-   * that places its names itself (with name_place.txt) also the names and values, {@link
-   * #writeNamePlaces}; without a folder or outlines, none.
+   * A mark the game draws at a point of its own in a territory: its name, its value, its capital's
+   * flag, its victory city marker.
    */
-  void writeMarkers(final Game game) throws IOException {
-    if (folder.isEmpty() || !hasOutlines()) {
-      return;
+  @AllArgsConstructor
+  enum Marker {
+    NAME("name_place.txt", "Name"),
+    VALUE("pu_place.txt", "PUs"),
+    CAPITAL("capitols.txt", "Capital"),
+    VICTORY_CITY("vc.txt", "VC");
+
+    private final String file;
+    @Getter private final String label;
+
+    /** Whether the game draws it for the territory. */
+    boolean isOn(final Game game, final String territory) {
+      return switch (this) {
+        case NAME -> true;
+        case VALUE -> !MapXml.isWater(game, territory) && MapXml.production(game, territory) > 0;
+        case CAPITAL -> MapXml.isCapital(game, territory);
+        case VICTORY_CITY -> MapXml.isVictoryCity(game, territory);
+      };
     }
-    final Path mapFolder = folder.get();
-    if (Files.exists(mapFolder.resolve(NAME_PLACES))) {
-      writeNamePlaces(game);
-    }
-    // the game draws the flag and the marker from their top left corner, else from the center
-    writeKeeping(
-        mapFolder.resolve(CAPITALS),
-        territories(t -> MapXml.isCapital(game, t)),
-        t -> new Point(middle(t).x - CAPITAL_FLAG_SIZE / 2, middle(t).y - CAPITAL_FLAG_SIZE / 2),
-        PointFileReaderWriter::readOneToOne,
-        PointFileReaderWriter::writeOneToOne);
-    writeKeeping(
-        mapFolder.resolve(VICTORY_CITIES),
-        territories(t -> MapXml.isVictoryCity(game, t)),
-        // right of the units around the center
-        t ->
-            new Point(
-                middle(t).x + UnitImageFactory.DEFAULT_UNIT_ICON_SIZE / 2 + 2,
-                middle(t).y - VICTORY_CITY_SIZE / 2),
-        PointFileReaderWriter::readOneToOne,
-        PointFileReaderWriter::writeOneToOne);
   }
 
   /**
-   * Writes name_place.txt and pu_place.txt: each territory's name centered above the units around
-   * its center, and below it the value of land that gives PUs. Without them the game finds a place
-   * for the name itself and draws the value below it; a map made here gets them, an opened map
-   * keeps its way.
+   * Where the map's files place things in the territories, by territory: the units (place.txt, with
+   * whether more stacks than places go on to the left) and the markers. A territory missing here
+   * has its places found, {@link #unitPlaces}, {@link #markerPlace}; places of territories the map
+   * maker does not know stay as they are.
    */
-  void writeNamePlaces(final Game game) throws IOException {
-    if (folder.isEmpty() || !hasOutlines()) {
-      return;
+  record Places(
+      Map<String, Tuple<List<Point>, Boolean>> units, Map<Marker, Map<String, Point>> markers) {
+    static Places none() {
+      return new Places(Map.of(), Map.of());
     }
-    final FontMetrics font = fontMetrics();
-    // the game draws a text from its left end, on its baseline or, set so, below its top
-    final int top =
-        Boolean.parseBoolean(properties.getProperty(MapData.PROPERTY_MAP_DRAWNAMESFROMTOPLEFT))
-            ? font.getHeight()
-            : 0;
-    writeKeeping(
-        folder.get().resolve(NAME_PLACES),
-        polygons.keySet(),
-        t -> {
-          final Point baseline = nameBaseline(t, font);
-          return new Point(baseline.x - font.stringWidth(t) / 2, baseline.y - top);
-        },
-        PointFileReaderWriter::readOneToOne,
-        PointFileReaderWriter::writeOneToOne);
-    writeKeeping(
-        folder.get().resolve(PU_PLACES),
-        territories(t -> !MapXml.isWater(game, t) && MapXml.production(game, t) > 0),
-        t -> {
-          final Point baseline = nameBaseline(t, font);
-          final String value = String.valueOf(MapXml.production(game, t));
-          return new Point(
-              baseline.x - font.stringWidth(value) / 2, baseline.y + font.getHeight() - top);
-        },
-        PointFileReaderWriter::readOneToOne,
-        PointFileReaderWriter::writeOneToOne);
+
+    /** The places in the folder's files; a file that does not read gives none, a save says why. */
+    static Places read(final Path folder) {
+      final Map<Marker, Map<String, Point>> markers = new EnumMap<>(Marker.class);
+      for (final Marker marker : Marker.values()) {
+        markers.put(
+            marker, readOrNone(folder.resolve(marker.file), PointFileReaderWriter::readOneToOne));
+      }
+      return new Places(
+          readOrNone(folder.resolve(PLACEMENTS), PointFileReaderWriter::readOneToManyPlacements),
+          Map.copyOf(markers));
+    }
+
+    private static <T> Map<String, T> readOrNone(final Path file, final PointsReader<T> reader) {
+      if (!Files.exists(file)) {
+        return Map.of();
+      }
+      try {
+        return Collections.unmodifiableMap(reader.read(file));
+      } catch (final IOException | IllegalArgumentException e) {
+        log.warn("Could not read {}", file, e);
+        return Map.of();
+      }
+    }
+
+    Map<String, Point> markers(final Marker marker) {
+      return markers.getOrDefault(marker, Map.of());
+    }
+
+    Places renamed(final String old, final String renamed) {
+      final Map<Marker, Map<String, Point>> moved = new EnumMap<>(Marker.class);
+      markers.forEach(
+          (marker, points) ->
+              moved.put(marker, Collections.unmodifiableMap(renamedKey(points, old, renamed))));
+      return new Places(
+          Collections.unmodifiableMap(renamedKey(units, old, renamed)), Map.copyOf(moved));
+    }
+
+    /** Without the places of these territories, so they are found again. */
+    Places without(final Collection<String> territories) {
+      final Map<Marker, Map<String, Point>> kept = new EnumMap<>(Marker.class);
+      markers.forEach((marker, points) -> kept.put(marker, without(points, territories)));
+      return new Places(without(units, territories), Map.copyOf(kept));
+    }
+
+    private static <T> Map<String, T> without(
+        final Map<String, T> values, final Collection<String> territories) {
+      final Map<String, T> kept = new LinkedHashMap<>(values);
+      kept.keySet().removeAll(territories);
+      return Collections.unmodifiableMap(kept);
+    }
+
+    Places withUnits(final String territory, final Tuple<List<Point>, Boolean> placed) {
+      final Map<String, Tuple<List<Point>, Boolean>> changed = new LinkedHashMap<>(units);
+      changed.put(territory, placed);
+      return new Places(Collections.unmodifiableMap(changed), markers);
+    }
+
+    Places withMarker(final Marker marker, final String territory, final Point point) {
+      final Map<String, Point> points = new LinkedHashMap<>(markers(marker));
+      points.put(territory, point);
+      final Map<Marker, Map<String, Point>> changed = new EnumMap<>(Marker.class);
+      changed.putAll(markers);
+      changed.put(marker, Collections.unmodifiableMap(points));
+      return new Places(units, Map.copyOf(changed));
+    }
+  }
+
+  /**
+   * Where the game draws the territory's units, the first stack first: as the map's place.txt says,
+   * else found inside it.
+   */
+  List<Point> unitPlaces(final String territory) {
+    return Optional.ofNullable(places.units().get(territory))
+        .map(Tuple::getFirst)
+        .orElseGet(
+            () ->
+                placesInside(
+                    polygons.getOrDefault(territory, List.of()),
+                    centers.get(territory),
+                    unitSize()));
+  }
+
+  /** Where the game draws the marker in the territory: as the map's file says, else found. */
+  Point markerPlace(final Game game, final Marker marker, final String territory) {
+    return Optional.ofNullable(places.markers(marker).get(territory))
+        .orElseGet(() -> foundMarker(game, marker, territory));
+  }
+
+  /** The files with the territory's units placed here, in this order; for none, unchanged. */
+  MapFiles withUnitPlaces(final String territory, final List<Point> points) {
+    if (points.isEmpty() || points.equals(unitPlaces(territory))) {
+      return this;
+    }
+    final boolean toLeft =
+        Optional.ofNullable(places.units().get(territory)).map(Tuple::getSecond).orElse(false);
+    return withPlaces(places.withUnits(territory, Tuple.of(List.copyOf(points), toLeft)));
+  }
+
+  MapFiles withMarkerPlace(
+      final Game game, final Marker marker, final String territory, final Point point) {
+    return point.equals(markerPlace(game, marker, territory))
+        ? this
+        : withPlaces(places.withMarker(marker, territory, point));
+  }
+
+  /** The files with the territory's places found again; unchanged if they are the found ones. */
+  MapFiles withPlacesFoundAgain(final String territory) {
+    final Places found = places.without(List.of(territory));
+    return found.equals(places) ? this : withPlaces(found);
+  }
+
+  private MapFiles withPlaces(final Places changed) {
+    return new MapFiles(
+        folder,
+        polygons,
+        centers,
+        properties,
+        picture,
+        unitPictures,
+        nationUnitPictures,
+        relief,
+        changed);
+  }
+
+  /** The size of a unit on the map as the game draws it: units.width and height by units.scale. */
+  Dimension unitSize() {
+    final int size = UnitImageFactory.DEFAULT_UNIT_ICON_SIZE;
+    double scale;
+    try {
+      scale = Double.parseDouble(properties.getProperty(MapData.PROPERTY_UNITS_SCALE, "1"));
+    } catch (final NumberFormatException e) {
+      // the game takes such a map's units at their size too
+      scale = 1;
+    }
+    return new Dimension(
+        (int) (scale * intProperty(MapData.PROPERTY_UNITS_WIDTH).orElse(size)),
+        (int) Math.round(scale * intProperty(MapData.PROPERTY_UNITS_HEIGHT).orElse(size)));
+  }
+
+  /** The marker's place as the map maker finds it, eg the name above the units at the center. */
+  private Point foundMarker(final Game game, final Marker marker, final String territory) {
+    final Point middle = middle(territory);
+    return switch (marker) {
+      // the game draws the flag and the marker from their top left corner, else from the center
+      case CAPITAL -> new Point(middle.x - CAPITAL_FLAG_SIZE / 2, middle.y - CAPITAL_FLAG_SIZE / 2);
+      // right of the units around the center
+      case VICTORY_CITY ->
+          new Point(
+              middle.x + UnitImageFactory.DEFAULT_UNIT_ICON_SIZE / 2 + 2,
+              middle.y - VICTORY_CITY_SIZE / 2);
+      case NAME, VALUE -> {
+        final FontMetrics font = fontMetrics();
+        // the game draws a text from its left end, on its baseline or, set so, below its top
+        final int top =
+            Boolean.parseBoolean(properties.getProperty(MapData.PROPERTY_MAP_DRAWNAMESFROMTOPLEFT))
+                ? font.getHeight()
+                : 0;
+        final Point baseline = nameBaseline(territory, font);
+        final String text =
+            marker == Marker.NAME ? territory : String.valueOf(MapXml.production(game, territory));
+        final int below = marker == Marker.NAME ? 0 : font.getHeight();
+        yield new Point(baseline.x - font.stringWidth(text) / 2, baseline.y + below - top);
+      }
+    };
   }
 
   private static FontMetrics fontMetrics() {
@@ -666,7 +889,8 @@ record MapFiles(
    * Places for unit stacks inside the outlines: the top left corners of unit-sized squares on a
    * grid that lie wholly inside, nearest to the center first; the center alone if none fits.
    */
-  static List<Point> placesInside(final List<Polygon> outlines, @Nullable final Point center) {
+  private static List<Point> placesInside(
+      final List<Polygon> outlines, @Nullable final Point center, final Dimension unit) {
     // from the outlines' own bounds: an empty Rectangle would add the map's origin to them
     final Rectangle bounds =
         outlines.stream()
@@ -676,25 +900,27 @@ record MapFiles(
     final Point middle =
         Optional.ofNullable(center)
             .orElseGet(() -> new Point((int) bounds.getCenterX(), (int) bounds.getCenterY()));
-    final int size = UnitImageFactory.DEFAULT_UNIT_ICON_SIZE;
+    final int width = Math.max(1, unit.width);
+    final int height = Math.max(1, unit.height);
     // the grid runs through the center, so the first place sits on it where it fits
     final int startX =
-        middle.x - size / 2 - Math.floorDiv(middle.x - size / 2 - bounds.x, size) * size;
+        middle.x - width / 2 - Math.floorDiv(middle.x - width / 2 - bounds.x, width) * width;
     final int startY =
-        middle.y - size / 2 - Math.floorDiv(middle.y - size / 2 - bounds.y, size) * size;
+        middle.y - height / 2 - Math.floorDiv(middle.y - height / 2 - bounds.y, height) * height;
     final List<Point> places = new ArrayList<>();
-    for (int x = startX; x + size <= bounds.x + bounds.width; x += size) {
-      for (int y = startY; y + size <= bounds.y + bounds.height; y += size) {
-        final Rectangle square = new Rectangle(x, y, size, size);
+    for (int x = startX; x + width <= bounds.x + bounds.width; x += width) {
+      for (int y = startY; y + height <= bounds.y + bounds.height; y += height) {
+        final Rectangle square = new Rectangle(x, y, width, height);
         if (outlines.stream().anyMatch(outline -> outline.contains(square))) {
           places.add(new Point(x, y));
         }
       }
     }
     places.sort(
-        Comparator.comparingDouble(p -> p.distance(middle.x - size / 2.0, middle.y - size / 2.0)));
+        Comparator.comparingDouble(
+            p -> p.distance(middle.x - width / 2.0, middle.y - height / 2.0)));
     return places.isEmpty()
-        ? List.of(new Point(middle.x - size / 2, middle.y - size / 2))
+        ? List.of(new Point(middle.x - width / 2, middle.y - height / 2))
         : List.copyOf(places.subList(0, Math.min(places.size(), MAX_PLACES)));
   }
 

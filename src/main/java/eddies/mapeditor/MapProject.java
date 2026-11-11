@@ -3,6 +3,7 @@ package eddies.mapeditor;
 import games.strategy.triplea.EngineImageLoader;
 import java.awt.Color;
 import java.awt.Image;
+import java.awt.Point;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
@@ -10,7 +11,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
@@ -31,6 +31,7 @@ import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.Info;
 import org.triplea.map.xml.writer.GameXmlWriter;
 import eddies.mapeditor.MapChecks.Problem;
+import eddies.mapeditor.MapFiles.Marker;
 import eddies.mapeditor.MapFiles.NationUnit;
 import eddies.mapeditor.MapFiles.Redrawn;
 import eddies.mapeditor.MapFiles.UnitPicture;
@@ -69,11 +70,7 @@ final class MapProject {
   private List<Problem> problems = List.of();
 
   /** One step: the game and the map's files, which change together when a territory is renamed. */
-  private record State(Game game, MapFiles files) {
-    State afterSaving(final Map<String, String> written) {
-      return written.isEmpty() ? this : new State(game, files.afterSaving(written));
-    }
-  }
+  private record State(Game game, MapFiles files) {}
 
   MapProject(final Path xmlFile, final Game game, final MapFiles files) {
     this.xmlFile = xmlFile;
@@ -386,6 +383,18 @@ final class MapProject {
             MapXml.withoutNation(game(), nation), current.files().withoutNationColor(nation)));
   }
 
+  /** The relief picture, drawn over the map, cut into relief tiles on the next save; one step. */
+  void setRelief(final BufferedImage relief) {
+    step(new State(game(), current.files().withRelief(relief)));
+  }
+
+  /** Sets a map.properties entry as one step; an empty value removes it. */
+  void setMapProperty(final String name, final String value) {
+    if (!value.equals(getFiles().properties().getProperty(name, ""))) {
+      step(new State(game(), current.files().withProperty(name, value)));
+    }
+  }
+
   void setNationColor(final String nation, final Color color) {
     step(new State(game(), current.files().withNationColor(nation, color)));
   }
@@ -401,6 +410,28 @@ final class MapProject {
    */
   void setNationUnitPictures(final String nation, final Map<String, BufferedImage> byUnit) {
     step(new State(game(), current.files().withNationUnitPictures(nation, byUnit)));
+  }
+
+  /** Places the territory's units here, in this order, as one step; for none, nothing. */
+  void setUnitPlaces(final String territory, final List<Point> places) {
+    stepFiles(current.files().withUnitPlaces(territory, places));
+  }
+
+  /** Places the territory's marker, eg its name, at this point, as one step. */
+  void setMarkerPlace(final Marker marker, final String territory, final Point place) {
+    stepFiles(current.files().withMarkerPlace(game(), marker, territory, place));
+  }
+
+  /** Finds the territory's places again, as one step; nothing if they are the found ones. */
+  void findPlacesAgain(final String territory) {
+    stepFiles(current.files().withPlacesFoundAgain(territory));
+  }
+
+  // a change that changes nothing is no step to undo
+  private void stepFiles(final MapFiles changed) {
+    if (changed != current.files()) {
+      step(new State(game(), changed));
+    }
   }
 
   /**
@@ -463,6 +494,12 @@ final class MapProject {
 
   boolean hasUnsavedChanges() {
     return current != saved;
+  }
+
+  /** Whether a relief picture was loaded since the last save, so the next one writes it. */
+  boolean hasUnsavedRelief() {
+    return getFiles().relief().isPresent()
+        && !getFiles().relief().equals(saved.files().relief());
   }
 
   /** The problems {@link MapChecks#quick} finds in the map as it is now. */
@@ -588,9 +625,9 @@ final class MapProject {
   /**
    * Writes what changed since the last save: the outlines and centers, map.properties, the picture
    * in tiles, flags and unit pictures of new nations and unit types, uploaded unit pictures, the
-   * notes, and the game; the places of capital flags and victory city markers on every save, as
-   * they follow the game. Text files are written as {@link MapFolder#replace} does, so a failed
-   * save loses nothing.
+   * notes, and the game; the places of units, names, capital flags and victory city markers when
+   * they differ from the files, as they follow the outlines and the game. Text files are written as
+   * {@link MapFolder#replace} does, so a failed save loses nothing.
    *
    * @throws IllegalStateException for a new map, which {@link #saveAsNewMap} saves first
    */
@@ -631,18 +668,21 @@ final class MapProject {
     // the outlines first: if they fail, the game file still names the territories they hold
     if (firstSave || saving.files().polygons() != saved.files().polygons()) {
       files.writeOutlines();
-      // a map made here gets them also when its picture comes after the first save
-      if (mapName != null) {
-        files.writeNamePlaces(saving.game());
-      }
     }
-    files.writeMarkers(saving.game());
+    // a map made here gets them also when its picture comes after the first save
+    if (mapName != null) {
+      files.writeNamePlaces(saving.game(), saved.files().places());
+    }
+    files.writePlaces(saving.game(), saved.files().places());
     if (firstSave || !saving.files().properties().equals(saved.files().properties())) {
       files.writeProperties();
     }
     if (files.picture().isPresent()
         && (firstSave || !files.picture().equals(saved.files().picture()))) {
       MapFolder.writePicture(mapFolder, files.picture().get());
+    }
+    if (files.relief().isPresent() && !files.relief().equals(saved.files().relief())) {
+      MapFolder.writeRelief(mapFolder, files.relief().get());
     }
     final Game before = firstSave ? Game.builder().build() : saved.game();
     writeNationPictures(saving.game(), files, before);
@@ -659,22 +699,9 @@ final class MapProject {
     }
     final Game game = mapName == null ? saving.game() : MapXml.withMapName(saving.game(), mapName);
     MapFolder.replace(xml, file -> GameXmlWriter.exportXml(game, file));
-    // the files hold the new names now, so every step's renames lead to those
-    final Map<String, String> written = saving.files().renames();
-    final List<State> undone = afterSaving(undos, written);
-    final List<State> redone = afterSaving(redos, written);
-    undos.clear();
-    undos.addAll(undone);
-    redos.clear();
-    redos.addAll(redone);
-    saved = saving.afterSaving(written);
+    saved = saving;
     current = saved;
     listeners.forEach(Runnable::run);
-  }
-
-  private static List<State> afterSaving(
-      final Collection<State> states, final Map<String, String> written) {
-    return states.stream().map(state -> state.afterSaving(written)).toList();
   }
 
   /**

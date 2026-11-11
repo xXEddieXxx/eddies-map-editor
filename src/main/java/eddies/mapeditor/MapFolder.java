@@ -222,6 +222,36 @@ class MapFolder {
     ImageIO.write(shrunk(image, PREVIEW_WIDTH), "png", folder.resolve("preview.png").toFile());
   }
 
+  /**
+   * The relief picture cut into the game's relief tiles, drawn over the base tiles; tiles there
+   * were before keep their first version as ".bak", as relief is drawn by hand.
+   */
+  static void writeRelief(final Path folder, final BufferedImage image) throws IOException {
+    final int size = MapFiles.tileSize();
+    final Path tiles = Files.createDirectories(folder.resolve("reliefTiles"));
+    final Set<Path> written = new HashSet<>();
+    for (int column = 0; column * size < image.getWidth(); column++) {
+      for (int row = 0; row * size < image.getHeight(); row++) {
+        final BufferedImage tile = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
+        final Graphics2D g = tile.createGraphics();
+        g.drawImage(image, -column * size, -row * size, null);
+        g.dispose();
+        final Path file = tiles.resolve(column + "_" + row + ".png");
+        replace(file, to -> ImageIO.write(tile, "png", to.toFile()));
+        written.add(file);
+      }
+    }
+    try (Stream<Path> before = Files.list(tiles)) {
+      for (final Path stale :
+          before
+              .filter(f -> f.getFileName().toString().endsWith(".png"))
+              .filter(f -> !written.contains(f))
+              .toList()) {
+        remove(stale);
+      }
+    }
+  }
+
   private static BufferedImage shrunk(final BufferedImage image, final int maxWidth) {
     final double scale = Math.min(1.0, maxWidth / (double) image.getWidth());
     final int width = Math.max(1, (int) (image.getWidth() * scale));
