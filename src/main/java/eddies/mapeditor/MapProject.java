@@ -1,6 +1,7 @@
 package eddies.mapeditor;
 
 import games.strategy.triplea.EngineImageLoader;
+import games.strategy.triplea.ui.mapdata.MapData;
 import java.awt.Color;
 import java.awt.Image;
 import java.awt.Point;
@@ -69,19 +70,27 @@ final class MapProject {
   private @Nullable State problemsOf;
   private List<Problem> problems = List.of();
 
-  /** One step: the game and the map's files, which change together when a territory is renamed. */
-  private record State(Game game, MapFiles files) {}
+  /**
+   * One step: the game, the map's files, which change together when a territory is renamed, and
+   * the texts beside them.
+   */
+  private record State(Game game, MapFiles files, MapTexts texts) {}
 
   MapProject(final Path xmlFile, final Game game, final MapFiles files) {
     this.xmlFile = xmlFile;
     folder = files.folder().orElseGet(() -> mapFolderOf(xmlFile));
-    saved = new State(game, files);
+    saved = new State(game, files, MapTexts.read(folder));
     current = saved;
   }
 
   private MapProject(final Game game) {
-    saved = new State(game, MapFiles.none());
+    saved = new State(game, MapFiles.none(), MapTexts.none());
     current = saved;
+  }
+
+  /** A step with this game and these files, the texts as they are. */
+  private State state(final Game game, final MapFiles files) {
+    return new State(game, files, current.texts());
   }
 
   /** The folder of the map the game XML belongs to: above its "games" folder, else its own. */
@@ -203,7 +212,7 @@ final class MapProject {
   void edit(final UnaryOperator<Game> change) {
     final Game changed = change.apply(current.game());
     if (changed != current.game()) {
-      step(new State(changed, current.files()));
+      step(state(changed, current.files()));
     }
   }
 
@@ -216,7 +225,7 @@ final class MapProject {
 
   /** Takes the picture as the map's, as one step; the territories stay until they are found. */
   void loadPicture(final BufferedImage picture) {
-    step(new State(game(), current.files().withPicture(picture)));
+    step(state(game(), current.files().withPicture(picture)));
   }
 
   /**
@@ -225,7 +234,7 @@ final class MapProject {
    */
   void loadPicture(final BufferedImage picture, final DetectedMap detected) {
     step(
-        new State(
+        state(
             MapXml.withWorld(game(), detected), current.files().withPicture(picture, detected)));
   }
 
@@ -241,7 +250,7 @@ final class MapProject {
       return false;
     }
     step(
-        new State(
+        state(
             MapXml.withRenamedTerritory(game(), old, renamed),
             current.files().withRenamed(old, renamed)));
     return true;
@@ -300,7 +309,7 @@ final class MapProject {
       count++;
     }
     if (count > 0) {
-      step(new State(game, files));
+      step(state(game, files));
     }
     return new Renamed(count, List.copyOf(refused));
   }
@@ -345,7 +354,7 @@ final class MapProject {
       return false;
     }
     step(
-        new State(
+        state(
             MapXml.withNation(game(), nation),
             current.files().withNationColor(nation, newNationColor())));
     return true;
@@ -376,32 +385,49 @@ final class MapProject {
                     Math.floorMod(MapXml.nations(game()).indexOf(nation), NATION_COLORS.size())));
   }
 
-  /** Removes the nation, all that names it and its color, as one step. */
-  void removeNation(final String nation) {
-    step(
-        new State(
-            MapXml.withoutNation(game(), nation), current.files().withoutNationColor(nation)));
+  /**
+   * Removes the nation, all that names it and its color, as one step; unless attachments, eg
+   * triggers, still name it, as the game would not load then.
+   *
+   * @return where it is still named, empty when it was removed
+   */
+  List<String> removeNation(final String nation) {
+    final Game without = MapXml.withoutNation(game(), nation);
+    final List<String> named = RulesXml.whereNamed(without, nation);
+    if (named.isEmpty()) {
+      step(state(without, current.files().withoutNationColor(nation)));
+    }
+    return named;
   }
 
-  /** The relief picture, drawn over the map, cut into relief tiles on the next save; one step. */
+  /**
+   * The relief picture, drawn over the map, cut into relief tiles on the next save; one step. A
+   * map told not to show its relief shows it again, as a new one is meant to be seen.
+   */
   void setRelief(final BufferedImage relief) {
-    step(new State(game(), current.files().withRelief(relief)));
+    final MapFiles files = current.files().withRelief(relief);
+    step(
+        state(
+            game(),
+            files.showsRelief()
+                ? files
+                : files.withProperty(MapData.PROPERTY_MAP_HASRELIEF, "")));
   }
 
   /** Sets a map.properties entry as one step; an empty value removes it. */
   void setMapProperty(final String name, final String value) {
     if (!value.equals(getFiles().properties().getProperty(name, ""))) {
-      step(new State(game(), current.files().withProperty(name, value)));
+      step(state(game(), current.files().withProperty(name, value)));
     }
   }
 
   void setNationColor(final String nation, final Color color) {
-    step(new State(game(), current.files().withNationColor(nation, color)));
+    step(state(game(), current.files().withNationColor(nation, color)));
   }
 
   /** The picture as the unit type's for every nation from the next save on, as one step. */
   void setUnitPicture(final String unitType, final UnitPicture picture) {
-    step(new State(game(), current.files().withUnitPicture(unitType, picture)));
+    step(state(game(), current.files().withUnitPicture(unitType, picture)));
   }
 
   /**
@@ -409,7 +435,7 @@ final class MapProject {
    * empty map takes back all imported for the nation.
    */
   void setNationUnitPictures(final String nation, final Map<String, BufferedImage> byUnit) {
-    step(new State(game(), current.files().withNationUnitPictures(nation, byUnit)));
+    step(state(game(), current.files().withNationUnitPictures(nation, byUnit)));
   }
 
   /** Places the territory's units here, in this order, as one step; for none, nothing. */
@@ -417,9 +443,18 @@ final class MapProject {
     stepFiles(current.files().withUnitPlaces(territory, places));
   }
 
-  /** Places the territory's marker, eg its name, at this point, as one step. */
-  void setMarkerPlace(final Marker marker, final String territory, final Point place) {
-    stepFiles(current.files().withMarkerPlace(game(), marker, territory, place));
+  /**
+   * Places the territory's marker, eg its name, at this point, as one step; the index counts the
+   * effects, 0 for the other markers.
+   */
+  void setMarkerPlace(
+      final Marker marker, final String territory, final int index, final Point place) {
+    stepFiles(current.files().withMarkerPlace(game(), marker, territory, index, place));
+  }
+
+  /** Draws the misc picture at these top left corners, as one step; none takes it off the map. */
+  void setDecorations(final String picture, final List<Point> places) {
+    stepFiles(current.files().withDecorations(picture, places));
   }
 
   /** Finds the territory's places again, as one step; nothing if they are the found ones. */
@@ -430,7 +465,7 @@ final class MapProject {
   // a change that changes nothing is no step to undo
   private void stepFiles(final MapFiles changed) {
     if (changed != current.files()) {
-      step(new State(game(), changed));
+      step(state(game(), changed));
     }
   }
 
@@ -444,14 +479,35 @@ final class MapProject {
     if (getFiles() != from) {
       return false;
     }
-    step(new State(game(), redrawn.files()));
+    step(state(game(), redrawn.files()));
     return true;
   }
 
   /** The unit type as the game draws it again, as one step; nothing without an uploaded one. */
   void removeUnitPicture(final String unitType) {
     if (getFiles().unitPictures().containsKey(unitType)) {
-      step(new State(game(), current.files().withoutUnitPicture(unitType)));
+      step(state(game(), current.files().withoutUnitPicture(unitType)));
+    }
+  }
+
+  /** Objectives, messages and unit tool tips beside the game, as they are now. */
+  MapTexts texts() {
+    return current.texts();
+  }
+
+  /** Sets the entry's text in the file, or adds the entry, as one step. */
+  void setText(final MapTexts.Kind kind, final String key, final String value) {
+    stepTexts(current.texts().with(kind, key, value));
+  }
+
+  void removeText(final MapTexts.Kind kind, final String key) {
+    stepTexts(current.texts().without(kind, key));
+  }
+
+  // a change that changes nothing is no step to undo
+  private void stepTexts(final MapTexts changed) {
+    if (changed != current.texts()) {
+      step(new State(game(), current.files(), changed));
     }
   }
 
@@ -625,7 +681,8 @@ final class MapProject {
   /**
    * Writes what changed since the last save: the outlines and centers, map.properties, the picture
    * in tiles, flags and unit pictures of new nations and unit types, uploaded unit pictures, the
-   * notes, and the game; the places of units, names, capital flags and victory city markers when
+   * notes, the objectives, messages and tool tips ({@link MapTexts}), and the game; the places of
+   * units, names, capital flags and victory city markers when
    * they differ from the files, as they follow the outlines and the game. Text files are written as
    * {@link MapFolder#replace} does, so a failed save loses nothing.
    *
@@ -697,6 +754,7 @@ final class MapProject {
     if (firstSave || !notes.equals(MapXml.notes(saved.game()))) {
       writeNotes(notesFile(xml), notes);
     }
+    saving.texts().writeChanged(mapFolder, saved.texts());
     final Game game = mapName == null ? saving.game() : MapXml.withMapName(saving.game(), mapName);
     MapFolder.replace(xml, file -> GameXmlWriter.exportXml(game, file));
     saved = saving;

@@ -4,6 +4,7 @@ import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.io.Serial;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -30,8 +31,8 @@ final class SearchList extends JPanel {
   @Serial private static final long serialVersionUID = 1L;
 
   private final JTextField search = new JTextField();
-  private final DefaultListModel<String> shown = new DefaultListModel<>();
-  private final JList<String> list = new JList<>(shown);
+  private DefaultListModel<String> shown = new DefaultListModel<>();
+  private final JList<String> list = new WideList();
   private final transient Supplier<List<String>> names;
   private boolean refilling;
 
@@ -50,6 +51,7 @@ final class SearchList extends JPanel {
     setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 8));
     search.putClientProperty("JTextField.placeholderText", placeholder);
     search.getDocument().addDocumentListener(new Refill());
+    list.setModel(shown);
     list.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
     list.setCellRenderer(new TwoLineRenderer(detail));
     list.addListSelectionListener(
@@ -63,18 +65,31 @@ final class SearchList extends JPanel {
     refresh();
   }
 
-  /** Reads the names again, keeping the search and the chosen one. */
+  /**
+   * Reads the names again, keeping the search and the chosen one. A list of thousands, eg a big
+   * map's attachments, stays quick: the names come in one new model, not one event each, and rows
+   * take the height of the first instead of each being measured.
+   */
   void refresh() {
-    final String chosen = list.getSelectedValue();
     final String filter = search.getText().strip().toLowerCase(Locale.ROOT);
+    final List<String> filtered =
+        names.get().stream()
+            .filter(name -> name.toLowerCase(Locale.ROOT).contains(filter))
+            .toList();
+    if (filtered.equals(Collections.list(shown.elements()))) {
+      // the names are the same, but their lines below may not be
+      list.repaint();
+      return;
+    }
+    final String chosen = list.getSelectedValue();
+    final DefaultListModel<String> refilled = new DefaultListModel<>();
+    refilled.addAll(filtered);
     refilling = true;
-    shown.clear();
-    names.get().stream()
-        .filter(name -> name.toLowerCase(Locale.ROOT).contains(filter))
-        .forEach(shown::addElement);
+    list.setPrototypeCellValue(filtered.isEmpty() ? null : filtered.getFirst());
+    shown = refilled;
+    list.setModel(refilled);
     list.setSelectedValue(chosen, false);
     refilling = false;
-    list.repaint();
   }
 
   /** Marks the name as chosen without telling the editor, eg after a click on the map. */
@@ -85,6 +100,16 @@ final class SearchList extends JPanel {
     }
     list.setSelectedValue(name, true);
     refilling = false;
+  }
+
+  /** A list as wide as its column, so long names are cut instead of scrolled sideways. */
+  private static final class WideList extends JList<String> {
+    @Serial private static final long serialVersionUID = 1L;
+
+    @Override
+    public boolean getScrollableTracksViewportWidth() {
+      return true;
+    }
   }
 
   private final class Refill implements DocumentListener {
@@ -122,18 +147,17 @@ final class SearchList extends JPanel {
         final boolean cellHasFocus) {
       final String name = Objects.toString(value);
       final String line = detail.apply(name);
+      // each line unwrapped, cut at the list's edge, as all rows take the first's height
       final String text =
-          "<html><b>"
+          "<html><nobr><b>"
               + escape(name)
               + "</b>"
-              + (line.isEmpty()
-                  ? ""
-                  : "<br><font color='"
-                      + Theme.convertColorToHex(Theme.getSecondaryTextColor())
-                      + "'>"
-                      + escape(line)
-                      + "</font>")
-              + "</html>";
+              // always a second line, empty or not, so the first row's height fits every row
+              + "<br><font color='"
+              + Theme.convertColorToHex(Theme.getSecondaryTextColor())
+              + "'>"
+              + (line.isEmpty() ? "&nbsp;" : escape(line))
+              + "</font></nobr></html>";
       super.getListCellRendererComponent(list, text, index, isSelected, cellHasFocus);
       setBorder(BorderFactory.createEmptyBorder(5, 8, 5, 8));
       return this;

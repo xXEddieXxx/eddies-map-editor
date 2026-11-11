@@ -17,7 +17,6 @@ import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.Serial;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -366,7 +365,7 @@ final class FilesEditor implements Editor {
       } else {
         text.colorAsPlain();
       }
-      text.setText(Files.readString(file, StandardCharsets.UTF_8));
+      text.setText(MapFolder.readText(file));
       text.setCaretPosition(0);
       text.setEditable(editable);
       fileLabel.setText(
@@ -537,7 +536,7 @@ final class FilesEditor implements Editor {
     }
     try {
       final String written = text.getText();
-      MapFolder.replace(file, to -> Files.writeString(to, written, StandardCharsets.UTF_8));
+      MapFolder.replaceText(file, written);
       dirty = false;
       updateButtons();
       reloadMap.run();

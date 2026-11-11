@@ -13,6 +13,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.BiFunction;
 import java.util.function.UnaryOperator;
 import java.util.stream.IntStream;
@@ -45,6 +47,8 @@ final class TerritoriesEditor implements Editor {
   // first in the owner boxes; told by its place, as a map may have a nation called "Neutral"
   private static final String NO_OWNER = "(no owner)";
   private static final List<Integer> VALUES = List.of(0, 1, 2, 3, 4, 5, 6, 8, 10, 12);
+  // the width of the decoration box: G40's misc folder holds dozens of long names
+  private static final String DECORATION_WIDTH = "a_decoration_name.png";
 
   private final MapProject project;
   private final MapView map;
@@ -61,6 +65,9 @@ final class TerritoriesEditor implements Editor {
           (g, t) -> copySource == null ? g : MapXml.withUnitsCopied(g, copySource, t));
   // shows the chosen territory's places on the map to move; a click then only selects
   private final Brush movePlaces = new Brush("Move places", null);
+  // places the picture chosen in the box beside it where the map is clicked
+  private final Brush placeDecorations = new Brush("Place decorations", null);
+  private final JComboBox<String> decorationPicture = new JComboBox<>();
   private boolean refilling;
   private @Nullable String selected;
   private boolean editingHere;
@@ -110,6 +117,13 @@ final class TerritoriesEditor implements Editor {
         });
     fillBrushes();
     brush.addActionListener(e -> brushChosen());
+    decorationPicture.setPrototypeDisplayValue(DECORATION_WIDTH);
+    decorationPicture.addActionListener(
+        e -> {
+          if (!refilling) {
+            editWithBrush();
+          }
+        });
     showInspector();
   }
 
@@ -146,6 +160,7 @@ final class TerritoriesEditor implements Editor {
   public void showing() {
     final JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
     tools.add(copyFrom);
+    tools.add(decorationPicture);
     tools.add(
         Help.with(
             brush,
@@ -155,11 +170,11 @@ final class TerritoriesEditor implements Editor {
                 + " before, the copied nation's units turned to the new owner's; Clear units"
                 + " takes them away. Move places shows the chosen territory's places: drag one"
                 + " to move it, click into the territory to add a place for units, right-click"
-                + " one or press Delete over it to remove it."));
+                + " one or press Delete over it to remove it. Place decorations puts the picture"
+                + " chosen beside it, from the map's misc folder, where you click, anywhere on the"
+                + " map; drag one to move it, right-click or Delete removes it."));
     map.useFor(MapMode.GAME, tools, this::clickOnMap);
-    if (movePlaces.equals(brush.getSelectedItem())) {
-      map.editPlaces();
-    }
+    editWithBrush();
     map.select(selected);
   }
 
@@ -221,6 +236,15 @@ final class TerritoriesEditor implements Editor {
     brushes.add(copyUnits);
     brushes.add(new Brush("Clear units", (g, t) -> MapXml.withTerritoryUnits(g, t, List.of())));
     brushes.add(movePlaces);
+    // the pictures in the map's misc folder, placed anywhere on the map as the game draws them
+    // and those decorations.txt names but misc lacks, so their decorations can still be moved
+    final Set<String> named = new TreeSet<>(project.getFiles().miscPictures());
+    named.addAll(project.getFiles().places().decorations().keySet());
+    final List<String> pictures = List.copyOf(named);
+    if (!pictures.isEmpty()) {
+      brushes.add(placeDecorations);
+    }
+    fillDecorationPictures(pictures);
     // by title, as nations come and go
     final List<String> shown =
         IntStream.range(0, brush.getItemCount()).mapToObj(i -> brush.getItemAt(i).title()).toList();
@@ -233,16 +257,49 @@ final class TerritoriesEditor implements Editor {
     }
   }
 
+  /** The misc pictures in the decoration box, keeping the one chosen. */
+  private void fillDecorationPictures(final List<String> pictures) {
+    final List<String> shown =
+        IntStream.range(0, decorationPicture.getItemCount())
+            .mapToObj(decorationPicture::getItemAt)
+            .toList();
+    if (!pictures.equals(shown)) {
+      final Object chosen = decorationPicture.getSelectedItem();
+      refilling = true;
+      decorationPicture.removeAllItems();
+      pictures.forEach(decorationPicture::addItem);
+      if (chosen != null) {
+        decorationPicture.setSelectedItem(chosen);
+      }
+      refilling = false;
+      if (!Objects.equals(chosen, decorationPicture.getSelectedItem())) {
+        // the chosen picture is gone from misc: the map places the one chosen now
+        editWithBrush();
+      }
+    }
+  }
+
+  /** The map shows what the chosen brush moves: the chosen territory's places or decorations. */
+  private void editWithBrush() {
+    final boolean decorating = placeDecorations.equals(brush.getSelectedItem());
+    decorationPicture.setVisible(decorating);
+    decorationPicture.setToolTipText(
+        "The picture a click places: " + decorationPicture.getSelectedItem());
+    if (decorating && decorationPicture.getSelectedItem() instanceof String picture) {
+      map.editDecorations(picture);
+    } else if (movePlaces.equals(brush.getSelectedItem())) {
+      map.editPlaces();
+    } else {
+      map.stopEditingPlaces();
+    }
+  }
+
   /** The copy brush takes the territory chosen now as the one whose units it copies. */
   private void brushChosen() {
     if (refilling) {
       return;
     }
-    if (movePlaces.equals(brush.getSelectedItem())) {
-      map.editPlaces();
-    } else {
-      map.stopEditingPlaces();
-    }
+    editWithBrush();
     if (brush.getSelectedItem() != copyUnits) {
       copyFrom.setText(" ");
       return;
@@ -353,9 +410,12 @@ final class TerritoriesEditor implements Editor {
 
     inspector.section(
         "Places",
-        "Where the game draws the units, the name, the value, the capital's flag and the victory"
-            + " city marker. Pick Move places above the map to move them; the game fills the places"
-            + " for units in their order. Find again finds them inside the territory.");
+        "Where the game draws the units, the name, the value, the capital's flag, the victory"
+            + " city marker, a sea zone's convoy, blockade, kamikaze and comment markers and the"
+            + " territory's effects. Pick Move places above the map to move them; the game fills"
+            + " the places for units in their order. Effects without places show side by side;"
+            + " once the map has territory_effects.txt a save writes them so, else the game"
+            + " stacks them on the center. Find again finds them inside the territory.");
     final JButton findPlaces = new JButton("Find again");
     findPlaces.setToolTipText("Finds the territory's places again inside its border");
     findPlaces.addActionListener(e -> project.findPlacesAgain(territory));

@@ -1,5 +1,6 @@
 package eddies.mapeditor;
 
+import games.strategy.triplea.Constants;
 import games.strategy.triplea.image.MapImage;
 import games.strategy.triplea.image.UnitImageFactory;
 import games.strategy.triplea.ui.mapdata.MapData;
@@ -24,6 +25,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -36,6 +38,8 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 import javax.annotation.Nullable;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -80,6 +84,7 @@ record MapFiles(
   private static final String POLYGONS = "polygons.txt";
   private static final String CENTERS = "centers.txt";
   private static final String PLACEMENTS = "place.txt";
+  private static final String DECORATIONS = "decorations.txt";
   // the game's default map font and the sizes of its capital flags and victory city marker
   // shortcut: a map with another map font or other flag sizes gets its names and flags slightly
   // off center; read the font from map.properties and the flag size from its flags when that shows
@@ -87,6 +92,8 @@ record MapFiles(
   private static final int CAPITAL_FLAG_SIZE = 100;
   private static final int VICTORY_CITY_SIZE = 36;
   private static final int MAX_PLACES = 30;
+  // found effects side by side, about as wide as the game's effect pictures
+  private static final int EFFECT_SPACING = 32;
   private static final String MAP_PROPERTIES = "map.properties";
   private static final String WIDTH = "map.width";
   private static final String HEIGHT = "map.height";
@@ -528,8 +535,8 @@ record MapFiles(
 
   /**
    * Writes where the game draws each territory's units, each capital's flag and each victory city's
-   * marker, and for a map that places its names itself (with name_place.txt) also the names and
-   * values, {@link #writeNamePlaces}; without a folder or outlines, none.
+   * marker; the other markers' files ({@link Marker#isAlwaysWritten}) and decorations.txt only when
+   * the map has them or places were set here; without a folder or outlines, none.
    */
   void writePlaces(final Game game, final Places saved) throws IOException {
     if (folder.isEmpty() || !hasOutlines()) {
@@ -542,17 +549,30 @@ record MapFiles(
         places.units(),
         saved.units(),
         t -> Tuple.of(unitPlaces(t), Boolean.FALSE),
+        t -> !polygons.containsKey(t),
         PointFileReaderWriter::readOneToManyPlacements,
         PointFileReaderWriter::writeOneToManyPlacements);
-    // the game reads the names' and the values' places each on their own
-    for (final Marker marker : List.of(Marker.NAME, Marker.VALUE)) {
-      if (!places.markers(marker).isEmpty()
-          || Files.exists(folder.get().resolve(marker.file))) {
+    // the game reads each file on its own and falls back on a place of its own without it
+    for (final Marker marker : Marker.values()) {
+      if (marker.isAlwaysWritten() || isKept(marker.file, places.markers(marker))) {
         writeMarkers(game, marker, saved);
       }
     }
-    writeMarkers(game, Marker.CAPITAL, saved);
-    writeMarkers(game, Marker.VICTORY_CITY, saved);
+    if (isKept(DECORATIONS, places.decorations())) {
+      writeKeeping(
+          DECORATIONS,
+          places.decorations().keySet(),
+          places.decorations(),
+          saved.decorations(),
+          image -> List.of(),
+          image -> true,
+          PointFileReaderWriter::readOneToMany,
+          PointFileReaderWriter::writeOneToMany);
+    }
+  }
+
+  private boolean isKept(final String fileName, final Map<String, ?> placed) {
+    return !placed.isEmpty() || Files.exists(folder.orElseThrow().resolve(fileName));
   }
 
   /**
@@ -572,21 +592,24 @@ record MapFiles(
 
   private void writeMarkers(final Game game, final Marker marker, final Places saved)
       throws IOException {
+    final Map<String, List<Point>> had = places.markers(marker);
+    final boolean keepsAll = marker.keepsUnused();
     writeKeeping(
         marker.file,
-        territories(t -> marker.isOn(game, t)),
-        places.markers(marker),
+        territories(t -> marker.isOn(game, t) || (keepsAll && had.containsKey(t))),
+        had,
         saved.markers(marker),
-        t -> foundMarker(game, marker, t),
-        PointFileReaderWriter::readOneToOne,
-        PointFileReaderWriter::writeOneToOne);
+        t -> foundMarkers(game, marker, t),
+        t -> keepsAll || !polygons.containsKey(t),
+        marker::read,
+        marker::write);
   }
 
   /**
    * Writes a file of points by territory. For these territories: a place changed here since the
    * last save, else the file's, maybe set by hand meanwhile, else the one here, else a found one.
-   * Lines of territories the map maker does not know stay, unless a rename here took them. Written
-   * only when that changes the file; a file left with no territory is removed.
+   * Other lines of the file stay if {@code keeps} says so, unless they were taken away here, eg by
+   * a rename. Written only when that changes the file; a file left with no territory is removed.
    *
    * @param had the places here
    * @param saved the places as last saved
@@ -597,6 +620,7 @@ record MapFiles(
       final Map<String, T> had,
       final Map<String, T> saved,
       final Function<String, T> found,
+      final Predicate<String> keeps,
       final PointsReader<T> reader,
       final PointsWriter<T> writer)
       throws IOException {
@@ -614,13 +638,16 @@ record MapFiles(
     }
     before.forEach(
         (territory, points) -> {
-          if (!polygons.containsKey(territory)
+          if (!after.containsKey(territory)
+              && keeps.test(territory)
               && !(saved.containsKey(territory) && !had.containsKey(territory))) {
             after.put(territory, points);
           }
         });
     if (after.isEmpty()) {
-      MapFolder.remove(file);
+      if (Files.exists(file)) {
+        MapFolder.remove(file);
+      }
     } else if (!after.equals(before)) {
       MapFolder.replace(file, written -> writer.write(written, after));
     }
@@ -637,52 +664,119 @@ record MapFiles(
   }
 
   /**
-   * A mark the game draws at a point of its own in a territory: its name, its value, its capital's
-   * flag, its victory city marker.
+   * A mark the game draws at a point of its own in a territory, as {@code MapData} reads them: its
+   * name, value, capital's flag, victory city marker, a sea zone's blockade, convoy, comment and
+   * kamikaze markers, and the territory's effects, one point each but the effects.
    */
   @AllArgsConstructor
   enum Marker {
-    NAME("name_place.txt", "Name"),
-    VALUE("pu_place.txt", "PUs"),
-    CAPITAL("capitols.txt", "Capital"),
-    VICTORY_CITY("vc.txt", "VC");
+    NAME("name_place.txt", "Name", "N"),
+    VALUE("pu_place.txt", "PUs", "P"),
+    CAPITAL("capitols.txt", "Capital", "C"),
+    VICTORY_CITY("vc.txt", "Victory city", "V"),
+    BLOCKADE("blockade.txt", "Blockade", "B"),
+    CONVOY("convoy.txt", "Convoy", "Cv"),
+    COMMENT("comments.txt", "Comment", "T"),
+    KAMIKAZE("kamikaze_place.txt", "Kamikaze", "K"),
+    EFFECT("territory_effects.txt", "Effect", "E");
 
     private final String file;
     @Getter private final String label;
+    // on the map, where the full labels would cover each other
+    @Getter private final String letter;
 
-    /** Whether the game draws it for the territory. */
+    /** Whether the game draws it for the territory, as TripleA's TileManager decides. */
     boolean isOn(final Game game, final String territory) {
+      final boolean water = MapXml.isWater(game, territory);
       return switch (this) {
         case NAME -> true;
-        case VALUE -> !MapXml.isWater(game, territory) && MapXml.production(game, territory) > 0;
+        case VALUE -> !water && MapXml.production(game, territory) > 0;
         case CAPITAL -> MapXml.isCapital(game, territory);
         case VICTORY_CITY -> MapXml.isVictoryCity(game, territory);
+        case BLOCKADE -> water && MapXml.hasTerritoryFlag(game, territory, "blockadeZone");
+        case CONVOY ->
+            water
+                && (MapXml.hasTerritoryFlag(game, territory, "convoyRoute")
+                    || MapXml.production(game, territory) > 0);
+        // a convoy center's comment names its original owner, at the start its owner
+        case COMMENT ->
+            water
+                && (MapXml.hasTerritoryFlag(game, territory, "convoyRoute")
+                    || (MapXml.production(game, territory) > 0
+                        && (MapXml.owner(game, territory).isPresent()
+                            || MapXml.option(
+                                    game,
+                                    Constants.TERRITORY_ATTACHMENT_NAME,
+                                    territory,
+                                    "originalOwner")
+                                .isPresent())));
+        case KAMIKAZE -> water && MapXml.hasTerritoryFlag(game, territory, "kamikazeZone");
+        case EFFECT -> !MapXml.territoryEffects(game, territory).isEmpty();
       };
+    }
+
+    /**
+     * Whether a save keeps its points where the game does not draw it now: names, values and flags
+     * follow the game, but triggers may make any sea zone a convoy route or kamikaze zone.
+     */
+    boolean keepsUnused() {
+      return EnumSet.of(BLOCKADE, CONVOY, COMMENT, KAMIKAZE, EFFECT).contains(this);
+    }
+
+    /** How many the game draws: one, or one per effect. */
+    int count(final Game game, final String territory) {
+      return this == EFFECT ? Math.max(1, MapXml.territoryEffects(game, territory).size()) : 1;
+    }
+
+    /** Whether its file is written on every save, as the game draws it badly without one. */
+    boolean isAlwaysWritten() {
+      return this == CAPITAL || this == VICTORY_CITY;
+    }
+
+    private Map<String, List<Point>> read(final Path from) throws IOException {
+      if (this == EFFECT) {
+        return PointFileReaderWriter.readOneToMany(from);
+      }
+      final Map<String, List<Point>> points = new LinkedHashMap<>();
+      PointFileReaderWriter.readOneToOne(from).forEach((t, point) -> points.put(t, List.of(point)));
+      return points;
+    }
+
+    private void write(final Path to, final Map<String, List<Point>> points) throws IOException {
+      if (this == EFFECT) {
+        PointFileReaderWriter.writeOneToMany(to, points);
+      } else {
+        final Map<String, Point> first = new LinkedHashMap<>();
+        points.forEach((t, list) -> first.put(t, list.getFirst()));
+        PointFileReaderWriter.writeOneToOne(to, first);
+      }
     }
   }
 
   /**
-   * Where the map's files place things in the territories, by territory: the units (place.txt, with
-   * whether more stacks than places go on to the left) and the markers. A territory missing here
-   * has its places found, {@link #unitPlaces}, {@link #markerPlace}; places of territories the map
-   * maker does not know stay as they are.
+   * Where the map's files place things: by territory the units (place.txt, with whether more stacks
+   * than places go on to the left) and the markers, and the decorations by their picture in the
+   * misc folder. A territory missing here has its places found, {@link #unitPlaces}, {@link
+   * #markerPlaces}; places of territories the map maker does not know stay as they are.
    */
   record Places(
-      Map<String, Tuple<List<Point>, Boolean>> units, Map<Marker, Map<String, Point>> markers) {
+      Map<String, Tuple<List<Point>, Boolean>> units,
+      Map<Marker, Map<String, List<Point>>> markers,
+      Map<String, List<Point>> decorations) {
     static Places none() {
-      return new Places(Map.of(), Map.of());
+      return new Places(Map.of(), Map.of(), Map.of());
     }
 
     /** The places in the folder's files; a file that does not read gives none, a save says why. */
     static Places read(final Path folder) {
-      final Map<Marker, Map<String, Point>> markers = new EnumMap<>(Marker.class);
+      final Map<Marker, Map<String, List<Point>>> markers = new EnumMap<>(Marker.class);
       for (final Marker marker : Marker.values()) {
-        markers.put(
-            marker, readOrNone(folder.resolve(marker.file), PointFileReaderWriter::readOneToOne));
+        markers.put(marker, readOrNone(folder.resolve(marker.file), marker::read));
       }
       return new Places(
           readOrNone(folder.resolve(PLACEMENTS), PointFileReaderWriter::readOneToManyPlacements),
-          Map.copyOf(markers));
+          Map.copyOf(markers),
+          readOrNone(folder.resolve(DECORATIONS), PointFileReaderWriter::readOneToMany));
     }
 
     private static <T> Map<String, T> readOrNone(final Path file, final PointsReader<T> reader) {
@@ -697,24 +791,26 @@ record MapFiles(
       }
     }
 
-    Map<String, Point> markers(final Marker marker) {
+    Map<String, List<Point>> markers(final Marker marker) {
       return markers.getOrDefault(marker, Map.of());
     }
 
     Places renamed(final String old, final String renamed) {
-      final Map<Marker, Map<String, Point>> moved = new EnumMap<>(Marker.class);
+      final Map<Marker, Map<String, List<Point>>> moved = new EnumMap<>(Marker.class);
       markers.forEach(
           (marker, points) ->
               moved.put(marker, Collections.unmodifiableMap(renamedKey(points, old, renamed))));
       return new Places(
-          Collections.unmodifiableMap(renamedKey(units, old, renamed)), Map.copyOf(moved));
+          Collections.unmodifiableMap(renamedKey(units, old, renamed)),
+          Map.copyOf(moved),
+          decorations);
     }
 
     /** Without the places of these territories, so they are found again. */
     Places without(final Collection<String> territories) {
-      final Map<Marker, Map<String, Point>> kept = new EnumMap<>(Marker.class);
+      final Map<Marker, Map<String, List<Point>>> kept = new EnumMap<>(Marker.class);
       markers.forEach((marker, points) -> kept.put(marker, without(points, territories)));
-      return new Places(without(units, territories), Map.copyOf(kept));
+      return new Places(without(units, territories), Map.copyOf(kept), decorations);
     }
 
     private static <T> Map<String, T> without(
@@ -727,16 +823,26 @@ record MapFiles(
     Places withUnits(final String territory, final Tuple<List<Point>, Boolean> placed) {
       final Map<String, Tuple<List<Point>, Boolean>> changed = new LinkedHashMap<>(units);
       changed.put(territory, placed);
-      return new Places(Collections.unmodifiableMap(changed), markers);
+      return new Places(Collections.unmodifiableMap(changed), markers, decorations);
     }
 
-    Places withMarker(final Marker marker, final String territory, final Point point) {
-      final Map<String, Point> points = new LinkedHashMap<>(markers(marker));
-      points.put(territory, point);
-      final Map<Marker, Map<String, Point>> changed = new EnumMap<>(Marker.class);
+    Places withMarker(final Marker marker, final String territory, final List<Point> points) {
+      final Map<String, List<Point>> placed = new LinkedHashMap<>(markers(marker));
+      placed.put(territory, points);
+      final Map<Marker, Map<String, List<Point>>> changed = new EnumMap<>(Marker.class);
       changed.putAll(markers);
-      changed.put(marker, Collections.unmodifiableMap(points));
-      return new Places(units, Map.copyOf(changed));
+      changed.put(marker, Collections.unmodifiableMap(placed));
+      return new Places(units, Map.copyOf(changed), decorations);
+    }
+
+    Places withDecorations(final String picture, final List<Point> points) {
+      final Map<String, List<Point>> changed = new LinkedHashMap<>(decorations);
+      if (points.isEmpty()) {
+        changed.remove(picture);
+      } else {
+        changed.put(picture, List.copyOf(points));
+      }
+      return new Places(units, markers, Collections.unmodifiableMap(changed));
     }
   }
 
@@ -755,10 +861,29 @@ record MapFiles(
                     unitSize()));
   }
 
-  /** Where the game draws the marker in the territory: as the map's file says, else found. */
-  Point markerPlace(final Game game, final Marker marker, final String territory) {
+  /**
+   * Where the game draws the marker in the territory: as the map's file says, else found; for
+   * effects one point per effect, the last one again for effects beyond them.
+   */
+  List<Point> markerPlaces(final Game game, final Marker marker, final String territory) {
     return Optional.ofNullable(places.markers(marker).get(territory))
-        .orElseGet(() -> foundMarker(game, marker, territory));
+        .filter(points -> !points.isEmpty())
+        .orElseGet(() -> foundMarkers(game, marker, territory));
+  }
+
+  /**
+   * The marker's places as found: one, or the effects side by side, so each shows and can be
+   * moved.
+   */
+  private List<Point> foundMarkers(final Game game, final Marker marker, final String territory) {
+    final Point first = foundMarker(game, marker, territory);
+    return IntStream.range(0, marker.count(game, territory))
+        .mapToObj(i -> new Point(first.x + i * EFFECT_SPACING, first.y))
+        .toList();
+  }
+
+  Point markerPlace(final Game game, final Marker marker, final String territory) {
+    return markerPlaces(game, marker, territory).getFirst();
   }
 
   /** The files with the territory's units placed here, in this order; for none, unchanged. */
@@ -771,17 +896,61 @@ record MapFiles(
     return withPlaces(places.withUnits(territory, Tuple.of(List.copyOf(points), toLeft)));
   }
 
+  /** The files with the marker's point of this number (0 but for effects) at the point given. */
   MapFiles withMarkerPlace(
-      final Game game, final Marker marker, final String territory, final Point point) {
-    return point.equals(markerPlace(game, marker, territory))
+      final Game game,
+      final Marker marker,
+      final String territory,
+      final int index,
+      final Point point) {
+    final List<Point> before = markerPlaces(game, marker, territory);
+    final List<Point> moved = new ArrayList<>(before);
+    while (moved.size() <= index) {
+      moved.add(moved.getLast());
+    }
+    moved.set(index, point);
+    return moved.equals(before)
         ? this
-        : withPlaces(places.withMarker(marker, territory, point));
+        : withPlaces(places.withMarker(marker, territory, List.copyOf(moved)));
   }
 
   /** The files with the territory's places found again; unchanged if they are the found ones. */
   MapFiles withPlacesFoundAgain(final String territory) {
     final Places found = places.without(List.of(territory));
     return found.equals(places) ? this : withPlaces(found);
+  }
+
+  /**
+   * The files with the misc folder's picture drawn at these top left corners; none takes it off the
+   * map.
+   */
+  MapFiles withDecorations(final String picture, final List<Point> points) {
+    return points.equals(places.decorations().getOrDefault(picture, List.of()))
+        ? this
+        : withPlaces(places.withDecorations(picture, points));
+  }
+
+  /** The pictures in the map's misc folder that decorations can show, by file name. */
+  List<String> miscPictures() {
+    final Optional<Path> misc = miscFolder().filter(Files::isDirectory);
+    if (misc.isEmpty()) {
+      return List.of();
+    }
+    try (Stream<Path> files = Files.list(misc.get())) {
+      return files
+          .map(file -> file.getFileName().toString())
+          .filter(name -> name.toLowerCase(Locale.ROOT).matches(".*\\.(png|gif|jpg|jpeg)"))
+          .sorted()
+          .toList();
+    } catch (final IOException e) {
+      log.info("Could not list the pictures in {}", misc.get(), e);
+      return List.of();
+    }
+  }
+
+  /** The map's misc folder, where the game finds the decorations' pictures. */
+  Optional<Path> miscFolder() {
+    return folder.map(f -> f.resolve("misc"));
   }
 
   private MapFiles withPlaces(final Places changed) {
@@ -812,7 +981,10 @@ record MapFiles(
         (int) Math.round(scale * intProperty(MapData.PROPERTY_UNITS_HEIGHT).orElse(size)));
   }
 
-  /** The marker's place as the map maker finds it, eg the name above the units at the center. */
+  /**
+   * The marker's place as the map maker finds it, eg the name above the units at the center; where
+   * the game falls back on the center, the center.
+   */
   private Point foundMarker(final Game game, final Marker marker, final String territory) {
     final Point middle = middle(territory);
     return switch (marker) {
@@ -823,8 +995,15 @@ record MapFiles(
           new Point(
               middle.x + UnitImageFactory.DEFAULT_UNIT_ICON_SIZE / 2 + 2,
               middle.y - VICTORY_CITY_SIZE / 2);
-      case NAME, VALUE -> {
+      case BLOCKADE, CONVOY, KAMIKAZE, EFFECT -> middle;
+      case NAME, VALUE, COMMENT -> {
         final FontMetrics font = fontMetrics();
+        final Optional<Point> namePlace =
+            Optional.ofNullable(places.markers(Marker.NAME).get(territory)).map(List::getFirst);
+        if (marker == Marker.COMMENT && namePlace.isPresent()) {
+          // the game draws the comment a line above the name it places
+          yield new Point(namePlace.get().x, namePlace.get().y - font.getHeight());
+        }
         // the game draws a text from its left end, on its baseline or, set so, below its top
         final int top =
             Boolean.parseBoolean(properties.getProperty(MapData.PROPERTY_MAP_DRAWNAMESFROMTOPLEFT))
@@ -832,8 +1011,14 @@ record MapFiles(
                 : 0;
         final Point baseline = nameBaseline(territory, font);
         final String text =
-            marker == Marker.NAME ? territory : String.valueOf(MapXml.production(game, territory));
-        final int below = marker == Marker.NAME ? 0 : font.getHeight();
+            marker == Marker.VALUE ? String.valueOf(MapXml.production(game, territory)) : territory;
+        // the value a line below the name, a comment a line above it
+        final int below =
+            switch (marker) {
+              case VALUE -> font.getHeight();
+              case COMMENT -> -font.getHeight();
+              default -> 0;
+            };
         yield new Point(baseline.x - font.stringWidth(text) / 2, baseline.y + below - top);
       }
     };
@@ -982,6 +1167,19 @@ record MapFiles(
     return folder
         .map(f -> f.resolve("baseTiles").resolve(column + "_" + row + ".png"))
         .filter(Files::exists);
+  }
+
+  /** The tile of the relief drawn over the picture at the column and row; empty if missing. */
+  Optional<Path> reliefTile(final int column, final int row) {
+    return folder
+        .map(f -> f.resolve("reliefTiles").resolve(column + "_" + row + ".png"))
+        .filter(Files::exists);
+  }
+
+  /** Whether the game draws the relief, as map.properties says; it does unless told not to. */
+  boolean showsRelief() {
+    return Boolean.parseBoolean(
+        properties.getProperty(MapData.PROPERTY_MAP_HASRELIEF, "true").strip());
   }
 
   static int tileSize() {

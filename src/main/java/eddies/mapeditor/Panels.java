@@ -5,6 +5,7 @@ import java.awt.Dimension;
 import java.awt.Point;
 import java.util.Optional;
 import javax.swing.JComponent;
+import javax.swing.JOptionPane;
 import javax.swing.JSplitPane;
 import javax.swing.JViewport;
 import javax.swing.SwingUtilities;
@@ -14,9 +15,13 @@ import lombok.experimental.UtilityClass;
 @UtilityClass
 class Panels {
   private static final int LIST_WIDTH = 320;
+  private static final int LIST_MIN_HEIGHT = 220;
 
   /** A list above the inspector of the chosen entry, the line between them movable. */
   static JSplitPane stacked(final JComponent list, final JComponent inspector) {
+    // a long inspector scrolls instead of squashing the list to a row
+    list.setMinimumSize(new Dimension(0, LIST_MIN_HEIGHT));
+    inspector.setMinimumSize(new Dimension(0, 0));
     final JSplitPane stacked = new JSplitPane(JSplitPane.VERTICAL_SPLIT, list, inspector);
     stacked.setResizeWeight(0.35);
     stacked.setBorder(null);
@@ -54,5 +59,22 @@ class Panels {
     preview.setText(html);
     // the view scrolls to its top after a new text, later: back to where the reader was
     SwingUtilities.invokeLater(() -> viewport.ifPresent(v -> v.setViewPosition(at)));
+  }
+
+  /**
+   * Asks with the content, eg a few fields, and OK and Cancel in English as the rest of the
+   * editor, not in the system's language; whether OK was chosen.
+   */
+  static boolean ask(final JComponent parent, final JComponent content, final String title) {
+    return JOptionPane.showOptionDialog(
+            parent,
+            content,
+            title,
+            JOptionPane.OK_CANCEL_OPTION,
+            JOptionPane.PLAIN_MESSAGE,
+            null,
+            new Object[] {"OK", "Cancel"},
+            "OK")
+        == 0;
   }
 }

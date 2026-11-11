@@ -13,6 +13,8 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.net.URL;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -461,6 +463,33 @@ class MapFolder {
   private static Optional<URL> engineAsset(final String... path) {
     return Optional.ofNullable(
         MapFolder.class.getClassLoader().getResource(ResourceLoader.getAssetsFileLocation(path)));
+  }
+
+  /** A text file as the game reads it: a .properties file as ISO-8859-1, the others as UTF-8. */
+  static String readText(final Path file) throws IOException {
+    return Files.readString(file, charsetOf(file));
+  }
+
+  /**
+   * Writes a text file as {@link #replace} does, as the game reads it: in a .properties file a
+   * character beyond ISO-8859-1 as a unicode escape like the game's own files have.
+   */
+  static void replaceText(final Path file, final String text) throws IOException {
+    final Charset charset = charsetOf(file);
+    final StringBuilder written = new StringBuilder(text.length());
+    for (final char c : text.toCharArray()) {
+      written.append(
+          charset.equals(StandardCharsets.UTF_8) || c <= 0xFF
+              ? String.valueOf(c)
+              : String.format("\\u%04X", (int) c));
+    }
+    replace(file, to -> Files.writeString(to, written, charset));
+  }
+
+  private static Charset charsetOf(final Path file) {
+    return file.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".properties")
+        ? StandardCharsets.ISO_8859_1
+        : StandardCharsets.UTF_8;
   }
 
   /**

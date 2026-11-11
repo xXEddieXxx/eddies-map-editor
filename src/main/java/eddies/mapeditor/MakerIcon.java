@@ -46,7 +46,12 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
     SAVE,
     MENU,
     RESOURCES,
-    MAP_LOOK
+    MAP_LOOK,
+    TEXTS,
+    ATTACHMENTS,
+    PRODUCTION,
+    POLITICS,
+    TECHNOLOGY
   }
 
   /** The icon at the size of the text around it. */
@@ -181,6 +186,36 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
         g.fillOval(4, 5, 3, 3);
         g.fillOval(8, 4, 3, 3);
         g.fillOval(10, 8, 3, 3);
+      }
+      case TEXTS -> {
+        // a speech bubble
+        g.drawRoundRect(1, 2, 14, 9, 3, 3);
+        g.drawPolyline(new int[] {4, 4, 8}, new int[] {11, 15, 11}, 3);
+        g.drawLine(4, 6, 12, 6);
+      }
+      case ATTACHMENTS -> {
+        // a paper clip
+        g.drawRoundRect(4, 1, 8, 14, 8, 8);
+        g.drawLine(8, 5, 8, 11);
+      }
+      case PRODUCTION -> {
+        // a factory
+        g.drawPolyline(
+            new int[] {1, 1, 6, 6, 11, 11, 15, 15, 1},
+            new int[] {15, 7, 10, 7, 10, 7, 10, 15, 15},
+            9);
+        g.drawLine(13, 9, 13, 2);
+      }
+      case POLITICS -> {
+        // two linked rings
+        g.drawOval(1, 4, 8, 8);
+        g.drawOval(7, 4, 8, 8);
+      }
+      case TECHNOLOGY -> {
+        // a flask
+        g.drawPolygon(
+            new Polygon(new int[] {6, 10, 10, 15, 1, 6}, new int[] {1, 1, 6, 15, 15, 6}, 6));
+        g.drawLine(4, 10, 12, 10);
       }
       default -> throw new IllegalStateException("Unknown icon: " + glyph);
     }

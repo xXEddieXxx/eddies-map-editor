@@ -47,14 +47,27 @@ Each release names the TripleA release it was tested with.
 - **Territories:** find them in the picture (areas between dark lines; blue areas are sea zones).
   Rename them one at a time or many at once. Set owners, PUs, capitals, victory cities and starting
   units, or paint them on the map with brushes. *Move places* shows where the game draws a
-  territory's units, name, PUs, capital flag and victory city marker: drag them, add or remove
-  places for units (right-click or Delete).
+  territory's units, name, PUs, capital flag, victory city, a sea zone's convoy, blockade, kamikaze
+  and comment markers and its territory effects: drag them, add or remove places for units
+  (right-click or Delete). *Place decorations* puts the picture chosen beside it, from the map's
+  `misc` folder, anywhere on the map (decorations.txt).
 - **Redraw borders:** draw new borders into the map's picture in any paint program, then choose
   *Picture ▾ → Redraw borders from a picture…*. Names, owners and units stay;
   territories whose border moved get their places found again.
 - **Connections, nations, units, game options, turn order and game notes,** each in its own tool.
+  The turn order's steps are added, moved, removed and changed (nation, how often, step
+  properties).
+- **Politics, technology and production:** relationship types (war, allied, neutral) and how each
+  two nations start; technologies, the category each nation researches them in and the built-in
+  ones it starts with; frontiers, what they sell, what it costs and which nation buys from which.
+- **Texts:** the objectives tab, the messages triggers show and unit tool tips
+  (`objectives.properties`, `notifications.properties`, `tooltips.properties`): each key explained,
+  new keys offered from the game's conditions, triggers and units.
+- **Attachments:** every attachment of the game, eg triggers and conditions, with its options in a
+  table; the option names TripleA knows are offered.
 - **Map look:** unit size, scrolling, what the map shows (map.properties), and a relief picture
-  cut into relief tiles.
+  cut into relief tiles: loaded, or created from the map with *Create relief…* (dark coasts
+  with waves, land raised at its borders), with a preview.
 - **Unit pictures:** upload a picture for a unit type, or import a whole folder of pictures for one
   nation, for example another map's `units/Germans`.
 - **The map as the game shows it:** owners, values, units and connections views, with a legend.
@@ -114,6 +127,7 @@ All code is in `src/main/java/eddies/mapeditor`:
 | `MapMakerWindow`                                                            | The window: tool strip, file browser, the map or a preview in the middle, the tool's panel    |
 | `MapProject`                                                                | The open map: its game and files, undo and redo, saving                                       |
 | `MapXml`                                                                    | Reads and changes the game XML model; each change makes a new model                           |
+| `RulesXml`, `ProductionXml`, `TechXml`                                      | The same for turn order and politics, production, technology                                  |
 | `MapFiles`, `MapFolder`                                                     | The files beside the game XML: outlines, centers, pictures, `map.properties`                  |
 | `MapPicture`                                                                | Finds territories, sea zones and neighbours in a picture                                      |
 | `MapCanvas`, `MapView`                                                      | The map on screen                                                                             |

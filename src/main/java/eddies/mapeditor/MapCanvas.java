@@ -33,6 +33,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
@@ -77,11 +78,14 @@ final class MapCanvas extends JComponent {
   private static final int LAYER_SIZE = 512;
   private static final int LAYER_SQUARES_KEPT = 32;
   // the radius of a marker's dot while places are edited, in pixels of the screen
-  private static final int PLACE_DOT = 6;
+  private static final int PLACE_DOT = 8;
+  // the size of a decoration whose picture is missing, so it can still be moved or removed
+  private static final int MISSING_DECORATION = 16;
 
   private final transient MapProject project;
   // the tiles seen last, enough for a screen at any zoom; a big map has far more than fit memory
   private final transient Map<Point, Optional<Image>> tiles = newRecentlyUsed(200);
+  private final transient Map<Point, Optional<Image>> reliefTiles = newRecentlyUsed(200);
   // the squares of the screen drawn last, and what they show
   private final transient Map<Point, BufferedImage> layer = newRecentlyUsed(LAYER_SQUARES_KEPT);
   private transient @Nullable LayerKey layerOf;
@@ -92,6 +96,7 @@ final class MapCanvas extends JComponent {
   private transient @Nullable Set<String> problemTerritories;
   // these follow the map's files: the territories' bounds, units' places and pictures
   private transient @Nullable MapFiles filesSeen;
+  private transient Optional<BufferedImage> reliefSeen = Optional.empty();
   private final transient Map<String, Rectangle> bounds = new HashMap<>();
   private final transient Map<String, List<Point>> unitPlaces = new HashMap<>();
   private final transient Map<String, Optional<Image>> unitPictures = new HashMap<>();
@@ -112,12 +117,18 @@ final class MapCanvas extends JComponent {
   private Point draggedBy = new Point();
   // where the mouse is over the map, for the Delete key; empty once it left or the map moved
   private Optional<Point> hovered = Optional.empty();
+  private transient Optional<Place> hoveredPlace = Optional.empty();
+  // the misc picture a click places while decorations are edited
+  private Optional<String> decorating = Optional.empty();
+  // the pictures of decorations, by their file
+  private final transient Map<Path, Optional<Image>> decorationPictures = new HashMap<>();
 
   /**
-   * A place the game draws something at in the selected territory: units, by their place in the
-   * order, or a marker.
+   * A place the game draws something at: in the selected territory units, by their place in the
+   * order, or a marker, by its number for effects; or a decoration's picture, by its number.
    */
-  private record Place(Optional<Marker> marker, int index, Point at) {}
+  private record Place(
+      Optional<Marker> marker, Optional<String> decoration, int index, Point at) {}
 
   /**
    * What the squares of the screen show; the files and the small picture compare as the same
@@ -183,7 +194,7 @@ final class MapCanvas extends JComponent {
                 hovered
                     .flatMap(MapCanvas.this::placeAt)
                     .filter(place -> place.marker().isEmpty())
-                    .ifPresent(place -> removeUnitPlace(place.index()));
+                    .ifPresent(MapCanvas.this::remove);
               }
             });
   }
@@ -229,8 +240,18 @@ final class MapCanvas extends JComponent {
     repaint();
   }
 
+  /**
+   * Shows the decorations: dragging one moves it, a click places the misc picture given, a
+   * right-click removes one.
+   */
+  void editDecorations(final String picture) {
+    stopEditingPlaces();
+    decorating = Optional.of(picture);
+  }
+
   void stopEditingPlaces() {
     editingPlaces = false;
+    decorating = Optional.empty();
     dragged = null;
     repaint();
   }
@@ -267,10 +288,9 @@ final class MapCanvas extends JComponent {
             place ->
                 place
                     .marker()
-                    .map(marker -> marker.getLabel() + ": drag to move")
+                    .map(marker -> label(marker, place.index()) + ": drag to move")
                     .orElse(
-                        "Units "
-                            + (place.index() + 1)
+                        place.decoration().orElse("Units " + (place.index() + 1))
                             + ": drag to move, right-click or Delete removes"))
         .or(() -> territoryAt(event.getPoint()))
         .orElse(null);
@@ -332,44 +352,89 @@ final class MapCanvas extends JComponent {
     g.dispose();
   }
 
-  /** The selected territory's places while they are edited, the units' in their order first. */
+  /**
+   * The decorations while they are edited, else the selected territory's places while they are,
+   * the units' in their order first, then the markers the game draws there or the files place.
+   */
   private List<Place> places() {
+    final List<Place> places = new ArrayList<>();
+    if (decorating.isPresent()) {
+      project
+          .getFiles()
+          .places()
+          .decorations()
+          .forEach(
+              (picture, points) -> {
+                for (int i = 0; i < points.size(); i++) {
+                  places.add(new Place(Optional.empty(), Optional.of(picture), i, points.get(i)));
+                }
+              });
+      return places;
+    }
     if (!editingPlaces
         || selected == null
         || !project.getFiles().polygons().containsKey(selected)) {
       return List.of();
     }
     final String territory = selected;
-    final List<Place> places = new ArrayList<>();
     final List<Point> units = unitPlacesOf(territory);
     for (int i = 0; i < units.size(); i++) {
-      places.add(new Place(Optional.empty(), i, units.get(i)));
+      places.add(new Place(Optional.empty(), Optional.empty(), i, units.get(i)));
     }
     final Game game = project.game();
+    final MapFiles files = project.getFiles();
     for (final Marker marker : Marker.values()) {
-      if (marker.isOn(game, territory)) {
-        places.add(
-            new Place(
-                Optional.of(marker),
-                0,
-                project.getFiles().markerPlace(game, marker, territory)));
+      // a save keeps no other
+      if (marker.isOn(game, territory)
+          || (marker.keepsUnused() && files.places().markers(marker).containsKey(territory))) {
+        final List<Point> points = files.markerPlaces(game, marker, territory);
+        for (int i = 0; i < marker.count(game, territory); i++) {
+          places.add(
+              new Place(
+                  Optional.of(marker),
+                  Optional.empty(),
+                  i,
+                  points.get(Math.min(i, points.size() - 1))));
+        }
       }
     }
     return places;
   }
 
-  /** The place on the screen, moved while it is dragged: a unit's square or a marker's dot. */
+  /**
+   * The place on the screen, moved while it is dragged: a unit's square, a marker's dot or a
+   * decoration's picture.
+   */
   private Rectangle onScreen(final Place place) {
     final Point by = place.equals(dragged) ? draggedBy : new Point();
     final int x = (int) (place.at().x * zoom) + by.x;
     final int y = (int) (place.at().y * zoom) + by.y;
-    return place.marker().isPresent()
-        ? new Rectangle(x - PLACE_DOT, y - PLACE_DOT, 2 * PLACE_DOT, 2 * PLACE_DOT)
-        : new Rectangle(
-            x,
-            y,
-            (int) Math.round(unitSize.width * zoom),
-            (int) Math.round(unitSize.height * zoom));
+    if (place.marker().isPresent()) {
+      return new Rectangle(x - PLACE_DOT, y - PLACE_DOT, 2 * PLACE_DOT, 2 * PLACE_DOT);
+    }
+    final Dimension size = place.decoration().map(this::decorationSize).orElse(unitSize);
+    return new Rectangle(
+        x, y, (int) Math.round(size.width * zoom), (int) Math.round(size.height * zoom));
+  }
+
+  /** The size of the decoration's picture on the map; a small square for one that is missing. */
+  private Dimension decorationSize(final String picture) {
+    return decorationPicture(picture)
+        .map(image -> new Dimension(image.getWidth(null), image.getHeight(null)))
+        .orElse(new Dimension(MISSING_DECORATION, MISSING_DECORATION));
+  }
+
+  private Optional<Image> decorationPicture(final String picture) {
+    return project
+        .getFiles()
+        .miscFolder()
+        .flatMap(
+            misc -> decorationPictures.computeIfAbsent(misc.resolve(picture), MapCanvas::read));
+  }
+
+  /** How the marker is called, with its number for effects. */
+  private static String label(final Marker marker, final int index) {
+    return marker == Marker.EFFECT ? marker.getLabel() + " " + (index + 1) : marker.getLabel();
   }
 
   /** The place at the point on the screen, the markers above the units. */
@@ -385,13 +450,18 @@ final class MapCanvas extends JComponent {
 
   /** Moves the place by so many pixels of the screen, as one step. */
   private void move(final Place place, final Point by) {
-    final String territory = Objects.requireNonNull(selected);
+    final String territory = Objects.toString(selected, "");
     final Point to =
         new Point(
             place.at().x + (int) Math.round(by.x / zoom),
             place.at().y + (int) Math.round(by.y / zoom));
-    if (place.marker().isPresent()) {
-      project.setMarkerPlace(place.marker().get(), territory, to);
+    if (place.decoration().isPresent()) {
+      final String picture = place.decoration().get();
+      final List<Point> moved = new ArrayList<>(decorations(picture));
+      moved.set(place.index(), to);
+      project.setDecorations(picture, moved);
+    } else if (place.marker().isPresent()) {
+      project.setMarkerPlace(place.marker().get(), territory, place.index(), to);
     } else {
       final List<Point> moved = new ArrayList<>(unitPlacesOf(territory));
       moved.set(place.index(), to);
@@ -410,6 +480,32 @@ final class MapCanvas extends JComponent {
     project.setUnitPlaces(territory, added);
   }
 
+  /** Removes a place for units or a decoration; markers stay. */
+  private void remove(final Place place) {
+    if (place.decoration().isPresent()) {
+      final List<Point> removed = new ArrayList<>(decorations(place.decoration().get()));
+      removed.remove(place.index());
+      project.setDecorations(place.decoration().get(), removed);
+    } else if (place.marker().isEmpty()) {
+      removeUnitPlace(place.index());
+    }
+  }
+
+  private List<Point> decorations(final String picture) {
+    return project.getFiles().places().decorations().getOrDefault(picture, List.of());
+  }
+
+  /** The picture being placed once more, centered at the point on the screen. */
+  private void addDecoration(final String picture, final Point point) {
+    final Dimension size = decorationSize(picture);
+    final List<Point> added = new ArrayList<>(decorations(picture));
+    added.add(
+        new Point(
+            (int) Math.round(point.x / zoom) - size.width / 2,
+            (int) Math.round(point.y / zoom) - size.height / 2));
+    project.setDecorations(picture, added);
+  }
+
   /** Removes the place for units; the last one stays, as the game needs one. */
   private void removeUnitPlace(final int index) {
     final String territory = Objects.requireNonNull(selected);
@@ -423,24 +519,41 @@ final class MapCanvas extends JComponent {
     final Rectangle shown = onScreen(place);
     final Color accent = Theme.getAccentColor();
     g.setStroke(new BasicStroke(2));
-    if (place.marker().isEmpty()) {
+    if (place.decoration().isPresent()) {
+      // the picture itself is drawn with the map
+      g.setColor(accent);
+      g.draw(shown);
+    } else if (place.marker().isEmpty()) {
       g.setColor(withAlpha(Color.WHITE, 0x66));
       g.fill(shown);
       g.setColor(accent);
       g.draw(shown);
-      paintBadge(g, String.valueOf(place.index() + 1), shown.x + 10, shown.y + 10);
-    } else {
-      g.setColor(accent);
-      g.fillOval(shown.x, shown.y, shown.width, shown.height);
-      g.setColor(Color.WHITE);
-      g.drawOval(shown.x, shown.y, shown.width, shown.height);
-      final String label = place.marker().get().getLabel();
-      g.setFont(getFont().deriveFont(Font.BOLD, 12f));
+      // in the middle: markers often sit at a square's corner
       paintBadge(
           g,
-          label,
-          shown.x + shown.width + 4 + (g.getFontMetrics().stringWidth(label) + 12) / 2,
+          String.valueOf(place.index() + 1),
+          (int) shown.getCenterX(),
           (int) shown.getCenterY());
+    } else {
+      // a letter on the point, the whole name while the mouse is over it
+      final Marker marker = place.marker().get();
+      final boolean hover = hovered.map(shown::contains).orElse(false);
+      final String text =
+          hover
+              ? label(marker, place.index())
+              : marker.getLetter() + (marker == Marker.EFFECT ? place.index() + 1 : "");
+      g.setFont(getFont().deriveFont(Font.BOLD, 11f));
+      final FontMetrics metrics = g.getFontMetrics();
+      final int width = Math.max(shown.width, metrics.stringWidth(text) + 8);
+      final int x = (int) shown.getCenterX() - width / 2;
+      g.setColor(accent);
+      g.fillRoundRect(x, shown.y, width, shown.height, shown.height, shown.height);
+      g.setColor(Color.WHITE);
+      g.drawRoundRect(x, shown.y, width, shown.height, shown.height, shown.height);
+      g.drawString(
+          text,
+          x + (width - metrics.stringWidth(text)) / 2,
+          shown.y + (shown.height + metrics.getAscent() - metrics.getDescent()) / 2);
     }
   }
 
@@ -459,14 +572,41 @@ final class MapCanvas extends JComponent {
     g.translate(-square.x * LAYER_SIZE, -square.y * LAYER_SIZE);
     g.scale(zoom, zoom);
     final boolean picture = showPicture && paintPicture(g);
+    if (picture && project.getFiles().showsRelief()) {
+      paintRelief(g);
+    }
     final Map<String, List<Polygon>> polygons = project.getFiles().polygons();
     shownIn(g.getClipBounds())
         .forEach(territory -> paintTerritory(g, territory, polygons.get(territory), picture));
+    if (picture) {
+      paintDecorations(g);
+    }
     if (mode == MapMode.CONNECTIONS) {
       paintConnections(g, project.game());
     }
     g.dispose();
     return drawn;
+  }
+
+  /** The misc pictures that decorations.txt places, as the game draws them over the map. */
+  private void paintDecorations(final Graphics2D g) {
+    final Rectangle visible = g.getClipBounds();
+    project
+        .getFiles()
+        .places()
+        .decorations()
+        .forEach(
+            (picture, points) ->
+                decorationPicture(picture)
+                    .ifPresent(
+                        image -> {
+                          for (final Point at : points) {
+                            if (visible.intersects(
+                                at.x, at.y, image.getWidth(null), image.getHeight(null))) {
+                              g.drawImage(image, at.x, at.y, null);
+                            }
+                          }
+                        }));
   }
 
   /** The territories in this part of the map or so close that a selected one's outline shows. */
@@ -488,6 +628,11 @@ final class MapCanvas extends JComponent {
       unitPlaces.clear();
       unitSize = filesSeen.unitSize();
       unitPictures.clear();
+      // a relief loaded, saved or undone: the tiles on disk may be new
+      if (!filesSeen.relief().equals(reliefSeen)) {
+        reliefSeen = filesSeen.relief();
+        reliefTiles.clear();
+      }
     }
   }
 
@@ -535,6 +680,28 @@ final class MapCanvas extends JComponent {
       g.drawImage(loaded.get(), 0, 0, null);
       return true;
     }
+    return paintTiles(g, this::tile);
+  }
+
+  /**
+   * The relief over the picture, loaded or in tiles, as the game draws it; at a small zoom the
+   * smaller copy of the picture has it already.
+   */
+  private void paintRelief(final Graphics2D g) {
+    if (zoom <= OVERVIEW_ZOOM) {
+      return;
+    }
+    final Optional<BufferedImage> loaded = project.getFiles().relief();
+    if (loaded.isPresent()) {
+      g.drawImage(loaded.get(), 0, 0, null);
+    } else {
+      paintTiles(g, this::reliefTile);
+    }
+  }
+
+  /** The tiles in the visible part; false when there is none. */
+  private static boolean paintTiles(
+      final Graphics2D g, final BiFunction<Integer, Integer, Optional<Image>> tileAt) {
     final int size = MapFiles.tileSize();
     final Rectangle visible = g.getClipBounds();
     boolean any = false;
@@ -544,7 +711,7 @@ final class MapCanvas extends JComponent {
       for (int row = Math.max(0, visible.y / size);
           row <= (visible.y + visible.height) / size;
           row++) {
-        final Optional<Image> tile = tile(column, row);
+        final Optional<Image> tile = tileAt.apply(column, row);
         if (tile.isPresent()) {
           g.drawImage(tile.get(), column * size, row * size, null);
           any = true;
@@ -557,7 +724,8 @@ final class MapCanvas extends JComponent {
   /** The smaller picture once it is made; starts making it for a new picture or folder. */
   private Optional<BufferedImage> overview() {
     final MapFiles files = project.getFiles();
-    final List<Object> source = List.of(files.picture(), files.folder());
+    final List<Object> source =
+        List.of(files.picture(), files.folder(), files.relief(), files.showsRelief());
     if (!source.equals(overviewOf)) {
       overviewOf = source;
       overview = null;
@@ -614,6 +782,23 @@ final class MapCanvas extends JComponent {
         }
       }
     }
+    if (files.showsRelief()) {
+      if (files.relief().isPresent()) {
+        g.drawImage(files.relief().get(), 0, 0, null);
+      } else {
+        final int size = MapFiles.tileSize();
+        for (int column = 0; column * size < map.width; column++) {
+          for (int row = 0; row * size < map.height; row++) {
+            final int x = column * size;
+            final int y = row * size;
+            files
+                .reliefTile(column, row)
+                .flatMap(MapCanvas::read)
+                .ifPresent(t -> g.drawImage(t, x, y, null));
+          }
+        }
+      }
+    }
     g.dispose();
     return small;
   }
@@ -621,6 +806,12 @@ final class MapCanvas extends JComponent {
   private Optional<Image> tile(final int column, final int row) {
     return tiles.computeIfAbsent(
         new Point(column, row), at -> project.getFiles().tile(at.x, at.y).flatMap(MapCanvas::read));
+  }
+
+  private Optional<Image> reliefTile(final int column, final int row) {
+    return reliefTiles.computeIfAbsent(
+        new Point(column, row),
+        at -> project.getFiles().reliefTile(at.x, at.y).flatMap(MapCanvas::read));
   }
 
   private static Optional<Image> read(final Path file) {
@@ -889,11 +1080,13 @@ final class MapCanvas extends JComponent {
       final Optional<Place> place = placeAt(e.getPoint());
       final Optional<String> territory = territoryAt(e.getPoint());
       if (place.isPresent()) {
-        if (SwingUtilities.isRightMouseButton(e) && place.get().marker().isEmpty()) {
-          removeUnitPlace(place.get().index());
+        if (SwingUtilities.isRightMouseButton(e)) {
+          remove(place.get());
         }
       } else if (SwingUtilities.isLeftMouseButton(e)) {
-        if (editingPlaces && territory.isPresent() && territory.get().equals(selected)) {
+        if (decorating.isPresent()) {
+          addDecoration(decorating.get(), e.getPoint());
+        } else if (editingPlaces && territory.isPresent() && territory.get().equals(selected)) {
           addUnitPlace(e.getPoint());
         } else {
           territory.ifPresent(onClick);
@@ -909,11 +1102,17 @@ final class MapCanvas extends JComponent {
     @Override
     public void mouseMoved(final MouseEvent e) {
       hovered = Optional.of(e.getPoint());
-      if (editingPlaces) {
+      if (editingPlaces || decorating.isPresent()) {
+        final Optional<Place> over = placeAt(e.getPoint());
         setCursor(
-            placeAt(e.getPoint()).isPresent()
+            over.isPresent()
                 ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
                 : Cursor.getDefaultCursor());
+        // a marker shows its whole name while the mouse is over it
+        if (!over.equals(hoveredPlace)) {
+          hoveredPlace = over;
+          repaint();
+        }
       }
     }
 

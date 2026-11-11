@@ -10,10 +10,14 @@ import org.triplea.map.data.elements.AttachmentList;
 import org.triplea.map.data.elements.AttachmentList.Attachment;
 import org.triplea.map.data.elements.AttachmentList.Attachment.Option;
 import org.triplea.map.data.elements.Game;
+import org.triplea.map.data.elements.GamePlay;
+import org.triplea.map.data.elements.GamePlay.Sequence;
+import org.triplea.map.data.elements.GamePlay.Sequence.Step;
 import org.triplea.map.data.elements.Initialize;
 import org.triplea.map.data.elements.Initialize.OwnerInitialize;
 import org.triplea.map.data.elements.Initialize.OwnerInitialize.TerritoryOwner;
 import org.triplea.map.data.elements.Initialize.RelationshipInitialize;
+import org.triplea.map.data.elements.Initialize.RelationshipInitialize.Relationship;
 import org.triplea.map.data.elements.Initialize.ResourceInitialize;
 import org.triplea.map.data.elements.Initialize.ResourceInitialize.ResourceGiven;
 import org.triplea.map.data.elements.Initialize.UnitInitialize;
@@ -23,11 +27,18 @@ import org.triplea.map.data.elements.Map.Connection;
 import org.triplea.map.data.elements.Map.Territory;
 import org.triplea.map.data.elements.PlayerList;
 import org.triplea.map.data.elements.Production;
+import org.triplea.map.data.elements.Production.PlayerProduction;
 import org.triplea.map.data.elements.Production.ProductionFrontier;
 import org.triplea.map.data.elements.Production.ProductionRule;
 import org.triplea.map.data.elements.Production.Rule.Cost;
+import org.triplea.map.data.elements.Production.Rule.Result;
 import org.triplea.map.data.elements.PropertyList;
 import org.triplea.map.data.elements.PropertyList.Property;
+import org.triplea.map.data.elements.RelationshipTypes;
+import org.triplea.map.data.elements.Technology;
+import org.triplea.map.data.elements.Technology.PlayerTech;
+import org.triplea.map.data.elements.Technology.PlayerTech.Category;
+import org.triplea.map.data.elements.Technology.Technologies;
 
 /**
  * {@code toBuilder()} for the parts of the XML model the editor changes, as extension methods
@@ -127,6 +138,52 @@ public class Builders {
 
   public static Property.PropertyBuilder toBuilder(final Property value) {
     return filled(value, Property.builder());
+  }
+
+  public static GamePlay.GamePlayBuilder toBuilder(final GamePlay value) {
+    return filled(value, GamePlay.builder());
+  }
+
+  public static Sequence.SequenceBuilder toBuilder(final Sequence value) {
+    return filled(value, Sequence.builder());
+  }
+
+  public static Step.StepBuilder toBuilder(final Step value) {
+    return filled(value, Step.builder());
+  }
+
+  public static Relationship.RelationshipBuilder toBuilder(final Relationship value) {
+    return filled(value, Relationship.builder());
+  }
+
+  public static RelationshipTypes.RelationshipTypesBuilder toBuilder(
+      final RelationshipTypes value) {
+    return filled(value, RelationshipTypes.builder());
+  }
+
+  public static Result.ResultBuilder toBuilder(final Result value) {
+    return filled(value, Result.builder());
+  }
+
+  public static PlayerProduction.PlayerProductionBuilder toBuilder(
+      final PlayerProduction value) {
+    return filled(value, PlayerProduction.builder());
+  }
+
+  public static Technology.TechnologyBuilder toBuilder(final Technology value) {
+    return filled(value, Technology.builder());
+  }
+
+  public static Technologies.TechnologiesBuilder toBuilder(final Technologies value) {
+    return filled(value, Technologies.builder());
+  }
+
+  public static PlayerTech.PlayerTechBuilder toBuilder(final PlayerTech value) {
+    return filled(value, PlayerTech.builder());
+  }
+
+  public static Category.CategoryBuilder toBuilder(final Category value) {
+    return filled(value, Category.builder());
   }
 
   /**

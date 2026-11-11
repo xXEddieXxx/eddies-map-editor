@@ -295,8 +295,20 @@ final class NationsEditor implements Editor {
                 + "\nUndo takes it back.",
             "Remove nation",
             JOptionPane.OK_CANCEL_OPTION);
-    if (answer == JOptionPane.OK_OPTION) {
-      project.removeNation(nation);
+    if (answer != JOptionPane.OK_OPTION) {
+      return;
+    }
+    final List<String> named = project.removeNation(nation);
+    if (!named.isEmpty()) {
+      JOptionPane.showMessageDialog(
+          page,
+          nation
+              + " stays: the game would not load without it, as these still name it:\n"
+              + String.join("\n", named.subList(0, Math.min(10, named.size())))
+              + (named.size() > 10 ? "\nand " + (named.size() - 10) + " more" : "")
+              + "\nChange them in Attachments first.",
+          "Remove nation",
+          JOptionPane.WARNING_MESSAGE);
     }
   }
 }

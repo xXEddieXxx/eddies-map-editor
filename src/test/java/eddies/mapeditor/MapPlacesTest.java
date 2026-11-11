@@ -2,19 +2,23 @@ package eddies.mapeditor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import games.strategy.triplea.attachments.TerritoryAttachment;
 import java.awt.Point;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.triplea.map.data.elements.Game;
 import org.triplea.util.PointFileReaderWriter;
 import eddies.mapeditor.MapFiles.Marker;
 
 final class MapPlacesTest {
   // a territory of MapPictureTest.givenPicture, as Find territories names it
   private static final String TERRITORY = "Territory 1";
+  private static final String SEA = "Sea Zone 1";
   private static final String UNKNOWN_LINE = "Atlantis (5,6) | overflowToLeft=true";
 
   @TempDir Path folder;
@@ -86,7 +90,7 @@ final class MapPlacesTest {
     final Point added = new Point(1, 2);
 
     project.setUnitPlaces(TERRITORY, List.of(found.getFirst(), added));
-    project.setMarkerPlace(Marker.NAME, TERRITORY, new Point(3, 4));
+    project.setMarkerPlace(Marker.NAME, TERRITORY, 0, new Point(3, 4));
     project.findPlacesAgain(TERRITORY);
     project.undo();
 
@@ -129,7 +133,7 @@ final class MapPlacesTest {
     final MapProject project = givenMapWithoutNamePlaces();
     final Point place = new Point(21, 22);
 
-    project.setMarkerPlace(Marker.VALUE, TERRITORY, place);
+    project.setMarkerPlace(Marker.VALUE, TERRITORY, 0, place);
     project.save();
 
     final Path folder = project.getFolder().orElseThrow();
@@ -169,5 +173,141 @@ final class MapPlacesTest {
                 .getFirst())
         .as("the place set by hand")
         .containsExactly(new Point(1, 2));
+  }
+
+  @DisplayName("A sea zone's kamikaze marker and each of its effects are placed and saved")
+  @Test
+  void savesKamikazeAndEffectPlaces() throws Exception {
+    final MapProject project = givenSavedMapWithUnknownPlace();
+    project.edit(MapPlacesTest::givenKamikazeZoneWithEffects);
+    final Path convoys = project.getFolder().orElseThrow().resolve("convoy.txt");
+    Files.writeString(convoys, TERRITORY + " (9,9)");
+
+    project.setMarkerPlace(Marker.KAMIKAZE, SEA, 0, new Point(30, 31));
+    project.setMarkerPlace(Marker.EFFECT, SEA, 1, new Point(40, 41));
+    project.save();
+
+    final Path folder = project.getFolder().orElseThrow();
+    assertThat(Marker.KAMIKAZE.isOn(project.game(), SEA)).as("the game draws it").isTrue();
+    assertThat(Marker.EFFECT.count(project.game(), SEA)).as("one per effect").isEqualTo(2);
+    assertThat(PointFileReaderWriter.readOneToOne(folder.resolve("kamikaze_place.txt")))
+        .as("the moved kamikaze marker, in a file of its own")
+        .containsExactly(Map.entry(SEA, new Point(30, 31)));
+    assertThat(PointFileReaderWriter.readOneToMany(folder.resolve("territory_effects.txt")))
+        .as("the first effect at the center, the second where it was moved to")
+        .containsEntry(
+            SEA,
+            List.of(
+                project.getFiles().markerPlace(project.game(), Marker.EFFECT, SEA),
+                new Point(40, 41)));
+    assertThat(PointFileReaderWriter.readOneToOne(convoys))
+        .as("a convoy marker set by hand stays, as triggers may make a convoy route")
+        .containsEntry(TERRITORY, new Point(9, 9));
+    assertThat(folder.resolve("blockade.txt")).as("no file the map does not use").doesNotExist();
+  }
+
+  @DisplayName("Found places of a territory's effects lie side by side, one per effect")
+  @Test
+  void spreadsFoundEffects() throws Exception {
+    final MapProject project = givenSavedMapWithUnknownPlace();
+
+    project.edit(MapPlacesTest::givenKamikazeZoneWithEffects);
+
+    assertThat(project.getFiles().markerPlaces(project.game(), Marker.EFFECT, SEA))
+        .as("two effects, two places apart, so each can be seen and moved")
+        .hasSize(2)
+        .doesNotHaveDuplicates();
+  }
+
+  /** The sea zone as a kamikaze zone with two territory effects. */
+  private static Game givenKamikazeZoneWithEffects(final Game game) {
+    final MapXml.AttachmentKey sea = seaAttachment();
+    return MapXml.withOption(
+        MapXml.withOption(game, sea, "kamikazeZone", "true"),
+        sea,
+        "territoryEffect",
+        "Forest:Mountain");
+  }
+
+  private static MapXml.AttachmentKey seaAttachment() {
+    return new MapXml.AttachmentKey(
+        "territoryAttachment", TerritoryAttachment.class.getName(), "territory", SEA);
+  }
+
+  @DisplayName("Placing and taking off decorations are steps; decorations.txt keeps other pictures")
+  @Test
+  void savesDecorations() throws Exception {
+    final MapProject opened = givenMapWithRocks();
+    final Path decorations = decorationsTxt(opened);
+
+    opened.setDecorations("tree.png", List.of(new Point(5, 5), new Point(6, 6)));
+    opened.setDecorations("rock.png", List.of());
+    opened.undo();
+    opened.save();
+
+    assertThat(opened.getFiles().places().decorations().get("rock.png"))
+        .as("taking the rocks off undone")
+        .containsExactly(new Point(1, 1), new Point(2, 2));
+    assertThat(PointFileReaderWriter.readOneToMany(decorations))
+        .as("the trees placed, the rocks as they were")
+        .containsEntry("tree.png", List.of(new Point(5, 5), new Point(6, 6)))
+        .containsEntry("rock.png", List.of(new Point(1, 1), new Point(2, 2)));
+    assertThat(decorations.resolveSibling("decorations.txt.bak"))
+        .as("the first version kept")
+        .hasContent("rock.png (1,1) (2,2)");
+  }
+
+  /** A saved map, opened again, whose decorations.txt places rocks. */
+  private MapProject givenMapWithRocks() throws Exception {
+    final MapProject project = givenSavedMapWithUnknownPlace();
+    Files.writeString(decorationsTxt(project), "rock.png (1,1) (2,2)");
+    return MapProject.open(project.getXmlFile().orElseThrow());
+  }
+
+  private static Path decorationsTxt(final MapProject project) {
+    return project.getFolder().orElseThrow().resolve("decorations.txt");
+  }
+
+  @DisplayName("Decorations taken off the map are gone from decorations.txt")
+  @Test
+  void removesDecorations() throws Exception {
+    final MapProject project = givenMapWithRocks();
+
+    project.setDecorations("rock.png", List.of());
+    project.save();
+
+    assertThat(decorationsTxt(project)).as("no picture left, no file left").doesNotExist();
+  }
+
+  @DisplayName("A comment's place follows the name a map maker moved, a line above it")
+  @Test
+  void commentFollowsMovedName() throws Exception {
+    final MapProject project = givenOpenedMapWithComments();
+    project.edit(MapPlacesTest::givenConvoyRoute);
+    final Point name = new Point(150, 200);
+
+    project.setMarkerPlace(Marker.NAME, SEA, 0, name);
+    project.save();
+
+    assertThat(PointFileReaderWriter.readOneToOne(commentsTxt(project)).get(SEA))
+        .as("above the moved name, at its left end")
+        .satisfies(comment -> assertThat(comment.x).isEqualTo(name.x))
+        .satisfies(comment -> assertThat(comment.y).isLessThan(name.y));
+  }
+
+  /** A saved map, opened again, whose comments.txt places a comment of another sea zone. */
+  private MapProject givenOpenedMapWithComments() throws Exception {
+    final MapProject project = givenSavedMapWithUnknownPlace();
+    Files.writeString(commentsTxt(project), "Atlantis (5,6)");
+    return MapProject.open(project.getXmlFile().orElseThrow());
+  }
+
+  private static Path commentsTxt(final MapProject project) {
+    return project.getFolder().orElseThrow().resolve("comments.txt");
+  }
+
+  /** The sea zone as a convoy route, which the game comments on. */
+  private static Game givenConvoyRoute(final Game game) {
+    return MapXml.withOption(game, seaAttachment(), "convoyRoute", "true");
   }
 }

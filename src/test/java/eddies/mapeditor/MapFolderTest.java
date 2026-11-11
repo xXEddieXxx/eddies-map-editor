@@ -7,11 +7,14 @@ import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import javax.imageio.ImageIO;
@@ -253,4 +256,32 @@ games:
     }
     return names;
   }
+
+  @DisplayName("Typed text in a .properties file is saved as the game reads it; other files UTF-8")
+  @Test
+  void savesPropertiesAsTheGameReadsThem() throws IOException {
+    final Path map = givenMap();
+    final Path properties = map.resolve("notifications.properties");
+    final Path notes = map.resolve("notes.txt");
+    final String typed = "Hello=Grüße 中";
+
+    MapFolder.replaceText(properties, typed);
+    MapFolder.replaceText(notes, typed);
+    final Properties read = new Properties();
+    try (InputStream in = Files.newInputStream(properties)) {
+      // as TripleA's ResourceLoader reads it: from bytes, which Properties takes as ISO-8859-1
+      read.load(in);
+    }
+
+    assertThat(read.getProperty("Hello"))
+        .as("the umlaut and the character beyond ISO-8859-1 as typed")
+        .isEqualTo("Grüße 中");
+    assertThat(MapFolder.readText(properties))
+        .as("the Files tool shows the umlaut as typed, the other as its escape")
+        .isEqualTo("Hello=Grüße \\u4E2D");
+    assertThat(Files.readString(notes, StandardCharsets.UTF_8))
+        .as("another text file stays UTF-8 as typed")
+        .isEqualTo(typed);
+  }
+
 }

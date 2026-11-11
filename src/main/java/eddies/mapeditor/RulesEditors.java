@@ -3,20 +3,16 @@ package eddies.mapeditor;
 import java.awt.BorderLayout;
 import java.io.Serial;
 import java.util.List;
-import java.util.Optional;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
 import javax.swing.JTable;
 import javax.swing.table.AbstractTableModel;
 import lombok.experimental.UtilityClass;
-import org.triplea.map.data.elements.GamePlay;
-import org.triplea.map.data.elements.GamePlay.Sequence;
-import org.triplea.map.data.elements.GamePlay.Sequence.Step;
 import org.triplea.map.data.elements.PropertyList.Property;
 import org.triplea.swing.SwingComponents;
 import eddies.mapeditor.MakerIcon.Glyph;
 
-/** The editors of the game's rules: its options and its turn order. */
+/** The editor of the game's options. */
 @UtilityClass
 class RulesEditors {
 
@@ -31,19 +27,6 @@ class RulesEditors {
         "The options players see before a game, with the value they start with. Double-click a"
             + " value to change it.",
         Glyph.OPTIONS,
-        SwingComponents.newJScrollPane(table));
-  }
-
-  /** The game's turn, phase by phase; shown only, changing it comes later. */
-  static Editor newTurnOrder(final MapProject project) {
-    final StepsTable model = new StepsTable(project);
-    project.onChange(model::fireTableDataChanged);
-    final JTable table = new JTable(model);
-    table.setRowHeight(table.getRowHeight() + 8);
-    return newEditor(
-        "Turn order",
-        "The phases of a round in their order, and whose they are. Shown only for now.",
-        Glyph.TURN_ORDER,
         SwingComponents.newJScrollPane(table));
   }
 
@@ -125,49 +108,6 @@ class RulesEditors {
       if (!text.equals(options().get(row).getValue())) {
         project.edit(g -> MapXml.withPropertyValue(g, name, text));
       }
-    }
-  }
-
-  private static final class StepsTable extends AbstractTableModel {
-    @Serial private static final long serialVersionUID = 1L;
-    private final transient MapProject project;
-
-    StepsTable(final MapProject project) {
-      this.project = project;
-    }
-
-    private List<Step> steps() {
-      return Optional.ofNullable(project.game().getGamePlay())
-          .map(GamePlay::getSequence)
-          .map(Sequence::getSteps)
-          .map(List::copyOf)
-          .orElse(List.of());
-    }
-
-    @Override
-    public int getRowCount() {
-      return steps().size();
-    }
-
-    @Override
-    public int getColumnCount() {
-      return 4;
-    }
-
-    @Override
-    public String getColumnName(final int column) {
-      return List.of("#", "Phase", "Nation", "Shown as").get(column);
-    }
-
-    @Override
-    public Object getValueAt(final int row, final int column) {
-      final Step step = steps().get(row);
-      return switch (column) {
-        case 0 -> row + 1;
-        case 1 -> step.getDelegate();
-        case 2 -> Optional.ofNullable(step.getPlayer()).orElse("");
-        default -> Optional.ofNullable(step.getDisplay()).orElse(step.getName());
-      };
     }
   }
 }

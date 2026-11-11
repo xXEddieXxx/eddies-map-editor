@@ -128,9 +128,10 @@ final class MapView extends JPanel {
                 + " To move borders, draw them into the picture with a paint program and choose"
                 + " Redraw borders: names, owners and units stay."));
     tools.add(find);
-    final JPanel top = new JPanel(new BorderLayout());
-    top.add(tools, BorderLayout.WEST);
-    top.add(editorTools, BorderLayout.EAST);
+    // the tool's own controls in a row below: beside the map's they did not fit the middle
+    final JPanel top = new JPanel(new BorderLayout(0, 6));
+    top.add(tools, BorderLayout.NORTH);
+    top.add(editorTools, BorderLayout.SOUTH);
     add(top, BorderLayout.NORTH);
     add(legend, BorderLayout.SOUTH);
     emptyState = newEmptyState(choosePicture);
@@ -209,6 +210,8 @@ final class MapView extends JPanel {
     showMode(mapMode);
     editorTools.removeAll();
     editorTools.add(tools);
+    // a tool without controls of its own leaves no empty row
+    editorTools.setVisible(tools.getComponentCount() > 0);
     editorTools.revalidate();
     editorTools.repaint();
     canvas.onTerritoryClick(onClick);
@@ -218,6 +221,11 @@ final class MapView extends JPanel {
   /** Shows the selected territory's places to edit, {@link MapCanvas#editPlaces}. */
   void editPlaces() {
     canvas.editPlaces();
+  }
+
+  /** Shows the decorations to move and remove; a click places the misc picture given. */
+  void editDecorations(final String picture) {
+    canvas.editDecorations(picture);
   }
 
   void stopEditingPlaces() {

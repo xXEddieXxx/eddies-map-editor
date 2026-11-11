@@ -46,10 +46,15 @@ All code is in `src/main/java/eddies/mapeditor`, the tests in `src/test/java/edd
 | `TerritoriesEditor`, `ConnectionsEditor`, `NationsEditor`, `UnitsEditor`, `RulesEditors`, `NotesEditor`, `MapLookEditor`, `FilesEditor` | The tools; `MapLookEditor`: map.properties settings and the relief |
 | `MapProject`                  | The open map: game + files per undo step, save, problems                                        |
 | `MapXml`                      | Reads and changes the XML model; every change returns a new `Game`                              |
+| `TurnOrderEditor`, `PoliticsEditor`, `TechnologyEditor`, `ProductionEditor` | Turn order steps; relationship types and how nations start; technologies; frontiers and production rules |
+| `RulesXml`, `ProductionXml`, `TechXml` | Like `MapXml` for turn order and politics, production, technology; `RulesXml.whereNamed` keeps what triggers name (a nation they name is not removed) |
 | `MapFiles`                    | The files beside the XML as one value: outlines, centers, properties, pictures, places         |
+| `TextsEditor`, `MapTexts`     | Objectives, trigger messages, unit tool tips (objectives/notifications/tooltips.properties): kept as text, changed by key in place |
+| `AttachmentsEditor`, `AttachmentsXml` | Every attachment (triggers, conditions, ...) with its options; known option names read from TripleA's classes |
 | `MapFolder`                   | Disk: map.yml, new map folders, tiles, flags, unit pictures, zip, `.bak` handling, Play         |
 | `PlayWith`                    | Which TripleA Play starts: another installed one (found or chosen, kept in Java preferences) or the one the editor runs with |
 | `MapPicture`                  | Finds territories (areas between dark lines, blue = sea) and neighbours in a picture            |
+| `ReliefMaker`                 | A relief made from the outlines: coast lines and shadows, waves, raised land, texture          |
 | `MapCanvas`, `MapView`, `MapLegend`, `MapMode`, `MapViewsButton` | The map on screen, its views and legend                      |
 | `MapChecks`, `FileLint`       | Problems of the map; checks of files as they are typed                                         |
 | `XmlTextArea`                 | Text in Files and Notes: XML and HTML in colors, Enter keeps the indentation                   |
@@ -60,20 +65,25 @@ All code is in `src/main/java/eddies/mapeditor`, the tests in `src/test/java/edd
 
 - **The XML model, not `GameData`.** The editor reads the game XML into
   `org.triplea.map.data.elements.Game` (`XmlMapper`), changes it with `MapXml`, and writes it with
-  `GameXmlWriter`. `GameData` is only used by Check (`MapChecks.findError`), to load the game as
-  TripleA does.
-- **Every change is a step.** `MapProject` keeps a `State(game, files)` per step for undo and redo,
-  and the saved state. Changes go through `MapProject.edit` or one of its methods, never by
+  `GameXmlWriter`. `GameData` is only used to ask TripleA itself: by Check
+  (`MapChecks.findError`), to load the game as TripleA does, and by `TechXml.withStandardTechs`, for
+  the standard technologies of a game without its own list.
+- **Every change is a step.** `MapProject` keeps a `State(game, files, texts)` per step for undo
+  and redo, and the saved state. Changes go through `MapProject.edit` or one of its methods, never by
   mutating a model. `onChange` listeners refresh the tools.
 - **A save writes what changed.** Text files go through `MapFolder.replace`: a failed save loses
-  nothing, and the first version of a file stays as `.bak`.
-- **Places are part of the model.** `MapFiles.Places` holds place.txt, name_place.txt,
-  pu_place.txt, capitols.txt and vc.txt as read when the map opened; Territories' *Move places*
-  brush changes them on the map. A territory without places gets found ones (`unitPlaces`,
-  `markerPlace`); a redrawn border that changed noticeably finds them again. A save writes a
-  place changed here since the last save, else keeps the file's (maybe set by hand meanwhile),
-  keeps lines of territories the editor does not know, and writes a file only when it differs
-  (`writeKeeping`).
+  nothing, and the first version of a file stays as `.bak`. `MapFolder.readText`/`replaceText` take
+  a file as the game reads it: .properties as ISO-8859-1 (other characters as `\uXXXX`), the rest UTF-8.
+- **Places are part of the model.** `MapFiles.Places` holds place.txt, the marker files
+  (`MapFiles.Marker`: name_place.txt, pu_place.txt, capitols.txt, vc.txt, blockade.txt, convoy.txt,
+  comments.txt, kamikaze_place.txt, territory_effects.txt) and decorations.txt as read when the
+  map opened; Territories' *Move places* brush and its *Place decorations* brush (with a
+  picture box beside it) change them on the map. A marker shows where the game draws it
+  (`Marker.isOn`) or, if a save keeps it there (`Marker.keepsUnused`), where the file has it. A
+  territory without places gets found ones (`unitPlaces`, `markerPlaces`); a redrawn border that
+  changed noticeably finds them again. A save writes a place changed here since the last save,
+  else keeps the file's (maybe set by hand meanwhile), keeps lines of territories the editor does
+  not know, and writes a file only when it differs (`writeKeeping`).
 - **Map folders**: `map.yml` at the top, the content (polygons.txt, baseTiles, ...) there or in a
   folder below it like `map/`, games in `games/` (`MapFolder.rootOf`, `gamesOf`).
 - **Background work** (finding territories, redrawing borders, Check) runs in a `SwingWorker` and
@@ -107,6 +117,4 @@ All code is in `src/main/java/eddies/mapeditor`, the tests in `src/test/java/edd
 ## Goal
 
 Everything TripleA's map format can do should be doable in the editor without opening a file.
-Still only in files today: politics, technology, objectives and triggers; turn order editing;
-production frontiers; decorations (decorations.txt, kamikaze and blockade markers); tooltips and
-notifications.
+Triggers and conditions are edited as plain attachments (Attachments), without a guided tool.

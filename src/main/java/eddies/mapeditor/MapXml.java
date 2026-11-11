@@ -367,6 +367,25 @@ class MapXml {
     return intOption(game, TERRITORY, territory, "victoryCity") != 0;
   }
 
+  /** Whether the territory's attachment sets the option true, eg kamikazeZone. */
+  static boolean hasTerritoryFlag(final Game game, final String territory, final String option) {
+    return option(game, TERRITORY, territory, option)
+        .map(value -> Boolean.parseBoolean(value.strip()))
+        .orElse(false);
+  }
+
+  /** The territory's effects, eg Forest, in the order the game draws them. */
+  static List<String> territoryEffects(final Game game, final String territory) {
+    return attachments(game).stream()
+        .filter(a -> TERRITORY.equals(a.getName()) && territory.equals(a.getAttachTo()))
+        .flatMap(a -> Optional.ofNullable(a.getOptions()).orElse(List.of()).stream())
+        .filter(o -> "territoryEffect".equals(o.getName()) && o.getValue() != null)
+        .flatMap(o -> Arrays.stream(o.getValue().split(":")))
+        .map(String::strip)
+        .filter(effect -> !effect.isEmpty())
+        .toList();
+  }
+
   static Game withVictoryCity(final Game game, final String territory) {
     return withTerritoryOption(game, territory, "victoryCity", "1");
   }
@@ -813,9 +832,10 @@ class MapXml {
   }
 
   /**
-   * The game without the nation and all that names it: its alliances, resources, production, turn,
-   * relationships, the territories it owns and its units at the start, its capitals, its bid
-   * option, and the attachments to it.
+   * The game without the nation and all that names it: its alliances, resources, production,
+   * technology, turn and its name in the steps' lists, relationships, the territories it owns and
+   * its units at the start, its capitals, its bid option, and the attachments to it. Other
+   * attachments that name it stay: {@link RulesXml#whereNamed} tells them.
    */
   static Game withoutNation(final Game game, final String nation) {
     final Predicate<String> isNation = nation::equals;
@@ -910,9 +930,12 @@ class MapXml {
                                 p -> isNation.test(p.getPlayer())))
                         .build())
                 .build();
+    final Game withoutTech =
+        RulesXml.withoutNameInStepProperties(
+            TechXml.withoutNation(withoutProduction, nation), nation);
     return game.getGamePlay() == null
-        ? withoutProduction
-        : withSteps(withoutProduction, without(steps(game), s -> isNation.test(s.getPlayer())));
+        ? withoutTech
+        : withSteps(withoutTech, without(steps(withoutTech), s -> isNation.test(s.getPlayer())));
   }
 
   private static <T> List<T> without(final List<T> values, final Predicate<T> removed) {

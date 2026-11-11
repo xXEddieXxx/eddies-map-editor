@@ -84,8 +84,27 @@ final class MapLookTest {
     project.save();
 
     assertThat(project.hasUnsavedRelief()).as("saved, so no longer to be written").isFalse();
+    assertThat(project.getFiles().reliefTile(0, 0)).as("the map shows its tile").isPresent();
+    assertThat(project.getFiles().showsRelief()).as("shown unless told not to").isTrue();
+    project.setMapProperty("map.hasRelief", "false");
+    assertThat(project.getFiles().showsRelief()).as("hidden when switched off").isFalse();
     assertThat(tiles.resolve("0_0.png")).as("the first tile written").exists();
     assertThat(tiles.resolve("9_9.png")).as("a tile beyond the relief removed").doesNotExist();
     assertThat(tiles.resolve("9_9.png.bak")).as("its first version kept").hasContent("an old tile");
+  }
+
+  @DisplayName("A new relief on a map told not to show one is shown, in the same step")
+  @Test
+  void newReliefIsShown() throws Exception {
+    final MapProject project = givenSavedMapWithRed();
+    project.setMapProperty("map.hasRelief", "false");
+    final Dimension size = project.getFiles().size();
+
+    project.setRelief(new BufferedImage(size.width, size.height, BufferedImage.TYPE_INT_ARGB));
+
+    assertThat(project.getFiles().showsRelief()).as("switched on with the relief").isTrue();
+    project.undo();
+    assertThat(project.getFiles().relief()).as("one undo takes the relief back").isEmpty();
+    assertThat(project.getFiles().showsRelief()).as("and hides it again").isFalse();
   }
 }

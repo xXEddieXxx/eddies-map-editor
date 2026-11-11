@@ -670,14 +670,21 @@ with map.yml, the game file, its notes and map.properties.
     overview = overviewEditor;
     toolGroups =
         List.of(
-            List.of(overviewEditor, new NotesEditor(opened)),
+            List.of(overviewEditor, new NotesEditor(opened), new TextsEditor(opened)),
             List.of(
                 territories,
                 new ConnectionsEditor(opened, map),
                 new NationsEditor(opened),
                 new MapLookEditor(opened)),
-            List.of(RulesEditors.newGameOptions(opened), RulesEditors.newTurnOrder(opened)),
-            List.of(new UnitsEditor(opened)));
+            List.of(
+                RulesEditors.newGameOptions(opened),
+                new TurnOrderEditor(opened),
+                new PoliticsEditor(opened),
+                new TechnologyEditor(opened)),
+            List.of(
+                new UnitsEditor(opened),
+                new ProductionEditor(opened),
+                new AttachmentsEditor(opened)));
     toolGroups.stream().flatMap(List::stream).forEach(this::addEditor);
 
     files.preview().ifPresent(file -> previewCards.add(file, FILE_PREVIEW));
