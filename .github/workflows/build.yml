@@ -1,0 +1,45 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: TripleA (the newest release's jar)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download -R triplea-game/triplea -p game-headed.zip
+          unzip -q game-headed.zip -d triplea
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Test and package
+        run: ./gradlew test distZip -PtripleaHome=triplea
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-reports
+          path: build/reports/tests/
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eddies-map-editor
+          path: build/distributions/*.zip

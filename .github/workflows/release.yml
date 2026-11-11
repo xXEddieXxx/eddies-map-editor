@@ -1,0 +1,104 @@
+name: Release
+
+# Builds the editor and publishes it as a GitHub release. Started by hand:
+# Actions > Release > "Run workflow", enter the version (for example 1.2.0). The workflow
+#  - refuses a version that already has a tag,
+#  - builds against a TripleA release (the newest, or the tag given) and runs the tests,
+#  - publishes the release "v<version>" with
+#      eddies-map-editor-windows.zip           the program with its own Java, for the README's
+#                                              .../releases/latest/download/... link
+#      eddies-map-editor-<version>-windows.zip the same, named by version
+#      eddies-map-editor-<version>.zip         for every system, needs Java 25 installed
+#    and the TripleA release it was built with in the release notes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 1.2.0 (becomes tag v1.2.0)"
+        required: true
+        type: string
+      triplea_release:
+        description: "TripleA release tag to build with, empty for the newest"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check the version
+        id: version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          V="${VERSION#v}"
+          if ! [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must look like 1.2.3, got '$VERSION'"; exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/v$V" >/dev/null || git ls-remote --exit-code --tags origin "v$V" >/dev/null 2>&1; then
+            echo "::error::tag v$V already exists; pick a new version"; exit 1
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: TripleA
+        id: triplea
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.triplea_release }}
+        run: |
+          gh release download $TAG -R triplea-game/triplea -p game-headed.zip
+          unzip -q game-headed.zip -d triplea
+          echo "release=$(ls triplea/bin | sed 's/^game-headed-//; s/\.jar$//')" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Test and package
+        run: ./gradlew test appZip distZip -PtripleaHome=triplea -PappVersion=${{ steps.version.outputs.version }}
+
+      - name: Name the files
+        run: |
+          V=${{ steps.version.outputs.version }}
+          cd build/distributions
+          cp eddies-map-editor-windows.zip "eddies-map-editor-$V-windows.zip"
+          mv eddies-map-editor.zip "eddies-map-editor-$V.zip"
+          ls -l
+
+      - name: Publish release v${{ steps.version.outputs.version }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          # the tag on the commit that was built and tested
+          target_commitish: ${{ github.sha }}
+          name: Eddie's Map Editor ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          make_latest: true
+          body: |
+            **Windows:** download `eddies-map-editor-windows.zip`, unzip it and start `Eddies Map Editor.exe`. It brings its own Java.
+            **Other systems:** `eddies-map-editor-${{ steps.version.outputs.version }}.zip` needs Java 25; start `bin/eddies-map-editor`.
+
+            **Needs TripleA installed** (triplea-game.org): the editor runs with it and finds it by itself, or asks where it is. Built and tested with TripleA ${{ steps.triplea.outputs.release }}.
+          files: |
+            build/distributions/eddies-map-editor-windows.zip
+            build/distributions/eddies-map-editor-${{ steps.version.outputs.version }}-windows.zip
+            build/distributions/eddies-map-editor-${{ steps.version.outputs.version }}.zip
