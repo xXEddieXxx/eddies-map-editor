@@ -201,4 +201,50 @@ final class MapTextsTest {
         .isNotEmpty();
   }
 
+
+  @DisplayName("A sound set keeps the file's comments, other lines and ISO-8859-1, with a .bak")
+  @Test
+  void soundsKeepTheirFile() throws Exception {
+    final Path xml = givenMinimapWithMessages().getXmlFile().orElseThrow();
+    final Path file = folder.resolve("sounds.properties");
+    final String before =
+        "# the map's sounds\nSound.Default.Folder=classical\nmy_own=réveil.mp3\n";
+    Files.writeString(file, before, StandardCharsets.ISO_8859_1);
+    final MapProject project = MapProject.open(xml);
+
+    project.setText(Kind.SOUNDS, "battle_land_Russians", "mine/battle.mp3");
+    project.undo();
+    final boolean undone = project.texts().value(Kind.SOUNDS, "battle_land_Russians").isEmpty();
+    project.redo();
+    project.save();
+
+    assertThat(undone).as("one undo takes the sound back").isTrue();
+    assertThat(Files.readString(file, StandardCharsets.ISO_8859_1))
+        .as("the lines before kept as they were, the new sound added")
+        .isEqualTo(before + "battle_land_Russians=mine/battle.mp3\n");
+    assertThat(Files.readString(folder.resolve("sounds.properties.bak"), StandardCharsets.ISO_8859_1))
+        .as("the first version stays as .bak")
+        .isEqualTo(before);
+  }
+
+  @DisplayName("Sounds are named plainly, also a nation's, and a trigger's message sounds offered")
+  @Test
+  void explainsAndOffersSounds() throws Exception {
+    final MapProject project = givenMinimapWithMessages();
+    final Game game = givenMinimapWithTrigger(project);
+    final MapTexts texts =
+        new MapTexts(Map.of(Kind.NOTIFICATIONS, "Hello=<body>Hi</body>\nHello_sounds=fanfare\n"));
+
+    final List<String> keys = MapTexts.soundKeys(game, texts);
+
+    assertThat(MapTexts.explain(Kind.SOUNDS, "battle_land_Russians", game))
+        .as("the game's sound for a nation")
+        .isEqualTo("Land battle for Russians");
+    assertThat(MapTexts.explain(Kind.SOUNDS, "notification_fanfare", game))
+        .as("a message's sound")
+        .isEqualTo("With a message, its sounds fanfare");
+    assertThat(keys)
+        .as("the game's sounds, a nation's, and the one the trigger's message names")
+        .contains("Sound.Default.Folder", "battle_land", "battle_land_Russians", "notification_fanfare");
+  }
 }

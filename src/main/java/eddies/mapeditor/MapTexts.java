@@ -25,8 +25,9 @@ import org.triplea.util.FileNameUtils;
 
 /**
  * The texts beside the game that the game reads by key: objectives.properties, notifications
- * .properties and tooltips.properties, each held as its whole text, so a change of one entry keeps
- * every other line, comment and odd entry as it was. The game reads them as ISO-8859-1.
+ * .properties, tooltips.properties, politicstext.properties and actionstext.properties, each held
+ * as its whole text, so a change of one entry keeps every other line, comment and odd entry as it
+ * was. The game reads them as ISO-8859-1.
  *
  * @param unreadable the files that are there but could not be read: shown without entries, not
  *     changed and never written
@@ -38,8 +39,62 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable) {
   private static final String SOUNDS = "_sounds";
   private static final String TOOLTIP = "tooltip.unit.";
   private static final String APPEND = ".append";
+  private static final String SOUND_FOLDER = "Sound.Default.Folder";
+  // the game's sound keys, SoundPath, by plain name; a key ending in _ is followed by a message
+  private static final Map<String, String> SOUND_NAMES =
+      Map.ofEntries(
+          Map.entry("chat_message", "Chat message"),
+          Map.entry("chat_slap", "Chat slap"),
+          Map.entry("chat_join_game", "Someone joins the chat"),
+          Map.entry("click_button", "Button clicked"),
+          Map.entry("game_start", "Game starts"),
+          Map.entry("game_won", "Game won"),
+          Map.entry("required_your_turn_series", "Your turn starts"),
+          Map.entry("battle_aa_hit", "Anti-air hit"),
+          Map.entry("battle_aa_miss", "Anti-air miss"),
+          Map.entry("battle_air", "Air battle"),
+          Map.entry("battle_air_successful", "Air battle won"),
+          Map.entry("battle_bombard", "Bombardment"),
+          Map.entry("battle_failure", "Battle lost"),
+          Map.entry("battle_land", "Land battle"),
+          Map.entry("battle_retreat_air", "Air retreat"),
+          Map.entry("battle_retreat_land", "Land retreat"),
+          Map.entry("battle_retreat_sea", "Sea retreat"),
+          Map.entry("battle_retreat_submerge", "Submarines submerge"),
+          Map.entry("battle_sea_normal", "Sea battle"),
+          Map.entry("battle_sea_subs", "Submarine battle"),
+          Map.entry("battle_sea_successful", "Sea battle won"),
+          Map.entry("battle_stalemate", "Battle undecided"),
+          Map.entry("bombing_rocket", "Rocket attack"),
+          Map.entry("bombing_strategic", "Strategic bombing"),
+          Map.entry("phase_battle", "Phase: battle"),
+          Map.entry("phase_end_turn", "Phase: end of turn"),
+          Map.entry("phase_move_combat", "Phase: combat move"),
+          Map.entry("phase_move_noncombat", "Phase: non-combat move"),
+          Map.entry("phase_placement", "Phase: placement"),
+          Map.entry("phase_politics", "Phase: politics"),
+          Map.entry("phase_purchase", "Phase: purchase"),
+          Map.entry("phase_technology", "Phase: technology"),
+          Map.entry("phase_user_actions", "Phase: actions"),
+          Map.entry("placed_air", "Air units placed"),
+          Map.entry("placed_infrastructure", "Buildings placed"),
+          Map.entry("placed_land", "Land units placed"),
+          Map.entry("placed_sea", "Sea units placed"),
+          Map.entry("political_action_failure", "Political action failed"),
+          Map.entry("political_action_successful", "Political action done"),
+          Map.entry("technology_failure", "No technology found"),
+          Map.entry("technology_successful", "Technology found"),
+          Map.entry("territory_capture_blitz", "Territory taken by blitz"),
+          Map.entry("territory_capture_capital", "Capital taken"),
+          Map.entry("territory_capture_land", "Territory taken"),
+          Map.entry("territory_capture_sea", "Sea zone taken"),
+          Map.entry("user_action_failure", "Action failed"),
+          Map.entry("user_action_successful", "Action done"),
+          Map.entry("notification_", "With a message, its sounds"),
+          Map.entry("victory_", "Victory, its sounds"),
+          Map.entry("defeat_", "Defeat, its sounds"));
 
-  /** The three files, by what they hold. */
+  /** The files, by what they hold. */
   @AllArgsConstructor
   @Getter
   enum Kind {
@@ -58,7 +113,23 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable) {
         "Unit tool tips",
         "The tool tip of a unit type, in HTML: it replaces the one the game makes, or with"
             + " .append is added below it; a nation's name after the unit's makes it that"
-            + " nation's.");
+            + " nation's."),
+    POLITICS(
+        "politicstext.properties",
+        "Political actions",
+        "The texts of political actions, eg their button and the messages when they succeed or"
+            + " fail. A key is an action's \"text\" and the part, eg Axis_To_War.BUTTON."),
+    ACTIONS(
+        "actionstext.properties",
+        "User actions",
+        "The texts of user actions, eg their button and the messages when they succeed or fail."
+            + " A key is an action's \"text\" and the part, eg Build_Fort.BUTTON."),
+    SOUNDS(
+        "sounds.properties",
+        "Sounds",
+        "The sounds the game plays, eg for a land battle: mp3 files or folders of them, separated"
+            + " by ;, below the map's sounds folder or the game's. A nation's name after the key"
+            + " makes it that nation's.");
 
     private final String file;
     private final String title;
@@ -283,6 +354,8 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable) {
       case OBJECTIVES -> explainObjective(key, game);
       case NOTIFICATIONS -> explainMessage(key, game);
       case TOOLTIPS -> explainTooltip(key, game);
+      case POLITICS, ACTIONS -> explainAction(kind, key, game);
+      case SOUNDS -> explainSound(key, game);
     };
   }
 
@@ -315,6 +388,86 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable) {
     return triggers.isEmpty()
         ? "No trigger shows this message"
         : "Shown by trigger " + String.join(", ", triggers);
+  }
+
+  private static String explainAction(final Kind kind, final String key, final Game game) {
+    final int dot = key.lastIndexOf('.');
+    final String textKey = dot < 0 ? key : key.substring(0, dot);
+    final List<String> actions =
+        ActionsXml.actions(game).stream()
+            .filter(a -> a.textKind() == kind)
+            .filter(a -> a.textParts().contains(key.substring(dot + 1)))
+            .filter(a -> textKey.equals(ActionsXml.textKey(game, a)))
+            .map(a -> a.name() + " of " + a.nation())
+            .distinct()
+            .toList();
+    return actions.isEmpty()
+        ? "No action of the game reads it"
+        : key.substring(dot + 1) + " of " + String.join(", ", actions);
+  }
+
+  /**
+   * The sound keys the game plays, eg battle_land, then those of each nation, eg
+   * battle_land_Germans, and those its triggers' messages name in notifications.properties; the
+   * default folder first.
+   */
+  static List<String> soundKeys(final Game game, final MapTexts texts) {
+    final List<String> fixed =
+        SOUND_NAMES.keySet().stream().filter(k -> !k.endsWith("_")).sorted().toList();
+    final Stream<String> triggered =
+        AttachmentsXml.attachments(game).stream()
+            .filter(a -> "TriggerAttachment".equals(AttachmentsXml.kind(a)))
+            .flatMap(
+                a ->
+                    Stream.concat(
+                        option(a, "notification")
+                            .flatMap(m -> messageSounds(texts, m))
+                            .map(s -> "notification_" + s)
+                            .stream(),
+                        option(a, "victory")
+                            .flatMap(m -> messageSounds(texts, m))
+                            .stream()
+                            .flatMap(s -> Stream.of("victory_" + s, "defeat_" + s))));
+    return Stream.of(
+            Stream.of(SOUND_FOLDER),
+            fixed.stream(),
+            MapXml.nations(game).stream()
+                .flatMap(n -> fixed.stream().map(k -> k + "_" + n)),
+            triggered)
+        .flatMap(s -> s)
+        .distinct()
+        .toList();
+  }
+
+  private static Optional<String> messageSounds(final MapTexts texts, final String message) {
+    return texts.value(Kind.NOTIFICATIONS, message + SOUNDS).map(String::strip);
+  }
+
+  private static String explainSound(final String key, final Game game) {
+    if (key.equals(SOUND_FOLDER)) {
+      return "Default folder";
+    }
+    if (SOUND_NAMES.containsKey(key)) {
+      return SOUND_NAMES.get(key);
+    }
+    final Optional<String> nation =
+        MapXml.nations(game).stream()
+            .filter(n -> key.endsWith("_" + n))
+            .filter(n -> SOUND_NAMES.containsKey(key.substring(0, key.length() - n.length() - 1)))
+            .findFirst();
+    if (nation.isPresent()) {
+      return SOUND_NAMES.get(key.substring(0, key.length() - nation.get().length() - 1))
+          + " for "
+          + nation.get();
+    }
+    return SOUND_NAMES.entrySet().stream()
+        .filter(e -> e.getKey().endsWith("_") && key.startsWith(e.getKey()))
+        .findFirst()
+        .map(e -> e.getValue() + " " + key.substring(e.getKey().length()))
+        .orElse(
+            key.startsWith("battle_") && (key.endsWith("_hit") || key.endsWith("_miss"))
+                ? "Fire of " + key.substring("battle_".length())
+                : "Not played by the game");
   }
 
   private static String explainTooltip(final String key, final Game game) {
@@ -370,9 +523,19 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable) {
                   .flatMap(a -> Stream.of("notification", "victory").map(o -> option(a, o)))
                   .flatMap(Optional::stream)
                   .map(message -> new Entry(message, ""));
+          case SOUNDS ->
+              soundKeys(game, texts).stream().map(k -> new Entry(k, ""));
           case TOOLTIPS ->
               MapXml.unitTypes(game).stream()
                   .flatMap(u -> Stream.of(TOOLTIP + u, TOOLTIP + u + APPEND))
+                  .map(k -> new Entry(k, ""));
+          case POLITICS, ACTIONS ->
+              ActionsXml.actions(game).stream()
+                  .filter(a -> a.textKind() == kind)
+                  .flatMap(
+                      a ->
+                          a.textParts().stream()
+                              .map(part -> ActionsXml.textKey(game, a) + "." + part))
                   .map(k -> new Entry(k, ""));
         };
     return all.filter(e -> !present.contains(e.key())).distinct().toList();

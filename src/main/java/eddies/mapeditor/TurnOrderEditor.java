@@ -4,6 +4,7 @@ import games.strategy.engine.data.GameStep;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.GridLayout;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
 import java.io.Serial;
@@ -32,6 +33,7 @@ import org.triplea.map.data.elements.GamePlay.Sequence.Step;
 import org.triplea.map.data.elements.GamePlay.Sequence.Step.StepProperty;
 import org.triplea.swing.DocumentListenerBuilder;
 import org.triplea.swing.SwingComponents;
+import eddies.mapeditor.GameRulesXml.DelegateKind;
 import eddies.mapeditor.MakerIcon.Glyph;
 
 /** The turn order: the steps of a round, each of a delegate and mostly of a nation. */
@@ -139,6 +141,9 @@ final class TurnOrderEditor implements Editor {
     final JButton add = new JButton("Add step");
     add.setToolTipText("A new step after the chosen one, of its kind and nation");
     add.addActionListener(e -> addStep());
+    final JButton kind = new JButton("Add kind...");
+    kind.setToolTipText("A step of a kind TripleA has, eg politics or user actions");
+    kind.addActionListener(e -> addKind());
     final JButton up = new JButton("▲");
     up.setToolTipText("Move the step up");
     up.addActionListener(e -> move(-1));
@@ -157,6 +162,7 @@ final class TurnOrderEditor implements Editor {
         });
     final JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
     buttons.add(add);
+    buttons.add(kind);
     buttons.add(up);
     buttons.add(down);
     buttons.add(remove);
@@ -179,6 +185,41 @@ final class TurnOrderEditor implements Editor {
                 at,
                 like.map(Step::getDelegate).orElse(delegates.get(0)),
                 like.map(Step::getPlayer).orElse(null)));
+  }
+
+  /** Asks for a kind of step TripleA has, and adds it with a step after the chosen one. */
+  private void addKind() {
+    final JComboBox<DelegateKind> kinds =
+        new JComboBox<>(GameRulesXml.DELEGATE_KINDS.toArray(DelegateKind[]::new));
+    final JComboBox<String> nations =
+        new JComboBox<>(MapXml.nations(project.game()).toArray(String[]::new));
+    final List<Step> all = RulesXml.steps(project.game());
+    if (selected >= 0 && all.get(selected).getPlayer() != null) {
+      nations.setSelectedItem(all.get(selected).getPlayer());
+    }
+    // steps of the whole round have no nation
+    kinds.addActionListener(
+        e -> nations.setEnabled(!((DelegateKind) kinds.getSelectedItem()).isOfRound()));
+    nations.setEnabled(!((DelegateKind) kinds.getSelectedItem()).isOfRound());
+    final JPanel fields = new JPanel(new GridLayout(0, 1, 0, 4));
+    fields.add(labelFor("Kind of step", kinds));
+    fields.add(kinds);
+    fields.add(labelFor("Nation", nations));
+    fields.add(nations);
+    if (!Panels.ask(page, fields, "Add kind of step")) {
+      return;
+    }
+    final DelegateKind kind = (DelegateKind) kinds.getSelectedItem();
+    final String nation = (String) nations.getSelectedItem();
+    final int at = selected >= 0 ? selected + 1 : all.size();
+    selected = at;
+    project.edit(g -> GameRulesXml.withDelegateStep(g, at, kind, nation));
+  }
+
+  private static JLabel labelFor(final String text, final JComponent field) {
+    final JLabel label = new JLabel(text);
+    label.setLabelFor(field);
+    return label;
   }
 
   private void move(final int by) {

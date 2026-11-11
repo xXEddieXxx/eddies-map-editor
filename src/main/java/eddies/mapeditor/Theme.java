@@ -37,6 +37,16 @@ class Theme {
     return themeColor("Separator.foreground");
   }
 
+  /**
+   * The 1 px outline of a color swatch: light around a dark color, dark around a light one, so a
+   * near-black nation shows on the dark theme and a near-white one on the light theme.
+   */
+  static Color getSwatchOutlineColor(final Color fill) {
+    final double luminance =
+        (0.299 * fill.getRed() + 0.587 * fill.getGreen() + 0.114 * fill.getBlue()) / 255;
+    return luminance < 0.5 ? new Color(0xB0B0B0) : new Color(0x505050);
+  }
+
   /** An XML file's tags, attribute names, values and comments, for a light or dark theme. */
   static List<Color> getXmlColors() {
     return FlatLaf.isLafDark()

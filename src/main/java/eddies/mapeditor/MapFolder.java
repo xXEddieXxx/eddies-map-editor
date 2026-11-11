@@ -27,6 +27,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 import java.util.zip.ZipEntry;
@@ -35,9 +36,14 @@ import javax.imageio.ImageIO;
 import lombok.experimental.UtilityClass;
 import org.triplea.game.ApplicationContext;
 import org.triplea.io.FileUtils;
+import org.triplea.map.data.elements.DiceSides;
+import org.triplea.map.data.elements.Game;
+import org.triplea.map.data.elements.TerritoryEffectList;
 import org.triplea.map.description.file.MapDescriptionYaml;
 import org.triplea.map.description.file.MapDescriptionYaml.MapGame;
 import org.triplea.util.Services;
+import org.triplea.yaml.YamlReader;
+import org.triplea.yaml.YamlWriter;
 
 /**
  * What the map maker does with a map's folder: its games, a new map's folder, a new game in it, the
@@ -66,25 +72,30 @@ class MapFolder {
     if (Files.exists(xml)) {
       throw new IOException("There is a game file " + fileName + " already");
     }
+    final Optional<Path> yamlFile =
+        FileUtils.findFileInParentFolders(template, MapDescriptionYaml.MAP_YAML_FILE_NAME);
+    // read first: a map.yml that does not read leaves no game file behind
+    final Optional<Map<String, Object>> yaml =
+        yamlFile.isPresent() ? Optional.of(readYaml(yamlFile.get())) : Optional.empty();
     Files.copy(template, xml);
-    final Optional<MapDescriptionYaml> yaml =
-        FileUtils.findFileInParentFolders(template, MapDescriptionYaml.MAP_YAML_FILE_NAME)
-            .flatMap(MapDescriptionYaml::fromFile);
-    if (yaml.isPresent()) {
-      final Path yamlFile = yaml.get().getYamlFileLocation();
-      final MapDescriptionYaml withGame =
-          MapDescriptionYaml.builder()
-              .yamlFileLocation(yamlFile)
-              .mapName(yaml.get().getMapName())
-              .mapGameList(yaml.get().getMapGameList())
-              .game(
-                  MapGame.builder()
-                      .gameName(gameName.strip())
-                      // the file name only: the game looks it up in the map's games folder
-                      .xmlFileName(xml.getFileName().toString())
-                      .build())
-              .build();
-      Files.writeString(yamlFile, withGame.toYamlString());
+    if (yamlFile.isPresent()) {
+      final List<Object> games = new ArrayList<>();
+      if (yaml.get().get("games") instanceof List<?> listed) {
+        games.addAll(listed);
+      }
+      final Map<String, Object> game = new LinkedHashMap<>();
+      game.put("game_name", gameName.strip());
+      // the file name only: the game looks it up in the map's games folder
+      game.put("file_name", xml.getFileName().toString());
+      games.add(game);
+      yaml.get().put("games", games);
+      try {
+        replaceText(yamlFile.get(), YamlWriter.writeToString(yaml.get()));
+      } catch (final IOException e) {
+        // a game file map.yml does not list would only confuse: take it back
+        Files.deleteIfExists(xml);
+        throw e;
+      }
     }
     return xml;
   }
@@ -527,6 +538,117 @@ class MapFolder {
     void write(Path to) throws IOException;
   }
 
+  /** The folders of pictures the game looks for in a map, with what they hold. */
+  static final Map<String, String> PICTURE_FOLDERS =
+      Map.of(
+          "PUs", "The PU coins on the territories, one for each value.",
+          "territoryNames", "Territory names as pictures, in place of the drawn ones.",
+          "territoryEffects", "The markers of territory effects, eg a forest.",
+          "dice", "The dice in battles: thrown, hits and ignored.",
+          "misc", "Victory city and blockade markers, the mouse pointer and decorations.");
+
+  /**
+   * The pictures the game looks for in one of the {@link #PICTURE_FOLDERS} for this game, eg 3.png
+   * in PUs for a territory worth 3; the game draws its own where one is missing.
+   */
+  static List<String> picturesFor(final String folderName, final Game game) {
+    return switch (folderName) {
+      case "PUs" ->
+          MapXml.territories(game).stream()
+              .map(t -> MapXml.production(game, t))
+              .filter(value -> value > 0)
+              .distinct()
+              .sorted()
+              .map(value -> value + ".png")
+              .toList();
+      case "territoryNames" ->
+          MapXml.territories(game).stream().map(t -> t.replace(' ', '_') + ".png").toList();
+      case "territoryEffects" ->
+          Optional.ofNullable(game.getTerritoryEffectList())
+              .map(TerritoryEffectList::getTerritoryEffects)
+              .orElse(List.of())
+              .stream()
+              .map(TerritoryEffectList.TerritoryEffect::getName)
+              .flatMap(effect -> Stream.of(effect + ".png", effect + "_large.png"))
+              .toList();
+      case "dice" ->
+          IntStream.rangeClosed(
+                  1,
+                  Optional.ofNullable(game.getDiceSides()).map(DiceSides::getValue).orElse(6))
+              .boxed()
+              .flatMap(side -> Stream.of("", "_hit", "_ignored").map(kind -> side + kind + ".png"))
+              .toList();
+      case "misc" ->
+          List.of(
+              "vc.png",
+              "blockade.png",
+              "cursor.gif",
+              "error.gif",
+              "warning.gif",
+              "non-withdrawable.png",
+              "non-withdrawable_small.png");
+      default -> List.of();
+    };
+  }
+
+  /** Copies the file into the map as {@link #replace} writes one, eg a sound. */
+  static void copyInto(final Path source, final Path target) throws IOException {
+    Files.createDirectories(target.getParent());
+    replace(target, to -> Files.copy(source, to));
+  }
+
+  /**
+   * The picture written as the target's kind, eg PUs/3.png from a jpg, as {@link #replace} writes
+   * a file.
+   *
+   * @throws IOException also for a file that is no picture
+   */
+  static void importPicture(final Path source, final Path target) throws IOException {
+    final BufferedImage picture = ImageIO.read(source.toFile());
+    if (picture == null) {
+      throw new IOException(source.getFileName() + " is no picture");
+    }
+    final String name = target.getFileName().toString();
+    final String kind = name.substring(name.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
+    Files.createDirectories(target.getParent());
+    // a jpg has no see-through parts, which png and gif keep
+    replace(target, to -> ImageIO.write(picture, kind, to.toFile()));
+  }
+
+  /**
+   * Gives the game of this XML file a new name in the map.yml, the name the game lists it by; every
+   * other entry of the file stays.
+   *
+   * @throws IOException also for a map.yml that does not read
+   */
+  static void renameGame(final Path yamlFile, final String xmlFileName, final String gameName)
+      throws IOException {
+    final Map<String, Object> yaml = readYaml(yamlFile);
+    if (yaml.get("games") instanceof List<?> games) {
+      for (final Object game : games) {
+        if (game instanceof Map<?, ?> entry
+            && xmlFileName.equals(entry.get("file_name"))) {
+          @SuppressWarnings("unchecked")
+          final Map<String, Object> named = (Map<String, Object>) entry;
+          named.put("game_name", gameName.strip());
+        }
+      }
+    }
+    replaceText(yamlFile, YamlWriter.writeToString(yaml));
+  }
+
+  /**
+   * The map.yml as its entries, to change and write back with every other entry; its comments are
+   * lost, kept in the .bak {@link #replaceText} leaves.
+   */
+  private static Map<String, Object> readYaml(final Path yamlFile) throws IOException {
+    try {
+      return new LinkedHashMap<>(YamlReader.readMap(readText(yamlFile)));
+    } catch (final YamlReader.InvalidYamlFormatException | ClassCastException e) {
+      throw new IOException(yamlFile.getFileName() + " does not read: " + e.getMessage(), e);
+    }
+  }
+
   /** Packs the folder into a zip, as the map server takes a map; returns the number of files. */
   static int zip(final Path folder, final Path zipFile) throws IOException {
     final List<Path> files;
@@ -568,5 +690,31 @@ class MapFolder {
             mainClass)
         .inheritIO()
         .start();
+  }
+
+  /**
+   * The picture as the resource's icons, fitted keeping its shape into the squares the game shows
+   * them in: {@code resources/<resource>.png} and {@code _large.png}; their first versions stay as
+   * ".bak".
+   */
+  static void writeResourceIcon(
+      final Path folder, final String resource, final BufferedImage picture) throws IOException {
+    final Path icons = Files.createDirectories(folder.resolve("resources"));
+    for (final Map.Entry<String, Integer> size : Map.of(".png", 20, "_large.png", 48).entrySet()) {
+      final int side = size.getValue();
+      final double scale =
+          Math.min(side / (double) picture.getWidth(), side / (double) picture.getHeight());
+      final int width = Math.max(1, (int) Math.round(picture.getWidth() * scale));
+      final int height = Math.max(1, (int) Math.round(picture.getHeight() * scale));
+      final BufferedImage icon = new BufferedImage(side, side, BufferedImage.TYPE_INT_ARGB);
+      final Graphics2D g = icon.createGraphics();
+      g.setRenderingHint(
+          RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+      g.drawImage(picture, (side - width) / 2, (side - height) / 2, width, height, null);
+      g.dispose();
+      replace(
+          icons.resolve(resource + size.getKey()),
+          file -> ImageIO.write(icon, "png", file.toFile()));
+    }
   }
 }

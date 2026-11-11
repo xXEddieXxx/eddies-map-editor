@@ -30,7 +30,6 @@ import org.triplea.generic.xml.reader.exceptions.XmlParsingException;
 import org.triplea.io.FileUtils;
 import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.Info;
-import org.triplea.map.xml.writer.GameXmlWriter;
 import eddies.mapeditor.MapChecks.Problem;
 import eddies.mapeditor.MapFiles.Marker;
 import eddies.mapeditor.MapFiles.NationUnit;
@@ -213,6 +212,18 @@ final class MapProject {
     final Game changed = change.apply(current.game());
     if (changed != current.game()) {
       step(state(changed, current.files()));
+    }
+  }
+
+  /**
+   * Changes the game and the texts beside it together, eg a trigger and its message, as one step;
+   * one that changes neither is no step.
+   */
+  void edit(final UnaryOperator<Game> change, final UnaryOperator<MapTexts> textChange) {
+    final Game changed = change.apply(current.game());
+    final MapTexts changedTexts = textChange.apply(current.texts());
+    if (changed != current.game() || changedTexts != current.texts()) {
+      step(new State(changed, current.files(), changedTexts));
     }
   }
 
@@ -416,9 +427,21 @@ final class MapProject {
 
   /** Sets a map.properties entry as one step; an empty value removes it. */
   void setMapProperty(final String name, final String value) {
-    if (!value.equals(getFiles().properties().getProperty(name, ""))) {
-      step(state(game(), current.files().withProperty(name, value)));
+    setMapProperties(Map.of(name, value));
+  }
+
+  /**
+   * Sets map.properties entries together as one step, eg those the game reads only all together;
+   * an empty value removes its entry.
+   */
+  void setMapProperties(final Map<String, String> values) {
+    MapFiles changed = current.files();
+    for (final Map.Entry<String, String> value : values.entrySet()) {
+      if (!value.getValue().equals(changed.properties().getProperty(value.getKey(), ""))) {
+        changed = changed.withProperty(value.getKey(), value.getValue());
+      }
     }
+    stepFiles(changed);
   }
 
   void setNationColor(final String nation, final Color color) {
@@ -756,7 +779,8 @@ final class MapProject {
     }
     saving.texts().writeChanged(mapFolder, saved.texts());
     final Game game = mapName == null ? saving.game() : MapXml.withMapName(saving.game(), mapName);
-    MapFolder.replace(xml, file -> GameXmlWriter.exportXml(game, file));
+    // the file there is the last save: what TripleA's model does not hold is kept from it
+    MapFolder.replace(xml, file -> GameXmlKeeper.export(game, xml, file));
     saved = saving;
     current = saved;
     listeners.forEach(Runnable::run);

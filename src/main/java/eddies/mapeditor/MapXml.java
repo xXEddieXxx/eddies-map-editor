@@ -188,8 +188,19 @@ class MapXml {
   }
 
   static Game withProduction(final Game game, final String territory, final int production) {
-    return withTerritoryOption(
-        game, territory, "production", production == 0 ? null : String.valueOf(production));
+    final Game changed =
+        withTerritoryOption(
+            game, territory, "production", production == 0 ? null : String.valueOf(production));
+    // the game's "production" sets the unit production too: an own one must stay after it
+    final List<String> units =
+        TerritoryXml.values(changed, territory, TerritoryXml.UNIT_PRODUCTION);
+    return changed == game || units.isEmpty()
+        ? changed
+        : TerritoryXml.withValues(
+            TerritoryXml.withValues(changed, territory, TerritoryXml.UNIT_PRODUCTION, List.of()),
+            territory,
+            TerritoryXml.UNIT_PRODUCTION,
+            units);
   }
 
   /** Whether the territory is the capital of its owner. */

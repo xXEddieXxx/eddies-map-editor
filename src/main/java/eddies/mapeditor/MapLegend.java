@@ -87,7 +87,7 @@ final class MapLegend extends JPanel {
     public void paintIcon(final Component c, final Graphics g, final int x, final int y) {
       g.setColor(color);
       g.fillRect(x, y + 1, 12, 12);
-      g.setColor(Color.DARK_GRAY);
+      g.setColor(Theme.getSwatchOutlineColor(color));
       g.drawRect(x, y + 1, 11, 11);
     }
 

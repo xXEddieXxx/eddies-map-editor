@@ -5,6 +5,7 @@ import java.awt.FlowLayout;
 import java.awt.Font;
 import javax.swing.AbstractButton;
 import javax.swing.BorderFactory;
+import javax.swing.Box;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
@@ -50,9 +51,11 @@ class Help {
 
   /** The component with its "?" right after it, named after the component's text. */
   static JComponent with(final JComponent component, final String explanation) {
-    final JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+    // no gap before the label, so it lines up with labels without a "?"
+    final JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
     row.setOpaque(false);
     row.add(component);
+    row.add(Box.createHorizontalStrut(4));
     final String subject =
         component instanceof JLabel label
             ? label.getText()

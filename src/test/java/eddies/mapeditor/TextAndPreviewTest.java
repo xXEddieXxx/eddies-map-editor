@@ -93,7 +93,8 @@ final class TextAndPreviewTest {
       Files.writeString(folder.resolve(namesAndTexts[i]), namesAndTexts[i + 1]);
     }
     final FilesEditor files =
-        new FilesEditor(() -> Optional.of(folder), () -> true, () -> {}, () -> {});
+        new FilesEditor(
+            () -> Optional.of(folder), MapXmlTest::givenMinimap, () -> true, () -> {}, () -> {});
     files.showing();
     return files;
   }

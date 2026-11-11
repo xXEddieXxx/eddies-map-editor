@@ -43,15 +43,20 @@ All code is in `src/main/java/eddies/mapeditor`, the tests in `src/test/java/edd
 | `StartPage`, `NewMapWizard`   | The start page's three choices; a new map from a picture                                        |
 | `Editor`                      | One tool: `title`, `hint` (its "?"), `glyph`, `page`, `preview`, `usesMap`, `showing`, `commit` |
 | `OverviewEditor`, `MapGuide`  | Next steps to a playable map, problems, the map folder's anatomy                                |
-| `TerritoriesEditor`, `ConnectionsEditor`, `NationsEditor`, `UnitsEditor`, `RulesEditors`, `NotesEditor`, `MapLookEditor`, `FilesEditor` | The tools; `MapLookEditor`: map.properties settings and the relief |
+| `TerritoriesEditor`, `ConnectionsEditor`, `NationsEditor`, `UnitsEditor`, `RulesEditors`, `NotesEditor`, `MapLookEditor`, `SoundsEditor`, `FilesEditor` | The tools; `MapLookEditor`: map.properties settings (units, small map, blending, map picture title, pointer) and the relief; `SoundsEditor`: sounds.properties (a `MapTexts` kind), mp3s copied into `sounds/`; `FilesEditor`: also map.yml's games to rename and the picture folders (PUs, dice, misc, territoryNames, territoryEffects) with what is missing, to import |
 | `MapProject`                  | The open map: game + files per undo step, save, problems                                        |
 | `MapXml`                      | Reads and changes the XML model; every change returns a new `Game`                              |
-| `TurnOrderEditor`, `PoliticsEditor`, `TechnologyEditor`, `ProductionEditor` | Turn order steps; relationship types and how nations start; technologies; frontiers and production rules |
-| `RulesXml`, `ProductionXml`, `TechXml` | Like `MapXml` for turn order and politics, production, technology; `RulesXml.whereNamed` keeps what triggers name (a nation they name is not removed) |
+| `GameXmlKeeper`               | Writes the game XML, keeping from the file it replaces what TripleA's model drops: DOCTYPE, comments, unknown elements and attributes |
+| `TurnOrderEditor`, `PoliticsEditor`, `TechnologyEditor`, `ProductionEditor` | Turn order steps; relationship types (their kind and what they allow) and how nations start; technologies; Buy and Repair (frontiers and rules), Resources (icons, amounts at the start). Turn order adds new kinds of step from TripleA's delegates |
+| `ActionsEditor`, `ActionsXml` | Political and user actions: texts (via `MapTexts`), conditions and triggers declared before them, relationship changes, cost, chance, who accepts; a new one comes last with the prefix TripleA needs, it and its button text one step |
+| `RulesXml`, `ProductionXml`, `TechXml`, `GameRulesXml` | Like `MapXml` for turn order, politics, a nation's player list flags and playerAttachment rules (Nations), production (repair through `ProductionXml.repairView`, resources), technology, game options (typed; a `<value>` child stays one), dice, variables, delegates; `RulesXml.whereNamed` keeps what triggers name (a nation they name is not removed) |
 | `MapFiles`                    | The files beside the XML as one value: outlines, centers, properties, pictures, places         |
-| `TextsEditor`, `MapTexts`     | Objectives, trigger messages, unit tool tips (objectives/notifications/tooltips.properties): kept as text, changed by key in place |
+| `TextsEditor`, `MapTexts`     | Objectives, trigger messages, unit tool tips, action texts and sounds (objectives/notifications/tooltips/politicstext/actionstext/sounds.properties): kept as text, changed by key in place; sounds are edited in `SoundsEditor` |
+| `UnitsXml`, `UnitOptions`    | A unit type's options (grouped in `UnitOptions` with plain labels and TripleA's names and defaults; the rest under "More options") and its support attachments; unknown options, counts and order stay |
 | `AttachmentsEditor`, `AttachmentsXml` | Every attachment (triggers, conditions, ...) with its options; known option names read from TripleA's classes |
-| `MapFolder`                   | Disk: map.yml, new map folders, tiles, flags, unit pictures, zip, `.bak` handling, Play         |
+| `TriggersEditor`, `TriggerAssistant`, `TriggerXml` | Triggers in plain words (listed in a `SwingWorker` while the tool shows, as maps have up to 35,000); the assistant (who, when, conditions, effects, how often) writes a trigger, its new conditions (right before it, as the game finds names only above) and its message text as one step. `TriggerXml.SPECS`: each option's parts and which go to `count` (TripleA reads `count:value`); an unchanged option keeps its form, unknown options and condition names (eg made by foreach) are kept |
+| `CanalsEditor`, `CanalXml`, `TerritoryEffectsEditor`, `TerritoryEffectsXml`, `TerritoryXml` | Canals (clicked on the map, shown with `MapView.mark`; a canalAttachment on each sea zone), territory effects (list, combat and movement per unit type, picture in `territoryEffects/`; rename and remove refused where `RulesXml.whereNamed` still finds them), the territory attachment's other options (impassable, unit production, original owner, effects, sea zone kinds, repeated ones as lists) |
+| `MapFolder`                   | Disk: map.yml (games renamed keeping unknown keys), new map folders, tiles, flags, unit pictures, picture folders and imports, zip, `.bak` handling, Play |
 | `PlayWith`                    | Which TripleA Play starts: another installed one (found or chosen, kept in Java preferences) or the one the editor runs with |
 | `MapPicture`                  | Finds territories (areas between dark lines, blue = sea) and neighbours in a picture            |
 | `ReliefMaker`                 | A relief made from the outlines: coast lines and shadows, waves, raised land, texture          |
@@ -65,12 +70,19 @@ All code is in `src/main/java/eddies/mapeditor`, the tests in `src/test/java/edd
 
 - **The XML model, not `GameData`.** The editor reads the game XML into
   `org.triplea.map.data.elements.Game` (`XmlMapper`), changes it with `MapXml`, and writes it with
-  `GameXmlWriter`. `GameData` is only used to ask TripleA itself: by Check
+  `GameXmlKeeper`: TripleA's JAXB export of the model, plus what the file on disk has that the model
+  drops (the difference between the file and the file read and exported by the model). Elements
+  are written in the model's order (the editor may move them, eg turn order steps); comments and
+  dropped elements go before the element they were before, a removed element's comments where it
+  was. A removed and a new element whose keys differ in one attribute count as renamed. `GameData` is only used to ask TripleA itself: by Check
   (`MapChecks.findError`), to load the game as TripleA does, and by `TechXml.withStandardTechs`, for
   the standard technologies of a game without its own list.
 - **Every change is a step.** `MapProject` keeps a `State(game, files, texts)` per step for undo
   and redo, and the saved state. Changes go through `MapProject.edit` or one of its methods, never by
-  mutating a model. `onChange` listeners refresh the tools.
+  mutating a model. `onChange` listeners refresh the tools. Not steps: resource icons, picture
+  imports, new picture folders, copied sounds and map.yml changes (new game, rename) are written to
+  disk at once, outside undo, with `.bak`; a rewritten map.yml loses its YAML comments (kept in the
+  `.bak`).
 - **A save writes what changed.** Text files go through `MapFolder.replace`: a failed save loses
   nothing, and the first version of a file stays as `.bak`. `MapFolder.readText`/`replaceText` take
   a file as the game reads it: .properties as ISO-8859-1 (other characters as `\uXXXX`), the rest UTF-8.
@@ -109,7 +121,8 @@ All code is in `src/main/java/eddies/mapeditor`, the tests in `src/test/java/edd
   Comments say why, not what.
 - **Tests**: JUnit 5 and AssertJ with `.as("why")`, `@DisplayName` on every test, given / when /
   then with setup in `given...()` helpers. A behaviour change comes with a test that fails without
-  it. Game data: TripleA's `minimap.xml` (copied into `src/test/resources`); pictures from
+  it. Game data: TripleA's `minimap.xml` and, for a big game, `ww2global40.xml`
+  (`GameRulesXmlTest.givenG40()`), copied into `src/test/resources`; pictures from
   `MapPictureTest.givenPicture()`.
 - **Swing checks without a screen**: render a window offscreen in a temporary test (build it by
   reflection, lay it out, `paint` into a `BufferedImage`, look at the PNG), then delete the test.
@@ -117,4 +130,5 @@ All code is in `src/main/java/eddies/mapeditor`, the tests in `src/test/java/edd
 ## Goal
 
 Everything TripleA's map format can do should be doable in the editor without opening a file.
-Triggers and conditions are edited as plain attachments (Attachments), without a guided tool.
+Triggers and conditions have a guided assistant (Triggers); options it does not know (eg
+foreach, chance increments) stay as they are and are edited as plain attachments (Attachments).

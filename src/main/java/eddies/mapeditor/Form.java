@@ -172,6 +172,8 @@ final class Form extends JPanel implements Scrollable {
       final int value, final int min, final int max, final IntConsumer onChange) {
     final JSpinner spinner =
         new JSpinner(new SpinnerNumberModel(value, Math.min(min, value), Math.max(max, value), 1));
+    // digits only, as in the map's files: no "2.300" for 2300 on a German system
+    spinner.setEditor(new JSpinner.NumberEditor(spinner, "#"));
     spinner.addChangeListener(e -> onChange.accept((Integer) spinner.getValue()));
     return spinner;
   }

@@ -107,8 +107,25 @@ class MapChecks {
             territories.stream()
                 .anyMatch(t -> MapXml.capitalOf(game, t).filter(nation::equals).isPresent());
         if (!hasCapital) {
-          problems.add(Problem.of(nation + " has no capital"));
+          // shown at one of its territories, where Territories makes a capital
+          final String owned =
+              territories.stream()
+                  .filter(t -> MapXml.owner(game, t).filter(nation::equals).isPresent())
+                  .findFirst()
+                  .orElseThrow();
+          problems.add(Problem.at(owned, nation + " has no capital"));
         }
+      }
+    }
+    // the game refuses a canal without exactly two sea zones or without land
+    for (final CanalXml.Canal canal : CanalXml.canals(game)) {
+      if (canal.seaZones().size() != 2 || canal.lands().isEmpty()) {
+        problems.add(
+            new Problem(
+                "The canal "
+                    + canal.name()
+                    + " needs two sea zones and a land territory: change it in Canals",
+                canal.seaZones().isEmpty() ? null : canal.seaZones().getFirst()));
       }
     }
     return problems;

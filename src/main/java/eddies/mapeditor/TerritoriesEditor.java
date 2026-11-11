@@ -5,11 +5,14 @@ import java.awt.Dimension;
 import java.awt.FileDialog;
 import java.awt.FlowLayout;
 import java.awt.GridLayout;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -34,6 +37,7 @@ import javax.swing.JScrollPane;
 import javax.swing.JTextField;
 import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.Initialize.UnitInitialize.UnitPlacement;
+import org.triplea.swing.DocumentListenerBuilder;
 import org.triplea.swing.FileChooser;
 import org.triplea.swing.SwingComponents;
 import eddies.mapeditor.MakerIcon.Glyph;
@@ -46,6 +50,7 @@ import eddies.mapeditor.MapProject.Renamed;
 final class TerritoriesEditor implements Editor {
   // first in the owner boxes; told by its place, as a map may have a nation called "Neutral"
   private static final String NO_OWNER = "(no owner)";
+  private static final String OWNER_AT_START = "(its owner at the start)";
   private static final List<Integer> VALUES = List.of(0, 1, 2, 3, 4, 5, 6, 8, 10, 12);
   // the width of the decoration box: G40's misc folder holds dozens of long names
   private static final String DECORATION_WIDTH = "a_decoration_name.png";
@@ -71,6 +76,10 @@ final class TerritoriesEditor implements Editor {
   private boolean refilling;
   private @Nullable String selected;
   private boolean editingHere;
+  // the rarer options shown, for each territory until hidden again
+  private boolean showMore;
+  // the commit of a text being typed, made a step by commit()
+  private Optional<Runnable> typing = Optional.empty();
 
   TerritoriesEditor(final MapProject project, final MapView map) {
     this.project = project;
@@ -80,7 +89,7 @@ final class TerritoriesEditor implements Editor {
             "Search territory or owner",
             () -> MapXml.territories(project.game()),
             this::detail,
-            this::choose);
+            this::chooseInList);
     final JScrollPane inspectorScroll = SwingComponents.newJScrollPane(inspector);
     final JPopupMenu namesMenu = new JPopupMenu();
     final JMenuItem importNames = namesMenu.add("Import names...");
@@ -144,11 +153,11 @@ final class TerritoriesEditor implements Editor {
 
   @Override
   public String hint() {
-    return "Each territory with its owner, value, capital, victory city and starting units. Click"
-        + " one on the map or in the list to change it here, or pick a brush above the map and"
-        + " paint owners, values or units onto it: the copy brush copies the units of the territory"
-        + " chosen when it is picked. Move places shows where the game draws the chosen"
-        + " territory's units, name and markers, to move them.";
+    return "Each territory with its owner, value, capital, victory city, effects and starting"
+        + " units. Click one on the map or in the list to change it here, or pick a brush above"
+        + " the map and paint owners, values, units, effects or impassable onto it: the copy brush"
+        + " copies the units of the territory chosen when it is picked. Move places shows where"
+        + " the game draws the chosen territory's units, name and markers, to move them.";
   }
 
   @Override
@@ -168,10 +177,11 @@ final class TerritoriesEditor implements Editor {
                 + " owner or a value onto each territory clicked, owners only on land. Copy units"
                 + " gives each territory clicked the starting units of the territory chosen"
                 + " before, the copied nation's units turned to the new owner's; Clear units"
-                + " takes them away. Move places shows the chosen territory's places: drag one"
-                + " to move it, click into the territory to add a place for units, right-click"
-                + " one or press Delete over it to remove it. Place decorations puts the picture"
-                + " chosen beside it, from the map's misc folder, where you click, anywhere on the"
+                + " takes them away. Impassable and effects brushes paint those; Clear effects"
+                + " takes all effects off. Move places shows the chosen territory's places:"
+                + " drag one to move it, click into the territory to add a place for units,"
+                + " right-click one or press Delete over it to remove it. Place decorations puts"
+                + " the picture chosen beside it, from the map's misc folder, where you click, anywhere on the"
                 + " map; drag one to move it, right-click or Delete removes it."));
     map.useFor(MapMode.GAME, tools, this::clickOnMap);
     editWithBrush();
@@ -197,7 +207,14 @@ final class TerritoriesEditor implements Editor {
         + (project.isChanged(territory) ? " ●" : "");
   }
 
+  @Override
+  public void commit() {
+    typing.ifPresent(Runnable::run);
+  }
+
   private void clickOnMap(final String territory) {
+    // a text being typed is the shown territory's, before the inspector shows another
+    commit();
     final Brush chosen = (Brush) brush.getSelectedItem();
     if (chosen != null && chosen.paint() != null) {
       project.edit(game -> chosen.paint().apply(game, territory));
@@ -206,7 +223,14 @@ final class TerritoriesEditor implements Editor {
     list.choose(territory);
   }
 
+  /** A choice in the list also brings the territory into view; one on the map is in it. */
+  private void chooseInList(final String territory) {
+    choose(territory);
+    map.scrollTo(territory);
+  }
+
   private void choose(final String territory) {
+    commit();
     selected = territory;
     map.select(territory);
     showInspector();
@@ -235,6 +259,17 @@ final class TerritoriesEditor implements Editor {
     }
     brushes.add(copyUnits);
     brushes.add(new Brush("Clear units", (g, t) -> MapXml.withTerritoryUnits(g, t, List.of())));
+    brushes.add(
+        new Brush(
+            "Paint impassable", (g, t) -> TerritoryXml.withFlag(g, t, TerritoryXml.IMPASSABLE)));
+    brushes.add(
+        new Brush(
+            "Paint passable", (g, t) -> TerritoryXml.withoutFlag(g, t, TerritoryXml.IMPASSABLE)));
+    for (final String effect : TerritoryEffectsXml.effects(project.game())) {
+      brushes.add(
+          new Brush("Paint effect: " + effect, (g, t) -> TerritoryXml.withEffect(g, t, effect)));
+    }
+    brushes.add(new Brush("Clear effects", (g, t) -> TerritoryXml.withEffects(g, t, List.of())));
     brushes.add(movePlaces);
     // the pictures in the map's misc folder, placed anywhere on the map as the game draws them
     // and those decorations.txt names but misc lacks, so their decorations can still be moved
@@ -401,6 +436,7 @@ final class TerritoriesEditor implements Editor {
                         ? MapXml.withVictoryCity(g, territory)
                         : MapXml.withoutVictoryCity(g, territory)));
     inspector.row(victoryCity);
+    showExtras(territory, game);
 
     inspector.section("Units at the start");
     for (final UnitPlacement units : MapXml.units(game, territory)) {
@@ -419,12 +455,175 @@ final class TerritoriesEditor implements Editor {
     final JButton findPlaces = new JButton("Find again");
     findPlaces.setToolTipText("Finds the territory's places again inside its border");
     findPlaces.addActionListener(e -> project.findPlacesAgain(territory));
-    inspector.row(findPlaces);
+    final JPanel findRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+    findRow.add(findPlaces);
+    inspector.row(findRow);
 
     inspector.section(
         "Neighbours", "The territories units can move to from here. Change them in Connections.");
     inspector.note(SearchList.escape(String.join(", ", MapXml.neighbors(game, territory))));
     inspector.end();
+  }
+
+  /**
+   * What the game reads beyond the basics: impassable, unit production, original owner, effects,
+   * a sea zone's kind and, behind More options, the rest.
+   */
+  private void showExtras(final String territory, final Game game) {
+    final boolean water = MapXml.isWater(game, territory);
+    inspector.row(
+        flagBox(game, territory, TerritoryXml.IMPASSABLE, "Impassable: no unit may enter"));
+    if (!water) {
+      inspector.field(
+          "Units its factories place per turn",
+          "As many as its PUs per turn, unless set otherwise here.",
+          Form.newNumber(
+              TerritoryXml.unitProduction(game, territory),
+              999,
+              value -> edit(g -> TerritoryXml.withUnitProduction(g, territory, value))));
+      final JComboBox<String> original = new JComboBox<>();
+      original.addItem(OWNER_AT_START);
+      MapXml.nations(game).forEach(original::addItem);
+      TerritoryXml.originalOwner(game, territory)
+          .ifPresent(
+              nation -> {
+                if (!MapXml.nations(game).contains(nation)) {
+                  original.addItem(nation);
+                }
+                original.setSelectedItem(nation);
+              });
+      original.setToolTipText("The nation that gets it back when an ally frees it");
+      original.addActionListener(
+          e ->
+              project.edit(
+                  g ->
+                      TerritoryXml.withOriginalOwner(
+                          g,
+                          territory,
+                          original.getSelectedIndex() == 0
+                              ? null
+                              : (String) original.getSelectedItem())));
+      inspector.field(
+          "Original owner",
+          "Who gets it back when an ally frees it, if not its owner at the start.",
+          original);
+    }
+    final List<String> effects = TerritoryEffectsXml.effects(game);
+    if (!effects.isEmpty()) {
+      inspector.section(
+          "Effects",
+          "What the territory does to units, eg a forest slows tanks. Make and change effects in"
+              + " Effects; the brush above the map paints them.");
+      final List<String> has = MapXml.territoryEffects(game, territory);
+      final JPanel boxes = new JPanel(new GridLayout(0, 2));
+      for (final String effect : effects) {
+        final JCheckBox box = new JCheckBox(effect, has.contains(effect));
+        box.addActionListener(
+            e ->
+                project.edit(
+                    g ->
+                        box.isSelected()
+                            ? TerritoryXml.withEffect(g, territory, effect)
+                            : TerritoryXml.withEffects(
+                                g,
+                                territory,
+                                MapXml.territoryEffects(g, territory).stream()
+                                    .filter(other -> !other.equals(effect))
+                                    .toList())));
+        boxes.add(box);
+      }
+      inspector.row(boxes);
+    }
+    if (water) {
+      inspector.section("Sea zone");
+      inspector.row(
+          flagBox(game, territory, "blockadeZone", "Blockade zone: ships here cut enemy PUs"));
+      inspector.row(
+          flagBox(game, territory, "kamikazeZone", "Kamikaze zone: kamikaze attacks strike here"));
+      inspector.row(
+          flagBox(game, territory, "convoyRoute", "Convoy route: enemy ships here cut PUs"));
+    }
+    final JButton more = new JButton(showMore ? "Fewer options ▴" : "More options ▾");
+    more.setToolTipText("What the game reads more rarely, eg resources or who takes it over");
+    more.addActionListener(
+        e -> {
+          showMore = !showMore;
+          showInspector();
+        });
+    final JPanel moreRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+    moreRow.add(more);
+    inspector.row(moreRow);
+    if (showMore) {
+      inspector.row(
+          flagBox(game, territory, "originalFactory", "Original factory: its own, for repairs"));
+      inspector.field(
+          "Resources per turn",
+          "Resources besides PUs it gives its owner each turn, eg 2:Ore; several with ';'.",
+          newText(territory, "resources"));
+      inspector.field(
+          "Taken by, goes to",
+          "Pairs captor:receiver, eg Germans:Italians: taken by the first, it goes to the second;"
+              + " several with ';'.",
+          newText(territory, "whenCapturedByGoesTo"));
+      inspector.field(
+          "Takes over its units when capturing",
+          "Nations, eg Germans:Italians, that take over the units in it when they capture it.",
+          newText(territory, "changeUnitOwners"));
+      inspector.field(
+          "Takes its units by entering",
+          "Nations, eg Germans:Italians, that capture the units in it by moving in.",
+          newText(territory, "captureUnitOnEnteringBy"));
+    }
+  }
+
+  /** A check box for an option that is true or not there, eg blockadeZone. */
+  private JCheckBox flagBox(
+      final Game game, final String territory, final String option, final String label) {
+    final JCheckBox box = new JCheckBox(label, MapXml.hasTerritoryFlag(game, territory, option));
+    box.addActionListener(
+        e ->
+            project.edit(
+                g ->
+                    box.isSelected()
+                        ? TerritoryXml.withFlag(g, territory, option)
+                        : TerritoryXml.withoutFlag(g, territory, option)));
+    return box;
+  }
+
+  /**
+   * A text of the option's values separated by ';' that becomes a step on Enter, when it loses the
+   * focus, or before a save or another territory is shown.
+   */
+  private JTextField newText(final String territory, final String option) {
+    final JTextField field =
+        new JTextField(String.join("; ", TerritoryXml.values(project.game(), territory, option)));
+    final Runnable commit =
+        () -> {
+          typing = Optional.empty();
+          final List<String> values =
+              Arrays.stream(field.getText().split(";"))
+                  .map(String::strip)
+                  .filter(v -> !v.isEmpty())
+                  .toList();
+          // compared with the game as it is now, which withValues does: a text committed once
+          // and then cleared must clear the option too; the territory may be gone meanwhile, eg
+          // renamed, and its option must not come back
+          edit(
+              g ->
+                  MapXml.territories(g).contains(territory)
+                      ? TerritoryXml.withValues(g, territory, option, values)
+                      : g);
+        };
+    new DocumentListenerBuilder(() -> typing = Optional.of(commit)).attachTo(field);
+    field.addActionListener(e -> commit.run());
+    field.addFocusListener(
+        new FocusAdapter() {
+          @Override
+          public void focusLost(final FocusEvent e) {
+            commit.run();
+          }
+        });
+    return field;
   }
 
   private void rename(final String old, final String typed) {

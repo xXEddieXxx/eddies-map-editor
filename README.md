@@ -51,29 +51,58 @@ Each release names the TripleA release it was tested with.
   and comment markers and its territory effects: drag them, add or remove places for units
   (right-click or Delete). *Place decorations* puts the picture chosen beside it, from the map's
   `misc` folder, anywhere on the map (decorations.txt).
+  Impassable, original owner, unit production, territory effects, blockade, kamikaze and convoy
+  zones are set there too; impassable and effects also with brushes.
+- **Canals and territory effects:** *Canals* makes a canal by clicking its two sea zones and its
+  land on the map, with the units that pass freely. *Effects* adds, renames and removes effects
+  like forest, with what they do to each unit type in battle and on the move, and their picture.
 - **Redraw borders:** draw new borders into the map's picture in any paint program, then choose
   *Picture ▾ → Redraw borders from a picture…*. Names, owners and units stay;
   territories whose border moved get their places found again.
+- **Units:** cost, picture and every ability in groups (combat, movement, transport and carrier,
+  sea, air and anti-air, production, bombing, special), the support a unit gives other units
+  (like artillery), and any other unitAttachment option by its name.
 - **Connections, nations, units, game options, turn order and game notes,** each in its own tool.
   The turn order's steps are added, moved, removed and changed (nation, how often, step
-  properties).
-- **Politics, technology and production:** relationship types (war, allied, neutral) and how each
-  two nations start; technologies, the category each nation researches them in and the built-in
-  ones it starts with; frontiers, what they sell, what it costs and which nation buys from which.
-- **Texts:** the objectives tab, the messages triggers show and unit tool tips
-  (`objectives.properties`, `notifications.properties`, `tooltips.properties`): each key explained,
-  new keys offered from the game's conditions, triggers and units.
+  properties), and new kinds of step (eg politics, user actions) are added from TripleA's.
+  Game options: a box, number or text each, whether players may change it and its bounds;
+  options are added from TripleA's names; the dice's sides; variables (lists of names that
+  attachments are made for each of).
+- **Nations:** besides color, alliance and PUs, who plays a nation by default, whether it is
+  optional or hidden, and its own rules (capitals it must hold, PUs lost with its capital,
+  blockades, handing over units, sharing technology; any other playerAttachment rule by name).
+- **Actions:** political actions (eg declare war) and user actions (fire a trigger): their texts
+  in `politicstext.properties` / `actionstext.properties`, the conditions they need, what they
+  change, cost, chance, attempts per turn and who must accept them.
+- **Politics, technology and production:** relationship types (war, allied, neutral, and what
+  each allows, eg moving through or flying over the other's land) and how each two nations start; technologies, the category each nation researches them in and the built-in
+  ones it starts with; frontiers, what they sell, what it costs and which nation buys from which,
+  the same for repairs; resources (added, renamed, removed, with icons) and what each nation has
+  of them at the start.
+- **Texts:** the objectives tab, the messages triggers show, unit tool tips
+  and the texts of actions (`objectives.properties`, `notifications.properties`,
+  `tooltips.properties`, `politicstext.properties`, `actionstext.properties`): each key explained,
+  new keys offered from the game's conditions, triggers, units and actions.
+- **Triggers:** every trigger in plain words, and an assistant that makes or changes one step by
+  step: whose it is, when it fires, its conditions (new ones or the map's), what happens (units,
+  PUs, owners, relationships, production, technology, messages, victory, ...) and how often. Its
+  problems show before it is written; it turns on *Use Triggers* if the game has it off.
 - **Attachments:** every attachment of the game, eg triggers and conditions, with its options in a
   table; the option names TripleA knows are offered.
-- **Map look:** unit size, scrolling, what the map shows (map.properties), and a relief picture
-  cut into relief tiles: loaded, or created from the map with *Create relief…* (dark coasts
+- **Map look:** unit size and a nation's unit tint, scrolling, what the map shows, the small map,
+  relief blending, the title of an exported map picture and the mouse pointer (map.properties), and
+  a relief picture cut into relief tiles: loaded, or created from the map with *Create relief…* (dark coasts
   with waves, land raised at its borders), with a preview.
 - **Unit pictures:** upload a picture for a unit type, or import a whole folder of pictures for one
   nation, for example another map's `units/Germans`.
 - **The map as the game shows it:** owners, values, units and connections views, with a legend.
   Territories with a problem have a red outline.
+- **Sounds:** the game's sounds, also per nation and for trigger messages, with your mp3 files or
+  folders (copied into the map's `sounds/`) or the game's own; play them to try (sounds.properties).
 - **Files:** an IDE-style file browser with a text editor that checks your files as you type. Add
-  other maps' folders to copy from them.
+  other maps' folders to copy from them. Choose the map's folder to rename its games (map.yml), or
+  a picture folder (PUs, dice, misc, territoryNames, territoryEffects) to see which pictures the
+  game looks for and import them.
 - **Check (F6)** loads the game the way TripleA does, **Play (F7)** starts TripleA with it, and
   **Export** zips the map for sharing.
 - **Undo and redo** for every change. A save writes only what changed, and the first version of
@@ -127,7 +156,10 @@ All code is in `src/main/java/eddies/mapeditor`:
 | `MapMakerWindow`                                                            | The window: tool strip, file browser, the map or a preview in the middle, the tool's panel    |
 | `MapProject`                                                                | The open map: its game and files, undo and redo, saving                                       |
 | `MapXml`                                                                    | Reads and changes the game XML model; each change makes a new model                           |
-| `RulesXml`, `ProductionXml`, `TechXml`                                      | The same for turn order and politics, production, technology                                  |
+| `RulesXml`, `ProductionXml`, `TechXml`, `GameRulesXml`                      | The same for turn order and politics, production, technology, options, dice and variables     |
+| `ActionsXml`                                                                | The same for political and user actions                                                       |
+| `UnitsXml`, `UnitOptions`                                                   | The same for a unit type's options and the support it gives                                   |
+| `CanalXml`, `TerritoryEffectsXml`, `TerritoryXml`                          | The same for canals, territory effects and a territory's other options                        |
 | `MapFiles`, `MapFolder`                                                     | The files beside the game XML: outlines, centers, pictures, `map.properties`                  |
 | `MapPicture`                                                                | Finds territories, sea zones and neighbours in a picture                                      |
 | `MapCanvas`, `MapView`                                                      | The map on screen                                                                             |

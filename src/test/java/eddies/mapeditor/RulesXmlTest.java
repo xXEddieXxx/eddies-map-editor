@@ -6,7 +6,9 @@ import games.strategy.engine.data.GameData;
 import games.strategy.engine.data.GameStep;
 import games.strategy.engine.data.RelationshipType;
 import games.strategy.engine.data.gameparser.GameParser;
+import games.strategy.engine.data.GamePlayer;
 import games.strategy.triplea.Constants;
+import games.strategy.triplea.attachments.PlayerAttachment;
 import games.strategy.triplea.attachments.TerritoryAttachment;
 import java.nio.file.Path;
 import java.util.List;
@@ -206,5 +208,97 @@ final class RulesXmlTest {
         .containsExactly("territoryAttachment of red north 1: originalOwner");
     assertThat(MapXml.nations(project.game())).as("not removed").contains("Italians");
     assertThat(project.canUndo()).as("no step made").isFalse();
+  }
+
+  @DisplayName("A nation's flags of the player list change and load in the engine")
+  @Test
+  void playerFlagsLoad(@TempDir final Path folder) {
+    final Game changed =
+        RulesXml.withPlayer(
+            minimap,
+            "Italians",
+            b -> b.optional(true).canBeDisabled(true).defaultType("AI").isHidden(true));
+
+    final GamePlayer loaded = givenLoaded(changed, folder).getPlayerList().getPlayerId("Italians");
+
+    assertThat(loaded.getOptional()).as("optional").isTrue();
+    assertThat(loaded.getCanBeDisabled()).as("can be disabled").isTrue();
+    assertThat(loaded.isDefaultTypeAi()).as("played by the computer").isTrue();
+    assertThat(loaded.isHidden()).as("hidden").isTrue();
+    assertThat(RulesXml.player(minimap, "Italians").getIsHidden())
+        .as("the game it started from stays, for undo")
+        .isNull();
+    assertThat(MapXml.nations(changed)).as("the nation keeps its place").startsWith("Russians");
+  }
+
+  @DisplayName("A nation's rule is set in a new playerAttachment, loads, and is taken out again")
+  @Test
+  void playerOptionIsSetAndCleared(@TempDir final Path folder) {
+    final Game set = RulesXml.withPlayerOption(minimap, "Russians", "retainCapitalNumber", "2");
+    final Game cleared = RulesXml.withoutPlayerOption(set, "Russians", "retainCapitalNumber");
+
+    final GamePlayer loaded = givenLoaded(set, folder).getPlayerList().getPlayerId("Russians");
+
+    assertThat(PlayerAttachment.get(loaded).getRetainCapitalNumber())
+        .as("the engine reads the rule")
+        .isEqualTo(2);
+    assertThat(RulesXml.playerOption(cleared, "Russians", "retainCapitalNumber"))
+        .as("taken out, so the default applies")
+        .isEmpty();
+    assertThat(RulesXml.withPlayerOption(set, "Russians", "retainCapitalNumber", "2"))
+        .as("setting the value it has makes no step")
+        .isSameAs(set);
+  }
+
+  @DisplayName("A relationship type's rule beyond its kind loads; As its kind takes it out")
+  @Test
+  void relationshipOptionsLoad(@TempDir final Path folder) {
+    final Game set =
+        RulesXml.withRelationshipOption(givenTruce(), TRUCE, "canMoveThroughCanals", "false");
+    final Game back =
+        RulesXml.withRelationshipOption(
+            set, TRUCE, "canMoveThroughCanals", Constants.RELATIONSHIP_PROPERTY_DEFAULT);
+
+    final RelationshipType loaded =
+        givenLoaded(set, folder).getRelationshipTypeList().getRelationshipType(TRUCE);
+
+    assertThat(loaded.getRelationshipTypeAttachment().canMoveThroughCanals())
+        .as("a neutral type that may not use canals")
+        .isFalse();
+    assertThat(MapXml.option(back, "relationshipTypeAttachment", TRUCE, "canMoveThroughCanals"))
+        .as("as its kind again: the option is gone")
+        .isEmpty();
+    assertThat(RulesXml.archetype(back, TRUCE)).as("its kind stays").isEqualTo("neutral");
+  }
+
+  @DisplayName("A nation list given twice is read whole and written back as one, still loading")
+  @Test
+  void repeatedNationListIsReadAndReplacedWhole(@TempDir final Path folder) {
+    final Game twice =
+        RulesXml.withPlayerOptionAdded(
+            RulesXml.withPlayerOptionAdded(
+                ActionsXmlTest.givenGlobal(), "Germans", "shareTechnology", "Italians"),
+            "Germans",
+            "shareTechnology",
+            "Japanese");
+
+    final List<String> read = RulesXml.playerNames(twice, "Germans", "shareTechnology");
+    final Game changed =
+        RulesXml.withPlayerNames(twice, "Germans", "shareTechnology", List.of("Japanese"));
+    final GamePlayer loaded = givenLoaded(changed, folder).getPlayerList().getPlayerId("Germans");
+
+    assertThat(read)
+        .as("both options, as TripleA adds them up")
+        .containsExactly("Italians", "Japanese");
+    assertThat(
+            RulesXml.playerOptions(changed, "Germans").stream()
+                .filter(o -> "shareTechnology".equals(o.getName())))
+        .as("one option left, no hidden second")
+        .singleElement()
+        .satisfies(o -> assertThat(o.getValue()).as("the chosen nation").isEqualTo("Japanese"));
+    assertThat(PlayerAttachment.get(loaded).getShareTechnology())
+        .as("the engine shares with the chosen nation only")
+        .extracting(GamePlayer::getName)
+        .containsExactly("Japanese");
   }
 }

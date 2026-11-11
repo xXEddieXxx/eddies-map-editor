@@ -8,6 +8,7 @@ import java.awt.Insets;
 import java.awt.image.BufferedImage;
 import java.io.Serial;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Consumer;
 import javax.annotation.Nullable;
 import javax.swing.JButton;
@@ -216,6 +217,12 @@ final class MapView extends JPanel {
     editorTools.repaint();
     canvas.onTerritoryClick(onClick);
     canvas.stopEditingPlaces();
+    canvas.setMarked(Set.of());
+  }
+
+  /** Shows these territories together, eg a canal's, until another editor takes the map. */
+  void mark(final Set<String> territories) {
+    canvas.setMarked(territories);
   }
 
   /** Shows the selected territory's places to edit, {@link MapCanvas#editPlaces}. */
@@ -238,5 +245,9 @@ final class MapView extends JPanel {
 
   void scrollTo(final String territory) {
     canvas.scrollTo(territory);
+    // a view not laid out yet, or still to be fitted, has no room to scroll in: again after it
+    if (scroll.getViewport().getExtentSize().width == 0 || !canvas.isShowing()) {
+      SwingUtilities.invokeLater(() -> canvas.scrollTo(territory));
+    }
   }
 }

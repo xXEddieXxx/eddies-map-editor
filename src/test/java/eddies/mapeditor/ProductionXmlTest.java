@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import games.strategy.engine.data.GameData;
 import games.strategy.engine.data.ProductionFrontier;
 import games.strategy.engine.data.ProductionRule;
+import games.strategy.engine.data.RepairFrontier;
 import games.strategy.engine.data.gameparser.GameParser;
 import games.strategy.triplea.attachments.TriggerAttachment;
 import java.nio.file.Path;
@@ -119,5 +120,104 @@ final class ProductionXmlTest {
     final List<Production.ProductionRule> rules =
         ProductionXml.rules(ProductionXml.withNewRule(game, "production", "carrier", 5));
     return rules.get(rules.size() - 1);
+  }
+
+  @DisplayName("Repair rules, frontiers and which a nation uses change, and the engine reads them")
+  @Test
+  void changesRepair(@TempDir final Path folder) {
+    for (final Game game : List.of(minimap, GameRulesXmlTest.givenG40())) {
+      final Game repaired =
+          ProductionXml.withRepairChange(
+              game,
+              g ->
+                  ProductionXml.withFrontierOf(
+                      ProductionXml.withCost(
+                          ProductionXml.withNewRule(
+                              ProductionXml.withFrontier(g, "fieldRepair"),
+                              "fieldRepair",
+                              "infantry",
+                              1,
+                              "repair"),
+                          "repairInfantry",
+                          MapXml.PUS,
+                          2),
+                      "Russians",
+                      "fieldRepair"));
+
+      final Game view = ProductionXml.repairView(repaired);
+      assertThat(ProductionXml.rulesIn(view, "fieldRepair"))
+          .as("the new repair rule, named for what it repairs")
+          .containsExactly("repairInfantry");
+      assertThat(ProductionXml.frontierOf(view, "Russians")).as("moved").contains("fieldRepair");
+      assertThat(ProductionXml.rules(repaired))
+          .as("the rules to buy stay as they were")
+          .isEqualTo(ProductionXml.rules(game));
+      assertThat(ProductionXml.withRepairChange(game, g -> g))
+          .as("a change of nothing is no step")
+          .isSameAs(game);
+      final GameData data =
+          RulesXmlTest.givenLoaded(repaired, folder.resolve(game.hashCode() + ""));
+      final RepairFrontier frontier =
+          data.getPlayerList().getPlayerId("Russians").getRepairFrontier();
+      assertThat(frontier.getName()).as("the engine's repair frontier").isEqualTo("fieldRepair");
+      assertThat(
+              frontier.getRules().get(0).getCosts()
+                  .getInt(data.getResourceList().getResourceOrThrow(MapXml.PUS)))
+          .as("at the changed cost")
+          .isEqualTo(2);
+    }
+  }
+
+  @DisplayName("Resources are added, renamed and removed with the nations' amounts at the start")
+  @Test
+  void changesResources(@TempDir final Path folder) {
+    for (final Game game : List.of(minimap, GameRulesXmlTest.givenG40())) {
+      final Game added = ProductionXml.withResource(game, "Oil");
+      final Game given = MapXml.withStartingResource(added, "Russians", "Oil", 7);
+      final Game sold = ProductionXml.withNewRule(given, "production", "Oil", 2);
+      final Game renamed = ProductionXml.withRenamedResource(sold, "Oil", "Fuel");
+
+      assertThat(ProductionXml.resources(renamed))
+          .as("renamed")
+          .contains("Fuel")
+          .doesNotContain("Oil");
+      assertThat(MapXml.startingResource(renamed, "Russians", "Fuel"))
+          .as("with the amount at the start")
+          .isEqualTo(7);
+      assertThat(ProductionXml.whyResourceStays(renamed, "Fuel"))
+          .as("a rule gives it, so it stays")
+          .isPresent();
+      assertThat(ProductionXml.whyResourceNotRenamed(renamed, MapXml.PUS))
+          .as("TripleA reads PUs by name")
+          .isPresent();
+      final GameData data =
+          RulesXmlTest.givenLoaded(renamed, folder.resolve(game.hashCode() + ""));
+      assertThat(
+              data.getPlayerList()
+                  .getPlayerId("Russians")
+                  .getResources()
+                  .getQuantity(data.getResourceList().getResourceOrThrow("Fuel")))
+          .as("the engine gives the nation its amount")
+          .isEqualTo(7);
+      final Game removed = ProductionXml.withoutResource(given, "Oil");
+      assertThat(ProductionXml.resources(removed)).as("removed").doesNotContain("Oil");
+      assertThat(MapXml.startingResource(removed, "Russians", "Oil"))
+          .as("with its amounts")
+          .isZero();
+      RulesXmlTest.givenLoaded(removed, folder.resolve("removed" + game.hashCode()));
+    }
+  }
+
+  @DisplayName("A resource an attachment names is neither renamed nor removed")
+  @Test
+  void keepsNamedResources() {
+    final Game g40 = GameRulesXmlTest.givenG40();
+
+    assertThat(ProductionXml.whyResourceStays(g40, "SuicideAttackTokens"))
+        .as("the Japanese suicideAttackResources name it")
+        .hasValueSatisfying(why -> assertThat(why).contains("playerAttachment of Japanese"));
+    assertThat(ProductionXml.whyResourceNotRenamed(g40, "techTokens"))
+        .as("TripleA rolls for techs with it")
+        .isPresent();
   }
 }

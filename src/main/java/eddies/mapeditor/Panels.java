@@ -1,20 +1,33 @@
 package eddies.mapeditor;
 
 import games.strategy.engine.framework.ui.GameNotesView;
+import java.awt.BorderLayout;
 import java.awt.Dimension;
+import java.awt.GridLayout;
 import java.awt.Point;
+import java.util.Collection;
+import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
+import javax.swing.JCheckBox;
 import javax.swing.JComponent;
 import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
+import javax.swing.JTextField;
 import javax.swing.JViewport;
 import javax.swing.SwingUtilities;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import lombok.experimental.UtilityClass;
+import org.triplea.swing.SwingComponents;
 
 /** How the tools lay out their panel: beside the map, or alone with the whole room. */
 @UtilityClass
 class Panels {
   private static final int LIST_WIDTH = 320;
+  private static final int LIST_MAX_WIDTH = 420;
   private static final int LIST_MIN_HEIGHT = 220;
 
   /** A list above the inspector of the chosen entry, the line between them movable. */
@@ -34,7 +47,9 @@ class Panels {
    */
   static JSplitPane sideBySide(final JComponent list, final JComponent inspector) {
     final JSplitPane sideBySide = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, list, inspector);
-    sideBySide.setDividerLocation(LIST_WIDTH);
+    // a list of long names, eg SearchList, may ask for more room
+    sideBySide.setDividerLocation(
+        Math.clamp(list.getPreferredSize().width, LIST_WIDTH, LIST_MAX_WIDTH));
     sideBySide.setBorder(null);
     return sideBySide;
   }
@@ -76,5 +91,63 @@ class Panels {
             new Object[] {"OK", "Cancel"},
             "OK")
         == 0;
+  }
+
+  /**
+   * Asks which of the names to tick, those given ticked first, with a search above a long list;
+   * empty when cancelled.
+   */
+  static Optional<List<String>> pick(
+      final JComponent parent,
+      final String title,
+      final List<String> names,
+      final Collection<String> ticked) {
+    final JPanel ticks = new JPanel(new GridLayout(0, 1));
+    final List<JCheckBox> boxes =
+        names.stream().map(name -> new JCheckBox(name, ticked.contains(name))).toList();
+    boxes.forEach(ticks::add);
+    final JScrollPane scroll = SwingComponents.newJScrollPane(ticks);
+    scroll.setPreferredSize(
+        new Dimension(320, Math.min(420, ticks.getPreferredSize().height + 8)));
+    final JPanel content = new JPanel(new BorderLayout(0, 6));
+    content.add(scroll, BorderLayout.CENTER);
+    if (names.size() > 12) {
+      final JTextField search = new JTextField();
+      search.putClientProperty("JTextField.placeholderText", "Search");
+      search.getDocument().addDocumentListener(new Filter(search, boxes, ticks));
+      content.add(search, BorderLayout.NORTH);
+    }
+    return ask(parent, content, title)
+        ? Optional.of(boxes.stream().filter(JCheckBox::isSelected).map(JCheckBox::getText).toList())
+        : Optional.empty();
+  }
+
+  /** Shows the boxes whose names hold the search, ticked or not; hidden ones keep their tick. */
+  private record Filter(JTextField search, List<JCheckBox> boxes, JPanel ticks)
+      implements DocumentListener {
+    @Override
+    public void insertUpdate(final DocumentEvent e) {
+      refill();
+    }
+
+    @Override
+    public void removeUpdate(final DocumentEvent e) {
+      refill();
+    }
+
+    @Override
+    public void changedUpdate(final DocumentEvent e) {
+      refill();
+    }
+
+    private void refill() {
+      final String filter = search.getText().strip().toLowerCase(Locale.ROOT);
+      ticks.removeAll();
+      boxes.stream()
+          .filter(box -> box.getText().toLowerCase(Locale.ROOT).contains(filter))
+          .forEach(ticks::add);
+      ticks.revalidate();
+      ticks.repaint();
+    }
   }
 }

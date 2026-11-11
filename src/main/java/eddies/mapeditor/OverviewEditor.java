@@ -2,6 +2,7 @@ package eddies.mapeditor;
 
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.nio.file.Path;
@@ -9,10 +10,13 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
 import javax.swing.BorderFactory;
+import javax.swing.Box;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JTextArea;
+import javax.swing.UIManager;
 import org.triplea.map.data.elements.Game;
 import org.triplea.swing.SwingComponents;
 import eddies.mapeditor.MakerIcon.Glyph;
@@ -175,7 +179,10 @@ final class OverviewEditor implements Editor {
           row(
               mark(false, true),
               problem.text(),
-              problem.territory().isPresent() ? show : new JPanel()));
+              // an empty slot as wide and high as the button, so all rows line up
+              problem.territory().isPresent()
+                  ? show
+                  : (JComponent) Box.createRigidArea(show.getPreferredSize())));
     }
     form.end();
   }
@@ -206,7 +213,7 @@ final class OverviewEditor implements Editor {
       final JPanel row = row(mark(part.present(), part.required()), "", buttons);
       final JLabel name = new JLabel(part.name());
       name.setFont(name.getFont().deriveFont(Font.BOLD));
-      final JLabel purpose = new JLabel(part.purpose());
+      final JTextArea purpose = wrapping(part.purpose());
       purpose.setForeground(Theme.getSecondaryTextColor());
       final JPanel texts = new JPanel(new BorderLayout());
       texts.setOpaque(false);
@@ -223,6 +230,10 @@ final class OverviewEditor implements Editor {
   private static JLabel mark(final boolean done, final boolean needed) {
     final JLabel mark = new JLabel(done ? "✓" : needed ? "!" : "○");
     mark.setFont(mark.getFont().deriveFont(Font.BOLD));
+    // as wide for each sign, so the texts beside them line up
+    mark.setHorizontalAlignment(JLabel.CENTER);
+    mark.setVerticalAlignment(JLabel.TOP);
+    mark.setPreferredSize(new Dimension(12, mark.getPreferredSize().height));
     mark.setForeground(done ? DONE : needed ? MISSING : Theme.getSecondaryTextColor());
     mark.getAccessibleContext().setAccessibleName(done ? "done" : needed ? "missing" : "optional");
     return mark;
@@ -232,12 +243,30 @@ final class OverviewEditor implements Editor {
     final JPanel row = new JPanel(new BorderLayout(8, 0));
     row.add(mark, BorderLayout.WEST);
     if (!text.isEmpty()) {
-      // wrapped to the panel's width, so a long step stays whole
-      row.add(
-          new JLabel("<html><div style='width:190px'>" + SearchList.escape(text) + "</div></html>"),
-          BorderLayout.CENTER);
+      row.add(wrapping(text), BorderLayout.CENTER);
     }
-    row.add(action, BorderLayout.EAST);
+    // at the top and its own size, also beside a text of two lines
+    final JPanel top = new JPanel(new BorderLayout());
+    top.setOpaque(false);
+    top.add(action, BorderLayout.NORTH);
+    row.add(top, BorderLayout.EAST);
     return row;
+  }
+
+  /**
+   * A text that looks like a label and wraps at the room it gets beside its button, so a long step
+   * stays whole however wide the column is.
+   */
+  private static JTextArea wrapping(final String text) {
+    final JTextArea area = new JTextArea(text);
+    area.setLineWrap(true);
+    area.setWrapStyleWord(true);
+    area.setEditable(false);
+    area.setFocusable(false);
+    area.setOpaque(false);
+    area.setBorder(null);
+    area.setFont(UIManager.getFont("Label.font"));
+    area.setForeground(UIManager.getColor("Label.foreground"));
+    return area;
   }
 }

@@ -51,7 +51,12 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
     ATTACHMENTS,
     PRODUCTION,
     POLITICS,
-    TECHNOLOGY
+    TECHNOLOGY,
+    SOUNDS,
+    CANALS,
+    EFFECTS,
+    ACTIONS,
+    TRIGGERS
   }
 
   /** The icon at the size of the text around it. */
@@ -216,6 +221,35 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
         g.drawPolygon(
             new Polygon(new int[] {6, 10, 10, 15, 1, 6}, new int[] {1, 1, 6, 15, 15, 6}, 6));
         g.drawLine(4, 10, 12, 10);
+      }
+      case SOUNDS -> {
+        // a speaker with a sound wave
+        g.drawPolygon(new Polygon(new int[] {1, 5, 9, 9, 5, 1}, new int[] {6, 6, 2, 14, 10, 10}, 6));
+        g.drawArc(8, 4, 6, 8, -60, 120);
+      }
+      case CANALS -> {
+        // two banks with a waterway between them
+        g.drawPolyline(new int[] {1, 6, 6, 1}, new int[] {2, 2, 14, 14}, 4);
+        g.drawPolyline(new int[] {15, 10, 10, 15}, new int[] {2, 2, 14, 14}, 4);
+        g.drawLine(8, 4, 8, 6);
+        g.drawLine(8, 10, 8, 12);
+      }
+      case EFFECTS -> {
+        // a tree on a hill
+        g.drawArc(1, 10, 14, 10, 0, 180);
+        g.fillPolygon(new Polygon(new int[] {8, 12, 4}, new int[] {1, 9, 9}, 3));
+      }
+      case ACTIONS -> {
+        // a hand pressing a button
+        g.drawRoundRect(2, 9, 12, 5, 2, 2);
+        g.drawLine(8, 2, 8, 9);
+        g.drawLine(5, 5, 8, 2);
+        g.drawLine(11, 5, 8, 2);
+      }
+      case TRIGGERS -> {
+        // a lightning bolt
+        g.drawPolygon(
+            new Polygon(new int[] {9, 3, 8, 6, 13, 8}, new int[] {1, 9, 9, 15, 6, 6}, 6));
       }
       default -> throw new IllegalStateException("Unknown icon: " + glyph);
     }

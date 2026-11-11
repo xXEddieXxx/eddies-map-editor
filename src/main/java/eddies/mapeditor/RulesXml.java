@@ -1,6 +1,7 @@
 package eddies.mapeditor;
 
 import games.strategy.triplea.Constants;
+import games.strategy.triplea.attachments.PlayerAttachment;
 import games.strategy.triplea.attachments.RelationshipTypeAttachment;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -9,6 +10,7 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
@@ -16,6 +18,7 @@ import lombok.experimental.ExtensionMethod;
 import lombok.experimental.UtilityClass;
 import org.triplea.map.data.elements.AttachmentList;
 import org.triplea.map.data.elements.AttachmentList.Attachment;
+import org.triplea.map.data.elements.AttachmentList.Attachment.Option;
 import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.GamePlay;
 import org.triplea.map.data.elements.GamePlay.Delegate;
@@ -25,6 +28,8 @@ import org.triplea.map.data.elements.GamePlay.Sequence.Step.StepProperty;
 import org.triplea.map.data.elements.Initialize;
 import org.triplea.map.data.elements.Initialize.RelationshipInitialize;
 import org.triplea.map.data.elements.Initialize.RelationshipInitialize.Relationship;
+import org.triplea.map.data.elements.PlayerList;
+import org.triplea.map.data.elements.PlayerList.Player;
 import org.triplea.map.data.elements.RelationshipTypes;
 import org.triplea.map.data.elements.RelationshipTypes.RelationshipType;
 import org.triplea.map.data.elements.VariableList;
@@ -309,6 +314,165 @@ class RulesXml {
                         .build())
                 .build())
         .build();
+  }
+
+  /**
+   * The relationship type's option, eg "canMoveThroughCanals": "true", "false" or "default", which
+   * goes by its archetype; "default" also when not given.
+   */
+  static String relationshipOption(final Game game, final String type, final String option) {
+    return MapXml.option(game, Constants.RELATIONSHIPTYPE_ATTACHMENT_NAME, type, option)
+        .orElse(Constants.RELATIONSHIP_PROPERTY_DEFAULT);
+  }
+
+  /** The game with the type's option set; "default" takes it out, so the archetype decides. */
+  static Game withRelationshipOption(
+      final Game game, final String type, final String option, final String value) {
+    if (value.equals(relationshipOption(game, type, option))) {
+      return game;
+    }
+    return MapXml.withOption(
+        game,
+        relationshipKey(type),
+        option,
+        Constants.RELATIONSHIP_PROPERTY_DEFAULT.equals(value) ? null : value);
+  }
+
+  // ---- nations: how they play and their own rules
+
+  /** The nation as the player list gives it: optional, can be disabled, played by, hidden. */
+  static Player player(final Game game, final String nation) {
+    return Optional.ofNullable(game.getPlayerList())
+        .map(PlayerList::getPlayers)
+        .orElse(List.of())
+        .stream()
+        .filter(p -> nation.equals(p.getName()))
+        .findFirst()
+        .orElseThrow(() -> new IllegalArgumentException("No nation " + nation));
+  }
+
+  /** The game with the nation's entry in the player list changed; it keeps its place. */
+  static Game withPlayer(
+      final Game game, final String nation, final UnaryOperator<Player.PlayerBuilder> change) {
+    final Player before = player(game, nation);
+    final Player changed =
+        change
+            .apply(
+                Player.builder()
+                    .name(before.getName())
+                    .optional(before.getOptional())
+                    .canBeDisabled(before.getCanBeDisabled())
+                    .defaultType(before.getDefaultType())
+                    .isHidden(before.getIsHidden()))
+            .build();
+    return game.toBuilder()
+        .playerList(
+            game.getPlayerList().toBuilder()
+                .players(
+                    game.getPlayerList().getPlayers().stream()
+                        .map(p -> p == before ? changed : p)
+                        .toList())
+                .build())
+        .build();
+  }
+
+  /** The option of the nation's playerAttachment, eg "retainCapitalNumber". */
+  static Optional<String> playerOption(final Game game, final String nation, final String option) {
+    return MapXml.option(game, Constants.PLAYER_ATTACHMENT_NAME, nation, option);
+  }
+
+  /** The game with the nation's option set; its playerAttachment is added when missing. */
+  static Game withPlayerOption(
+      final Game game, final String nation, final String option, final String value) {
+    return playerOption(game, nation, option).filter(value::equals).isPresent()
+        ? game
+        : MapXml.withOption(game, playerKey(nation), option, value);
+  }
+
+  /** The game without the nation's option, so the game's default applies. */
+  static Game withoutPlayerOption(final Game game, final String nation, final String option) {
+    return playerOption(game, nation, option).isEmpty()
+        ? game
+        : MapXml.withOption(game, playerKey(nation), option, null);
+  }
+
+  /** All options of the nation's playerAttachment in their order. */
+  static List<Option> playerOptions(final Game game, final String nation) {
+    return AttachmentsXml.attachments(game).stream()
+        .filter(playerKey(nation)::matches)
+        .findFirst()
+        .map(AttachmentsXml::options)
+        .orElse(List.of());
+  }
+
+  /**
+   * The nations a list option of the nation names, eg shareTechnology; TripleA adds up an option
+   * given more than once, so all are read.
+   */
+  static List<String> playerNames(final Game game, final String nation, final String option) {
+    return playerOptions(game, nation).stream()
+        .filter(o -> option.equals(o.getName()) && o.getValue() != null)
+        .flatMap(o -> Arrays.stream(o.getValue().split(":")))
+        .map(String::strip)
+        .filter(n -> !n.isEmpty())
+        .toList();
+  }
+
+  /**
+   * The game with the list option naming these nations in one value at the place of its first;
+   * none takes it out.
+   */
+  static Game withPlayerNames(
+      final Game game, final String nation, final String option, final List<String> names) {
+    if (playerNames(game, nation, option).equals(names)) {
+      return game;
+    }
+    final Game without = MapXml.withOption(game, playerKey(nation), option, null);
+    if (names.isEmpty()) {
+      return without;
+    }
+    final List<Attachment> attachments = AttachmentsXml.attachments(game);
+    for (int i = 0; i < attachments.size(); i++) {
+      if (playerKey(nation).matches(attachments.get(i))) {
+        final List<Option> options = new ArrayList<>();
+        boolean placed = false;
+        for (final Option o : AttachmentsXml.options(attachments.get(i))) {
+          if (!option.equals(o.getName())) {
+            options.add(o);
+          } else if (!placed) {
+            options.add(Option.builder().name(option).value(String.join(":", names)).build());
+            placed = true;
+          }
+        }
+        if (!placed) {
+          options.add(Option.builder().name(option).value(String.join(":", names)).build());
+        }
+        return AttachmentsXml.withAttachment(
+            game, i, attachments.get(i).toBuilder().options(List.copyOf(options)).build());
+      }
+    }
+    return MapXml.withOption(without, playerKey(nation), option, String.join(":", names));
+  }
+
+  /** The game with one more option of the nation, also one it has, eg a second placementLimit. */
+  static Game withPlayerOptionAdded(
+      final Game game, final String nation, final String option, final String value) {
+    final List<Attachment> attachments = AttachmentsXml.attachments(game);
+    for (int i = 0; i < attachments.size(); i++) {
+      if (playerKey(nation).matches(attachments.get(i))) {
+        return AttachmentsXml.withAttachment(
+            game,
+            i,
+            AttachmentsXml.withNewOption(
+                attachments.get(i), Option.builder().name(option).value(value).build()));
+      }
+    }
+    return MapXml.withOption(game, playerKey(nation), option, value);
+  }
+
+  private static AttachmentKey playerKey(final String nation) {
+    return new AttachmentKey(
+        Constants.PLAYER_ATTACHMENT_NAME, PlayerAttachment.class.getName(), "player", nation);
   }
 
   // ---- names

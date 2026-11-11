@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.awt.Component;
 import java.awt.Container;
+import java.awt.Rectangle;
+import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -91,5 +93,26 @@ final class SearchListTest {
     assertThat(list.getFixedCellHeight())
         .as("the first row, without a line below, as high as one with it")
         .isGreaterThanOrEqualTo(withDetail);
+  }
+
+  @DisplayName("A row's tool tip tells its whole name and line; long names widen the column")
+  @Test
+  void toolTipsAndWidthForLongNames() {
+    final String name = "conditionAttachment_Germans_Hold_Every_Capital_Of_The_Allies";
+    final SearchList searchList =
+        new SearchList("Search", () -> List.of(name, "short"), n -> "Germans, round 3", n -> {});
+    final JList<?> list = listIn(searchList);
+    list.setSize(200, 400);
+    final Rectangle row = list.getCellBounds(0, 0);
+
+    final String tip =
+        list.getToolTipText(
+            new MouseEvent(list, MouseEvent.MOUSE_MOVED, 0, 0, row.x + 4, row.y + 4, 0, false));
+
+    assertThat(tip).as("the whole name and its line").contains(name).contains("Germans, round 3");
+    assertThat(searchList.getPreferredSize().width)
+        .as("wider than the usual column for the long name, up to a limit")
+        .isGreaterThan(240)
+        .isLessThanOrEqualTo(360);
   }
 }

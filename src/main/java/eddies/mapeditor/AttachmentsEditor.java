@@ -84,9 +84,13 @@ final class AttachmentsEditor implements Editor {
     remove.setToolTipText("Removes the chosen attachment from the game");
     remove.addActionListener(
         e -> chosen().ifPresent(i -> project.edit(g -> AttachmentsXml.withoutAttachment(g, i))));
+    final JButton newTrigger = new JButton("New trigger...");
+    newTrigger.setToolTipText("Makes a trigger step by step with the trigger assistant");
+    newTrigger.addActionListener(e -> TriggerAssistant.openNew(page, project));
     final JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     buttons.add(add);
     buttons.add(remove);
+    buttons.add(newTrigger);
     final JPanel listColumn = new JPanel(new BorderLayout(0, 8));
     listColumn.add(kinds, BorderLayout.NORTH);
     listColumn.add(list, BorderLayout.CENTER);
@@ -109,8 +113,10 @@ final class AttachmentsEditor implements Editor {
     // the value is what is longest, eg a trigger's conditions
     table.getColumnModel().getColumn(0).setPreferredWidth(160);
     table.getColumnModel().getColumn(1).setPreferredWidth(400);
-    table.getColumnModel().getColumn(2).setPreferredWidth(50);
-    table.getColumnModel().getColumn(2).setMaxWidth(80);
+    // the count, short, beside the option's name instead of squeezed at the far right
+    table.getColumnModel().getColumn(2).setMinWidth(70);
+    table.getColumnModel().getColumn(2).setMaxWidth(70);
+    table.moveColumn(2, 1);
     attachTo.setPreferredSize(new Dimension(260, attachTo.getPreferredSize().height));
     attachToRow.add(attachTo);
     optionsScroll.setColumnHeaderView(table.getTableHeader());
@@ -282,6 +288,12 @@ final class AttachmentsEditor implements Editor {
     final JPanel optionButtons = new JPanel(new GridLayout(1, 2, 4, 0));
     optionButtons.add(addOption);
     optionButtons.add(removeOption);
+    if (TriggerXml.TRIGGER.equals(AttachmentsXml.kind(attachment))) {
+      final JButton guided = new JButton("Guided...");
+      guided.setToolTipText("Opens the trigger in the trigger assistant");
+      guided.addActionListener(e -> TriggerAssistant.open(page, project, index.get()));
+      optionButtons.add(guided);
+    }
     final JPanel optionButtonsLeft = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
     optionButtonsLeft.add(optionButtons);
     table.setPreferredScrollableViewportSize(

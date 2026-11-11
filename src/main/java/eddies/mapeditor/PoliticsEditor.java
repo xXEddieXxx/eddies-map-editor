@@ -7,6 +7,8 @@ import java.awt.FlowLayout;
 import java.awt.Font;
 import java.io.Serial;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import javax.annotation.Nullable;
 import javax.swing.DefaultCellEditor;
@@ -35,6 +37,23 @@ final class PoliticsEditor implements Editor {
           Constants.RELATIONSHIP_ARCHETYPE_WAR,
           Constants.RELATIONSHIP_ARCHETYPE_ALLIED,
           Constants.RELATIONSHIP_ARCHETYPE_NEUTRAL);
+  private static final List<String> SETTINGS =
+      List.of(
+          Constants.RELATIONSHIP_PROPERTY_DEFAULT,
+          Constants.RELATIONSHIP_PROPERTY_TRUE,
+          Constants.RELATIONSHIP_PROPERTY_FALSE);
+  private static final List<String> SETTING_LABELS = List.of("As its kind", "Yes", "No");
+  // the options of a relationship type that maps use most, in plain words
+  private static final List<Map.Entry<String, String>> TYPE_RULES =
+      List.of(
+          Map.entry("canMoveLandUnitsOverOwnedLand", "Land units may move through their land"),
+          Map.entry("canMoveAirUnitsOverOwnedLand", "Planes may fly over their land"),
+          Map.entry("canLandAirUnitsOnOwnedLand", "Planes may land in their land"),
+          Map.entry("canMoveIntoDuringCombatMove", "May move into their land in combat move"),
+          Map.entry("canMoveThroughCanals", "May use their canals"),
+          Map.entry("canTakeOverOwnedTerritory", "Takes their land by moving in"),
+          Map.entry("givesBackOriginalTerritories", "Gives back their land when freeing it"),
+          Map.entry("rocketsCanFlyOver", "Rockets may fly over their land"));
 
   private final MapProject project;
   private final JPanel page = new JPanel(new BorderLayout(8, 0));
@@ -44,7 +63,13 @@ final class PoliticsEditor implements Editor {
   private final JTable startTable;
   private final JComboBox<String> startChoices = new JComboBox<>();
   private final JLabel startTitle = new JLabel();
+  private final JLabel nationTitle = new JLabel();
   private List<String> typesShown = List.of();
+  private final Form typeRules = new Form(280);
+  private @Nullable String typeRulesShown;
+  // the type chosen in the table, which loses its selection when the game changes
+  private @Nullable String chosenType;
+  private @Nullable Game typeRulesGame;
 
   PoliticsEditor(final MapProject project) {
     this.project = project;
@@ -76,6 +101,9 @@ final class PoliticsEditor implements Editor {
         .setCellRenderer(new ByAllianceRenderer(project, start));
 
     final Form form = new Form(280);
+    nationTitle.setFont(
+        nationTitle.getFont().deriveFont(Font.BOLD, nationTitle.getFont().getSize2D() * 1.6f));
+    form.row(nationTitle);
     form.section(
         "At the start",
         "How the chosen nation starts with each other nation. By alliance: allied when they share"
@@ -90,12 +118,23 @@ final class PoliticsEditor implements Editor {
             + " other settings stay as the game has them.");
     form.row(withHeader(typesTable));
     form.row(buttons);
+    form.row(typeRules);
     form.end();
+    typesTable
+        .getSelectionModel()
+        .addListSelectionListener(
+            e -> {
+              final int row = typesTable.getSelectedRow();
+              if (row >= 0) {
+                chosenType = RulesXml.relationshipTypes(project.game()).get(row);
+                showTypeRules();
+              }
+            });
     final SearchList nations =
         new SearchList(
             "Search nation",
             () -> MapXml.nations(project.game()),
-            nation -> String.join(", ", MapXml.alliances(project.game(), nation)),
+            nation -> NationsEditor.allianceLine(project.game(), nation),
             nation -> {
               start.nation = nation;
               refresh();
@@ -131,6 +170,10 @@ final class PoliticsEditor implements Editor {
   private void refresh() {
     final Game game = project.game();
     types.fireTableDataChanged();
+    final int chosenRow = RulesXml.relationshipTypes(game).indexOf(chosenType);
+    if (chosenRow >= 0) {
+      typesTable.setRowSelectionInterval(chosenRow, chosenRow);
+    }
     if (!RulesXml.relationshipTypes(game).equals(typesShown)) {
       typesShown = RulesXml.relationshipTypes(game);
       startChoices.removeAllItems();
@@ -139,6 +182,53 @@ final class PoliticsEditor implements Editor {
     }
     start.fireTableDataChanged();
     startTitle.setText(start.chosen().map(n -> n + " starts with").orElse("No nations yet."));
+    nationTitle.setText(start.chosen().orElse("Politics"));
+    showTypeRules();
+  }
+
+  /** What the chosen type allows beyond its kind; built again only when it or the game changed. */
+  private void showTypeRules() {
+    final Game game = project.game();
+    final String type =
+        RulesXml.relationshipTypes(game).contains(chosenType) ? chosenType : null;
+    if (game == typeRulesGame && Objects.equals(type, typeRulesShown)) {
+      return;
+    }
+    typeRulesGame = game;
+    typeRulesShown = type;
+    typeRules.clear();
+    if (type == null) {
+      typeRules.note("Choose a type to see what it allows.").end();
+      typeRules.revalidate();
+      return;
+    }
+    typeRules.title(
+        type + " allows",
+        "What nations in this relationship may do in each other's land. As its kind: as war,"
+            + " allied or neutral have it; the game's other settings of the type stay as they"
+            + " are.");
+    TYPE_RULES.forEach(rule -> typeRules.field(rule.getValue(), typeSetting(type, rule.getKey())));
+    typeRules.end();
+    typeRules.revalidate();
+  }
+
+  private JComboBox<String> typeSetting(final String type, final String option) {
+    final String value = RulesXml.relationshipOption(project.game(), type, option);
+    final JComboBox<String> box = new JComboBox<>(SETTING_LABELS.toArray(String[]::new));
+    if (!SETTINGS.contains(value)) {
+      // a value this editor does not know stays, unless another is chosen
+      box.addItem(value);
+    }
+    box.setSelectedIndex(SETTINGS.contains(value) ? SETTINGS.indexOf(value) : SETTINGS.size());
+    box.addActionListener(
+        e -> {
+          final int index = box.getSelectedIndex();
+          if (index < SETTINGS.size()) {
+            project.edit(
+                g -> RulesXml.withRelationshipOption(g, type, option, SETTINGS.get(index)));
+          }
+        });
+    return box;
   }
 
   @Override
@@ -154,7 +244,7 @@ final class PoliticsEditor implements Editor {
   @Override
   public String hint() {
     return "How nations stand to each other at the start: at war, allied or neutral, by their"
-        + " alliance or by a relationship type.";
+        + " alliance or by a relationship type, and what each type allows.";
   }
 
   @Override

@@ -3,6 +3,9 @@ package eddies.mapeditor;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Dimension;
+import java.awt.Font;
+import java.awt.FontMetrics;
+import java.awt.event.MouseEvent;
 import java.io.Serial;
 import java.util.Collections;
 import java.util.List;
@@ -19,6 +22,7 @@ import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JTextField;
 import javax.swing.ListSelectionModel;
+import javax.swing.ToolTipManager;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import org.triplea.swing.SwingComponents;
@@ -29,12 +33,16 @@ import org.triplea.swing.SwingComponents;
  */
 final class SearchList extends JPanel {
   @Serial private static final long serialVersionUID = 1L;
+  // narrow lists cut long names: the column asks for room for the longest, up to a limit
+  private static final int MIN_WIDTH = 240;
+  private static final int MAX_WIDTH = 360;
 
   private final JTextField search = new JTextField();
   private DefaultListModel<String> shown = new DefaultListModel<>();
-  private final JList<String> list = new WideList();
+  private final JList<String> list;
   private final transient Supplier<List<String>> names;
   private boolean refilling;
+  private int wanted = MIN_WIDTH;
 
   /**
    * @param names the names, asked again on every {@link #refresh}
@@ -47,7 +55,8 @@ final class SearchList extends JPanel {
       final Consumer<String> onChoose) {
     super(new BorderLayout(0, 8));
     this.names = names;
-    setPreferredSize(new Dimension(240, 0));
+    list = new WideList(detail);
+    ToolTipManager.sharedInstance().registerComponent(list);
     setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 8));
     search.putClientProperty("JTextField.placeholderText", placeholder);
     search.getDocument().addDocumentListener(new Refill());
@@ -72,8 +81,10 @@ final class SearchList extends JPanel {
    */
   void refresh() {
     final String filter = search.getText().strip().toLowerCase(Locale.ROOT);
+    final List<String> all = names.get();
+    fitWidthTo(all);
     final List<String> filtered =
-        names.get().stream()
+        all.stream()
             .filter(name -> name.toLowerCase(Locale.ROOT).contains(filter))
             .toList();
     if (filtered.equals(Collections.list(shown.elements()))) {
@@ -92,6 +103,23 @@ final class SearchList extends JPanel {
     refilling = false;
   }
 
+  private void fitWidthTo(final List<String> all) {
+    final FontMetrics bold = list.getFontMetrics(list.getFont().deriveFont(Font.BOLD));
+    // the cell's and column's borders and the scroll bar
+    final int longest = all.stream().mapToInt(bold::stringWidth).max().orElse(0) + 48;
+    final int width = Math.clamp(longest, MIN_WIDTH, MAX_WIDTH);
+    if (width != wanted) {
+      wanted = width;
+      revalidate();
+    }
+  }
+
+  @Override
+  public Dimension getPreferredSize() {
+    // a size the tool set, eg for a dialog, wins
+    return isPreferredSizeSet() ? super.getPreferredSize() : new Dimension(wanted, 0);
+  }
+
   /** Marks the name as chosen without telling the editor, eg after a click on the map. */
   void choose(@Nullable final String name) {
     refilling = true;
@@ -102,9 +130,32 @@ final class SearchList extends JPanel {
     refilling = false;
   }
 
-  /** A list as wide as its column, so long names are cut instead of scrolled sideways. */
+  /**
+   * A list as wide as its column, so long names are cut instead of scrolled sideways; the tool tip
+   * of a row tells it whole.
+   */
   private static final class WideList extends JList<String> {
     @Serial private static final long serialVersionUID = 1L;
+    private final transient Function<String, String> detail;
+
+    WideList(final Function<String, String> detail) {
+      this.detail = detail;
+    }
+
+    @Override
+    public @Nullable String getToolTipText(final MouseEvent event) {
+      final int index = locationToIndex(event.getPoint());
+      if (index < 0 || !getCellBounds(index, index).contains(event.getPoint())) {
+        return null;
+      }
+      final String name = getModel().getElementAt(index);
+      final String line = detail.apply(name);
+      return "<html><b>"
+          + escape(name)
+          + "</b>"
+          + (line.isEmpty() ? "" : "<br>" + escape(line))
+          + "</html>";
+    }
 
     @Override
     public boolean getScrollableTracksViewportWidth() {

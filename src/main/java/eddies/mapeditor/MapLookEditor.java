@@ -7,6 +7,7 @@ import java.awt.Color;
 import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.GridLayout;
 import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.Polygon;
@@ -17,7 +18,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
@@ -29,6 +33,7 @@ import javax.swing.Box;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
+import javax.swing.JColorChooser;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
@@ -54,17 +59,42 @@ final class MapLookEditor implements Editor {
   private static final List<String> SCALES =
       List.of("1.25", "1", "0.875", "0.8333", "0.75", "0.6666", "0.5625", "0.5");
 
+  // the game's ways of blending the relief into the map, BlendComposite
+  private static final List<String> BLEND_MODES =
+      List.of("NORMAL", "OVERLAY", "MULTIPLY", "DIFFERENCE", "LINEAR_LIGHT");
+  // MapData keeps these keys private
+  private static final String TRANSFORM_COLOR = "units.transform.color.";
+  private static final String TRANSFORM_BRIGHTNESS = "units.transform.brightness.";
+  private static final String TRANSFORM_FLIP = "units.transform.flip.";
+  private static final String SMALL_MAP_SATURATION = "smallMap.territory.saturation";
+  private static final String SMALL_MAP_UNIT_SIZE = "smallMap.unit.size";
+  private static final String SMALL_MAP_BORDER = "smallMap.viewer.borderColor";
+  private static final String SMALL_MAP_FILL = "smallMap.viewer.fillColor";
+  private static final String SMALL_MAP_FILL_ALPHA = "smallMap.viewer.fillAlpha";
+  // what the game takes for the title's place and size without all three
+  private static final int SCREENSHOT_TITLE_DEFAULT = 15;
+
   private final MapProject project;
-  private final Form form = new Form(420);
+  // two columns of sections, as the tool takes the window's width
+  private final Form left = new Form(300);
+  private final Form right = new Form(300);
+  // the column the sections are added to while filling
+  private Form form = left;
   private final JPanel page = new JPanel(new BorderLayout());
   // while the form is filled from the map, its fields tell no changes
   private boolean filling;
   // a change made here keeps the form, so a field keeps its focus
   private boolean editingHere;
+  // the nation whose units' look is shown
+  private String tintedNation = "";
 
   MapLookEditor(final MapProject project) {
     this.project = project;
-    page.add(SwingComponents.newJScrollPane(form), BorderLayout.CENTER);
+    final JPanel columns = new JPanel(new GridLayout(1, 2, 24, 0));
+    columns.add(left);
+    columns.add(right);
+    // a form around them, so they follow the width of the scrolled view
+    page.add(SwingComponents.newJScrollPane(new Form(300).row(columns)), BorderLayout.CENTER);
     project.onChange(this::fill);
     fill();
   }
@@ -96,7 +126,9 @@ final class MapLookEditor implements Editor {
     }
     filling = true;
     try {
-      form.clear();
+      left.clear();
+      right.clear();
+      form = left;
       form.section("Units", "The size the game draws the units in, and how many it stacks.");
       form.field("Scale", "1 draws them at their pictures' size.", fitting(scaleChoice()));
       form.field(
@@ -111,16 +143,42 @@ final class MapLookEditor implements Editor {
           "Stack up to",
           "How many units of a kind are drawn on top of each other; 0 for one with a number.",
           number(MapData.PROPERTY_UNITS_STACK_SIZE, 0, 99));
-      form.section("Scrolling");
+      form.field(
+          "Number left",
+          "Where the number of units is drawn, from the left of the picture.",
+          number(
+              MapData.PROPERTY_UNITS_COUNTER_OFFSET_WIDTH,
+              intValue(MapData.PROPERTY_UNITS_WIDTH, UnitImageFactory.DEFAULT_UNIT_ICON_SIZE) / 4,
+              400));
+      form.field(
+          "Number down",
+          "Where the number of units is drawn, from the top of the picture.",
+          number(
+              MapData.PROPERTY_UNITS_COUNTER_OFFSET_HEIGHT,
+              intValue(MapData.PROPERTY_UNITS_HEIGHT, UnitImageFactory.DEFAULT_UNIT_ICON_SIZE),
+              400));
+      unitTint();
+      form.section("Scrolling", "Whether the map goes on at the other side, as round a globe.");
       form.row(check("Scrolls around left and right", MapData.PROPERTY_MAP_SCROLLWRAPX, true));
       form.row(check("Scrolls around top and bottom", MapData.PROPERTY_MAP_SCROLLWRAPY, false));
-      form.section("Shown on the map");
+      form.section(
+          "Shown on the map", "What the game draws on the territories, besides units and owners.");
       form.row(check("Territory names", MapData.PROPERTY_MAP_SHOWTERRITORYNAMES, true));
       form.row(check("Sea zone names", MapData.PROPERTY_MAP_SHOWSEAZONENAMES, false));
       form.row(check("Resources, eg PUs", MapData.PROPERTY_MAP_SHOWRESOURCES, true));
       form.row(check("Capital markers", MapData.PROPERTY_MAP_SHOWCAPITOLMARKERS, true));
       form.row(
           check("Territory effect markers", MapData.PROPERTY_MAP_USETERRITORYEFFECTMARKERS, false));
+      form.row(check("Comment markers", MapData.PROPERTY_MAP_SHOWCOMMENTS, true));
+      form.row(
+          check("Each nation's own convoy flags", MapData.PROPERTY_MAP_USENATION_CONVOYFLAGS, false));
+      form.row(
+          check(
+              "Names from their place's top left",
+              MapData.PROPERTY_MAP_DRAWNAMESFROMTOPLEFT,
+              false));
+      form.end();
+      form = right;
       form.section(
           "Relief",
           "A picture drawn over the map, eg mountains and forests, with see-through parts where"
@@ -139,7 +197,16 @@ final class MapLookEditor implements Editor {
       buttons.add(create);
       form.row(fitting(buttons));
       form.row(check("Show the relief", MapData.PROPERTY_MAP_HASRELIEF, true));
+      blends();
+      smallMap();
+      screenshot();
+      form.section(
+          "Mouse pointer",
+          "The map's own pointer is misc/cursor.gif; this is the point of it that clicks.");
+      form.field("Point left", number(MapData.PROPERTY_MAP_CURSOR_HOTSPOT_X, 0, 256));
+      form.field("Point down", number(MapData.PROPERTY_MAP_CURSOR_HOTSPOT_Y, 0, 256));
       form.end();
+      form = left;
     } finally {
       filling = false;
     }
@@ -165,14 +232,206 @@ final class MapLookEditor implements Editor {
   }
 
   private JComponent number(final String property, final int fallback, final int max) {
-    final int value;
+    return number(property, fallback, 0, max);
+  }
+
+  private JComponent number(
+      final String property, final int fallback, final int min, final int max) {
+    return Form.newNumber(
+        intValue(property, fallback), min, max, n -> set(property, String.valueOf(n)));
+  }
+
+  /** The whole number; a map's value the game cannot read either as the game's default. */
+  private int intValue(final String property, final int fallback) {
     try {
-      value = Integer.parseInt(value(property, String.valueOf(fallback)).strip());
+      return Integer.parseInt(value(property, String.valueOf(fallback)).strip());
     } catch (final NumberFormatException e) {
-      // a map's value the game cannot read either: shown as the game's default
-      return Form.newNumber(fallback, max, n -> set(property, String.valueOf(n)));
+      return fallback;
     }
-    return Form.newNumber(value, max, n -> set(property, String.valueOf(n)));
+  }
+
+  /** A share from 0 to 1, eg 0.5f, as a percent. */
+  private JComponent percent(final String property, final float fallback) {
+    float share;
+    try {
+      share = Float.parseFloat(value(property, String.valueOf(fallback)).strip());
+    } catch (final NumberFormatException e) {
+      share = fallback;
+    }
+    return Form.newNumber(
+        Math.round(share * 100), 100, n -> set(property, String.valueOf(n / 100.0)));
+  }
+
+  /**
+   * A button showing the color, which a color chooser changes; "None" without one, which the
+   * chooser then also offers, as the game draws nothing for it.
+   */
+  private JComponent color(final String property, final Optional<Color> fallback) {
+    if (fallback.isPresent()) {
+      return colorWithDefault(property, fallback.get());
+    }
+    final Optional<Color> shown =
+        Optional.ofNullable(project.getFiles().properties().getProperty(property))
+            .flatMap(MapLookEditor::colorOf);
+    final JButton button = new JButton(shown.isPresent() ? "      " : "None");
+    shown.ifPresent(
+        c -> {
+          button.setBackground(c);
+          button.setToolTipText("#" + hex(c));
+        });
+    button.addActionListener(
+        e -> {
+          final JColorChooser chooser = new JColorChooser(shown.orElse(Color.GRAY));
+          final int choice =
+              JOptionPane.showOptionDialog(
+                  page,
+                  chooser,
+                  "Choose a color",
+                  JOptionPane.DEFAULT_OPTION,
+                  JOptionPane.PLAIN_MESSAGE,
+                  null,
+                  new Object[] {"OK", "None", "Cancel"},
+                  "OK");
+          if (choice == 0) {
+            set(property, hex(chooser.getColor()));
+          } else if (choice == 1) {
+            set(property, "");
+          }
+        });
+    return fitting(button);
+  }
+
+  private JComponent colorWithDefault(final String property, final Color fallback) {
+    final Color shown =
+        Optional.ofNullable(project.getFiles().properties().getProperty(property))
+            .flatMap(MapLookEditor::colorOf)
+            .orElse(fallback);
+    final JButton button = new JButton("      ");
+    button.setBackground(shown);
+    button.setToolTipText("#" + hex(shown));
+    button.addActionListener(
+        e ->
+            Optional.ofNullable(JColorChooser.showDialog(page, "Choose a color", shown))
+                .ifPresent(chosen -> set(property, hex(chosen))));
+    return fitting(button);
+  }
+
+  /** The color as map.properties holds it, eg FF0011; empty for one the game cannot read. */
+  static Optional<Color> colorOf(final String value) {
+    final String hex = value.strip();
+    return hex.matches("[0-9A-Fa-f]{6}")
+        ? Optional.of(new Color(Integer.parseInt(hex, 16)))
+        : Optional.empty();
+  }
+
+  static String hex(final Color color) {
+    return String.format("%06X", color.getRGB() & 0xFFFFFF);
+  }
+
+  /** How a nation's units are drawn: tinted, lighter or darker, turned to face the other way. */
+  private void unitTint() {
+    final List<String> nations = MapXml.nations(project.game());
+    if (nations.isEmpty()) {
+      return;
+    }
+    if (!nations.contains(tintedNation)) {
+      tintedNation = nations.getFirst();
+    }
+    form.section(
+        "A nation's units",
+        "Draws the nation's unit pictures tinted, lighter or darker, or facing the other way,"
+            + " eg when the nations share one set of pictures.");
+    final JComboBox<String> nation = new JComboBox<>(nations.toArray(String[]::new));
+    nation.setSelectedItem(tintedNation);
+    nation.addActionListener(
+        e -> {
+          tintedNation = (String) nation.getSelectedItem();
+          fill();
+        });
+    form.field("Nation", fitting(nation));
+    final String tint = TRANSFORM_COLOR + tintedNation;
+    form.field("Tint", "None draws the pictures in their own colors.", color(tint, Optional.empty()));
+    form.field(
+        "Brightness",
+        "From -100, dark, to 100, light; 0 as the pictures are.",
+        number(TRANSFORM_BRIGHTNESS + tintedNation, 0, -100, 100));
+    form.row(check("Facing the other way", TRANSFORM_FLIP + tintedNation, false));
+  }
+
+  private void blends() {
+    form.section(
+        "Blending",
+        "How the relief is blended into the map when a player turns on View, Show Map Blends.");
+    final JComboBox<String> mode = new JComboBox<>(BLEND_MODES.toArray(String[]::new));
+    final String current =
+        value(MapData.PROPERTY_MAP_MAPBLENDMODE, "normal").strip().toUpperCase(Locale.ROOT);
+    if (!BLEND_MODES.contains(current)) {
+      mode.addItem(current);
+    }
+    mode.setSelectedItem(current);
+    mode.addActionListener(
+        e -> set(MapData.PROPERTY_MAP_MAPBLENDMODE, (String) mode.getSelectedItem()));
+    form.field("Mode", fitting(mode));
+    form.field("Strength in %", percent(MapData.PROPERTY_MAP_MAPBLENDALPHA, 0.5f));
+  }
+
+  private void smallMap() {
+    form.section("Small map", "The whole map in small, with a frame where the player looks.");
+    form.field(
+        "Territory colors in %",
+        "How strongly the nations' colors show.",
+        percent(SMALL_MAP_SATURATION, 1));
+    form.field("Unit dots", "Their size in pixels.", number(SMALL_MAP_UNIT_SIZE, 4, 50));
+    form.field("Frame", color(SMALL_MAP_BORDER, Optional.of(Color.LIGHT_GRAY)));
+    form.field("Inside the frame", color(SMALL_MAP_FILL, Optional.of(Color.LIGHT_GRAY)));
+    form.field(
+        "Inside the frame, cover in %",
+        "0 leaves the map clear inside the frame.",
+        percent(SMALL_MAP_FILL_ALPHA, 0));
+  }
+
+  /** The title of a picture of the map the game saves, eg "Big World Round 3". */
+  private void screenshot() {
+    form.section("Map picture", "A player's File, Export map picture: its title.");
+    form.row(check("With a title", MapData.PROPERTY_SCREENSHOT_TITLE_ENABLED, true));
+    form.field("Title left", titleNumber(MapData.PROPERTY_SCREENSHOT_TITLE_X, 100_000));
+    form.field("Title down", titleNumber(MapData.PROPERTY_SCREENSHOT_TITLE_Y, 100_000));
+    form.field("Title size", titleNumber(MapData.PROPERTY_SCREENSHOT_TITLE_FONT_SIZE, 400));
+    form.field(
+        "Title color", color(MapData.PROPERTY_SCREENSHOT_TITLE_COLOR, Optional.of(Color.BLACK)));
+  }
+
+  /**
+   * One of the title's place and size: the game reads them only all three, else takes 15 for
+   * each, so a change writes all three.
+   */
+  private JComponent titleNumber(final String property, final int max) {
+    return Form.newNumber(
+        titlePlace().get(property),
+        max,
+        n -> {
+          final Map<String, String> written = new LinkedHashMap<>();
+          titlePlace().forEach((k, v) -> written.put(k, String.valueOf(v)));
+          written.put(property, String.valueOf(n));
+          setAll(written);
+        });
+  }
+
+  private Map<String, Integer> titlePlace() {
+    final List<String> keys =
+        List.of(
+            MapData.PROPERTY_SCREENSHOT_TITLE_X,
+            MapData.PROPERTY_SCREENSHOT_TITLE_Y,
+            MapData.PROPERTY_SCREENSHOT_TITLE_FONT_SIZE);
+    final Map<String, Integer> place = new LinkedHashMap<>();
+    try {
+      for (final String key : keys) {
+        place.put(key, Integer.parseInt(value(key, "").strip()));
+      }
+    } catch (final NumberFormatException e) {
+      keys.forEach(key -> place.put(key, SCREENSHOT_TITLE_DEFAULT));
+    }
+    return place;
   }
 
   private JCheckBox check(final String label, final String property, final boolean fallback) {
@@ -189,12 +448,16 @@ final class MapLookEditor implements Editor {
   }
 
   private void set(final String property, final String value) {
+    setAll(Map.of(property, value));
+  }
+
+  private void setAll(final Map<String, String> values) {
     if (filling) {
       return;
     }
     editingHere = true;
     try {
-      project.setMapProperty(property, value);
+      project.setMapProperties(values);
     } finally {
       editingHere = false;
     }

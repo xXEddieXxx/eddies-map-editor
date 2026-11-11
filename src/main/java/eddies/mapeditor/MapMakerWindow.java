@@ -110,6 +110,7 @@ public final class MapMakerWindow extends JFrame {
   private final transient FilesEditor files =
       new FilesEditor(
           () -> project.getFolder().map(MapFolder::rootOf),
+          () -> project.game(),
           this::mayWriteMapFile,
           this::reloadFromFiles,
           this::showFileInMiddle);
@@ -674,12 +675,17 @@ with map.yml, the game file, its notes and map.properties.
             List.of(
                 territories,
                 new ConnectionsEditor(opened, map),
+                new CanalsEditor(opened, map),
+                new TerritoryEffectsEditor(opened),
                 new NationsEditor(opened),
-                new MapLookEditor(opened)),
+                new MapLookEditor(opened),
+                new SoundsEditor(opened)),
             List.of(
                 RulesEditors.newGameOptions(opened),
                 new TurnOrderEditor(opened),
                 new PoliticsEditor(opened),
+                new ActionsEditor(opened),
+                new TriggersEditor(opened),
                 new TechnologyEditor(opened)),
             List.of(
                 new UnitsEditor(opened),
@@ -854,9 +860,9 @@ with map.yml, the game file, its notes and map.properties.
     for (final List<Editor> tools : toolGroups) {
       final JSeparator line = new JSeparator();
       line.setMaximumSize(new Dimension(Integer.MAX_VALUE, 1));
-      strip.add(Box.createVerticalStrut(8));
+      strip.add(stripGap(2, 8));
       strip.add(line);
-      strip.add(Box.createVerticalStrut(8));
+      strip.add(stripGap(2, 8));
       for (final Editor editor : tools) {
         final String shortcut = key <= 9 ? " (Alt+" + key + ")" : "";
         final JToggleButton button =
@@ -872,7 +878,7 @@ with map.yml, the game file, its notes and map.properties.
         group.add(button);
         navButtons.put(editor.title(), button);
         strip.add(button);
-        strip.add(Box.createVerticalStrut(4));
+        strip.add(stripGap(0, 4));
       }
     }
     strip.add(Box.createVerticalGlue());
@@ -889,6 +895,15 @@ with map.yml, the game file, its notes and map.properties.
     resources.addActionListener(e -> links.show(resources, resources.getWidth(), 0));
     strip.add(resources);
     return strip;
+  }
+
+  /**
+   * A gap in the strip that shrinks to its minimum, as the buttons do, when the window is too low
+   * for all tools, so the last ones and Resources stay on screen.
+   */
+  private static Box.Filler stripGap(final int min, final int preferred) {
+    return new Box.Filler(
+        new Dimension(0, min), new Dimension(0, preferred), new Dimension(0, preferred));
   }
 
   /** A square icon button of the strip; its name for screen readers, name and use as tool tip. */
@@ -913,7 +928,8 @@ with map.yml, the game file, its notes and map.properties.
     button.setAlignmentX(Component.CENTER_ALIGNMENT);
     final Dimension size = new Dimension(36, 36);
     button.setPreferredSize(size);
-    button.setMinimumSize(size);
+    // lower when the window is low; the 20 px icon still fits
+    button.setMinimumSize(new Dimension(36, 26));
     button.setMaximumSize(size);
   }
 

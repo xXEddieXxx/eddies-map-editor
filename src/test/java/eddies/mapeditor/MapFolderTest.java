@@ -2,6 +2,7 @@ package eddies.mapeditor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 import java.awt.Color;
 import java.awt.Graphics2D;
@@ -21,8 +22,10 @@ import javax.imageio.ImageIO;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.triplea.map.data.elements.Game;
 import org.triplea.map.description.file.MapDescriptionYaml;
 import org.triplea.map.description.file.MapDescriptionYaml.MapGame;
+import org.triplea.yaml.YamlReader;
 import eddies.mapeditor.MapFolder.UnitPictures;
 
 final class MapFolderTest {
@@ -68,6 +71,30 @@ games:
     assertThatThrownBy(() -> MapFolder.newGame(map.resolve("games/first.xml"), "second try"))
         .as("never over a game that is there")
         .isInstanceOf(IOException.class);
+  }
+
+  @DisplayName("A new game keeps map.yml's other entries, and its first version as .bak")
+  @Test
+  void newGameKeepsMapYml() throws IOException {
+    final Path map = givenMap();
+    final Path yml = map.resolve("map.yml");
+    final String before = Files.readString(yml) + "version: 3\n";
+    Files.writeString(yml, before);
+
+    MapFolder.newGame(map.resolve("games/first.xml"), "Second");
+
+    assertThat(YamlReader.readMap(Files.readString(yml)))
+        .as("an entry the editor does not know stays")
+        .containsEntry("version", 3);
+    assertThat(yml.resolveSibling("map.yml.bak")).as("the first version kept").hasContent(before);
+  }
+
+  @DisplayName("A copied sound ends in .mp3 in lower case, the only ending the game plays")
+  @Test
+  void soundsEndInLowerCaseMp3() {
+    assertThat(SoundsEditor.mp3Name(Path.of("music", "Horn.MP3")))
+        .as("the game matches the ending exactly")
+        .isEqualTo("Horn.mp3");
   }
 
   @DisplayName("A map keeping its files in map/ below its map.yml opens from either folder")
@@ -284,4 +311,94 @@ games:
         .isEqualTo(typed);
   }
 
+
+  @DisplayName("Renaming a game in map.yml keeps every other entry and the first version as .bak")
+  @Test
+  void renamedGameKeepsTheRest() throws IOException {
+    final Path yml = Files.createDirectories(root.resolve("named")).resolve("map.yml");
+    final String before =
+"""
+map_name: My Map
+version: 3
+games:
+- game_name: First
+  file_name: first.xml
+  note: keep me
+- {game_name: Second, file_name: second.xml}
+""";
+    Files.writeString(yml, before);
+
+    MapFolder.renameGame(yml, "first.xml", " Opening ");
+
+    final MapDescriptionYaml yaml = MapDescriptionYaml.fromFile(yml).orElseThrow();
+    assertThat(yaml.getMapGameList())
+        .as("the game of first.xml renamed, the other as it was")
+        .extracting(MapGame::getGameName, MapGame::getXmlFileName)
+        .containsExactly(tuple("Opening", "first.xml"), tuple("Second", "second.xml"));
+    final Map<String, Object> written = YamlReader.readMap(Files.readString(yml));
+    assertThat(written)
+        .as("the map's name and an entry the editor does not know stay")
+        .containsEntry("map_name", "My Map")
+        .containsEntry("version", 3);
+    assertThat(Files.readString(yml)).as("an entry of a game stays").contains("note: keep me");
+    assertThat(yml.resolveSibling("map.yml.bak")).as("the first version kept").hasContent(before);
+  }
+
+  @DisplayName("An imported picture is written as the folder's picture wants, the one before as .bak")
+  @Test
+  void importedPictureKeepsTheOld() throws IOException {
+    final Path map = givenMap();
+    final Path jpg = root.resolve("coin.jpg");
+    // a jpg holds no see-through parts
+    ImageIO.write(new BufferedImage(8, 8, BufferedImage.TYPE_INT_RGB), "jpg", jpg.toFile());
+    final Path coin = Files.createDirectories(map.resolve("PUs")).resolve("3.png");
+    Files.writeString(coin, "the old coin");
+
+    MapFolder.importPicture(jpg, coin);
+
+    assertThat(ImageIO.read(coin.toFile())).as("written as a picture png reads").isNotNull();
+    assertThat(Files.readAllBytes(coin)).as("as png").startsWith(0x89, 'P', 'N', 'G');
+    assertThat(coin.resolveSibling("3.png.bak")).as("the first version kept").hasContent("the old coin");
+  }
+
+  @DisplayName("A picture folder wants a picture for each PU value, die side and effect of the game")
+  @Test
+  void pictureFoldersFollowTheGame() {
+    final Game game = MapXmlTest.givenMinimap();
+
+    final List<String> coins = MapFolder.picturesFor("PUs", game);
+    final List<String> dice = MapFolder.picturesFor("dice", game);
+
+    assertThat(coins)
+        .as("one coin per value a territory of the minimap gives, from the smallest")
+        .containsExactly("2.png", "5.png", "10.png");
+    assertThat(dice)
+        .as("thrown, hit and ignored for each of the 6 sides")
+        .hasSize(18)
+        .contains("1.png", "6_hit.png", "3_ignored.png");
+  }
+
+  @DisplayName("A resource icon is written in both sizes, its shape kept, the old one kept as .bak")
+  @Test
+  void writesResourceIcon() throws IOException {
+    final Path map = givenMap();
+    final BufferedImage wide = new BufferedImage(100, 50, BufferedImage.TYPE_INT_ARGB);
+    final Graphics2D g = wide.createGraphics();
+    g.setColor(Color.RED);
+    g.fillRect(0, 0, 100, 50);
+    g.dispose();
+    MapFolder.writeResourceIcon(map, "Oil", wide);
+
+    MapFolder.writeResourceIcon(map, "Oil", wide);
+
+    final BufferedImage small = ImageIO.read(map.resolve("resources/Oil.png").toFile());
+    final BufferedImage large = ImageIO.read(map.resolve("resources/Oil_large.png").toFile());
+    assertThat(List.of(small.getWidth(), small.getHeight(), large.getWidth(), large.getHeight()))
+        .as("squares of 20 and 48 pixels, as the game shows them")
+        .containsExactly(20, 20, 48, 48);
+    assertThat(List.of(small.getRGB(10, 10) >>> 24, small.getRGB(10, 2) >>> 24))
+        .as("the wide picture in the middle, clear above it")
+        .containsExactly(255, 0);
+    assertThat(map.resolve("resources/Oil.png.bak")).as("the first one kept").exists();
+  }
 }

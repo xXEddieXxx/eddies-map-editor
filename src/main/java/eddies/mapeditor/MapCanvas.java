@@ -109,6 +109,8 @@ final class MapCanvas extends JComponent {
   private double zoom = 0.5;
   private boolean showPicture = true;
   private @Nullable String selected;
+  // territories a tool shows together, eg a canal's sea zones and land
+  private transient Set<String> marked = Set.of();
   private transient Consumer<String> onClick = territory -> {};
   // the selected territory's places shown to move, add and remove
   private boolean editingPlaces;
@@ -140,6 +142,7 @@ final class MapCanvas extends JComponent {
       MapMode mode,
       boolean showPicture,
       @Nullable String selected,
+      Set<String> marked,
       int changes,
       MapFiles files,
       @Nullable BufferedImage overview) {}
@@ -261,6 +264,12 @@ final class MapCanvas extends JComponent {
     repaint();
   }
 
+  /** Shows these territories together, in the accent color; none for no marks. */
+  void setMarked(final Set<String> territories) {
+    marked = Set.copyOf(territories);
+    repaint();
+  }
+
   /** Scrolls the territory into the middle of the view. */
   void scrollTo(final String territory) {
     final Point center = center(territory);
@@ -317,7 +326,15 @@ final class MapCanvas extends JComponent {
     final double screenScale = g.getTransform().getScaleX();
     final LayerKey drawn =
         new LayerKey(
-            zoom, screenScale, mode, showPicture, selected, changes, project.getFiles(), overview);
+            zoom,
+            screenScale,
+            mode,
+            showPicture,
+            selected,
+            marked,
+            changes,
+            project.getFiles(),
+            overview);
     if (!drawn.equals(layerOf)) {
       layer.clear();
       layerOf = drawn;
@@ -835,7 +852,12 @@ final class MapCanvas extends JComponent {
       g.setColor(overPicture ? withAlpha(fill, asPlayed ? 0x59 : 0x8C) : fill);
       shapes.forEach(g::fill);
     }
-    final boolean isSelected = territory.equals(selected);
+    final boolean isMarked = marked.contains(territory);
+    if (isMarked) {
+      g.setColor(withAlpha(Theme.getAccentColor(), 0x66));
+      shapes.forEach(g::fill);
+    }
+    final boolean isSelected = territory.equals(selected) || isMarked;
     // a territory with a problem stands out in red, as the legend says
     final boolean problem = !isSelected && problemTerritories().contains(territory);
     g.setColor(isSelected ? Theme.getAccentColor() : problem ? PROBLEM : OUTLINE);

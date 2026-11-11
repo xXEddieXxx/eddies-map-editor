@@ -34,7 +34,9 @@ final class TextsEditor implements Editor {
 
   private final MapProject project;
   private final JPanel page = new JPanel(new BorderLayout(8, 8));
-  private final JComboBox<Kind> file = new JComboBox<>(Kind.values());
+  // sounds have a tool of their own
+  private final JComboBox<Kind> file =
+      new JComboBox<>(Stream.of(Kind.values()).filter(k -> k != Kind.SOUNDS).toArray(Kind[]::new));
   private final SearchList list;
   private final Form inspector = new Form(360);
   private final XmlTextArea text = new XmlTextArea();
@@ -120,8 +122,8 @@ final class TextsEditor implements Editor {
 
   @Override
   public String hint() {
-    return "The texts the game shows by key: objectives, the messages of triggers and unit tool"
-        + " tips. Each is saved in its file beside the game.";
+    return "The texts the game shows by key: objectives, the messages of triggers, unit tool tips"
+        + " and the texts of actions. Each is saved in its file beside the game.";
   }
 
   @Override

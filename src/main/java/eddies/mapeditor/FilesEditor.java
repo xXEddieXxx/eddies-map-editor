@@ -44,6 +44,7 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
+import javax.swing.JTextField;
 import javax.swing.JTree;
 import javax.swing.KeyStroke;
 import javax.swing.SwingConstants;
@@ -58,6 +59,9 @@ import javax.swing.tree.DefaultTreeCellRenderer;
 import javax.swing.tree.TreeModel;
 import javax.swing.tree.TreePath;
 import lombok.extern.slf4j.Slf4j;
+import org.triplea.map.data.elements.Game;
+import org.triplea.map.description.file.MapDescriptionYaml;
+import org.triplea.map.description.file.MapDescriptionYaml.MapGame;
 import org.triplea.swing.SwingComponents;
 import eddies.mapeditor.FileLint.Lint;
 import eddies.mapeditor.MakerIcon.Glyph;
@@ -77,8 +81,11 @@ final class FilesEditor implements Editor {
   // larger text is shown read only: a text area of tens of megabytes is too slow to type in
   private static final long MAX_EDITED_SIZE = 20L * 1024 * 1024;
   private static final int PREVIEW_SIZE = 640;
+  private static final String POLYGONS = "polygons.txt";
+  private static final int THUMBNAIL = 32;
 
   private final Supplier<Optional<Path>> mapFolder;
+  private final Supplier<Game> game;
   private final BooleanSupplier mayWriteMapFile;
   private final Runnable reloadMap;
   private final Runnable fileShown;
@@ -121,9 +128,11 @@ final class FilesEditor implements Editor {
    *     the map's own changes; false to leave it
    * @param reloadMap reads the open map again from its files
    * @param fileShown brings the open file to the middle, eg when it is chosen in the tree
+   * @param game the open map's game, for the pictures its folders should have
    */
   FilesEditor(
       final Supplier<Optional<Path>> mapFolder,
+      final Supplier<Game> game,
       final BooleanSupplier mayWriteMapFile,
       final Runnable reloadMap,
       final Runnable fileShown) {
@@ -131,6 +140,7 @@ final class FilesEditor implements Editor {
     this.fileShown = fileShown;
     this.mayWriteMapFile = mayWriteMapFile;
     this.reloadMap = reloadMap;
+    this.game = game;
     tree = new JTree(folders);
     lintLater.setRepeats(false);
     tree.setRootVisible(false);
@@ -142,7 +152,7 @@ final class FilesEditor implements Editor {
                 .map(TreePath::getLastPathComponent)
                 .filter(Path.class::isInstance)
                 .map(Path.class::cast)
-                .filter(Files::isRegularFile)
+                .filter(p -> Files.isRegularFile(p) || hasFolderView(p))
                 .ifPresent(this::openFile));
     // a click on the file already chosen brings it back to the middle, eg after a tool's view
     tree.addMouseListener(
@@ -341,7 +351,9 @@ final class FilesEditor implements Editor {
     problems.clear();
     fileSlot.removeAll();
     final String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
-    if (TEXT_FILES.stream().anyMatch(name::endsWith)) {
+    if (Files.isDirectory(file)) {
+      showFolder(file);
+    } else if (TEXT_FILES.stream().anyMatch(name::endsWith)) {
       showText(file);
     } else if (PICTURES.stream().anyMatch(name::endsWith)) {
       showPicture(file);
@@ -445,6 +457,229 @@ final class FilesEditor implements Editor {
     } catch (final IOException e) {
       fileSlot.add(note("Could not read " + file.getFileName() + ": " + e.getMessage()));
     }
+  }
+
+  /**
+   * Whether the middle has something for the folder of the open map: map.yml's games, the picture
+   * folders the map lacks, or one of the picture folders.
+   */
+  private boolean hasFolderView(final Path folder) {
+    return Files.isDirectory(folder)
+        && mapFolder.get().filter(folder::startsWith).isPresent()
+        && (Files.isRegularFile(folder.resolve(MapDescriptionYaml.MAP_YAML_FILE_NAME))
+            || Files.isRegularFile(folder.resolve(POLYGONS))
+            || MapFolder.PICTURE_FOLDERS.containsKey(folder.getFileName().toString()));
+  }
+
+  private void showFolder(final Path folder) {
+    final Form form = new Form(PREVIEW_SIZE);
+    form.title(folder.getFileName().toString());
+    final Path yml = folder.resolve(MapDescriptionYaml.MAP_YAML_FILE_NAME);
+    if (Files.isRegularFile(yml)) {
+      showGames(form, folder, yml);
+    }
+    if (Files.isRegularFile(folder.resolve(POLYGONS))) {
+      showMissingPictureFolders(form, folder);
+    }
+    Optional.ofNullable(MapFolder.PICTURE_FOLDERS.get(folder.getFileName().toString()))
+        .ifPresent(what -> showPictures(form, folder, what));
+    form.end();
+    fileSlot.add(SwingComponents.newJScrollPane(form), BorderLayout.CENTER);
+  }
+
+  /** The map's name and its games as map.yml lists them, each game to rename. */
+  private void showGames(final Form form, final Path folder, final Path yml) {
+    form.section(
+        "map.yml",
+        "How the game lists the map and its games. The games find the map by its name, so the"
+            + " name stays; a game's name is the one players choose it by.");
+    final Optional<MapDescriptionYaml> yaml = MapDescriptionYaml.fromFile(yml);
+    if (yaml.isEmpty()) {
+      form.note("map.yml does not read: open it to fix it.");
+      return;
+    }
+    form.field("Map name", new JLabel(yaml.get().getMapName()));
+    final List<String> names =
+        yaml.get().getMapGameList().stream().map(MapGame::getGameName).toList();
+    for (final MapGame mapGame : yaml.get().getMapGameList()) {
+      final JTextField name = new JTextField(mapGame.getGameName());
+      final JButton rename = new JButton("Rename");
+      rename.addActionListener(
+          e -> renameGame(folder, yml, mapGame, name.getText().strip(), names));
+      name.addActionListener(e -> rename.doClick());
+      final JPanel row = new JPanel(new BorderLayout(6, 0));
+      row.add(name, BorderLayout.CENTER);
+      row.add(rename, BorderLayout.EAST);
+      form.field("Game in " + mapGame.getXmlFileName(), row);
+    }
+  }
+
+  private void renameGame(
+      final Path folder,
+      final Path yml,
+      final MapGame mapGame,
+      final String name,
+      final List<String> names) {
+    if (name.equals(mapGame.getGameName())) {
+      return;
+    }
+    if (name.isEmpty() || names.contains(name)) {
+      JOptionPane.showMessageDialog(
+          page,
+          name.isEmpty() ? "A game needs a name." : "Another game has the name " + name + ".",
+          "map.yml",
+          JOptionPane.WARNING_MESSAGE);
+      return;
+    }
+    try {
+      MapFolder.renameGame(yml, mapGame.getXmlFileName(), name);
+    } catch (final IOException e) {
+      log.warn("Could not rename the game in {}", yml, e);
+      JOptionPane.showMessageDialog(
+          page, "Could not write map.yml:\n" + e.getMessage(), "map.yml", JOptionPane.WARNING_MESSAGE);
+    }
+    showFile(folder);
+  }
+
+  /** The picture folders the map has not, each to add. */
+  private void showMissingPictureFolders(final Form form, final Path folder) {
+    final List<String> missing =
+        MapFolder.PICTURE_FOLDERS.keySet().stream()
+            .sorted()
+            .filter(name -> !Files.isDirectory(folder.resolve(name)))
+            .toList();
+    if (missing.isEmpty()) {
+      return;
+    }
+    form.section(
+        "Picture folders", "Folders of pictures the game takes in place of its own drawing.");
+    for (final String name : missing) {
+      final JButton add = new JButton("Add");
+      add.addActionListener(
+          e -> {
+            try {
+              Files.createDirectories(folder.resolve(name));
+            } catch (final IOException ex) {
+              log.warn("Could not make {}", folder.resolve(name), ex);
+              return;
+            }
+            folders.refresh();
+            reveal(folder.resolve(name));
+          });
+      form.row(
+          slotRow(name + ": " + MapFolder.PICTURE_FOLDERS.get(name), true, add, Optional.empty()));
+    }
+  }
+
+  /** The pictures the game looks for in the folder, those missing marked, each to import. */
+  private void showPictures(final Form form, final Path folder, final String what) {
+    final List<String> pictures =
+        MapFolder.picturesFor(folder.getFileName().toString(), game.get());
+    final long there = pictures.stream().filter(p -> Files.exists(folder.resolve(p))).count();
+    form.section("Pictures", what);
+    form.note(
+        there
+            + " of "
+            + pictures.size()
+            + " there; the game draws its own where one is missing.");
+    final JButton importHere = new JButton("Import picture here...");
+    importHere.setToolTipText("Copies a picture into this folder under its own name");
+    importHere.addActionListener(
+        e ->
+            choosePicture(folder)
+                .ifPresent(
+                    chosen ->
+                        importInto(
+                            folder,
+                            chosen,
+                            () ->
+                                MapFolder.copyInto(
+                                    chosen, folder.resolve(chosen.getFileName().toString())))));
+    final JPanel importRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+    importRow.add(importHere);
+    form.row(importRow);
+    for (final String picture : pictures) {
+      final JButton take = new JButton("Import...");
+      take.addActionListener(
+          e ->
+              choosePicture(folder)
+                  .ifPresent(
+                      chosen ->
+                          importInto(
+                              folder,
+                              chosen,
+                              () -> MapFolder.importPicture(chosen, folder.resolve(picture)))));
+      final boolean present = Files.exists(folder.resolve(picture));
+      form.row(
+          slotRow(
+              picture + (present ? "" : "  · missing"),
+              !present,
+              take,
+              present ? thumbnail(folder.resolve(picture)) : Optional.empty()));
+    }
+  }
+
+  /** The picture shrunk to fit a row, empty when it does not read. */
+  private static Optional<ImageIcon> thumbnail(final Path file) {
+    try {
+      final BufferedImage picture = ImageIO.read(file.toFile());
+      if (picture == null) {
+        return Optional.empty();
+      }
+      final double scale =
+          Math.min(1, THUMBNAIL / (double) Math.max(picture.getWidth(), picture.getHeight()));
+      return Optional.of(
+          new ImageIcon(
+              picture.getScaledInstance(
+                  Math.max(1, (int) (picture.getWidth() * scale)),
+                  Math.max(1, (int) (picture.getHeight() * scale)),
+                  Image.SCALE_SMOOTH)));
+    } catch (final IOException e) {
+      return Optional.empty();
+    }
+  }
+
+  private static JPanel slotRow(
+      final String text,
+      final boolean quiet,
+      final JButton action,
+      final Optional<ImageIcon> thumbnail) {
+    final JLabel label = new JLabel(text);
+    thumbnail.ifPresent(label::setIcon);
+    if (quiet) {
+      label.setForeground(Theme.getSecondaryTextColor());
+    }
+    final JPanel row = new JPanel(new BorderLayout(8, 0));
+    row.add(label, BorderLayout.CENTER);
+    row.add(action, BorderLayout.EAST);
+    return row;
+  }
+
+  private Optional<Path> choosePicture(final Path folder) {
+    return MapMakerWindow.chooseFileToOpen(
+        page, "Choose a picture", folder, "png", "gif", "jpg", "jpeg");
+  }
+
+  /** Writes the picture, then shows the folder again with it. */
+  private void importInto(final Path folder, final Path chosen, final Import write) {
+    try {
+      write.run();
+    } catch (final IOException e) {
+      log.warn("Could not import {}", chosen, e);
+      JOptionPane.showMessageDialog(
+          page,
+          "Could not import " + chosen.getFileName() + ":\n" + e.getMessage(),
+          "Import picture",
+          JOptionPane.WARNING_MESSAGE);
+    }
+    folders.refresh();
+    reveal(folder);
+    showFile(folder);
+  }
+
+  @FunctionalInterface
+  private interface Import {
+    void run() throws IOException;
   }
 
   private void showNothing() {

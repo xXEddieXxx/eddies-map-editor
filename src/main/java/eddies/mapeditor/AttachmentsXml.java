@@ -146,18 +146,23 @@ class AttachmentsXml {
   static Game withNewAttachment(
       final Game game, final String kind, final String name, final String attachTo) {
     final List<Attachment> attachments = new ArrayList<>(attachments(game));
-    attachments.add(
-        Attachment.builder()
-            .name(name)
-            .attachTo(attachTo)
-            .javaClass(PACKAGE + kind)
-            .type(KINDS.getOrDefault(kind, "player"))
-            .options(List.of())
-            .build());
+    attachments.add(newAttachment(kind, name, attachTo));
     return withAttachments(game, attachments);
   }
 
-  private static Game withAttachments(final Game game, final List<Attachment> attachments) {
+  /** A new attachment of the kind, without options, not in a game yet. */
+  static Attachment newAttachment(final String kind, final String name, final String attachTo) {
+    return Attachment.builder()
+        .name(name)
+        .attachTo(attachTo)
+        .javaClass(PACKAGE + kind)
+        .type(KINDS.getOrDefault(kind, "player"))
+        .options(List.of())
+        .build();
+  }
+
+  /** The game with these attachments, in this order. */
+  static Game withAttachments(final Game game, final List<Attachment> attachments) {
     final AttachmentList list =
         Optional.ofNullable(game.getAttachmentList())
             .orElseGet(() -> AttachmentList.builder().build());
@@ -221,6 +226,10 @@ class AttachmentsXml {
   static List<String> knownOptions(final Game game, final String kind) {
     final TreeSet<String> names =
         new TreeSet<>(KNOWN_OPTIONS.computeIfAbsent(kind, AttachmentsXml::optionsOfClass));
+    if ("UnitAttachment".equals(kind)) {
+      // names whose setter is spelt otherwise, eg attackAA by setAttackAa
+      names.addAll(UnitOptions.NAMES);
+    }
     attachments(game).stream()
         .filter(a -> kind.equals(kind(a)))
         .flatMap(a -> options(a).stream())
