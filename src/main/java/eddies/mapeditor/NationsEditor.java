@@ -1,15 +1,24 @@
 package eddies.mapeditor;
 
+import com.formdev.flatlaf.FlatClientProperties;
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Component;
+import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.GridLayout;
 import java.awt.Image;
+import java.awt.Window;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -17,8 +26,13 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiFunction;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
 import javax.annotation.Nullable;
 import javax.swing.BorderFactory;
+import javax.swing.Box;
+import javax.swing.BoxLayout;
+import javax.swing.DefaultListCellRenderer;
 import javax.swing.Icon;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
@@ -27,27 +41,31 @@ import javax.swing.JColorChooser;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
-import javax.swing.JOptionPane;
+import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JSpinner;
+import javax.swing.JSplitPane;
 import javax.swing.JTextField;
+import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
 import org.triplea.map.data.elements.AttachmentList.Attachment.Option;
 import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.Initialize;
 import org.triplea.map.data.elements.Initialize.UnitInitialize;
 import org.triplea.map.data.elements.Initialize.UnitInitialize.UnitPlacement;
-import org.triplea.map.data.elements.Production.Rule.Result;
 import org.triplea.map.data.elements.PlayerList.Player;
+import org.triplea.map.data.elements.Production.Rule.Result;
 import org.triplea.swing.SwingComponents;
 import eddies.mapeditor.MakerIcon.Glyph;
 import eddies.mapeditor.MapFolder.UnitPictures;
 
 /**
- * The nations: adding and removing them, their color, alliance, the PUs they start with, what
- * they own at the start, who plays them and their own rules (playerAttachment).
+ * The nations: adding and removing them, their color, alliance, the PUs they start with, who
+ * plays them, their unit pictures and their own rules (playerAttachment).
  */
 final class NationsEditor implements Editor {
+  private static final String NO_ALLIANCE = "No alliance";
   private static final String RETAIN_CAPITAL = "retainCapitalNumber";
   private static final String RETAIN_CAPITAL_PRODUCE = "retainCapitalProduceNumber";
   private static final String DESTROYS_PUS = "destroysPUs";
@@ -68,52 +86,101 @@ final class NationsEditor implements Editor {
           HELP_PAY_TECH_COST);
   // the player list's defaultType: none is a person, as the game reads it
   private static final List<String> PLAYED_BY = List.of("", "AI", "DoesNothing");
+  private static final List<String> PLAYED_BY_LABELS =
+      List.of("A person", "The computer", "Nobody (it does nothing)");
+  // the rules the Add rule dialog offers first, in plain words
+  private static final List<String> FIRST_RULES =
+      List.of(
+          "placementLimit",
+          "movementLimit",
+          "attackingLimit",
+          "suicideAttackTargets",
+          "suicideAttackResources",
+          "vps",
+          "captureVps",
+          "captureUnitOnEnteringBy");
+  private static final List<String> FIRST_RULE_LABELS =
+      List.of(
+          "Limit units placed per territory",
+          "Limit units moving into a territory",
+          "Limit units attacking a territory",
+          "Units its suicide attacks may target",
+          "Resources its suicide attacks cost",
+          "Victory points",
+          "Victory points for capturing it",
+          "Who captures its units by moving in");
+  // how a unit limit counts, as PlayerAttachment reads it
+  private static final List<String> COUNTING = List.of("owned", "allied", "total");
+  private static final List<String> COUNTING_LABELS =
+      List.of("its own units", "its and allied units", "all units");
+  private static final String ALL_UNITS = "All units";
+  private static final int FIELD_WIDTH = 360;
+  private static final int LIST_HEIGHT = 220;
   private static final Icon BLANK =
       new ImageIcon(new BufferedImage(48, 48, BufferedImage.TYPE_INT_ARGB));
-  private static final List<String> PLAYED_BY_LABELS =
-      List.of("A person", "The computer", "Nobody: it does nothing");
 
   private final MapProject project;
+  private final MapView map;
+  private final Consumer<String> openTool;
   private final JPanel page = new JPanel(new BorderLayout(8, 0));
   private final SearchList list;
   private final Form inspector = new Form(280);
+  // the first two sections, side by side when wide enough
+  private final Form start = new Form(280);
   private @Nullable String selected;
+  private @Nullable JPanel headerLine;
   private boolean editingHere;
+  // the rule's text typed and not yet taken, for commit()
+  private @Nullable Runnable typing;
 
   NationsEditor(final MapProject project) {
+    this(project, new MapView(project, () -> {}, () -> {}, () -> {}), tool -> {});
+  }
+
+  /**
+   * @param openTool switches to the tool of this title, eg "Territories"
+   */
+  NationsEditor(final MapProject project, final MapView map, final Consumer<String> openTool) {
     this.project = project;
+    this.map = map;
+    this.openTool = openTool;
     list =
         new SearchList(
-            "Search nation",
-            () -> MapXml.nations(project.game()),
-            nation -> allianceLine(project.game(), nation),
-            this::choose);
-    final JComponent inspectorScroll = SwingComponents.newJScrollPane(inspector);
-    final JButton add = new JButton("Add nation...");
-    add.addActionListener(e -> addNation());
-    final JPanel listColumn = new JPanel(new BorderLayout(0, 8));
-    listColumn.add(list, BorderLayout.CENTER);
-    listColumn.add(add, BorderLayout.SOUTH);
-    page.add(Panels.sideBySide(listColumn, inspectorScroll), BorderLayout.CENTER);
+                "nation",
+                "nations",
+                () -> MapXml.nations(project.game()),
+                nation -> nation,
+                nation -> allianceLine(project.game(), nation),
+                this::choose)
+            .withAdd("Add", "Add a nation", this::addNation);
+    start.setBorder(BorderFactory.createEmptyBorder());
+    start.setOpaque(false);
+    final JSplitPane stacked = Panels.stacked(list, SwingComponents.newJScrollPane(inspector));
+    // a game has a few nations: the inspector gets the room
+    stacked.setResizeWeight(0);
+    stacked.setDividerLocation(LIST_HEIGHT);
+    page.add(stacked, BorderLayout.CENTER);
     project.onChange(
         () -> {
           list.refresh();
           if (!editingHere) {
             showInspector();
+          } else if (headerLine != null && selected != null) {
+            showLine(headerLine, project.game(), selected);
           }
+          showOnMap();
         });
     showInspector();
   }
 
-  /**
-   * The nation's alliances for the list's second line; "no alliance" when it plays alone, as an
-   * alliance of its own name is.
-   */
+  /** The nation's alliances for the list; "No alliance" when it plays alone, as in one of its name. */
   static String allianceLine(final Game game, final String nation) {
     final List<String> alliances = MapXml.alliances(game, nation);
-    return alliances.isEmpty() || alliances.equals(List.of(nation))
-        ? "no alliance"
-        : String.join(", ", alliances);
+    return playsAlone(alliances, nation) ? NO_ALLIANCE : String.join(", ", alliances);
+  }
+
+  private static boolean playsAlone(final List<String> alliances, final String nation) {
+    return alliances.isEmpty() || alliances.equals(List.of(nation));
   }
 
   @Override
@@ -128,9 +195,8 @@ final class NationsEditor implements Editor {
 
   @Override
   public String hint() {
-    return "The nations that play. Add them here; choose one to change its color, alliance, the"
-        + " PUs it starts with, who plays it, its own rules and its unit pictures. What it owns"
-        + " is set in Territories.";
+    return "Give each nation an alliance and its starting PUs. Who owns which land is set in"
+        + " Territories.";
   }
 
   @Override
@@ -138,126 +204,248 @@ final class NationsEditor implements Editor {
     return page;
   }
 
+  @Override
+  public boolean usesMap() {
+    return true;
+  }
+
+  /** The map in the nations' colors; a click on land chooses its owner. */
+  @Override
+  public void showing() {
+    map.useFor(MapMode.OWNERS, new JPanel(), this::click);
+    markChosen();
+  }
+
+  /** A click on land chooses its owner. */
+  void click(final String territory) {
+    MapXml.owner(project.game(), territory)
+        .ifPresent(
+            owner -> {
+              // a value typed and not yet taken is kept, as the form is built anew
+              commit();
+              choose(owner);
+              list.choose(owner);
+            });
+  }
+
+  /** The chosen nation's land marked, while this tool shows the map. */
+  private void showOnMap() {
+    if (page.isShowing()) {
+      markChosen();
+    }
+  }
+
+  private void markChosen() {
+    map.mark(
+        Optional.ofNullable(selected)
+            .map(nation -> Set.copyOf(owned(project.game(), nation)))
+            .orElse(Set.of()));
+  }
+
+  @Override
+  public void commit() {
+    if (typing != null) {
+      typing.run();
+    }
+  }
+
   private void choose(final String nation) {
     selected = nation;
     showInspector();
+    showOnMap();
   }
 
   private void addNation() {
-    final String name =
-        JOptionPane.showInputDialog(
-            page, "Name of the new nation:", "Add nation", JOptionPane.PLAIN_MESSAGE);
-    if (name == null) {
-      return;
-    }
-    final String nation = name.strip();
-    if (project.addNation(nation)) {
-      choose(nation);
-      list.choose(nation);
-    } else {
-      JOptionPane.showMessageDialog(
-          page,
-          "<html>The name must not be empty or be a territory's, a nation's or a unit's, and"
-              + " must not hold : &lt; or (.</html>",
-          "Add nation",
-          JOptionPane.WARNING_MESSAGE);
-    }
+    Dialogs.askName(page, "Add nation", "Name", "", "Add", project::nameProblem)
+        .filter(project::addNation)
+        .ifPresent(
+            nation -> {
+              choose(nation);
+              list.choose(nation);
+            });
   }
 
   private void showInspector() {
+    typing = null;
+    headerLine = null;
     inspector.clear();
+    start.clear();
     final Game game = project.game();
-    if (selected == null || !MapXml.nations(game).contains(selected)) {
-      inspector
-          .note(
-              MapXml.nations(game).isEmpty()
-                  ? "No nations yet. Add the nations that play with Add nation."
-                  : MapXml.nations(game).size() + " nations play this game.")
-          .end();
+    final List<String> nations = MapXml.nations(game);
+    if (nations.isEmpty()) {
+      inspector.row(
+          Panels.empty(
+              Glyph.NATIONS,
+              "No nations yet",
+              "Nations are the sides that play. A game needs at least two.",
+              "Add nation",
+              this::addNation));
+      inspector.end();
       return;
     }
+    if (selected == null || !nations.contains(selected)) {
+      selected = nations.getFirst();
+      list.choose(selected);
+    }
     final String nation = selected;
-    inspector.title(nation);
+    showHeader(game, nation);
+    start.columns();
+    showTeam(game, nation);
+    showHowItPlays(nation);
+    start.end();
+    inspector.row(start);
+    showUnitPictures(nation);
+    inspector.more("nations.more", moreCount(game, nation), f -> showMore(f, game, nation));
+    inspector.remove("Remove nation", () -> removeNation(nation));
+    inspector.end();
+  }
+
+  /** How many options "More options" holds: all of the nation's playerAttachment. */
+  static int moreCount(final Game game, final String nation) {
+    return RulesXml.playerOptions(game, nation).size();
+  }
+
+  // ---- the top: color, name and what it is
+
+  private void showHeader(final Game game, final String nation) {
     final JPanel swatch = new JPanel();
-    swatch.setPreferredSize(new Dimension(48, 20));
+    swatch.setPreferredSize(new Dimension(40, 40));
     swatch.setBackground(project.nationColor(nation));
     swatch.setBorder(
         BorderFactory.createLineBorder(Theme.getSwatchOutlineColor(project.nationColor(nation))));
-    final JButton color = new JButton("Change color...");
-    color.addActionListener(
-        e ->
-            Optional.ofNullable(
-                    JColorChooser.showDialog(
-                        page, "Color of " + nation, project.nationColor(nation)))
-                .ifPresent(chosen -> project.setNationColor(nation, chosen)));
-    final JPanel colorRow = new JPanel(new BorderLayout(8, 0));
-    colorRow.add(swatch, BorderLayout.WEST);
-    colorRow.add(new JLabel("Its color on the map"), BorderLayout.CENTER);
-    colorRow.add(color, BorderLayout.EAST);
-    inspector.row(colorRow);
-    final JButton remove = new JButton("Remove nation");
-    remove.addActionListener(e -> removeNation(nation));
-    final JPanel removeRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-    removeRow.add(remove);
-    inspector.row(removeRow);
+    swatch.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+    swatch.setToolTipText("Change color");
+    swatch.addMouseListener(
+        new MouseAdapter() {
+          @Override
+          public void mouseClicked(final MouseEvent e) {
+            changeColor(nation);
+          }
+        });
+    final JPanel line = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+    line.setOpaque(false);
+    showLine(line, game, nation);
+    headerLine = line;
+    final List<JComponent> links = new ArrayList<>();
+    links.add(newLink("Change color", () -> changeColor(nation)));
+    if (capital(game, nation).isEmpty()) {
+      links.add(newLink("Mark one in Territories", () -> openTool.accept("Territories")));
+    }
+    inspector.row(Details.header(Optional.of(swatch), nation, line, links));
+  }
 
-    inspector.section("Alliance");
+  /** "Axis · 30 PUs at the start · capital Germany · 9 territories", a missing capital warned. */
+  private static void showLine(final JPanel line, final Game game, final String nation) {
+    line.removeAll();
+    final String start =
+        allianceLine(game, nation)
+            + " · "
+            + MapXml.startingResource(game, nation, MapXml.PUS)
+            + " PUs at the start · ";
+    final String territories = owned(game, nation).size() + " territories";
+    capital(game, nation)
+        .ifPresentOrElse(
+            capital ->
+                line.add(Theme.newSecondaryLabel(start + "capital " + capital + " · " + territories)),
+            () -> {
+              line.add(Theme.newSecondaryLabel(start));
+              final JLabel missing = new JLabel("! no capital yet");
+              missing.setForeground(Theme.getWarningColor());
+              line.add(missing);
+              line.add(Theme.newSecondaryLabel(" · " + territories));
+            });
+    line.revalidate();
+    line.repaint();
+  }
+
+  private static List<String> owned(final Game game, final String nation) {
+    return MapXml.territories(game).stream()
+        .filter(t -> MapXml.owner(game, t).filter(nation::equals).isPresent())
+        .toList();
+  }
+
+  private static Optional<String> capital(final Game game, final String nation) {
+    return owned(game, nation).stream().filter(t -> MapXml.isCapital(game, t)).findFirst();
+  }
+
+  /** A color chooser; the map shows the nation's land in the color pointed at, before it is taken. */
+  private void changeColor(final String nation) {
+    final JColorChooser chooser = new JColorChooser(project.nationColor(nation));
+    chooser.getSelectionModel().addChangeListener(e -> map.previewColor(nation, chooser.getColor()));
+    final boolean chosen = Dialogs.ask(page, "Color of " + nation, chooser, "Choose");
+    map.endPreview();
+    if (chosen) {
+      project.setNationColor(nation, chooser.getColor());
+    }
+  }
+
+  private static JButton newLink(final String text, final Runnable action) {
+    final JButton link = new JButton(text);
+    Theme.setTertiaryButtonStyle(link);
+    link.addActionListener(e -> action.run());
+    return link;
+  }
+
+  // ---- team and start, who plays it
+
+  private void showTeam(final Game game, final String nation) {
+    start.section("Team and start");
     final JComboBox<String> alliance = new JComboBox<>();
     alliance.setEditable(true);
-    MapXml.allAlliances(game).forEach(alliance::addItem);
+    alliance.addItem(NO_ALLIANCE);
+    // its own alliance is "No alliance"
+    MapXml.allAlliances(game).stream().filter(a -> !a.equals(nation)).forEach(alliance::addItem);
     final List<String> current = MapXml.alliances(game, nation);
-    alliance.setSelectedItem(current.isEmpty() ? "" : current.get(0));
+    alliance.setSelectedItem(playsAlone(current, nation) ? NO_ALLIANCE : current.getFirst());
     alliance.addActionListener(
         e -> {
           final String chosen = String.valueOf(alliance.getSelectedItem());
-          if (!List.of(chosen).equals(MapXml.alliances(project.game(), nation))) {
-            project.edit(g -> MapXml.withAlliance(g, nation, chosen));
+          final List<String> now = MapXml.alliances(project.game(), nation);
+          // alone in an alliance of its own name, as maps do, so it stays in the game's list
+          final String written = NO_ALLIANCE.equals(chosen) ? nation : chosen;
+          if (!(NO_ALLIANCE.equals(chosen) ? playsAlone(now, nation)
+              : List.of(chosen).equals(now))) {
+            project.edit(g -> MapXml.withAlliance(g, nation, written));
           }
         });
-    inspector.field(
-        "Plays in the alliance",
-        "Nations of one alliance fight together. Type a name for a new alliance.",
-        alliance);
-
-    inspector.section("Start");
-    inspector.field(
+    start.field("Alliance", capped(alliance));
+    start.note("Nations of one alliance fight together. Type a new name for a new alliance.");
+    start.number(
         "PUs at the start",
         Form.newNumber(
             MapXml.startingResource(game, nation, MapXml.PUS),
             9999,
-            value -> {
-              editingHere = true;
-              try {
-                project.edit(g -> MapXml.withStartingResource(g, nation, MapXml.PUS, value));
-              } finally {
-                editingHere = false;
-              }
-            }));
-    final List<String> owned =
-        MapXml.territories(game).stream()
-            .filter(t -> MapXml.owner(game, t).filter(nation::equals).isPresent())
-            .toList();
-    final int income = owned.stream().mapToInt(t -> MapXml.production(game, t)).sum();
-    inspector.note(
-        "Owns " + owned.size() + " territories at the start, worth " + income + " PUs per turn.");
-    owned.stream()
-        .filter(t -> MapXml.isCapital(game, t))
-        .findFirst()
-        .ifPresentOrElse(
-            capital -> inspector.note("Capital: " + capital),
-            () -> inspector.note("No capital yet: mark one in Territories."));
-    showHowItPlays(nation);
-    showRules(nation);
-    showUnitPictures(nation);
-    inspector.end();
+            value -> quietly(nation, MapXml.PUS, value)));
+    final int income = owned(game, nation).stream().mapToInt(t -> MapXml.production(game, t)).sum();
+    start.note("Its territories are worth " + income + " PUs per turn.");
+  }
+
+  // the same edit as Production's Resources, so both show one value
+  private void quietly(final String nation, final String resource, final int value) {
+    editingHere = true;
+    try {
+      project.edit(g -> MapXml.withStartingResource(g, nation, resource, value));
+    } finally {
+      editingHere = false;
+    }
+  }
+
+  /** At most 360 px wide, at the left, narrower in a narrow column. */
+  private static JComponent capped(final JComponent field) {
+    final Dimension size = new Dimension(FIELD_WIDTH, field.getPreferredSize().height);
+    field.setPreferredSize(size);
+    field.setMaximumSize(size);
+    final JPanel holder = new JPanel();
+    holder.setLayout(new BoxLayout(holder, BoxLayout.X_AXIS));
+    holder.setOpaque(false);
+    holder.add(field);
+    holder.add(Box.createHorizontalGlue());
+    return holder;
   }
 
   /** Who plays the nation by default, and whether a game may leave it out or hide it. */
   private void showHowItPlays(final String nation) {
-    inspector.section(
-        "How it plays",
-        "Who plays it when a game starts, and whether players may leave it out. A hidden nation"
-            + " is not shown in the list of players, eg the neutrals.");
+    start.section("Who plays it");
     final Player player = RulesXml.player(project.game(), nation);
     final JComboBox<String> playedBy = new JComboBox<>(PLAYED_BY_LABELS.toArray(String[]::new));
     final String type = Optional.ofNullable(player.getDefaultType()).orElse("");
@@ -278,25 +466,27 @@ final class NationsEditor implements Editor {
                         g, nation, b -> b.defaultType(chosen.isEmpty() ? null : chosen)));
           }
         });
-    inspector.field("Played by default", playedBy);
-    inspector.row(
+    start.field("Played by default", capped(playedBy));
+    start.row(
         playerFlag(
             nation,
-            "Optional: players may leave it out",
+            "Players may leave it out",
             player.getOptional(),
             Player.PlayerBuilder::optional));
-    inspector.row(
+    start.row(
         playerFlag(
             nation,
             "Can be switched off at the start",
             player.getCanBeDisabled(),
             Player.PlayerBuilder::canBeDisabled));
-    inspector.row(
-        playerFlag(
-            nation,
-            "Hidden from the list of players",
-            player.getIsHidden(),
-            Player.PlayerBuilder::isHidden));
+    start.row(
+        Help.with(
+            playerFlag(
+                nation,
+                "Hidden from the player list",
+                player.getIsHidden(),
+                Player.PlayerBuilder::isHidden),
+            "Not shown in the list of players when a game starts, eg the neutrals."));
   }
 
   /** A check box of the player list; unchecked writes false only where the map gave it. */
@@ -314,205 +504,21 @@ final class NationsEditor implements Editor {
     return box;
   }
 
-  /** The common options of the nation's playerAttachment in plain words, the others below. */
-  private void showRules(final String nation) {
-    inspector.section(
-        "Rules for this nation",
-        "Rules that only this nation has. Left as they are, the game's defaults apply.");
-    inspector.field(
-        "Capitals it must hold to keep its PUs",
-        "With fewer of its capitals, an enemy taking one takes its PUs. 1 when not set.",
-        playerNumber(nation, RETAIN_CAPITAL));
-    inspector.field(
-        "Capitals it must hold to collect and build",
-        "With fewer of its capitals it gets no income and cannot buy units. 1 when not set.",
-        playerNumber(nation, RETAIN_CAPITAL_PRODUCE));
-    inspector.row(
-        Help.with(
-            playerCheck(nation, DESTROYS_PUS, "Its PUs are lost when its capital falls"),
-            "The enemy that takes its capital does not get its PUs: they are gone."));
-    inspector.row(
-        Help.with(
-            playerCheck(nation, IMMUNE_TO_BLOCKADE, "Immune to blockades"),
-            "Enemy ships by its land do not cut its income."));
-    inspector.row(
-        playerNations(
-            nation,
-            GIVE_UNIT_CONTROL,
-            "Hands its units over to",
-            "At the end of its turn its units in land these nations own become theirs."));
-    inspector.row(
-        playerCheck(
-            nation, GIVE_UNIT_CONTROL_EVERYWHERE, "Hands its units over in all territories"));
-    inspector.row(
-        playerNations(
-            nation,
-            SHARE_TECHNOLOGY,
-            "Shares its technology with",
-            "Technology it finds is given to these nations too."));
-    inspector.row(
-        playerNations(
-            nation,
-            HELP_PAY_TECH_COST,
-            "May help pay its research",
-            "These nations may give PUs to its research."));
-    final List<Option> others =
-        RulesXml.playerOptions(project.game(), nation).stream()
-            .filter(o -> !COMMON_RULES.contains(o.getName()))
-            .toList();
-    if (!others.isEmpty()) {
-      inspector.section(
-          "Other rules",
-          "Rules of this nation by TripleA's names, eg placementLimit. Change or remove them in"
-              + " Attachments, in its playerAttachment.");
-      final JPanel table = new JPanel(new GridLayout(0, 2, 12, 4));
-      others.forEach(
-          o -> {
-            table.add(new JLabel(o.getName()));
-            table.add(new JLabel(Objects.toString(o.getValue(), "")));
-          });
-      inspector.row(table);
-    }
-    final JButton more = new JButton("More rules...");
-    more.setToolTipText(
-        "Adds another rule, eg a placementLimit; change or remove it in Attachments");
-    more.addActionListener(e -> addRule(nation));
-    final JPanel moreRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-    moreRow.add(more);
-    inspector.row(moreRow);
-  }
-
-  /** A number of the playerAttachment whose default is 1; 1 takes it out. */
-  private JSpinner playerNumber(final String nation, final String option) {
-    final int value =
-        RulesXml.playerOption(project.game(), nation, option)
-            .flatMap(NationsEditor::parseInt)
-            .orElse(1);
-    return Form.newNumber(
-        value,
-        99,
-        chosen -> {
-          editingHere = true;
-          try {
-            project.edit(
-                g ->
-                    chosen == 1
-                        ? RulesXml.withoutPlayerOption(g, nation, option)
-                        : RulesXml.withPlayerOption(g, nation, option, String.valueOf(chosen)));
-          } finally {
-            editingHere = false;
-          }
-        });
-  }
-
-  private static Optional<Integer> parseInt(final String value) {
-    try {
-      return Optional.of(Integer.parseInt(value.strip()));
-    } catch (final NumberFormatException e) {
-      return Optional.empty();
-    }
-  }
-
-  private JCheckBox playerCheck(final String nation, final String option, final String label) {
-    final JCheckBox box =
-        new JCheckBox(
-            label,
-            RulesXml.playerOption(project.game(), nation, option)
-                .map(Boolean::parseBoolean)
-                .orElse(false));
-    box.addActionListener(
-        e ->
-            project.edit(
-                g ->
-                    box.isSelected()
-                        ? RulesXml.withPlayerOption(g, nation, option, "true")
-                        : RulesXml.withoutPlayerOption(g, nation, option)));
-    return box;
-  }
-
-  /** The nations an option lists, with a button to choose them. */
-  private JComponent playerNations(
-      final String nation, final String option, final String label, final String help) {
-    final List<String> chosen = RulesXml.playerNames(project.game(), nation, option);
-    final JButton choose = new JButton("Choose...");
-    choose.setToolTipText("Choose the nations");
-    choose.addActionListener(
-        e ->
-            chooseNations(
-                    page,
-                    label,
-                    MapXml.nations(project.game()).stream()
-                        .filter(n -> !n.equals(nation))
-                        .toList(),
-                    chosen)
-                .ifPresent(
-                    names ->
-                        project.edit(g -> RulesXml.withPlayerNames(g, nation, option, names))));
-    final JPanel row = new JPanel(new BorderLayout(8, 4));
-    row.add(Help.with(new JLabel(label), help), BorderLayout.NORTH);
-    row.add(
-        new JLabel(chosen.isEmpty() ? "None" : String.join(", ", chosen)), BorderLayout.CENTER);
-    row.add(choose, BorderLayout.EAST);
-    return row;
-  }
-
-  /**
-   * Asks which of the nations to take, those chosen before checked; empty when cancelled. Shared by
-   * the tools whose options list nations.
-   */
-  static Optional<List<String>> chooseNations(
-      final JComponent parent,
-      final String title,
-      final List<String> nations,
-      final List<String> chosen) {
-    final JPanel boxes = new JPanel(new GridLayout(0, 3, 8, 4));
-    final List<JCheckBox> checks =
-        nations.stream().map(n -> new JCheckBox(n, chosen.contains(n))).toList();
-    checks.forEach(boxes::add);
-    if (!Panels.ask(parent, boxes, title)) {
-      return Optional.empty();
-    }
-    return Optional.of(
-        checks.stream().filter(JCheckBox::isSelected).map(JCheckBox::getText).toList());
-  }
-
-  /** Adds another option of the nation's playerAttachment, eg a second placementLimit. */
-  private void addRule(final String nation) {
-    final JComboBox<String> name = new JComboBox<>();
-    name.setEditable(true);
-    AttachmentsXml.knownOptions(project.game(), "PlayerAttachment").stream()
-        .filter(o -> !COMMON_RULES.contains(o))
-        .forEach(name::addItem);
-    final JTextField value = new JTextField(24);
-    final JPanel ask = new JPanel(new GridLayout(0, 1, 0, 4));
-    ask.add(new JLabel("Rule"));
-    ask.add(name);
-    ask.add(new JLabel("Value, eg 2:territory:infantry for a placementLimit"));
-    ask.add(value);
-    if (!Panels.ask(page, ask, "More rules for " + nation)) {
-      return;
-    }
-    final String option = String.valueOf(name.getSelectedItem()).strip();
-    if (!option.isEmpty() && !value.getText().isBlank()) {
-      project.edit(
-          g -> RulesXml.withPlayerOptionAdded(g, nation, option, value.getText().strip()));
-    }
-  }
+  // ---- unit pictures
 
   /** The nation's units as they look, and buttons to import pictures for them or take them back. */
   private void showUnitPictures(final String nation) {
-    inspector.section(
-        "Unit pictures",
-        "How this nation's units look. Import a folder of pictures, eg another map's"
-            + " units/<nation> folder: each picture named like a unit type, eg infantry.png,"
-            + " becomes this nation's picture of it. Saving writes them into the map's units"
-            + " folder; the first versions stay as .bak. Use the game's pictures takes them back.");
+    inspector.section("Unit pictures");
     final List<String> units = unitsOf(project.game(), nation);
     if (units.size() < MapXml.unitTypes(project.game()).size()) {
-      inspector.note("The " + units.size() + " unit types it can buy or has at the start.");
+      inspector.note(
+          units.size() == 1
+              ? "The unit type it can buy or has at the start."
+              : "The " + units.size() + " unit types it can buy or has at the start.");
     }
     // rows of a few, as a flowing row would not wrap in the form
-    final JPanel pictures = new JPanel(new GridLayout(0, 5, 4, 8));
+    final JPanel pictures = new JPanel(new GridLayout(0, 3, 4, 8));
+    pictures.setOpaque(false);
     final Color color = project.nationColor(nation);
     for (final String unit : units) {
       final JLabel picture = new JLabel(unit);
@@ -526,15 +532,44 @@ final class NationsEditor implements Editor {
       pictures.add(picture);
     }
     inspector.row(pictures);
-    final JButton importPictures = new JButton("Import unit pictures...");
+    final JCheckBox inColor =
+        new JCheckBox(
+            "In the nation's color",
+            project.getFiles().unitTint(nation).equals(Optional.of(project.nationColor(nation))));
+    inColor.setToolTipText(
+        "The game tints the pictures in the nation's color when it draws them; the files stay.");
+    inColor.addActionListener(
+        e -> {
+          if (inColor.isSelected()) {
+            project.tintUnits(List.of(nation));
+          } else {
+            project.setMapProperty(MapFiles.UNIT_TINT + nation, "");
+          }
+        });
+    final JButton allNations =
+        newLink(
+            "All nations",
+            () -> project.tintUnits(MapXml.nations(project.game())));
+    allNations.setToolTipText("Every nation's units in its color");
+    final JPanel tint = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+    tint.setOpaque(false);
+    tint.add(inColor);
+    tint.add(Box.createHorizontalStrut(Theme.GAP_S));
+    tint.add(allNations);
+    inspector.row(tint);
+    final JButton importPictures = new JButton("Import pictures…");
+    Theme.setSecondaryButtonStyle(importPictures);
     importPictures.addActionListener(e -> importUnitPictures(nation));
-    final JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+    final JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+    buttons.setOpaque(false);
     buttons.add(importPictures);
+    buttons.add(Box.createHorizontalStrut(Theme.GAP_S));
     if (project.getFiles().nationUnitPictures().keySet().stream()
         .anyMatch(key -> key.nation().equals(nation))) {
-      final JButton takeBack = new JButton("Use the game's pictures");
-      takeBack.addActionListener(e -> project.setNationUnitPictures(nation, Map.of()));
-      buttons.add(takeBack);
+      final JButton reset =
+          newLink("Reset", () -> project.setNationUnitPictures(nation, Map.of()));
+      reset.setToolTipText("Use the game's pictures again");
+      buttons.add(reset);
     }
     inspector.row(buttons);
   }
@@ -597,55 +632,467 @@ final class NationsEditor implements Editor {
     try {
       read = MapFolder.readUnitPictures(folder.get(), MapXml.unitTypes(project.game()));
     } catch (final IOException e) {
-      JOptionPane.showMessageDialog(
-          page,
-          "Could not read " + folder.get() + ":\n" + e.getMessage(),
-          "Import unit pictures",
-          JOptionPane.WARNING_MESSAGE);
+      Dialogs.warn(
+          page, "Import pictures", "Could not read " + folder.get() + ":\n" + e.getMessage());
       return;
     }
-    if (!read.byUnit().isEmpty()) {
-      project.setNationUnitPictures(nation, read.byUnit());
+    if (read.byUnit().isEmpty()) {
+      Dialogs.warn(
+          page,
+          "Import pictures",
+          "No picture there is named like a unit type of this game, eg infantry.png.");
+      return;
     }
-    JOptionPane.showMessageDialog(
+    project.setNationUnitPictures(nation, read.byUnit());
+    Dialogs.toast(
         page,
-        read.byUnit().isEmpty()
-            ? "No picture there is named like a unit type of this game, eg infantry.png."
-            : read.byUnit().size()
-                + " unit pictures imported for "
-                + nation
-                + (read.unknown().isEmpty()
-                    ? "."
-                    : ".\nLeft out, named like no unit type or no picture: "
-                        + String.join(", ", read.unknown())),
-        "Import unit pictures",
-        read.byUnit().isEmpty() ? JOptionPane.WARNING_MESSAGE : JOptionPane.INFORMATION_MESSAGE);
+        "✓ "
+            + read.byUnit().size()
+            + " unit pictures imported for "
+            + nation
+            + (read.unknown().isEmpty() ? "" : " · left out: " + String.join(", ", read.unknown())));
   }
 
+  // ---- more options: capitals, sharing, other rules
+
+  private void showMore(final Form f, final Game game, final String nation) {
+    f.section("Capitals");
+    f.number(
+        "Capitals needed to keep its PUs",
+        "With fewer of its capitals, an enemy taking one takes its PUs. 1 when not set.",
+        playerNumber(nation, RETAIN_CAPITAL));
+    f.number(
+        "Capitals needed to collect income and build", playerNumber(nation, RETAIN_CAPITAL_PRODUCE));
+    f.row(playerCheck(nation, DESTROYS_PUS, "Its PUs are lost when its capital falls"));
+    f.row(
+        Help.with(
+            playerCheck(nation, IMMUNE_TO_BLOCKADE, "Immune to blockades"),
+            "Enemy ships by its land do not cut its income."));
+    f.section("Sharing");
+    final boolean handsOver = !RulesXml.playerNames(game, nation, GIVE_UNIT_CONTROL).isEmpty();
+    f.field("Hands its units over to", playerNations(nation, GIVE_UNIT_CONTROL, "Hands its units over to"));
+    final JCheckBox everywhere =
+        playerCheck(nation, GIVE_UNIT_CONTROL_EVERYWHERE, "…in all territories, not only theirs");
+    everywhere.setEnabled(handsOver);
+    everywhere.setBorder(BorderFactory.createEmptyBorder(0, 20, 0, 0));
+    f.row(everywhere);
+    f.field(
+        "Shares its technology with",
+        playerNations(nation, SHARE_TECHNOLOGY, "Shares its technology with"));
+    f.field(
+        "Helps pay its research",
+        playerNations(nation, HELP_PAY_TECH_COST, "Helps pay its research"));
+    showOtherRules(f, game, nation);
+  }
+
+  /** A number of the playerAttachment whose default is 1; 1 takes it out. */
+  private JSpinner playerNumber(final String nation, final String option) {
+    final int value =
+        RulesXml.playerOption(project.game(), nation, option)
+            .flatMap(NationsEditor::parseInt)
+            .orElse(1);
+    return Form.newNumber(
+        value,
+        99,
+        chosen -> {
+          editingHere = true;
+          try {
+            project.edit(
+                g ->
+                    chosen == 1
+                        ? RulesXml.withoutPlayerOption(g, nation, option)
+                        : RulesXml.withPlayerOption(g, nation, option, String.valueOf(chosen)));
+          } finally {
+            editingHere = false;
+          }
+        });
+  }
+
+  private static Optional<Integer> parseInt(final String value) {
+    try {
+      return Optional.of(Integer.parseInt(value.strip()));
+    } catch (final NumberFormatException e) {
+      return Optional.empty();
+    }
+  }
+
+  private JCheckBox playerCheck(final String nation, final String option, final String label) {
+    final JCheckBox box =
+        new JCheckBox(
+            label,
+            RulesXml.playerOption(project.game(), nation, option)
+                .map(Boolean::parseBoolean)
+                .orElse(false));
+    box.addActionListener(
+        e ->
+            project.edit(
+                g ->
+                    box.isSelected()
+                        ? RulesXml.withPlayerOption(g, nation, option, "true")
+                        : RulesXml.withoutPlayerOption(g, nation, option)));
+    return box;
+  }
+
+  /** The nations an option lists, short, and "Choose…" right beside them. */
+  private JComponent playerNations(final String nation, final String option, final String label) {
+    final List<String> chosen = RulesXml.playerNames(project.game(), nation, option);
+    final JLabel names = new JLabel(shortList(chosen));
+    names.setToolTipText(chosen.isEmpty() ? null : String.join(", ", chosen));
+    final JButton choose =
+        newLink(
+            "Choose…",
+            () ->
+                Dialogs.pickMany(
+                        page,
+                        label,
+                        MapXml.nations(project.game()).stream()
+                            .filter(n -> !n.equals(nation))
+                            .toList(),
+                        chosen,
+                        "Choose")
+                    .ifPresent(
+                        picked ->
+                            project.edit(
+                                g -> RulesXml.withPlayerNames(g, nation, option, picked))));
+    final JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+    row.setOpaque(false);
+    row.add(names);
+    row.add(Box.createHorizontalStrut(Theme.GAP_S));
+    row.add(choose);
+    return row;
+  }
+
+  /** "None", "Russians and British", "Russians, British and 3 more". */
+  static String shortList(final List<String> names) {
+    return switch (names.size()) {
+      case 0 -> "None";
+      case 1 -> names.getFirst();
+      case 2, 3 ->
+          String.join(", ", names.subList(0, names.size() - 1)) + " and " + names.getLast();
+      default -> names.get(0) + ", " + names.get(1) + " and " + (names.size() - 2) + " more";
+    };
+  }
+
+  /** The options the editor has no words for, by TripleA's name, each changed or removed here. */
+  private void showOtherRules(final Form f, final Game game, final String nation) {
+    f.section("Other rules");
+    final List<Option> options = RulesXml.playerOptions(game, nation);
+    final List<JLabel> names = new ArrayList<>();
+    for (int row = 0; row < options.size(); row++) {
+      if (!COMMON_RULES.contains(options.get(row).getName())) {
+        f.row(newRuleRow(nation, row, options.get(row), names));
+      }
+    }
+    // the values line up behind the longest name
+    final int nameWidth = names.stream().mapToInt(n -> n.getPreferredSize().width).max().orElse(0);
+    for (final JLabel name : names) {
+      final Dimension size = new Dimension(nameWidth, name.getPreferredSize().height);
+      name.setPreferredSize(size);
+      name.setMaximumSize(size);
+    }
+    final JPanel add = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+    add.setOpaque(false);
+    add.add(newLink("+ Add rule…", () -> addRule(nation)));
+    f.row(add);
+  }
+
+  private JComponent newRuleRow(
+      final String nation, final int row, final Option option, final List<JLabel> names) {
+    final String name = option.getName();
+    final String value = Objects.toString(option.getValue(), "");
+    final JLabel label = new JLabel(name);
+    names.add(label);
+    final JTextField text = new JTextField(value);
+    final Dimension size = new Dimension(FIELD_WIDTH, text.getPreferredSize().height);
+    text.setPreferredSize(size);
+    text.setMaximumSize(size);
+    final Runnable take =
+        () -> {
+          typing = null;
+          final String typed = text.getText().strip();
+          if (!typed.isEmpty() && !typed.equals(value.strip())) {
+            project.edit(
+                g ->
+                    isRuleAt(g, nation, row, name)
+                        ? RulesXml.withPlayerOptionAt(g, nation, row, typed)
+                        : g);
+          }
+        };
+    text.addActionListener(e -> take.run());
+    text.addFocusListener(
+        new FocusAdapter() {
+          @Override
+          public void focusLost(final FocusEvent e) {
+            take.run();
+          }
+        });
+    OnTyping.attach(text, () -> typing = take);
+    final JButton remove =
+        Theme.newIconButton(
+            "×",
+            "Remove " + name,
+            () ->
+                project.edit(
+                    g ->
+                        isRuleAt(g, nation, row, name)
+                            ? RulesXml.withoutPlayerOptionAt(g, nation, row)
+                            : g));
+    final JPanel line = new JPanel();
+    line.setLayout(new BoxLayout(line, BoxLayout.X_AXIS));
+    line.setOpaque(false);
+    line.add(label);
+    line.add(Box.createHorizontalStrut(Theme.GAP_S));
+    line.add(text);
+    line.add(Box.createHorizontalStrut(Theme.GAP_XS));
+    line.add(remove);
+    line.add(Box.createHorizontalGlue());
+    return line;
+  }
+
+  // a field of a form the game changed under, eg by undo, changes nothing
+  private static boolean isRuleAt(
+      final Game game, final String nation, final int row, final String name) {
+    final List<Option> options = RulesXml.playerOptions(game, nation);
+    return row < options.size() && name.equals(options.get(row).getName());
+  }
+
+  /** Asks for a new rule of the nation, its value built from its parts, and adds it as one step. */
+  private void addRule(final String nation) {
+    final NewRule rule = new NewRule(project.game(), nation);
+    if (Dialogs.ask(
+        page, "Add a rule for " + nation, rule.content, "Add rule", () -> rule.value().isPresent())) {
+      rule.value()
+          .ifPresent(
+              value ->
+                  project.edit(
+                      g -> RulesXml.withPlayerOptionAdded(g, nation, rule.name(), value)));
+    }
+  }
+
+  /** A unit limit as PlayerAttachment reads it, eg "2:owned:infantry:artillery"; "All units" is all. */
+  static String unitLimit(final int count, final String counting, final List<String> units) {
+    return count
+        + ":"
+        + counting
+        + ":"
+        + (units.contains(ALL_UNITS) ? "all" : String.join(":", units));
+  }
+
+  /** How a rule's value is asked for. */
+  private enum RuleForm {
+    UNIT_LIMIT,
+    UNITS,
+    NATIONS,
+    NUMBER,
+    TEXT;
+
+    static RuleForm of(final String rule) {
+      return switch (rule) {
+        case "placementLimit", "movementLimit", "attackingLimit" -> UNIT_LIMIT;
+        case "suicideAttackTargets" -> UNITS;
+        case "captureUnitOnEnteringBy" -> NATIONS;
+        case "vps", "captureVps" -> NUMBER;
+        default -> TEXT;
+      };
+    }
+  }
+
+  /** The Add rule dialog's inside: the rule, its value's parts by the rule, the value it writes. */
+  private final class NewRule {
+    private final JPanel content = new JPanel();
+    private final JComboBox<String> rule = new JComboBox<>();
+    private final JLabel plain = Theme.newSecondaryLabel(" ");
+    private final JPanel parts = new JPanel(new GridLayout(0, 1, 0, Theme.GAP_XS));
+    private final JLabel writes = Theme.newSecondaryLabel(" ");
+    private final Game game;
+    private final String nation;
+    private @Nullable RuleForm form;
+    private final JSpinner count = new JSpinner(new SpinnerNumberModel(1, 0, 999, 1));
+    private final JComboBox<String> counting =
+        new JComboBox<>(COUNTING_LABELS.toArray(String[]::new));
+    private final JTextField text = new JTextField(24);
+    private List<String> names = List.of();
+
+    NewRule(final Game game, final String nation) {
+      this.game = game;
+      this.nation = nation;
+      content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
+      content.setOpaque(false);
+      parts.setOpaque(false);
+      rule.setEditable(true);
+      Stream.concat(
+              FIRST_RULES.stream(),
+              AttachmentsXml.knownOptions(game, "PlayerAttachment").stream()
+                  .filter(o -> !COMMON_RULES.contains(o) && !FIRST_RULES.contains(o)))
+          .forEach(rule::addItem);
+      rule.setRenderer(new RuleRenderer());
+      count.setEditor(new JSpinner.NumberEditor(count, "#"));
+      text.putClientProperty(FlatClientProperties.PLACEHOLDER_TEXT, "Value as TripleA reads it");
+      count.addChangeListener(e -> showWrites());
+      counting.addActionListener(e -> showWrites());
+      OnTyping.attach(text, this::showWrites);
+      OnTyping.attach((JTextField) rule.getEditor().getEditorComponent(), this::ruleChanged);
+      for (final JComponent part : List.of(new JLabel("Rule"), rule, plain, parts, writes)) {
+        part.setAlignmentX(Component.LEFT_ALIGNMENT);
+        content.add(part);
+        content.add(Box.createVerticalStrut(Theme.GAP_XS));
+      }
+      rule.setSelectedIndex(0);
+      ruleChanged();
+    }
+
+    String name() {
+      return ((JTextField) rule.getEditor().getEditorComponent()).getText().strip();
+    }
+
+    /** The value as the game reads it; empty while a part is missing. */
+    Optional<String> value() {
+      if (name().isEmpty() || form == null) {
+        return Optional.empty();
+      }
+      return switch (form) {
+        case UNIT_LIMIT ->
+            names.isEmpty()
+                ? Optional.empty()
+                : Optional.of(
+                    unitLimit(
+                        (Integer) count.getValue(),
+                        COUNTING.get(counting.getSelectedIndex()),
+                        names));
+        case UNITS, NATIONS ->
+            names.isEmpty() ? Optional.empty() : Optional.of(String.join(":", names));
+        case NUMBER -> Optional.of(String.valueOf(count.getValue()));
+        case TEXT -> Optional.of(text.getText().strip()).filter(t -> !t.isEmpty());
+      };
+    }
+
+    private void ruleChanged() {
+      final int known = FIRST_RULES.indexOf(name());
+      plain.setText(known < 0 ? " " : FIRST_RULE_LABELS.get(known));
+      final RuleForm now = RuleForm.of(name());
+      if (now != form) {
+        form = now;
+        names = List.of();
+        showParts();
+      }
+      showWrites();
+    }
+
+    private void showParts() {
+      parts.removeAll();
+      switch (Objects.requireNonNull(form)) {
+        case UNIT_LIMIT -> {
+          parts.add(line(new JLabel("At most"), count, new JLabel("counting"), counting));
+          parts.add(namesLine("of", "Choose units…", unitChoices()));
+        }
+        case UNITS -> parts.add(namesLine("Units", "Choose units…", MapXml.unitTypes(game)));
+        case NATIONS ->
+            parts.add(
+                namesLine(
+                    "Nations",
+                    "Choose nations…",
+                    MapXml.nations(game).stream().filter(n -> !n.equals(nation)).toList()));
+        case NUMBER -> parts.add(line(count));
+        case TEXT -> parts.add(line(text));
+      }
+      parts.revalidate();
+      parts.repaint();
+      fitWindow();
+    }
+
+    private List<String> unitChoices() {
+      return Stream.concat(Stream.of(ALL_UNITS), MapXml.unitTypes(game).stream()).toList();
+    }
+
+    private JComponent namesLine(final String label, final String verb, final List<String> all) {
+      final JLabel shown = new JLabel("None");
+      final JButton choose =
+          newLink(
+              verb,
+              () ->
+                  Dialogs.pickMany(content, verb.replace("…", ""), all, names, "Choose")
+                      .ifPresent(
+                          picked -> {
+                            names = picked;
+                            shown.setText(shortList(picked));
+                            shown.setToolTipText(String.join(", ", picked));
+                            showWrites();
+                          }));
+      return line(new JLabel(label), shown, choose);
+    }
+
+    private static JPanel line(final JComponent... items) {
+      final JPanel line = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_S, 0));
+      line.setOpaque(false);
+      for (final JComponent item : items) {
+        line.add(item);
+      }
+      return line;
+    }
+
+    private void showWrites() {
+      writes.setText(
+          "Writes: " + value().map(v -> name() + " = " + v).orElse("—"));
+    }
+
+    // the dialog grows with the parts, eg a units line
+    private void fitWindow() {
+      Optional.ofNullable(SwingUtilities.getWindowAncestor(content)).ifPresent(Window::pack);
+    }
+  }
+
+  /** The first rules in plain words with TripleA's name after them, the rest by name. */
+  private static final class RuleRenderer extends DefaultListCellRenderer {
+    @Override
+    public Component getListCellRendererComponent(
+        final JList<?> list,
+        final Object value,
+        final int index,
+        final boolean isSelected,
+        final boolean cellHasFocus) {
+      final String name = String.valueOf(value);
+      final int known = FIRST_RULES.indexOf(name);
+      final String text =
+          known < 0
+              ? name
+              : "<html>"
+                  + FIRST_RULE_LABELS.get(known)
+                  + " <span style='color:"
+                  + Theme.convertColorToHex(
+                      isSelected
+                          ? Theme.getSelectionSecondaryTextColor()
+                          : Theme.getSecondaryTextColor())
+                  + "'>"
+                  + name
+                  + "</span></html>";
+      return super.getListCellRendererComponent(list, text, index, isSelected, cellHasFocus);
+    }
+  }
+
+  // ---- remove
+
   private void removeNation(final String nation) {
-    final int answer =
-        JOptionPane.showConfirmDialog(
-            page,
-            "Remove "
-                + nation
-                + " with its turn, the territories it owns at the start and its units?"
-                + "\nUndo takes it back.",
-            "Remove nation",
-            JOptionPane.OK_CANCEL_OPTION);
-    if (answer != JOptionPane.OK_OPTION) {
+    if (!Dialogs.confirmRemove(
+        page,
+        "Remove nation",
+        "Remove "
+            + nation
+            + "?\nIts turn, the territories it owns at the start and its units go too. Undo"
+            + " brings them back.",
+        List.of(),
+        "Remove")) {
       return;
     }
     final List<String> named = project.removeNation(nation);
     if (!named.isEmpty()) {
-      JOptionPane.showMessageDialog(
+      Dialogs.warn(
           page,
+          "Remove nation",
           nation
-              + " stays: the game would not load without it, as these still name it:\n"
+              + " stays: these still name it\n"
               + String.join("\n", named.subList(0, Math.min(10, named.size())))
               + (named.size() > 10 ? "\nand " + (named.size() - 10) + " more" : "")
-              + "\nChange them in Attachments first.",
-          "Remove nation",
-          JOptionPane.WARNING_MESSAGE);
+              + "\nChange them in Attachments first.");
     }
   }
 }

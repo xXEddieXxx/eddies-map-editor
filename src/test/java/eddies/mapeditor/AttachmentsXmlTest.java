@@ -201,4 +201,30 @@ final class AttachmentsXmlTest {
         .as("the first is there, so adding it again is refused")
         .isTrue();
   }
+
+  @DisplayName("Every kind has plain names, and the kind's usual name is told from a name of its own")
+  @Test
+  void namesKindsPlainly() {
+    final Attachment relationship =
+        AttachmentsXml.newAttachment(
+            "RelationshipTypeAttachment", "relationshipTypeAttachment", "War");
+    final Attachment trigger =
+        AttachmentsXml.newAttachment("TriggerAttachment", "triggerAttachment_X", "Germans");
+
+    assertThat(AttachmentsXml.KIND_NAMES.keySet())
+        .as("every kind TripleA makes has plain names")
+        .isEqualTo(AttachmentsXml.KINDS.keySet());
+    assertThat(AttachmentsXml.kindName("TriggerAttachment").many())
+        .as("the plural for the kind filter")
+        .isEqualTo("Triggers");
+    assertThat(AttachmentsXml.kindName("FooAttachment").one())
+        .as("a kind the editor does not know stays as TripleA names it")
+        .isEqualTo("FooAttachment");
+    assertThat(AttachmentsXml.hasDefaultName(relationship))
+        .as("relationshipTypeAttachment is the name TripleA reads it by")
+        .isTrue();
+    assertThat(AttachmentsXml.hasDefaultName(trigger))
+        .as("a trigger with a name of its own")
+        .isFalse();
+  }
 }

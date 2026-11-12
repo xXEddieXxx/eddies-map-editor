@@ -220,4 +220,43 @@ final class ProductionXmlTest {
         .as("TripleA rolls for techs with it")
         .isPresent();
   }
+
+  @DisplayName("Choosing a frontier's nations moves the ticked, leaves the unticked without one")
+  @Test
+  void setsFrontierUsers(@TempDir final Path folder) {
+    final String tech = "productionIndustrialTechnology";
+
+    final Game moved = ProductionXml.withFrontierUsers(minimap, tech, List.of("Italians"));
+    final Game none = ProductionXml.withFrontierUsers(moved, "production", List.of());
+
+    assertThat(ProductionXml.frontierOf(moved, "Italians")).as("ticked, moved").contains(tech);
+    assertThat(ProductionXml.frontierOf(moved, "Russians"))
+        .as("a nation of another frontier stays")
+        .contains("production");
+    assertThat(ProductionXml.frontierOf(none, "Russians")).as("unticked, buys nothing").isEmpty();
+    assertThat(ProductionXml.frontierOf(none, "Italians"))
+        .as("a nation of another frontier is not touched")
+        .contains(tech);
+    final GameData data = RulesXmlTest.givenLoaded(moved, folder);
+    assertThat(data.getPlayerList().getPlayerId("Italians").getProductionFrontier().getName())
+        .as("the engine reads the moved nation's frontier")
+        .isEqualTo(tech);
+  }
+
+  @DisplayName("A new rule gives its amount for its cost, and the game loads")
+  @Test
+  void newRuleWithAmountLoads(@TempDir final Path folder) {
+    final Game sold = ProductionXml.withNewRule(minimap, "production", "armour", 2, 5, "buy");
+
+    final GameData data = RulesXmlTest.givenLoaded(sold, folder);
+    final ProductionRule rule =
+        data.getPlayerList().getPlayerId("Russians").getProductionFrontier().getRules().stream()
+            .filter(r -> r.getName().equals("buyArmour2"))
+            .findFirst()
+            .orElseThrow();
+    assertThat(rule.getResults().totalValues()).as("two armour").isEqualTo(2);
+    assertThat(rule.getCosts().getInt(data.getResourceList().getResourceOrThrow(MapXml.PUS)))
+        .as("for 5 PUs")
+        .isEqualTo(5);
+  }
 }

@@ -108,6 +108,21 @@ class ProductionXml {
     return gameWithFrontierOf(game, nation, null);
   }
 
+  /** The frontier used by exactly these nations: the others that used it use none. */
+  static Game withFrontierUsers(
+      final Game game, final String frontier, final List<String> nations) {
+    Game changed = game;
+    for (final String nation : MapXml.nations(game)) {
+      final boolean uses = frontierOf(game, nation).filter(frontier::equals).isPresent();
+      if (nations.contains(nation) && !uses) {
+        changed = withFrontierOf(changed, nation, frontier);
+      } else if (!nations.contains(nation) && uses) {
+        changed = withoutFrontierOf(changed, nation);
+      }
+    }
+    return changed;
+  }
+
   private static Game gameWithFrontierOf(
       final Game game, final String nation, @Nullable final String frontier) {
     final List<PlayerProduction> productions = new ArrayList<>();
@@ -203,6 +218,17 @@ class ProductionXml {
       final String resourceOrUnit,
       final int cost,
       final String prefix) {
+    return withNewRule(game, frontier, resourceOrUnit, 1, cost, prefix);
+  }
+
+  /** As {@link #withNewRule(Game, String, String, int, String)}, giving the amount. */
+  static Game withNewRule(
+      final Game game,
+      final String frontier,
+      final String resourceOrUnit,
+      final int amount,
+      final int cost,
+      final String prefix) {
     final Set<String> taken =
         rules(game).stream().map(ProductionRule::getName).collect(Collectors.toSet());
     final String name =
@@ -212,18 +238,24 @@ class ProductionXml {
         ProductionRule.builder()
             .name(name)
             .costs(
-                resources(game).stream()
-                    .filter(MapXml.PUS::equals)
-                    .findFirst()
-                    .or(() -> resources(game).stream().findFirst())
+                costResource(game)
                     .map(r -> List.of(Cost.builder().resource(r).quantity(cost).build()))
                     .orElse(List.of()))
-            .results(List.of(Result.builder().resourceOrUnit(resourceOrUnit).quantity(1).build()))
+            .results(
+                List.of(Result.builder().resourceOrUnit(resourceOrUnit).quantity(amount).build()))
             .build();
     return withRuleIn(
         withRules(game, Stream.concat(rules(game).stream(), Stream.of(rule)).toList()),
         frontier,
         name);
+  }
+
+  /** What a new rule costs: PUs, else the game's first resource, none without resources. */
+  static Optional<String> costResource(final Game game) {
+    return resources(game).stream()
+        .filter(MapXml.PUS::equals)
+        .findFirst()
+        .or(() -> resources(game).stream().findFirst());
   }
 
   /** The game without the rule, also out of every frontier. */

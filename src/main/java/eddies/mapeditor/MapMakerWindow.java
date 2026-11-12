@@ -8,11 +8,15 @@ import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Component;
 import java.awt.Cursor;
+import java.awt.Desktop;
 import java.awt.Dimension;
 import java.awt.FileDialog;
 import java.awt.FlowLayout;
-import java.awt.Font;
+import java.awt.Frame;
 import java.awt.event.ActionEvent;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
+import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
@@ -21,7 +25,9 @@ import java.io.IOException;
 import java.io.Serial;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -34,27 +40,23 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import javax.annotation.Nullable;
 import javax.swing.AbstractAction;
-import javax.swing.AbstractButton;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.ButtonGroup;
 import javax.swing.JButton;
-import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComponent;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
-import javax.swing.JOptionPane;
+import javax.swing.JMenu;
+import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
-import javax.swing.JSeparator;
+import javax.swing.JRadioButtonMenuItem;
 import javax.swing.JSplitPane;
-import javax.swing.JToggleButton;
 import javax.swing.KeyStroke;
-import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
-import javax.swing.UIManager;
 import javax.swing.WindowConstants;
 import lombok.extern.slf4j.Slf4j;
 import org.triplea.game.client.HeadedGameRunner;
@@ -62,65 +64,66 @@ import org.triplea.map.data.elements.Game;
 import org.triplea.swing.FileChooser;
 import eddies.mapeditor.MakerIcon.Glyph;
 import eddies.mapeditor.MapChecks.Problem;
+import eddies.mapeditor.MapPicture.DetectedTerritory;
 import eddies.mapeditor.MapProject.NewMap;
+import eddies.mapeditor.MapProject.RedrawChoices;
+import eddies.mapeditor.Theme.Status;
 
 /**
  * The map maker: one window for all changes to a map. It opens on a {@link StartPage} to open a
- * map's folder, create an empty map in a folder of the player's choice, or create one from a
- * picture with {@link NewMapWizard} (name, picture with its territories, nations); a new map is
- * saved as a map folder at once. As in IntelliJ: on the far left a strip of icons, the file browser
- * ({@link FilesEditor}, open beside it at first) and the tools (Overview, Game notes, Territories,
- * Connections, Nations, Game options, Turn order, Units), each telling its name and use when the
- * mouse is over it; in the middle the map, a tool's own preview or the file chosen in the browser;
- * on the right the tool's panel under its title and "?"; at the top the map's name, whether all is
- * saved and the buttons for the whole map; at the bottom how many problems are left.
+ * map's folder, one of the maps opened last, or create one with {@link NewMapWizard} (name,
+ * picture with its territories, nations); a new map is saved as a map folder at once. On the left
+ * the tools by name in their groups ({@link Sidebar}); the chosen tool takes the rest, under its
+ * title and "?": a tool that works on the map shows it left of its panel. At the top the map's
+ * name (its menu), whether all is saved, its problems and the buttons for the whole map.
  */
 @Slf4j
 public final class MapMakerWindow extends JFrame {
   @Serial private static final long serialVersionUID = 1L;
 
-  private static final String MAP_PREVIEW = "map";
-  private static final String FILE_PREVIEW = "file";
-  private static final int RIGHT_WIDTH = 380;
-  private static final int BROWSER_WIDTH = 260;
-  private static final int STRIP_ICON = 20;
+  private static final int INSPECTOR_WIDTH = 340;
+  private static final int INSPECTOR_MIN_WIDTH = 300;
+  private static final int NAME_MIN_WIDTH = 160;
+  private static final String SAVE = "Save";
+
+  /** How far Check is with the map as it is now. */
+  enum Check {
+    NOT_YET,
+    RUNNING,
+    DONE
+  }
+
+  /** The header's problems pill: its words and how it looks. */
+  record Pill(String text, Status status) {}
 
   // nothing to save or leave until a map is opened or created; set here, before the Files view
   // below asks for its folder
   private transient MapProject project = MapProject.newEmpty();
   // a map's own game file, kept as .bak on the first save; a map made here has no older version
   private boolean openedFromFile;
-  private transient @Nullable OverviewEditor overview;
+  private transient @Nullable HomeEditor home;
   private final transient Map<String, Editor> editors = new LinkedHashMap<>();
-  private final JLabel mapName = new JLabel();
+  // the place of the shared map in each tool that works on it
+  private final transient Map<Editor, JPanel> mapSlots = new HashMap<>();
+  private final JButton mapButton = new JButton();
   private final JLabel saveState = new JLabel();
-  private final JButton problemsLabel = new JButton();
-  private final JPanel editorCards = new JPanel(new CardLayout());
-  private final JButton saveButton = new JButton("Save");
-  private final JButton undoButton = new JButton(MakerIcon.small(Glyph.UNDO));
-  private final JButton redoButton = new JButton(MakerIcon.small(Glyph.REDO));
-  // the middle: the shared map, or a tool's own preview
-  private final JPanel previewCards = new JPanel(new CardLayout());
+  private final JButton pill = new JButton();
+  private final JPanel workspace = new JPanel(new CardLayout());
+  private final JButton saveButton = new JButton(SAVE, MakerIcon.small(Glyph.SAVE));
+  private final JButton playButton = new JButton("Play", MakerIcon.small(Glyph.PLAYTEST));
+  private final JButton undoButton =
+      Theme.newIconButton(Glyph.UNDO, "Undo (Ctrl+Z)", this::undo);
+  private final JButton redoButton =
+      Theme.newIconButton(Glyph.REDO, "Redo (Ctrl+Y)", this::redo);
   private transient @Nullable MapView map;
   private transient @Nullable TerritoriesEditor territories;
-  // the tools in the strip on the left, a line between the groups
-  private transient List<List<Editor>> toolGroups = List.of();
-  private final Map<String, JToggleButton> navButtons = new LinkedHashMap<>();
+  private transient @Nullable Sidebar sidebar;
+  // the game's name after the map's, when the map has more than one
+  private transient Optional<String> gameName = Optional.empty();
+  private Check check = Check.NOT_YET;
   // one for the window, so the maps added to copy from and the open file stay across reloads
   private final transient FilesEditor files =
-      new FilesEditor(
-          () -> project.getFolder().map(MapFolder::rootOf),
-          () -> project.game(),
-          this::mayWriteMapFile,
-          this::reloadFromFiles,
-          this::showFileInMiddle);
-  // the file browser beside the tools, open as in IntelliJ until the player closes it
-  private boolean browserShown = true;
-  private transient @Nullable JSplitPane browserSplit;
-  // the middle and the tool's panel; a tool without map or preview takes the middle's room too
-  private transient @Nullable JSplitPane columnsSplit;
-  private int middleWidth;
-  private @Nullable JToggleButton browserButton;
+      new FilesEditor(() -> project, this::mayWriteMapFile, this::reloadFromFiles, this::showTool);
   private boolean mapShown;
   // a file saved in Files does not read: the map in memory is older than its files
   private boolean filesAhead;
@@ -145,7 +148,16 @@ public final class MapMakerWindow extends JFrame {
             }
           }
         });
+    // the sidebar shows only icons in a narrow window
+    addComponentListener(
+        new ComponentAdapter() {
+          @Override
+          public void componentResized(final ComponentEvent e) {
+            Optional.ofNullable(sidebar).ifPresent(s -> s.fitTo(getWidth()));
+          }
+        });
     setMinimumSize(new Dimension(1000, 640));
+    newHeaderButtons();
     bindKeys();
     showStart();
   }
@@ -154,6 +166,8 @@ public final class MapMakerWindow extends JFrame {
   static void start() {
     // TripleA's settings hold the maps folder; its look gives the editor its colors and styles
     HeadedGameRunner.initializeClientSettingAndLogging();
+    // before the look and feel is set up, which reads the editor's colors then
+    Theme.install();
     HeadedGameRunner.initializeLookAndFeel();
     SwingUtilities.invokeLater(MapMakerWindow::openStandalone);
   }
@@ -177,99 +191,45 @@ public final class MapMakerWindow extends JFrame {
 
   // ---- new, opening and leaving a map
 
-  /** The page the map maker opens with: open a map, create an empty one, or one from a picture. */
+  /** The page the map maker opens with: open a map, one opened last, or a new one. */
   private void showStart() {
     mapShown = false;
+    sidebar = null;
     setTitle("Eddie's Map Editor");
-    setContentPane(new StartPage(this::chooseAndOpen, this::createEmptyMap, this::createMap));
+    setContentPane(new StartPage(this::chooseAndOpen, this::createMap, this::openProject));
     revalidate();
     repaint();
   }
 
-  /**
-   * An empty map where the player wants it: the system's folder dialog for the place, then its
-   * name; the map's folder with all its files is made there and opened.
-   */
-  private void createEmptyMap() {
+  /** Back to the start page, asking first about unsaved changes. */
+  private void closeMap() {
     if (!mayLeaveProject()) {
       return;
     }
-    final Optional<Path> location =
-        chooseFolder(
-            this, "Where should the new map go?", ClientFileSystemHelper.getUserMapsFolder());
-    if (location.isEmpty()) {
-      return;
-    }
-    String suggestion = "My map";
-    while (true) {
-      final String name =
-          (String)
-              JOptionPane.showInputDialog(
-                  this,
-                  "Name of the new map; its folder is made in\n" + location.get(),
-                  "Create an empty map",
-                  JOptionPane.PLAIN_MESSAGE,
-                  null,
-                  null,
-                  suggestion);
-      if (name == null) {
-        return;
-      }
-      suggestion = name;
-      final Optional<String> refused = MapFolder.whyNoNewMap(location.get(), name);
-      if (refused.isPresent()) {
-        JOptionPane.showMessageDialog(
-            this, refused.get(), "Create an empty map", JOptionPane.WARNING_MESSAGE);
-        continue;
-      }
-      try {
-        opened(MapProject.newMap(name, null, List.of(), location.get()));
-      } catch (final Exception e) {
-        log.warn("Could not create the map {} in {}", name, location.get(), e);
-        JOptionPane.showMessageDialog(
-            this,
-            "Could not create the map:\n" + e.getMessage(),
-            "Create an empty map",
-            JOptionPane.WARNING_MESSAGE);
-        continue;
-      }
-      JOptionPane.showMessageDialog(
-          this,
-          "Created "
-              + project.getFolder().orElseThrow()
-              +
-"""
-
-with map.yml, the game file, its notes and map.properties.
-
-"""
-              + "Next: load a picture of the map in Territories and press Find territories.\n"
-              + "TripleA lists the maps in its maps folder: move it there to play it.",
-          "Create an empty map",
-          JOptionPane.INFORMATION_MESSAGE);
-      return;
-    }
+    project = MapProject.newEmpty();
+    editors.clear();
+    mapSlots.clear();
+    workspace.removeAll();
+    home = null;
+    map = null;
+    territories = null;
+    filesAhead = false;
+    // the map's typed text was dropped when the player agreed to leave it
+    files.forgetText();
+    showStart();
   }
 
-  /** The new-map wizard; the map it makes opens, with what was found in its picture. */
+  /** The new-map wizard; the map it makes opens on Home, with what was found in its picture. */
   private void createMap() {
     if (mayLeaveProject()) {
       NewMapWizard.show(
           this,
           made -> {
             opened(made);
-            if (!made.refusedNations().isEmpty()) {
-              JOptionPane.showMessageDialog(
-                  this,
-                  "These nations were left out: "
-                      + String.join(", ", made.refusedNations())
-                      + "\nA nation needs a name of its own, not a territory's or a unit's, without"
-                      + " : < or (. Add them in Nations.",
-                  "New map",
-                  JOptionPane.WARNING_MESSAGE);
-            }
+            // Home tells what was found and left out; the pill tells Check's result
+            Optional.ofNullable(home).ifPresent(shown -> shown.welcome(made));
             if (made.project().getFiles().hasOutlines()) {
-              showFound(made.project().game());
+              check(problems -> {});
             }
           });
     }
@@ -279,6 +239,7 @@ with map.yml, the game file, its notes and map.properties.
   private void opened(final NewMap made) {
     showProject(made.project());
     openedFromFile = false;
+    made.project().getXmlFile().ifPresent(RecentMaps::add);
   }
 
   /** The system's own folder dialog for a map's folder, then its game, asking when it has more. */
@@ -308,14 +269,15 @@ with map.yml, the game file, its notes and map.properties.
     if (filesAhead || !project.hasUnsavedChanges()) {
       return true;
     }
-    final int answer =
-        JOptionPane.showConfirmDialog(
-            this,
-            "The map has changes made here that are not saved. Saving this file reads the map"
-                + " again from its files.\nSave the map's changes first? No drops them.",
-            "Save file",
-            JOptionPane.YES_NO_CANCEL_OPTION);
-    return answer == JOptionPane.NO_OPTION || (answer == JOptionPane.YES_OPTION && save());
+    return switch (Dialogs.askToSave(
+        this,
+        "Save file",
+        "Save the map's changes first?\nSaving this file reads the map again from its files;"
+            + " Don't save drops the changes made in the other tools.")) {
+      case SAVE -> save();
+      case DONT_SAVE -> true;
+      case CANCEL -> false;
+    };
   }
 
   /** Reads the open map again from its files after one was changed in Files, staying there. */
@@ -327,19 +289,18 @@ with map.yml, the game file, its notes and map.properties.
     try {
       showProject(MapProject.open(xml.get()));
       // back to the file just saved, which showProject read again
-      showFileInMiddle();
+      showFiles();
     } catch (final Exception e) {
       log.info("Could not read the map again from {}", xml.get(), e);
       // the map as it was must not be written over the files the player changed
       filesAhead = true;
-      JOptionPane.showMessageDialog(
+      Dialogs.warn(
           this,
-          "The file is saved, but the map could not be read from its files:\n"
-              + e.getMessage()
-              + "\nFix it in Files. Until the map reads again, the other editors show it as it"
-              + " was and nothing is saved from them.",
           "Files",
-          JOptionPane.WARNING_MESSAGE);
+          "The file is saved, but the map could not be read from its files\n"
+              + e.getMessage()
+              + "\nFix it in Files. Until the map reads again, the other tools show it as it"
+              + " was and nothing is saved from them.");
     }
   }
 
@@ -357,28 +318,20 @@ with map.yml, the game file, its notes and map.properties.
   private void openMapFolder(final Path folder) {
     final Map<String, Path> games = gamesOf(folder);
     if (games.isEmpty()) {
-      JOptionPane.showMessageDialog(
+      Dialogs.warn(
           this,
+          "Open",
           "No game found in "
               + folder
-              + ".\nA map folder has its map.yml and its games in a games folder.",
-          "Open",
-          JOptionPane.WARNING_MESSAGE);
+              + "\nA map folder has its map.yml and its games in a games folder.");
       return;
     }
-    final String[] names = games.keySet().toArray(String[]::new);
-    final Object game =
-        names.length == 1
-            ? names[0]
-            : JOptionPane.showInputDialog(
-                this,
-                "Which game of the map?",
-                "Open",
-                JOptionPane.QUESTION_MESSAGE,
-                null,
-                names,
-                names[0]);
-    Optional.ofNullable(game).map(games::get).ifPresent(this::openProject);
+    final List<String> names = List.copyOf(games.keySet());
+    final Optional<String> game =
+        names.size() == 1
+            ? Optional.of(names.getFirst())
+            : Dialogs.pick(this, "Open", "Which game of the map?", names, name -> name, "Open");
+    game.map(games::get).ifPresent(this::openProject);
   }
 
   /** The games of the map in this folder; none when its folders cannot be read. */
@@ -402,7 +355,10 @@ with map.yml, the game file, its notes and map.properties.
       final Path folder,
       final String... extensions) {
     return FileChooser.builder()
-        .parent(JOptionPane.getFrameForComponent(parent))
+        .parent(
+            parent instanceof Frame frame
+                ? frame
+                : (Frame) SwingUtilities.getAncestorOfClass(Frame.class, parent))
         .title(dialogTitle)
         .mode(FileDialog.LOAD)
         .directory(folder)
@@ -420,13 +376,11 @@ with map.yml, the game file, its notes and map.properties.
   private void openProject(final Path xml) {
     try {
       showProject(MapProject.open(xml));
+      RecentMaps.add(xml);
     } catch (final Exception e) {
       log.warn("Could not open {} in the map maker", xml, e);
-      JOptionPane.showMessageDialog(
-          this,
-          "Could not read " + xml.getFileName() + " as a game:\n" + e.getMessage(),
-          "Map Maker",
-          JOptionPane.WARNING_MESSAGE);
+      Dialogs.warn(
+          this, "Open", "Could not read " + xml.getFileName() + " as a game\n" + e.getMessage());
     }
   }
 
@@ -436,13 +390,23 @@ with map.yml, the game file, its notes and map.properties.
     if (template.isEmpty() || !mayLeaveProject()) {
       return;
     }
-    final String name = JOptionPane.showInputDialog(this, "Name of the new game:", "My game");
-    if (name != null && !name.isBlank()) {
+    final Map<String, Path> games = gamesOf(template.get().getParent());
+    final Optional<String> name =
+        Dialogs.askName(
+            this,
+            "New game",
+            "Name",
+            "My game",
+            "Create",
+            typed ->
+                games.containsKey(typed)
+                    ? Optional.of("A game of that name exists")
+                    : Optional.empty());
+    if (name.isPresent()) {
       try {
-        openProject(MapFolder.newGame(template.get(), name));
+        openProject(MapFolder.newGame(template.get(), name.get()));
       } catch (final Exception e) {
-        JOptionPane.showMessageDialog(
-            this, e.getMessage(), "New game", JOptionPane.WARNING_MESSAGE);
+        Dialogs.warn(this, "New game", "Could not make the game\n" + e.getMessage());
       }
     }
   }
@@ -458,13 +422,12 @@ with map.yml, the game file, its notes and map.properties.
     if (filesAhead || !project.hasUnsavedChanges()) {
       return true;
     }
-    final int answer =
-        JOptionPane.showConfirmDialog(
-            this,
-            "Save the changes to " + project.name() + " first?",
-            "Unsaved changes",
-            JOptionPane.YES_NO_CANCEL_OPTION);
-    return answer == JOptionPane.NO_OPTION || (answer == JOptionPane.YES_OPTION && save());
+    return switch (Dialogs.askToSave(
+        this, "Unsaved changes", "Save the changes to " + project.name() + " first?")) {
+      case SAVE -> save();
+      case DONT_SAVE -> true;
+      case CANCEL -> false;
+    };
   }
 
   // ---- the picture
@@ -503,14 +466,12 @@ with map.yml, the game file, its notes and map.properties.
     final Optional<BufferedImage> picture = project.getFiles().picture();
     if (picture.isEmpty()
         || (project.getFiles().hasOutlines()
-            && JOptionPane.showConfirmDialog(
-                    this,
-                    "Find the territories again? The territories and connections found replace the"
-                        + " ones the map has now,\nwith their owners and units. Undo takes it"
-                        + " back.",
-                    "Find territories",
-                    JOptionPane.OK_CANCEL_OPTION)
-                != JOptionPane.OK_OPTION)) {
+            && !Dialogs.confirm(
+                this,
+                "Find territories",
+                "Find the territories again?\nThe territories and connections found replace the"
+                    + " ones the map has now, with their owners and units. Undo takes it back.",
+                "Find again"))) {
       return;
     }
     final MapProject findingIn = project;
@@ -531,6 +492,9 @@ with map.yml, the game file, its notes and map.properties.
    * territories' borders from it as one step and tells which kept theirs.
    */
   private void redrawBorders() {
+    if (!RedrawDialog.howTo(this)) {
+      return;
+    }
     final Optional<Path> file =
         chooseFileToOpen(
             this,
@@ -555,38 +519,90 @@ with map.yml, the game file, its notes and map.properties.
           if (redrawing != project) {
             return;
           }
-          if (!redrawing.takeRedrawn(from, redrawn)) {
-            JOptionPane.showMessageDialog(
-                this,
-                "The map changed while the borders were redrawn, so they stay as they are."
-                    + "\nChoose Redraw borders again.",
-                "Redraw borders",
-                JOptionPane.INFORMATION_MESSAGE);
+          if (redrawing.getFiles() != from) {
+            tellMapChangedWhileRedrawing();
             return;
           }
-          final List<String> kept = redrawn.kept();
-          JOptionPane.showMessageDialog(
+          final Optional<RedrawChoices> choices =
+              redrawn.added().isEmpty() && redrawn.merged().isEmpty()
+                  ? Optional.of(RedrawChoices.none())
+                  : RedrawDialog.ask(this, redrawing, from, redrawn);
+          if (choices.isEmpty()) {
+            return;
+          }
+          final List<CanalXml.Canal> canalsBefore = CanalXml.canals(redrawing.game());
+          final Optional<List<String>> stillNamed =
+              redrawing.takeRedrawn(from, redrawn, choices.get());
+          if (stillNamed.isEmpty()) {
+            tellMapChangedWhileRedrawing();
+            return;
+          }
+          final List<String> territories = MapXml.territories(redrawing.game());
+          // a removed territory takes the canals through it along
+          final List<CanalXml.Canal> canalsAfter = CanalXml.canals(redrawing.game());
+          final List<String> canalsGone =
+              canalsBefore.stream()
+                  .filter(c -> !canalsAfter.contains(c))
+                  .map(CanalXml.Canal::name)
+                  .toList();
+          final List<String> changed =
+              redrawn.changed().stream().filter(territories::contains).toList();
+          final List<String> mergedInto = new ArrayList<>();
+          redrawn
+              .merged()
+              .forEach(
+                  (area, members) -> {
+                    final String keeper =
+                        choices.get().keepers().getOrDefault(area, members.getFirst());
+                    members.stream()
+                        .filter(m -> !m.equals(keeper) && !territories.contains(m))
+                        .forEach(m -> mergedInto.add(m + " into " + keeper));
+                  });
+          final List<String> added =
+              choices.get().added().values().stream().map(DetectedTerritory::name).toList();
+          final List<String> merged =
+              redrawn.merged().values().stream().flatMap(List::stream).toList();
+          // a merged territory is told below: it was removed, or kept its border as still named
+          final List<String> kept =
+              redrawn.kept().stream().filter(t -> !merged.contains(t)).toList();
+          Dialogs.warn(
               this,
-              "<html><div style='width:420px'>"
-                  + (redrawn.changed().isEmpty()
+              "Redraw borders",
+              (changed.isEmpty()
                       ? "No border changed noticeably."
-                      : "Borders changed: " + names(redrawn.changed()) + ".")
+                      : "Borders changed: " + names(changed) + ".")
+                  + (added.isEmpty() ? "" : "\n\nAdded: " + names(added) + ".")
+                  + (mergedInto.isEmpty() ? "" : "\n\nMerged: " + names(mergedInto) + ".")
+                  + (canalsGone.isEmpty()
+                      ? ""
+                      : "\n\nCanals removed with them: " + names(canalsGone) + ".")
+                  + (stillNamed.get().isEmpty()
+                      ? ""
+                      : "\n\nKept their old border, still named: "
+                          + names(stillNamed.get())
+                          + ".")
                   + (kept.isEmpty()
                       ? ""
-                      : "<br><br>These kept their border, as the picture has no area there of"
+                      : "\n\nThese kept their border, as the picture has no area there of"
                           + " their own: "
                           + names(kept)
                           + ".")
-                  + "<br><br>Look at them on the map; Undo takes it all back.</div></html>",
-              "Redraw borders",
-              JOptionPane.INFORMATION_MESSAGE);
+                  + "\n\nLook at them on the map; Undo takes it all back.");
         });
+  }
+
+  private void tellMapChangedWhileRedrawing() {
+    Dialogs.warn(
+        this,
+        "Redraw borders",
+        "The map changed while the borders were redrawn, so they stay as they are."
+            + "\nChoose Redraw borders again.");
   }
 
   /** The names for a message, at most a screen's worth. */
   private static String names(final List<String> names) {
     final int shown = Math.min(names.size(), 30);
-    return SearchList.escape(String.join(", ", names.subList(0, shown)))
+    return String.join(", ", names.subList(0, shown))
         + (names.size() > shown ? " and " + (names.size() - shown) + " more" : "");
   }
 
@@ -609,11 +625,7 @@ with map.yml, the game file, its notes and map.properties.
         } catch (final Exception e) {
           final Throwable cause = e instanceof ExecutionException ? e.getCause() : e;
           log.warn(failure, cause);
-          JOptionPane.showMessageDialog(
-              MapMakerWindow.this,
-              failure + ":\n" + cause.getMessage(),
-              "Picture",
-              JOptionPane.WARNING_MESSAGE);
+          Dialogs.warn(MapMakerWindow.this, "Picture", failure + "\n" + cause.getMessage());
           return;
         }
         then.accept(result);
@@ -621,23 +633,14 @@ with map.yml, the game file, its notes and map.properties.
     }.execute();
   }
 
-  /** What the picture gave and what to do next; then Validate shows what is left to fix. */
+  /** What the picture gave, then Check, staying in the tool. */
   private void showFound(final Game game) {
     final long seas =
         MapXml.territories(game).stream().filter(t -> MapXml.isWater(game, t)).count();
     final long land = MapXml.territories(game).size() - seas;
-    JOptionPane.showMessageDialog(
-        this,
-        "Found "
-            + land
-            + " territories and "
-            + seas
-            + " sea zones.\n\n"
-            + "Next: add the nations in Nations, name the territories and set their owners in"
-            + " Territories,\ncheck the Connections, then Save and Check.",
-        "Picture",
-        JOptionPane.INFORMATION_MESSAGE);
-    validateMap();
+    Dialogs.toast(this, "Found " + land + " territories and " + seas + " sea zones.");
+    // the pill tells the result; a toast of its own would hide the one above
+    check(problems -> {});
   }
 
   // ---- the editor layout
@@ -645,347 +648,293 @@ with map.yml, the game file, its notes and map.properties.
   private void showProject(final MapProject opened) {
     mapShown = true;
     filesAhead = false;
+    check = Check.NOT_YET;
     // typed text of the map left was dropped when the player agreed to leave it
     files.forgetText();
     project = opened;
     openedFromFile = opened.getXmlFile().isPresent();
+    gameName = gameNameOf(opened);
     editors.clear();
-    navButtons.clear();
-    editorCards.removeAll();
-    previewCards.removeAll();
-    previewCards.setVisible(true);
-    map = new MapView(opened, this::choosePicture, this::findTerritories, this::redrawBorders);
-    previewCards.add(map, MAP_PREVIEW);
-    final TerritoriesEditor territories = new TerritoriesEditor(opened, map);
-    this.territories = territories;
-    final OverviewEditor overviewEditor =
-        new OverviewEditor(
+    mapSlots.clear();
+    workspace.removeAll();
+    final MapView shared =
+        new MapView(opened, this::choosePicture, this::findTerritories, this::redrawBorders);
+    map = shared;
+    final TerritoriesEditor territoriesEditor =
+        new TerritoriesEditor(
             opened,
-            territory -> showEditor(territories, territory),
-            title -> Optional.ofNullable(editors.get(title)).ifPresent(this::showEditor),
-            file -> {
-              showBrowser(true);
-              files.reveal(file);
-            },
-            this::validateMap);
-    overview = overviewEditor;
-    toolGroups =
+            shared,
+            (title, item) ->
+                Optional.ofNullable(editors.get(title)).ifPresent(e -> showEditor(e, item)));
+    territories = territoriesEditor;
+    final HomeEditor homeEditor =
+        new HomeEditor(
+            opened,
+            territory -> showEditor(territoriesEditor, territory),
+            this::showTool,
+            this::validateMap,
+            this::save,
+            this::playtest);
+    home = homeEditor;
+    shared.onShowProblems(this::showProblems);
+    final List<Sidebar.Group> groups =
         List.of(
-            List.of(overviewEditor, new NotesEditor(opened), new TextsEditor(opened)),
-            List.of(
-                territories,
-                new ConnectionsEditor(opened, map),
-                new CanalsEditor(opened, map),
-                new TerritoryEffectsEditor(opened),
-                new NationsEditor(opened),
-                new MapLookEditor(opened),
-                new SoundsEditor(opened)),
-            List.of(
-                RulesEditors.newGameOptions(opened),
-                new TurnOrderEditor(opened),
-                new PoliticsEditor(opened),
-                new ActionsEditor(opened),
-                new TriggersEditor(opened),
-                new TechnologyEditor(opened)),
-            List.of(
-                new UnitsEditor(opened),
-                new ProductionEditor(opened),
-                new AttachmentsEditor(opened)));
-    toolGroups.stream().flatMap(List::stream).forEach(this::addEditor);
-
-    files.preview().ifPresent(file -> previewCards.add(file, FILE_PREVIEW));
+            new Sidebar.Group("Home", List.of(homeEditor)),
+            new Sidebar.Group(
+                "Map",
+                List.of(
+                    territoriesEditor,
+                    new ConnectionsEditor(opened, shared),
+                    new CanalsEditor(opened, shared),
+                    new TerritoryEffectsEditor(
+                        opened,
+                        effect -> {
+                          showEditor(territoriesEditor);
+                          territoriesEditor.paintEffect(effect);
+                        }),
+                    new MapLookEditor(opened, () -> showTool("Territories")))),
+            new Sidebar.Group(
+                "Players",
+                List.of(
+                    new NationsEditor(opened, shared, this::showTool),
+                    new PoliticsEditor(opened, this::showTool),
+                    new TechnologyEditor(opened, this::showTool))),
+            new Sidebar.Group(
+                "Units & economy", List.of(new UnitsEditor(opened), new ProductionEditor(opened))),
+            new Sidebar.Group(
+                "Game flow",
+                List.of(
+                    new TurnOrderEditor(opened),
+                    RulesEditors.newGameOptions(opened),
+                    new ActionsEditor(opened),
+                    new TriggersEditor(opened))),
+            new Sidebar.Group(
+                "Texts & sound",
+                List.of(
+                    new NotesEditor(opened),
+                    new TextsEditor(opened, this::showTool),
+                    new SoundsEditor(opened))));
+    final Sidebar.Group advanced =
+        new Sidebar.Group("Advanced", List.of(new AttachmentsEditor(opened), files));
+    final List<Editor> inOrder = new ArrayList<>();
+    groups.forEach(group -> inOrder.addAll(group.tools()));
+    inOrder.addAll(advanced.tools());
+    inOrder.forEach(this::addEditor);
+    final Sidebar tools =
+        new Sidebar(
+            groups,
+            advanced,
+            this::showEditor,
+            MakerResources.menu(
+                this,
+                () -> {
+                  showFiles();
+                  files.addFolder();
+                }));
+    tools.fitTo(getWidth());
+    sidebar = tools;
+    // Alt+1 Home, Alt+2 to 9 the tools after it in the sidebar's order
+    for (int key = 1; key <= 9 && key <= inOrder.size(); key++) {
+      final Editor tool = inOrder.get(key - 1);
+      bind(
+          "tool" + key,
+          KeyStroke.getKeyStroke(KeyEvent.VK_0 + key, InputEvent.ALT_DOWN_MASK),
+          () -> showEditor(tool));
+    }
 
     final JPanel content = new JPanel(new BorderLayout());
-    content.add(newToolStrip(), BorderLayout.WEST);
-    final JPanel main = new JPanel(new BorderLayout(0, 12));
-    main.setBorder(BorderFactory.createEmptyBorder(12, 16, 8, 16));
-    main.add(newHeader(), BorderLayout.NORTH);
-    // the middle shows what is made, the right the tool's settings; the line between them moves
-    editorCards.setPreferredSize(new Dimension(RIGHT_WIDTH, 0));
-    editorCards.setMinimumSize(new Dimension(260, 0));
-    // a big map would ask for all the room: the right keeps its width, the middle takes the rest
-    previewCards.setPreferredSize(new Dimension(400, 0));
-    previewCards.setMinimumSize(new Dimension(300, 0));
-    final JSplitPane columns =
-        new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, previewCards, editorCards);
-    columns.setResizeWeight(1);
-    columns.setBorder(null);
-    columnsSplit = columns;
-    final JSplitPane browser =
-        new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, newFileBrowser(), columns);
-    browser.setDividerLocation(BROWSER_WIDTH);
-    browser.setBorder(null);
-    browserSplit = browser;
-    showBrowser(browserShown);
-    main.add(browser, BorderLayout.CENTER);
-    content.add(main, BorderLayout.CENTER);
-    content.add(newStatusBar(), BorderLayout.SOUTH);
+    content.add(newHeader(), BorderLayout.NORTH);
+    content.add(tools, BorderLayout.WEST);
+    content.add(workspace, BorderLayout.CENTER);
     setContentPane(content);
-    opened.onChange(this::updateState);
+    opened.onChange(
+        () -> {
+          // a Check was of the map before this change
+          if (check == Check.DONE) {
+            check = Check.NOT_YET;
+          }
+          updateState();
+        });
     updateState();
-    files.showing();
-    // first the overview: what is done, what comes next, and what the map's folder holds
-    showEditor(overviewEditor);
+    // first Home: what is done, what comes next, the problems
+    showEditor(homeEditor);
     revalidate();
     repaint();
   }
 
-  /** The file browser beside the tools: the map's folder under its title and "?". */
-  private JComponent newFileBrowser() {
-    final JLabel heading =
-        new JLabel(files.title(), MakerIcon.small(files.glyph()), SwingConstants.LEFT);
-    heading.setFont(heading.getFont().deriveFont(Font.BOLD));
-    heading.setIconTextGap(8);
-    final JPanel browser = new JPanel(new BorderLayout(0, 8));
-    browser.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 8));
-    browser.setMinimumSize(new Dimension(180, 0));
-    browser.add(Help.with(heading, files.hint()), BorderLayout.NORTH);
-    browser.add(files.page(), BorderLayout.CENTER);
-    return browser;
+  /** The open game's name, when the map has more than one game to tell apart. */
+  private static Optional<String> gameNameOf(final MapProject opened) {
+    final Optional<Path> xml = opened.getXmlFile().map(MapMakerWindow::normalized);
+    final Map<String, Path> games =
+        opened.getFolder().map(MapMakerWindow::gamesOf).orElse(Map.of());
+    return games.size() < 2
+        ? Optional.empty()
+        : games.entrySet().stream()
+            .filter(game -> xml.equals(Optional.of(normalized(game.getValue()))))
+            .map(Map.Entry::getKey)
+            .findFirst();
   }
 
-  /** Opens or closes the file browser, as its icon in the strip does. */
-  private void showBrowser(final boolean shown) {
-    browserShown = shown;
-    Optional.ofNullable(browserButton).ifPresent(button -> button.setSelected(shown));
-    Optional.ofNullable(browserSplit)
-        .ifPresent(
-            split -> {
-              split.getLeftComponent().setVisible(shown);
-              split.setDividerSize(shown ? UIManager.getInt("SplitPane.dividerSize") : 0);
-              if (shown) {
-                split.setDividerLocation(BROWSER_WIDTH);
-              }
-              split.revalidate();
-            });
+  private void showTool(final String title) {
+    Optional.ofNullable(editors.get(title)).ifPresent(this::showEditor);
   }
 
-  /** The file chosen in the browser, in the middle; the tools' panel stays on the right. */
-  private void showFileInMiddle() {
-    showInMiddle(FILE_PREVIEW);
+  /** Brings Files to the front, eg when a file is chosen in its tree. */
+  private void showFiles() {
+    if (!files.page().isShowing()) {
+      showEditor(files);
+    }
   }
 
-  private void showInMiddle(final String card) {
-    ((CardLayout) previewCards.getLayout()).show(previewCards, card);
-    Optional.ofNullable(columnsSplit)
-        .filter(split -> !previewCards.isVisible())
-        .ifPresent(
-            split -> {
-              previewCards.setVisible(true);
-              split.setDividerSize(UIManager.getInt("SplitPane.dividerSize"));
-              split.setDividerLocation(middleWidth);
-            });
-  }
-
-  /** No middle: the tool's settings take the whole room, for a better overview. */
-  private void hideMiddle() {
-    Optional.ofNullable(columnsSplit)
-        .filter(split -> previewCards.isVisible())
-        .ifPresent(
-            split -> {
-              middleWidth = split.getDividerLocation();
-              previewCards.setVisible(false);
-              split.setDividerSize(0);
-              split.revalidate();
-            });
-  }
-
-  /** The tool's panel on the right under its icon, title and "?"; its preview in the middle. */
+  /**
+   * The tool's screen, a card of the workspace: a tool on the map gets the map left of its panel;
+   * the others take the whole width.
+   */
   private void addEditor(final Editor editor) {
     editors.put(editor.title(), editor);
-    final JLabel heading =
-        new JLabel(editor.title(), MakerIcon.small(editor.glyph()), SwingConstants.LEFT);
-    heading.setFont(heading.getFont().deriveFont(Font.BOLD, heading.getFont().getSize2D() * 1.3f));
-    heading.setIconTextGap(8);
-    final JPanel panel = new JPanel(new BorderLayout(0, 8));
-    panel.setBorder(BorderFactory.createEmptyBorder(0, 12, 0, 0));
-    panel.add(Help.with(heading, editor.hint()), BorderLayout.NORTH);
-    panel.add(editor.page(), BorderLayout.CENTER);
-    editorCards.add(panel, editor.title());
-    editor.preview().ifPresent(preview -> previewCards.add(preview, editor.title()));
+    final JComponent screen;
+    if (editor.usesMap()) {
+      final JPanel mapSlot = new JPanel(new BorderLayout());
+      // a big map would ask for all the room: the panel keeps its width, the map takes the rest
+      mapSlot.setPreferredSize(new Dimension(400, 0));
+      mapSlot.setMinimumSize(new Dimension(300, 0));
+      mapSlots.put(editor, mapSlot);
+      final JComponent inspector = titled(editor, editor.page());
+      inspector.setPreferredSize(new Dimension(INSPECTOR_WIDTH, 0));
+      inspector.setMinimumSize(new Dimension(INSPECTOR_MIN_WIDTH, 0));
+      final JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, mapSlot, inspector);
+      split.setResizeWeight(1);
+      split.setBorder(null);
+      screen = split;
+    } else {
+      screen = titled(editor, editor.page());
+    }
+    workspace.add(screen, editor.title());
+  }
+
+  /** The tool's title with its one "?", its first-visit line, then the content. */
+  private static JComponent titled(final Editor editor, final JComponent content) {
+    final JPanel titleRow = new JPanel(new FlowLayout(FlowLayout.LEADING, Theme.GAP_XS, 0));
+    titleRow.add(Theme.newTitle(editor.title()));
+    titleRow.add(Help.button(editor.title(), editor.hint()));
+    final JPanel top = new JPanel();
+    top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
+    for (final JComponent part : List.of(titleRow, Help.intro(editor.title(), editor.hint()))) {
+      part.setAlignmentX(Component.LEFT_ALIGNMENT);
+      top.add(part);
+    }
+    final JPanel screen = new JPanel(new BorderLayout(0, Theme.GAP_M));
+    screen.setBorder(
+        BorderFactory.createEmptyBorder(Theme.GAP_L, Theme.GAP_L, Theme.GAP_L, Theme.GAP_L));
+    screen.add(top, BorderLayout.NORTH);
+    screen.add(content, BorderLayout.CENTER);
+    return screen;
   }
 
   private void showEditor(final Editor editor) {
     showEditor(editor, null);
   }
 
+  /** Home with all the map's problems, eg from the header's pill. */
+  private void showProblems() {
+    Optional.ofNullable(home)
+        .ifPresent(
+            shown -> {
+              showEditor(shown);
+              shown.showProblems();
+            });
+  }
+
   private void showEditor(final Editor editor, @Nullable final String territory) {
     // the map in the game view, a click there opening the territory; a tool may take it over
     Optional.ofNullable(map)
         .ifPresent(
-            shared ->
-                shared.useFor(
-                    MapMode.GAME,
-                    new JPanel(),
-                    clicked ->
-                        Optional.ofNullable(territories).ifPresent(t -> showEditor(t, clicked))));
+            shared -> {
+              shared.useFor(
+                  MapMode.GAME,
+                  new JPanel(),
+                  clicked ->
+                      Optional.ofNullable(territories).ifPresent(t -> showEditor(t, clicked)));
+              // the one map moves into the tool that works on it
+              Optional.ofNullable(mapSlots.get(editor))
+                  .filter(slot -> shared.getParent() != slot)
+                  .ifPresent(
+                      slot -> {
+                        slot.add(shared, BorderLayout.CENTER);
+                        slot.revalidate();
+                      });
+            });
     editor.showing();
-    if (editor.preview().isPresent()) {
-      showInMiddle(editor.title());
-    } else if (editor.usesMap()) {
-      showInMiddle(MAP_PREVIEW);
-    } else {
-      hideMiddle();
-    }
-    ((CardLayout) editorCards.getLayout()).show(editorCards, editor.title());
-    Optional.ofNullable(navButtons.get(editor.title())).ifPresent(b -> b.setSelected(true));
+    ((CardLayout) workspace.getLayout()).show(workspace, editor.title());
+    Optional.ofNullable(sidebar).ifPresent(s -> s.select(editor));
     if (territory != null) {
       editor.show(territory);
     }
   }
 
-  /**
-   * The strip on the far left, icons only as in IntelliJ, each telling its name and use when the
-   * mouse is over it: the file browser on top, then the tools by group.
-   */
-  private JComponent newToolStrip() {
-    final JPanel strip = new JPanel();
-    strip.setLayout(new BoxLayout(strip, BoxLayout.Y_AXIS));
-    strip.setBorder(
-        BorderFactory.createCompoundBorder(
-            BorderFactory.createMatteBorder(0, 0, 0, 1, Theme.getSeparatorColor()),
-            BorderFactory.createEmptyBorder(10, 6, 10, 6)));
-    // Alt+1 for the file browser, Alt+2 and on for the tools in their order, as in IntelliJ
-    final JToggleButton browser =
-        newStripButton(
-            files.glyph(), files.title() + ": show or hide the file browser (Alt+1)", files.hint());
-    browser.setSelected(browserShown);
-    browserButton = browser;
-    browser.addActionListener(e -> showBrowser(browser.isSelected()));
-    bind(
-        "browser", KeyStroke.getKeyStroke(KeyEvent.VK_1, KeyEvent.ALT_DOWN_MASK), browser::doClick);
-    strip.add(browser);
-    final ButtonGroup group = new ButtonGroup();
-    int key = 2;
-    for (final List<Editor> tools : toolGroups) {
-      final JSeparator line = new JSeparator();
-      line.setMaximumSize(new Dimension(Integer.MAX_VALUE, 1));
-      strip.add(stripGap(2, 8));
-      strip.add(line);
-      strip.add(stripGap(2, 8));
-      for (final Editor editor : tools) {
-        final String shortcut = key <= 9 ? " (Alt+" + key + ")" : "";
-        final JToggleButton button =
-            newStripButton(editor.glyph(), editor.title() + shortcut, editor.hint());
-        button.addActionListener(e -> showEditor(editor));
-        if (key <= 9) {
-          bind(
-              "tool" + key,
-              KeyStroke.getKeyStroke(KeyEvent.VK_0 + key, KeyEvent.ALT_DOWN_MASK),
-              button::doClick);
-        }
-        key++;
-        group.add(button);
-        navButtons.put(editor.title(), button);
-        strip.add(button);
-        strip.add(stripGap(0, 4));
-      }
-    }
-    strip.add(Box.createVerticalGlue());
-    final JButton resources = new JButton(new MakerIcon(Glyph.RESOURCES, STRIP_ICON));
-    styleStripButton(
-        resources, "Resources", "Guides and links for map makers, and maps to copy from");
-    final JPopupMenu links =
-        MakerResources.menu(
-            this,
-            () -> {
-              showBrowser(true);
-              files.addFolder();
-            });
-    resources.addActionListener(e -> links.show(resources, resources.getWidth(), 0));
-    strip.add(resources);
-    return strip;
-  }
+  // ---- the header
 
-  /**
-   * A gap in the strip that shrinks to its minimum, as the buttons do, when the window is too low
-   * for all tools, so the last ones and Resources stay on screen.
-   */
-  private static Box.Filler stripGap(final int min, final int preferred) {
-    return new Box.Filler(
-        new Dimension(0, min), new Dimension(0, preferred), new Dimension(0, preferred));
-  }
-
-  /** A square icon button of the strip; its name for screen readers, name and use as tool tip. */
-  private static JToggleButton newStripButton(
-      final Glyph glyph, final String title, final String hint) {
-    final JToggleButton button = new JToggleButton(new MakerIcon(glyph, STRIP_ICON));
-    styleStripButton(button, title, hint);
-    return button;
-  }
-
-  private static void styleStripButton(
-      final AbstractButton button, final String title, final String hint) {
-    button.setToolTipText(
-        "<html><div style='width:260px'><b>"
-            + SearchList.escape(title)
-            + "</b><br>"
-            + SearchList.escape(hint)
-            + "</div></html>");
-    button.getAccessibleContext().setAccessibleName(title);
-    button.putClientProperty(
-        FlatClientProperties.BUTTON_TYPE, FlatClientProperties.BUTTON_TYPE_TOOLBAR_BUTTON);
-    button.setAlignmentX(Component.CENTER_ALIGNMENT);
-    final Dimension size = new Dimension(36, 36);
-    button.setPreferredSize(size);
-    // lower when the window is low; the 20 px icon still fits
-    button.setMinimumSize(new Dimension(36, 26));
-    button.setMaximumSize(size);
-  }
-
-  /**
-   * The bar for the whole map: its name and whether all is saved on the left; the Map menu, Undo,
-   * Redo, Validate, Playtest and Save on the right.
-   */
-  private JComponent newHeader() {
-    final JPanel header = new JPanel(new BorderLayout(16, 0));
-    final JPanel naming = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 0));
-    mapName.setFont(mapName.getFont().deriveFont(Font.BOLD, mapName.getFont().getSize2D() * 1.4f));
-    saveState.setForeground(Theme.getSecondaryTextColor());
-    naming.add(mapName);
-    naming.add(saveState);
-    header.add(naming, BorderLayout.CENTER);
-    final JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
-    final JButton mapButton = new JButton("Map ▾", MakerIcon.small(Glyph.MENU));
-    mapButton.setToolTipText("New, open, the map's games, export");
+  private void newHeaderButtons() {
+    Theme.setBorderlessButtonStyle(mapButton);
+    mapButton.putClientProperty(FlatClientProperties.STYLE_CLASS, "h3");
+    mapButton.setToolTipText("The map's games, open, new, export, close");
+    mapButton.setMinimumSize(new Dimension(NAME_MIN_WIDTH, 0));
     mapButton.addActionListener(e -> mapMenu().show(mapButton, 0, mapButton.getHeight()));
-    buttons.add(mapButton);
-    undoButton.getAccessibleContext().setAccessibleName("Undo");
-    redoButton.getAccessibleContext().setAccessibleName("Redo");
-    undoButton.setToolTipText("Undo: takes the last change back (Ctrl+Z)");
-    undoButton.addActionListener(e -> undo());
-    buttons.add(undoButton);
-    redoButton.setToolTipText("Redo: makes the change again (Ctrl+Y)");
-    redoButton.addActionListener(e -> redo());
-    buttons.add(redoButton);
-    final JButton validate =
-        newButton("Check", "Looks for problems, also by loading the game (F6)", this::validateMap);
-    validate.setIcon(MakerIcon.small(Glyph.VALIDATE));
-    buttons.add(validate);
-    final JButton play =
-        newButton("Play", "Saves and starts the game in a new TripleA window (F7)", this::playtest);
-    play.setIcon(MakerIcon.small(Glyph.PLAYTEST));
-    buttons.add(play);
-    saveButton.setIcon(MakerIcon.small(Glyph.SAVE));
+    pill.setToolTipText("Shows the problems in Home");
+    pill.addActionListener(e -> showProblems());
     saveButton.setToolTipText("Writes the map's files (Ctrl+S)");
     saveButton.addActionListener(e -> save());
-    Theme.setPrimaryButtonStyle(saveButton);
+    playButton.setToolTipText("Saves and starts the game in a new TripleA window (F7)");
+    playButton.addActionListener(e -> playtest());
+  }
+
+  /**
+   * The bar for the whole map: its name (the Map menu) and whether all is saved on the left; its
+   * problems, Undo, Redo, Check, Save and Play on the right.
+   */
+  private JComponent newHeader() {
+    final JPanel header = new JPanel(new BorderLayout(Theme.GAP_L, 0));
+    header.setBorder(
+        BorderFactory.createCompoundBorder(
+            BorderFactory.createMatteBorder(0, 0, 1, 0, Theme.getSeparatorColor()),
+            BorderFactory.createEmptyBorder(Theme.GAP_M, Theme.GAP_L, Theme.GAP_M, Theme.GAP_L)));
+    // a long name gives way first, the save state stays
+    final JPanel naming = new JPanel();
+    naming.setLayout(new BoxLayout(naming, BoxLayout.X_AXIS));
+    naming.add(mapButton);
+    naming.add(Box.createHorizontalStrut(Theme.GAP_M));
+    naming.add(saveState);
+    naming.add(Box.createHorizontalGlue());
+    header.add(naming, BorderLayout.CENTER);
+    final JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, Theme.GAP_S, 0));
+    buttons.add(pill);
+    buttons.add(Box.createHorizontalStrut(Theme.GAP_S));
+    buttons.add(undoButton);
+    buttons.add(redoButton);
+    buttons.add(Box.createHorizontalStrut(Theme.GAP_S));
+    final JButton checkButton = new JButton("Check", MakerIcon.small(Glyph.VALIDATE));
+    checkButton.setToolTipText("Looks for problems, also by loading the game (F6)");
+    Theme.setSecondaryButtonStyle(checkButton);
+    checkButton.addActionListener(e -> validateMap());
+    buttons.add(checkButton);
     buttons.add(saveButton);
+    buttons.add(playButton);
     header.add(buttons, BorderLayout.EAST);
     return header;
   }
 
   /**
-   * New and open; for a saved map its games, this one ticked, and a new game from this one; export.
+   * The map's games, this one chosen, and a new game from this one; open, new, recent maps; export,
+   * the TripleA for Play, the folder; close.
    */
   private JPopupMenu mapMenu() {
     final JPopupMenu menu = new JPopupMenu();
-    menu.add("Open map folder...").addActionListener(e -> chooseAndOpen());
-    menu.add("Create an empty map...").addActionListener(e -> createEmptyMap());
-    menu.add("New map from a picture...").addActionListener(e -> createMap());
     if (project.getXmlFile().isPresent()) {
-      menu.addSeparator();
+      final JMenuItem gamesTitle = new JMenuItem("Games of this map");
+      gamesTitle.setEnabled(false);
+      menu.add(gamesTitle);
       final Optional<Path> open = project.getXmlFile().map(MapMakerWindow::normalized);
+      final ButtonGroup games = new ButtonGroup();
       project
           .getFolder()
           .map(MapMakerWindow::gamesOf)
@@ -993,7 +942,8 @@ with map.yml, the game file, its notes and map.properties.
           .forEach(
               (name, file) -> {
                 final boolean isOpen = open.equals(Optional.of(normalized(file)));
-                final JCheckBoxMenuItem item = new JCheckBoxMenuItem(name, isOpen);
+                final JRadioButtonMenuItem item = new JRadioButtonMenuItem(name, isOpen);
+                games.add(item);
                 item.addActionListener(
                     e -> {
                       if (!isOpen && mayLeaveProject()) {
@@ -1002,48 +952,118 @@ with map.yml, the game file, its notes and map.properties.
                     });
                 menu.add(item);
               });
-      menu.add("New game from this one...").addActionListener(e -> newGame());
+      menu.add("New game from this one…").addActionListener(e -> newGame());
+      menu.addSeparator();
     }
+    menu.add(menuItem("Open a map…", KeyEvent.VK_O, InputEvent.CTRL_DOWN_MASK))
+        .addActionListener(e -> chooseAndOpen());
+    menu.add(menuItem("New map…", KeyEvent.VK_N, InputEvent.CTRL_DOWN_MASK))
+        .addActionListener(e -> createMap());
+    menu.add(recentMaps());
     menu.addSeparator();
-    menu.add("Export map as zip... (F8)").addActionListener(e -> export());
-    menu.add("TripleA for Play...").addActionListener(e -> PlayWith.choose(this));
+    menu.add(menuItem("Export as zip…", KeyEvent.VK_F8, 0)).addActionListener(e -> export());
+    final String tripleA = PlayWith.describe();
+    menu.add(tripleA.isEmpty() ? "Play with…" : "Play with: " + tripleA + "…")
+        .addActionListener(e -> PlayWith.choose(this));
+    final boolean mac = System.getProperty("os.name").toLowerCase(Locale.ROOT).startsWith("mac");
+    final JMenuItem show = new JMenuItem(mac ? "Show in Finder" : "Show in Explorer");
+    show.setEnabled(project.getFolder().isPresent() && Desktop.isDesktopSupported());
+    show.addActionListener(e -> showFolder());
+    menu.add(show);
+    menu.addSeparator();
+    menu.add(menuItem("Close map", KeyEvent.VK_W, InputEvent.CTRL_DOWN_MASK))
+        .addActionListener(e -> closeMap());
     return menu;
+  }
+
+  // the key shows in the menu; the window's own bindings do the work
+  private static JMenuItem menuItem(final String text, final int key, final int modifiers) {
+    final JMenuItem item = new JMenuItem(text);
+    item.setAccelerator(KeyStroke.getKeyStroke(key, modifiers));
+    return item;
+  }
+
+  private JMenu recentMaps() {
+    final JMenu recent = new JMenu("Recent maps");
+    final Optional<Path> open = project.getXmlFile().map(MapMakerWindow::normalized);
+    for (final Path xml : RecentMaps.list()) {
+      if (open.equals(Optional.of(normalized(xml)))) {
+        continue;
+      }
+      final Path folder = MapFolder.rootOf(xml.getParent());
+      final String game = xml.getFileName().toString().replaceFirst("\\.xml$", "");
+      final JMenuItem item = new JMenuItem(folder.getFileName() + " · " + game);
+      item.setToolTipText(xml.toString());
+      item.addActionListener(
+          e -> {
+            if (mayLeaveProject()) {
+              openProject(xml);
+            }
+          });
+      recent.add(item);
+    }
+    recent.setEnabled(recent.getItemCount() > 0);
+    return recent;
+  }
+
+  private void showFolder() {
+    final Path root = MapFolder.rootOf(project.getFolder().orElseThrow());
+    try {
+      Desktop.getDesktop().open(root.toFile());
+    } catch (final IOException | UnsupportedOperationException e) {
+      log.info("Could not show {}", root, e);
+      Dialogs.warn(this, "Show the map's folder", "Could not open " + root + "\n" + e.getMessage());
+    }
+  }
+
+  /** The map's name, with the game's when the map has another game and it is named apart. */
+  static String headerTitle(final String mapName, final Optional<String> gameName) {
+    return mapName + gameName.filter(game -> !game.equals(mapName)).map(g -> " · " + g).orElse("");
   }
 
   private static Path normalized(final Path file) {
     return file.toAbsolutePath().normalize();
   }
 
-  private static JButton newButton(final String text, final String toolTip, final Runnable action) {
-    final JButton button = new JButton(text);
-    button.setToolTipText(toolTip);
-    button.addActionListener(e -> action.run());
-    return button;
-  }
-
-  private JComponent newStatusBar() {
-    final JPanel bar = new JPanel(new BorderLayout(16, 0));
-    bar.setBorder(
-        BorderFactory.createCompoundBorder(
-            BorderFactory.createMatteBorder(1, 0, 0, 0, Theme.getSeparatorColor()),
-            BorderFactory.createEmptyBorder(6, 16, 6, 16)));
-    Theme.setBorderlessButtonStyle(problemsLabel);
-    problemsLabel.setToolTipText("Shows the problems in Overview");
-    problemsLabel.addActionListener(e -> Optional.ofNullable(overview).ifPresent(this::showEditor));
-    bar.add(problemsLabel, BorderLayout.WEST);
-    return bar;
-  }
-
   private void updateState() {
-    saveState.setText(project.hasUnsavedChanges() ? "● Not saved" : "All saved");
-    mapName.setText(project.name());
-    saveButton.setEnabled(project.hasUnsavedChanges());
+    final boolean unsaved = project.hasUnsavedChanges();
+    saveState.setText(unsaved ? "• Not saved" : "All saved");
+    saveState.setForeground(unsaved ? Theme.getWarningColor() : Theme.getSecondaryTextColor());
+    mapButton.setText(headerTitle(project.name(), gameName) + " ▾");
+    mapButton.getAccessibleContext().setAccessibleName("Map: " + project.name());
+    showSaveAndPlay(project, saveButton, playButton);
     undoButton.setEnabled(project.canUndo());
     redoButton.setEnabled(project.canRedo());
-    final int problems = Optional.ofNullable(overview).map(o -> o.problems().size()).orElse(0);
-    problemsLabel.setText(
-        problems == 0 ? "No problems found" : problems == 1 ? "1 problem" : problems + " problems");
-    setTitle((project.hasUnsavedChanges() ? "● " : "") + project.name() + " — Eddie's Map Editor");
+    final Pill shown =
+        pill(Optional.ofNullable(home).map(h -> h.problems().size()).orElse(0), check);
+    pill.setText(shown.text());
+    Theme.setPillStyle(pill, shown.status());
+    setTitle((unsaved ? "● " : "") + project.name() + " — Eddie's Map Editor");
+  }
+
+  /** One primary in the header: Save while there are changes, else Play. */
+  static void showSaveAndPlay(final MapProject project, final JButton save, final JButton play) {
+    final boolean unsaved = project.hasUnsavedChanges();
+    save.setVisible(unsaved);
+    Theme.setPrimaryButtonStyle(save);
+    if (unsaved) {
+      Theme.setSecondaryButtonStyle(play);
+    } else {
+      Theme.setPrimaryButtonStyle(play);
+    }
+  }
+
+  /** The pill for the problems known and how far Check is. */
+  static Pill pill(final int problems, final Check check) {
+    if (check == Check.RUNNING) {
+      return new Pill("Checking…", Status.TODO);
+    }
+    if (problems > 0) {
+      return new Pill("! " + problems + (problems == 1 ? " problem" : " problems"), Status.PROBLEM);
+    }
+    return check == Check.DONE
+        ? new Pill("✓ No problems", Status.DONE)
+        : new Pill("Not checked yet", Status.TODO);
   }
 
   // ---- actions on the whole map
@@ -1062,13 +1082,11 @@ with map.yml, the game file, its notes and map.properties.
   /** Saves; false, with a message, if it failed. */
   private boolean save() {
     if (filesAhead) {
-      JOptionPane.showMessageDialog(
+      Dialogs.warn(
           this,
-"""
-The map's files were changed in Files and do not read yet. Fix them there first:
-saving here would write the map as it was over them.""",
-          "Save",
-          JOptionPane.WARNING_MESSAGE);
+          SAVE,
+          "The map's files were changed in Files and do not read yet\nFix them there first:"
+              + " saving here would write the map as it was over them.");
       return false;
     }
     editors.values().forEach(Editor::commit);
@@ -1079,33 +1097,51 @@ saving here would write the map as it was over them.""",
     try {
       project.save();
       if (openedFromFile && firstBackup && Files.exists(backup)) {
-        JOptionPane.showMessageDialog(
+        Dialogs.toast(
             this,
-"""
-Saved. The map maker writes the game file anew: comments in it are not kept.
-The file as it was stays beside it as """
-                + backup.getFileName()
-                + ".",
-            "Save",
-            JOptionPane.INFORMATION_MESSAGE);
+            "✓ Saved. The old file stays as " + backup.getFileName(),
+            "Show",
+            () -> {
+              showFiles();
+              files.reveal(backup);
+            });
       }
       return true;
     } catch (final Exception e) {
       log.warn("Could not save {}", xml, e);
-      JOptionPane.showMessageDialog(
-          this, "Could not save the map:\n" + e.getMessage(), "Save", JOptionPane.ERROR_MESSAGE);
+      Dialogs.warn(this, SAVE, "Could not save the map\n" + e.getMessage());
       return false;
     }
   }
 
+  /** Check, then a toast with what it found; the tool stays. */
   private void validateMap() {
-    if (overview == null) {
+    check(
+        problems -> {
+          if (problems.isEmpty()) {
+            Dialogs.toast(this, "✓ Check found no problems");
+          } else {
+            Dialogs.toast(
+                this,
+                "! Check found "
+                    + problems.size()
+                    + (problems.size() == 1 ? " problem" : " problems"),
+                "Show",
+                this::showProblems);
+          }
+        });
+  }
+
+  /** Checks the map in the background; the result counts only for the map as it still is. */
+  private void check(final Consumer<List<Problem>> then) {
+    if (home == null) {
       return;
     }
     final MapProject checked = project;
     final Game checkedGame = checked.game();
-    final OverviewEditor shownIn = overview;
-    problemsLabel.setText("Checking...");
+    final HomeEditor shownIn = home;
+    check = Check.RUNNING;
+    updateState();
     new SwingWorker<List<Problem>, Void>() {
       @Override
       protected List<Problem> doInBackground() {
@@ -1115,17 +1151,26 @@ The file as it was stays beside it as """
       @Override
       protected void done() {
         // another map was opened or this one changed meanwhile: the result is of an older one
-        if (shownIn != overview || checked.game() != checkedGame) {
+        if (shownIn != home || checked.game() != checkedGame) {
+          if (shownIn == home) {
+            check = Check.NOT_YET;
+            updateState();
+          }
+          return;
+        }
+        final List<Problem> problems;
+        try {
+          problems = get();
+        } catch (final Exception e) {
+          log.warn("Validating the map failed", e);
+          check = Check.NOT_YET;
           updateState();
           return;
         }
-        try {
-          shownIn.setValidated(get());
-        } catch (final Exception e) {
-          log.warn("Validating the map failed", e);
-        }
+        shownIn.setValidated(problems);
+        check = Check.DONE;
         updateState();
-        showEditor(shownIn);
+        then.accept(problems);
       }
     }.execute();
   }
@@ -1143,18 +1188,10 @@ The file as it was stays beside it as """
     }
     try {
       final String tripleA = PlayWith.play(project.getXmlFile().orElseThrow());
-      JOptionPane.showMessageDialog(
-          this,
-          "Starts " + tripleA + " with this game.\nChoose who plays and click Start Game.",
-          "Playtest",
-          JOptionPane.INFORMATION_MESSAGE);
+      Dialogs.toast(this, "Starting " + tripleA + ": choose who plays and click Start Game.");
     } catch (final Exception e) {
       log.warn("Could not start the playtest", e);
-      JOptionPane.showMessageDialog(
-          this,
-          "Could not start TripleA:\n" + e.getMessage(),
-          "Playtest",
-          JOptionPane.ERROR_MESSAGE);
+      Dialogs.warn(this, "Play", "Could not start TripleA\n" + e.getMessage());
     }
   }
 
@@ -1188,33 +1225,42 @@ The file as it was stays beside it as """
       @Override
       protected void done() {
         try {
-          JOptionPane.showMessageDialog(
-              MapMakerWindow.this,
-              "Packed " + get() + " files into\n" + zip,
-              "Export",
-              JOptionPane.INFORMATION_MESSAGE);
+          Dialogs.toast(MapMakerWindow.this, "✓ Exported " + get() + " files to " + zip);
         } catch (final Exception e) {
           log.warn("Could not export {}", zip, e);
-          JOptionPane.showMessageDialog(
-              MapMakerWindow.this,
-              "Could not export the map:\n" + e.getMessage(),
-              "Export",
-              JOptionPane.ERROR_MESSAGE);
+          Dialogs.warn(
+              MapMakerWindow.this, "Export", "Could not export the map\n" + e.getMessage());
         }
       }
     }.execute();
   }
 
   private void bindKeys() {
-    bind("save", KeyStroke.getKeyStroke(KeyEvent.VK_S, KeyEvent.CTRL_DOWN_MASK), this::save);
-    bind("undo", KeyStroke.getKeyStroke(KeyEvent.VK_Z, KeyEvent.CTRL_DOWN_MASK), this::undo);
-    bind("redo", KeyStroke.getKeyStroke(KeyEvent.VK_Y, KeyEvent.CTRL_DOWN_MASK), this::redo);
+    final int ctrl = InputEvent.CTRL_DOWN_MASK;
+    bind("save", KeyStroke.getKeyStroke(KeyEvent.VK_S, ctrl), this::save);
+    bind("undo", KeyStroke.getKeyStroke(KeyEvent.VK_Z, ctrl), this::undo);
+    bind("redo", KeyStroke.getKeyStroke(KeyEvent.VK_Y, ctrl), this::redo);
     bind("validate", KeyStroke.getKeyStroke(KeyEvent.VK_F6, 0), this::validateMap);
     bind("playtest", KeyStroke.getKeyStroke(KeyEvent.VK_F7, 0), this::playtest);
     bind("export", KeyStroke.getKeyStroke(KeyEvent.VK_F8, 0), this::export);
+    bind("close", KeyStroke.getKeyStroke(KeyEvent.VK_W, ctrl), this::closeMap);
+    bindAlways("open", KeyStroke.getKeyStroke(KeyEvent.VK_O, ctrl), this::chooseAndOpen);
+    bindAlways("new", KeyStroke.getKeyStroke(KeyEvent.VK_N, ctrl), this::createMap);
   }
 
+  /** A key for an open map; the start page has no map to save, undo or test. */
   private void bind(final String name, final KeyStroke key, final Runnable action) {
+    bindAlways(
+        name,
+        key,
+        () -> {
+          if (mapShown) {
+            action.run();
+          }
+        });
+  }
+
+  private void bindAlways(final String name, final KeyStroke key, final Runnable action) {
     getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(key, name);
     getRootPane()
         .getActionMap()
@@ -1225,10 +1271,7 @@ The file as it was stays beside it as """
 
               @Override
               public void actionPerformed(final ActionEvent e) {
-                // the start page has no map to save, undo or test
-                if (mapShown) {
-                  action.run();
-                }
+                action.run();
               }
             });
   }

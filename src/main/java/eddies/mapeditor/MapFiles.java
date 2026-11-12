@@ -27,6 +27,7 @@ import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -81,6 +82,8 @@ record MapFiles(
     Optional<BufferedImage> relief,
     Places places) {
 
+  // map.properties: the color the game tints a nation's unit pictures in, eg ...color.Germans
+  static final String UNIT_TINT = "units.transform.color.";
   private static final String POLYGONS = "polygons.txt";
   private static final String CENTERS = "centers.txt";
   private static final String PLACEMENTS = "place.txt";
@@ -99,6 +102,8 @@ record MapFiles(
   private static final String HEIGHT = "map.height";
   // a redrawn border whose bounds overlap the old ones less than this changed noticeably
   private static final double SAME_BORDER = 0.9;
+  // nor one whose bounds moved this few pixels, as found outlines reach into the border line
+  private static final int SAME_BORDER_PIXELS = 3;
 
   /** The files of the map that the game XML belongs to, found in the folders above it. */
   static MapFiles of(final Path gameXml) {
@@ -166,6 +171,56 @@ record MapFiles(
         places.renamed(old, renamed));
   }
 
+  /**
+   * The files with these outlines for the territory, a new one last; its center stays if still
+   * inside, and its places are found again in them.
+   */
+  MapFiles withOutlines(final String territory, final List<Polygon> outlines) {
+    final Map<String, List<Polygon>> outlined = new LinkedHashMap<>(polygons);
+    outlined.put(territory, List.copyOf(outlines));
+    final Map<String, Point> middles = new LinkedHashMap<>(centers);
+    movedCenter(territory, outlines).ifPresent(p -> middles.put(territory, p));
+    return new MapFiles(
+        folder,
+        outlined,
+        middles,
+        properties,
+        picture,
+        unitPictures,
+        nationUnitPictures,
+        relief,
+        places.without(List.of(territory)));
+  }
+
+  /**
+   * The territory's center in the new outlines, when it must move: the center moves only when they
+   * leave it outside.
+   */
+  private Optional<Point> movedCenter(final String territory, final List<Polygon> outlines) {
+    final Point center = centers.get(territory);
+    return center == null || outlines.stream().noneMatch(o -> o.contains(center))
+        ? outlines.stream().findFirst().flatMap(MapFiles::pointInside)
+        : Optional.empty();
+  }
+
+  /** The files without the territory's outlines, center and places. */
+  MapFiles withoutTerritory(final String territory) {
+    final Map<String, List<Polygon>> outlined = new LinkedHashMap<>(polygons);
+    outlined.remove(territory);
+    final Map<String, Point> middles = new LinkedHashMap<>(centers);
+    middles.remove(territory);
+    return new MapFiles(
+        folder,
+        outlined,
+        middles,
+        properties,
+        picture,
+        unitPictures,
+        nationUnitPictures,
+        relief,
+        places.without(List.of(territory)));
+  }
+
   private static <T> Map<String, T> renamedKey(
       final Map<String, T> values, final String old, final String renamed) {
     final Map<String, T> result = new LinkedHashMap<>();
@@ -216,7 +271,9 @@ record MapFiles(
    * The files with the picture, each territory's borders redrawn from it: each of its outlines
    * becomes the outline of the area in the picture that covers most of it and no territory before
    * took, so names, owners, units and neighbours stay. An outline keeps its border where no such
-   * area is found, eg after the border between two territories was rubbed out. A territory whose
+   * area is found, eg after the border between two territories was rubbed out: then the area is
+   * told as merged when it holds all of the territory's outlines and the one that took it has
+   * exactly it, or none took it and it holds all outlines of two or more. A territory whose
    * border changed noticeably gets its places found again, the others keep theirs.
    */
   Redrawn withBordersFrom(final BufferedImage image, final DetectedMap detected) {
@@ -224,6 +281,9 @@ record MapFiles(
     final Map<String, Point> middles = new LinkedHashMap<>(centers);
     final Map<DetectedTerritory, String> takenBy = new HashMap<>();
     final Set<String> kept = new LinkedHashSet<>();
+    final Set<String> foundOne = new HashSet<>();
+    // per territory, the area holding most of each outline that found no free area
+    final Map<String, List<Optional<DetectedTerritory>>> heldBy = new LinkedHashMap<>();
     polygons.forEach(
         (territory, before) -> {
           final List<Polygon> after = new ArrayList<>();
@@ -233,29 +293,47 @@ record MapFiles(
                     .filter(a -> takenBy.getOrDefault(a, territory).equals(territory))
                     .findFirst();
             if (area.isPresent()) {
+              foundOne.add(territory);
               if (takenBy.put(area.get(), territory) == null) {
                 after.addAll(area.get().outlines());
               }
             } else {
               after.add(outline);
               kept.add(territory);
+              heldBy
+                  .computeIfAbsent(territory, t -> new ArrayList<>())
+                  .add(areaHoldingMost(outline, detected));
             }
           }
           outlines.put(territory, after);
-          // the center moves only when the new border leaves it outside
-          final Point center = centers.get(territory);
-          if (center == null || after.stream().noneMatch(o -> o.contains(center))) {
-            after.stream()
-                .findFirst()
-                .flatMap(MapFiles::pointInside)
-                .ifPresent(p -> middles.put(territory, p));
+          movedCenter(territory, after).ifPresent(p -> middles.put(territory, p));
+        });
+    final Map<DetectedTerritory, List<String>> merged = new LinkedHashMap<>();
+    final Set<DetectedTerritory> held = new HashSet<>();
+    heldBy.forEach(
+        (territory, areas) -> {
+          areas.forEach(area -> area.ifPresent(held::add));
+          final Optional<DetectedTerritory> area = areas.getFirst();
+          if (!foundOne.contains(territory)
+              && area.isPresent()
+              && areas.stream().allMatch(area::equals)
+              && (!takenBy.containsKey(area.get())
+                  || outlines.get(takenBy.get(area.get())).equals(area.get().outlines()))) {
+            merged
+                .computeIfAbsent(
+                    area.get(),
+                    a -> new ArrayList<>(Optional.ofNullable(takenBy.get(a)).stream().toList()))
+                .add(territory);
           }
         });
+    // an area none took, as each holds too little of it, is a merge of two or more
+    merged.values().removeIf(members -> members.size() < 2);
+    merged.replaceAll((area, members) -> List.copyOf(members));
     final MapFiles pictured = withPicture(image);
     final List<String> changed =
         outlines.keySet().stream()
             .filter(t -> !kept.contains(t))
-            .filter(t -> overlap(polygons.get(t), outlines.get(t)) < SAME_BORDER)
+            .filter(t -> !isSameBorder(polygons.get(t), outlines.get(t)))
             .toList();
     return new Redrawn(
         new MapFiles(
@@ -270,7 +348,11 @@ record MapFiles(
             // places the old border held may lie outside the new one: found again in it
             places.without(changed)),
         changed,
-        List.copyOf(kept));
+        List.copyOf(kept),
+        detected,
+        Map.copyOf(takenBy),
+        Collections.unmodifiableMap(merged),
+        Set.copyOf(held));
   }
 
   /**
@@ -278,8 +360,28 @@ record MapFiles(
    *
    * @param changed the territories whose border changed noticeably, to look at
    * @param kept the territories with an outline that kept its border
+   * @param detected the areas of the picture
+   * @param takenBy the territory that took each area
+   * @param merged the areas a rubbed-out border made of territories, with them: the one that took
+   *     it first, if one did
+   * @param held the areas holding most of an outline that kept its border: old land, not new
    */
-  record Redrawn(MapFiles files, List<String> changed, List<String> kept) {}
+  record Redrawn(
+      MapFiles files,
+      List<String> changed,
+      List<String> kept,
+      DetectedMap detected,
+      Map<DetectedTerritory, String> takenBy,
+      Map<DetectedTerritory, List<String>> merged,
+      Set<DetectedTerritory> held) {
+
+    /** The areas no territory took, eg drawn in as new ones, in the picture's order. */
+    List<DetectedTerritory> added() {
+      return detected.territories().stream()
+          .filter(a -> !takenBy.containsKey(a) && !held.contains(a))
+          .toList();
+    }
+  }
 
   /**
    * The areas that cover a part of the outline, the most first, counted on a grid of points inside
@@ -289,19 +391,39 @@ record MapFiles(
    */
   private static List<DetectedTerritory> areasCovering(
       final Polygon outline, final DetectedMap detected) {
-    final Map<DetectedTerritory, Integer> covered = new HashMap<>();
-    for (final Point point : pointsInside(outline)) {
-      // the innermost area at the point: the island, not the sea around it
-      detected.territories().stream()
-          .filter(area -> area.outlines().stream().anyMatch(o -> o.contains(point)))
-          .min(Comparator.comparingDouble(MapFiles::boundsArea))
-          .ifPresent(area -> covered.merge(area, 1, Integer::sum));
-    }
+    final Map<DetectedTerritory, Integer> covered =
+        innermostCounts(pointsInside(outline), detected);
     covered.keySet().removeIf(area -> !isMostlyIn(area, outline));
     return covered.entrySet().stream()
         .sorted(Map.Entry.<DetectedTerritory, Integer>comparingByValue().reversed())
         .map(Map.Entry::getKey)
         .toList();
+  }
+
+  /** How many of the points each area holds innermost: the island, not the sea around it. */
+  private static Map<DetectedTerritory, Integer> innermostCounts(
+      final List<Point> points, final DetectedMap detected) {
+    final Map<DetectedTerritory, Integer> counts = new HashMap<>();
+    for (final Point point : points) {
+      detected.territories().stream()
+          .filter(area -> area.outlines().stream().anyMatch(o -> o.contains(point)))
+          .min(Comparator.comparingDouble(MapFiles::boundsArea))
+          .ifPresent(area -> counts.merge(area, 1, Integer::sum));
+    }
+    return counts;
+  }
+
+  /**
+   * The area innermost at more than half of the outline, eg the big one a small territory was
+   * merged into; not {@link #isMostlyIn}, as little of that area lies in the outline.
+   */
+  private static Optional<DetectedTerritory> areaHoldingMost(
+      final Polygon outline, final DetectedMap detected) {
+    final List<Point> points = pointsInside(outline);
+    return innermostCounts(points, detected).entrySet().stream()
+        .filter(e -> e.getValue() * 2 > points.size())
+        .map(Map.Entry::getKey)
+        .findFirst();
   }
 
   private static double boundsArea(final DetectedTerritory area) {
@@ -343,10 +465,19 @@ record MapFiles(
     return inside;
   }
 
-  /** How much two territories' bounds overlap: 1 for the same, 0 for none. */
-  private static double overlap(final List<Polygon> before, final List<Polygon> after) {
+  /** Whether two territories' bounds are the same within a few pixels or mostly overlap. */
+  private static boolean isSameBorder(final List<Polygon> before, final List<Polygon> after) {
     final Rectangle a = boundsOf(before);
     final Rectangle b = boundsOf(after);
+    final boolean near =
+        Math.abs(a.x - b.x) <= SAME_BORDER_PIXELS
+            && Math.abs(a.y - b.y) <= SAME_BORDER_PIXELS
+            && Math.abs(a.x + a.width - b.x - b.width) <= SAME_BORDER_PIXELS
+            && Math.abs(a.y + a.height - b.y - b.height) <= SAME_BORDER_PIXELS;
+    return near || overlap(a, b) >= SAME_BORDER;
+  }
+
+  private static double overlap(final Rectangle a, final Rectangle b) {
     final Rectangle common = a.intersection(b);
     final double shared = common.isEmpty() ? 0 : (double) common.width * common.height;
     return shared / ((double) a.width * a.height + (double) b.width * b.height - shared);
@@ -536,9 +667,12 @@ record MapFiles(
   /**
    * Writes where the game draws each territory's units, each capital's flag and each victory city's
    * marker; the other markers' files ({@link Marker#isAlwaysWritten}) and decorations.txt only when
-   * the map has them or places were set here; without a folder or outlines, none.
+   * the map has them or places were set here; without a folder or outlines, none. Lines of
+   * territories removed since the last save go.
+   *
+   * @param saved the files as last saved, {@link #writeKeeping}
    */
-  void writePlaces(final Game game, final Places saved) throws IOException {
+  void writePlaces(final Game game, final MapFiles saved) throws IOException {
     if (folder.isEmpty() || !hasOutlines()) {
       return;
     }
@@ -547,9 +681,9 @@ record MapFiles(
         PLACEMENTS,
         polygons.keySet(),
         places.units(),
-        saved.units(),
+        saved.places().units(),
         t -> Tuple.of(unitPlaces(t), Boolean.FALSE),
-        t -> !polygons.containsKey(t),
+        t -> !polygons.containsKey(t) && !saved.polygons().containsKey(t),
         PointFileReaderWriter::readOneToManyPlacements,
         PointFileReaderWriter::writeOneToManyPlacements);
     // the game reads each file on its own and falls back on a place of its own without it
@@ -563,7 +697,7 @@ record MapFiles(
           DECORATIONS,
           places.decorations().keySet(),
           places.decorations(),
-          saved.decorations(),
+          saved.places().decorations(),
           image -> List.of(),
           image -> true,
           PointFileReaderWriter::readOneToMany,
@@ -581,16 +715,16 @@ record MapFiles(
    * for the name itself and draws the value below it; a map made here gets them, an opened map
    * keeps its way until a name or value is moved.
    *
-   * @param saved the places as last saved, {@link #writeKeeping}
+   * @param saved the files as last saved, {@link #writeKeeping}
    */
-  void writeNamePlaces(final Game game, final Places saved) throws IOException {
+  void writeNamePlaces(final Game game, final MapFiles saved) throws IOException {
     if (folder.isPresent() && hasOutlines()) {
       writeMarkers(game, Marker.NAME, saved);
       writeMarkers(game, Marker.VALUE, saved);
     }
   }
 
-  private void writeMarkers(final Game game, final Marker marker, final Places saved)
+  private void writeMarkers(final Game game, final Marker marker, final MapFiles saved)
       throws IOException {
     final Map<String, List<Point>> had = places.markers(marker);
     final boolean keepsAll = marker.keepsUnused();
@@ -598,9 +732,10 @@ record MapFiles(
         marker.file,
         territories(t -> marker.isOn(game, t) || (keepsAll && had.containsKey(t))),
         had,
-        saved.markers(marker),
+        saved.places().markers(marker),
         t -> foundMarkers(game, marker, t),
-        t -> keepsAll || !polygons.containsKey(t),
+        // a territory removed since the last save loses its line
+        t -> polygons.containsKey(t) ? keepsAll : !saved.polygons().containsKey(t),
         marker::read,
         marker::write);
   }
@@ -1149,6 +1284,14 @@ record MapFiles(
     } catch (final NumberFormatException e) {
       return Optional.empty();
     }
+  }
+
+  /**
+   * The color the game tints the nation's unit pictures in (map.properties
+   * units.transform.color.Nation), empty when it draws them as they are or the color is unreadable.
+   */
+  Optional<Color> unitTint(final String nation) {
+    return MapLookEditor.colorOf(properties.getProperty(UNIT_TINT + nation, ""));
   }
 
   /** The nation's color from map.properties, empty when the map gives it none. */

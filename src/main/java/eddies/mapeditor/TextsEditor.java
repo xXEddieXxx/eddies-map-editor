@@ -1,73 +1,90 @@
 package eddies.mapeditor;
 
+import com.formdev.flatlaf.FlatClientProperties;
+import games.strategy.engine.framework.ui.GameNotesView;
 import java.awt.BorderLayout;
-import java.awt.FlowLayout;
+import java.awt.CardLayout;
+import java.awt.Dimension;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
+import javax.swing.BorderFactory;
+import javax.swing.BoxLayout;
 import javax.swing.DefaultComboBoxModel;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
+import javax.swing.JLabel;
+import javax.swing.JList;
 import javax.swing.JPanel;
+import javax.swing.JTabbedPane;
 import javax.swing.Timer;
 import org.triplea.map.data.elements.Game;
-import org.triplea.swing.DocumentListenerBuilder;
 import org.triplea.swing.SwingComponents;
 import eddies.mapeditor.MakerIcon.Glyph;
 import eddies.mapeditor.MapTexts.Entry;
 import eddies.mapeditor.MapTexts.Kind;
 
 /**
- * The texts the game reads by key beside the game file: objectives, the messages of triggers and
- * unit tool tips. A file at a time, its keys in a list with what each means, the chosen one's text
- * to change. Typing becomes one step when it pauses or the text is left.
+ * The texts the game reads by key beside the game file: objectives, the messages of triggers, unit
+ * tool tips and the texts of actions. A tab per file, its keys in plain words, the chosen one's
+ * text to change with a preview where it is HTML. Typing becomes one step when it pauses or the
+ * text is left.
  */
 final class TextsEditor implements Editor {
   private static final int PAUSE_MILLIS = 1000;
+  private static final int PREVIEW_HEIGHT = 160;
+  private static final int NOTE_WIDTH = 400;
+  private static final String UNREADABLE = "unreadable";
+  private static final String GROUP = "TABLEGROUP.";
+  // sounds have a tool of their own
+  static final List<Kind> KINDS = Stream.of(Kind.values()).filter(k -> k != Kind.SOUNDS).toList();
 
   private final MapProject project;
-  private final JPanel page = new JPanel(new BorderLayout(8, 8));
-  // sounds have a tool of their own
-  private final JComboBox<Kind> file =
-      new JComboBox<>(Stream.of(Kind.values()).filter(k -> k != Kind.SOUNDS).toArray(Kind[]::new));
-  private final SearchList list;
-  private final Form inspector = new Form(360);
+  private final Consumer<String> openTool;
+  private final JPanel page = new JPanel(new BorderLayout(0, Theme.GAP_S));
+  private final JTabbedPane tabs = new JTabbedPane();
+  private final CardLayout cards = new CardLayout();
+  private final JPanel listCards = new JPanel(cards);
+  private final Map<Kind, SearchList> lists = new EnumMap<>(Kind.class);
+  private final JPanel banner = new JPanel();
+  private final JLabel bannerText = Theme.newSecondaryLabel("");
+  // narrower than the design's 680: a row wider than the column shrinks every field to its least
+  private final Form inspector = new Form(NOTE_WIDTH);
   private final XmlTextArea text = new XmlTextArea();
+  private final GameNotesView preview = new GameNotesView();
   private final Timer pause = new Timer(PAUSE_MILLIS, e -> commit());
   private @Nullable String selected;
-  // the file the text shown belongs to, as the choice of file changes before the text is kept
+  // the file the text shown belongs to, as the tab changes before the text is kept
   private Kind shownKind = Kind.OBJECTIVES;
   private boolean editingHere;
-  private final JButton add = new JButton();
-  private final JButton remove = new JButton();
-  private final Map<String, String> explained = new HashMap<>();
+  private final Map<Kind, Map<String, String>> explained = new EnumMap<>(Kind.class);
   private @Nullable Game explainedFor;
-  private @Nullable Kind explainedKind;
 
   TextsEditor(final MapProject project) {
+    this(project, tool -> {});
+  }
+
+  /**
+   * @param openTool switches to the tool of this title, eg "Files"
+   */
+  TextsEditor(final MapProject project, final Consumer<String> openTool) {
     this.project = project;
-    list =
-        new SearchList(
-            "Search key",
-            () -> {
-              final List<String> keys = keys();
-              return keys.stream().map(k -> shown(k, keys)).toList();
-            },
-            this::explain,
-            this::choose);
+    this.openTool = openTool;
     text.setLineWrap(true);
     text.setWrapStyleWord(true);
     text.colorAsXml();
-    text.setRows(12);
+    text.setRows(8);
     pause.setRepeats(false);
-    new DocumentListenerBuilder(pause::restart).attachTo(text);
+    OnTyping.attach(text, pause::restart);
     text.addFocusListener(
         new FocusAdapter() {
           @Override
@@ -75,39 +92,120 @@ final class TextsEditor implements Editor {
             commit();
           }
         });
-    file.setToolTipText("Which file's texts are listed");
-    file.addActionListener(
+    tabs.putClientProperty("JTabbedPane.tabType", "underlined");
+    for (final Kind kind : KINDS) {
+      final JPanel strip = new JPanel();
+      strip.setPreferredSize(new Dimension(0, 0));
+      tabs.addTab(kind.getTitle(), null, strip, kind.getHelp());
+      listCards.add(newColumn(kind), kind.name());
+      listCards.add(
+          Panels.empty(
+              Glyph.TEXTS,
+              kind.getFile() + " does not read",
+              "Fix it in Files.",
+              "Open in Files",
+              () -> openTool.accept("Files")),
+          kind.name() + UNREADABLE);
+    }
+    tabs.addChangeListener(
         e -> {
           commit();
+          lists.get(shownKind).choose(null);
           selected = null;
-          list.refresh();
+          showList();
           showInspector();
         });
-    add.setText("Add entry...");
-    add.setToolTipText("Adds an entry, its key offered from the game");
-    add.addActionListener(e -> addEntry());
-    remove.setText("Remove");
-    remove.setToolTipText("Removes the chosen entry from the file");
-    remove.addActionListener(
-        e -> Optional.ofNullable(selected).ifPresent(key -> project.removeText(kind(), key)));
-    final JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-    buttons.add(add);
-    buttons.add(remove);
-    final JPanel listColumn = new JPanel(new BorderLayout(0, 8));
-    listColumn.add(file, BorderLayout.NORTH);
-    listColumn.add(list, BorderLayout.CENTER);
-    listColumn.add(buttons, BorderLayout.SOUTH);
+    page.add(tabs, BorderLayout.NORTH);
     page.add(
-        Panels.sideBySide(listColumn, SwingComponents.newJScrollPane(inspector)),
+        Panels.sideBySide(listCards, SwingComponents.newJScrollPane(inspector)),
         BorderLayout.CENTER);
     project.onChange(
         () -> {
-          list.refresh();
+          lists.values().forEach(SearchList::refresh);
+          showList();
           if (!editingHere) {
             showInspector();
           }
         });
+    showList();
     showInspector();
+  }
+
+  /** The kind's list, objectives with the banner that tells when they are another game's. */
+  private JComponent newColumn(final Kind kind) {
+    final String noun = noun(kind);
+    final String plural = noun + "s";
+    final String add = addTitle(kind);
+    final SearchList list =
+        new SearchList(
+                noun,
+                plural,
+                () -> keys(kind),
+                key -> MapTexts.title(kind, key, project.game()),
+                key -> detail(kind, key),
+                this::choose)
+            .stripSharedPrefix()
+            .withAdd("Add", add, () -> addEntry(kind))
+            .withEmpty(Panels.empty(Glyph.TEXTS, "No " + plural + " yet", kind.getHelp()));
+    lists.put(kind, list);
+    final JPanel column = new JPanel(new BorderLayout(0, Theme.GAP_S));
+    column.add(list, BorderLayout.CENTER);
+    if (kind == Kind.OBJECTIVES) {
+      column.add(newBanner(), BorderLayout.NORTH);
+    }
+    return column;
+  }
+
+  private static String noun(final Kind kind) {
+    return switch (kind) {
+      case OBJECTIVES -> "objective text";
+      case NOTIFICATIONS -> "message";
+      case TOOLTIPS -> "tool tip";
+      case POLITICS -> "political action text";
+      case ACTIONS, SOUNDS -> "user action text";
+    };
+  }
+
+  private static String addTitle(final Kind kind) {
+    return switch (kind) {
+      case OBJECTIVES -> "Add objective text";
+      case NOTIFICATIONS -> "Add message";
+      case TOOLTIPS -> "Add unit tool tip";
+      case POLITICS, ACTIONS, SOUNDS -> "Add action text";
+    };
+  }
+
+  private JComponent newBanner() {
+    banner.setLayout(new BoxLayout(banner, BoxLayout.Y_AXIS));
+    banner.setBackground(Theme.getWarningBackground());
+    banner.setBorder(
+        BorderFactory.createCompoundBorder(
+            BorderFactory.createMatteBorder(0, 3, 0, 0, Theme.getWarningColor()),
+            BorderFactory.createEmptyBorder(
+                Theme.GAP_M, Theme.GAP_M, Theme.GAP_M, Theme.GAP_M)));
+    final JLabel title = Theme.newStatusLabel(Theme.Status.WARNING, "Not shown in this game");
+    title.putClientProperty(FlatClientProperties.STYLE_CLASS, "semibold");
+    final JButton use = new JButton("Use them for this game");
+    Theme.setTertiaryButtonStyle(use);
+    use.addActionListener(e -> useForThisGame());
+    for (final JComponent part : List.of(title, bannerText, use)) {
+      part.setAlignmentX(JComponent.LEFT_ALIGNMENT);
+      banner.add(part);
+    }
+    return banner;
+  }
+
+  /** Renames the keys to this game's start, all in one step: the game then shows them. */
+  private void useForThisGame() {
+    commit();
+    MapTexts.foreignPrefix(project.texts(), project.game())
+        .ifPresent(
+            old -> {
+              final String own = MapTexts.objectivesPrefix(project.game());
+              project.edit(g -> g, t -> t.withKeyPrefix(Kind.OBJECTIVES, old, own));
+              Dialogs.toast(
+                  page, "✓ The objective texts are now this game's", "Undo", project::undo);
+            });
   }
 
   @Override
@@ -131,80 +229,113 @@ final class TextsEditor implements Editor {
     return page;
   }
 
-  /** What the key means; kept per game and file, as the list asks for every row it paints. */
-  private String explain(final String key) {
-    if (explainedFor != project.game() || explainedKind != kind()) {
-      explained.clear();
-      explainedFor = project.game();
-      explainedKind = kind();
-    }
-    return explained.computeIfAbsent(
-        key, k -> MapTexts.explain(kind(), keyOf(k), project.game()));
+  private Kind kind() {
+    return KINDS.get(tabs.getSelectedIndex());
   }
 
-  private List<String> keys() {
-    return project.texts().entries(kind()).stream().map(Entry::key).toList();
+  private List<String> keys(final Kind kind) {
+    return project.texts().entries(kind).stream().map(Entry::key).toList();
   }
 
   /**
-   * The key as listed: objectives' keys without the game's name they all start with, unless that
-   * leaves another key's name.
+   * The line below a row's title: the key for objectives and tool tips, else what the key means,
+   * kept per game as the list asks for every row it paints.
    */
-  private String shown(final String key, final List<String> keys) {
-    final String prefix = MapTexts.objectivesPrefix(project.game());
-    return kind() == Kind.OBJECTIVES
-            && key.startsWith(prefix)
-            && !keys.contains(key.substring(prefix.length()))
-        ? key.substring(prefix.length())
-        : key;
+  private String detail(final Kind kind, final String key) {
+    if (explainedFor != project.game()) {
+      explained.clear();
+      explainedFor = project.game();
+    }
+    final String explanation =
+        explained
+            .computeIfAbsent(kind, k -> new HashMap<>())
+            .computeIfAbsent(key, k -> MapTexts.explain(kind, k, project.game()));
+    return switch (kind) {
+      // a row for another game says so, unless the banner says it for all
+      // without the game's name, as Objectives.Panel.Name keeps the list from finding it shared
+      case OBJECTIVES ->
+          MapTexts.isForeign(key, project.game()) && !banner.isVisible()
+              ? explanation
+              : key.substring(MapTexts.prefixOf(key).length());
+      case TOOLTIPS -> key;
+      default -> explanation;
+    };
   }
 
-  /** The key of a name in the list. */
-  private String keyOf(final String shown) {
-    return keys().contains(shown) ? shown : MapTexts.objectivesPrefix(project.game()) + shown;
+  /** The kind's list, or that its file does not read; the banner while it has something to say. */
+  private void showList() {
+    final Kind kind = kind();
+    cards.show(
+        listCards,
+        project.texts().unreadable().contains(kind) ? kind.name() + UNREADABLE : kind.name());
+    final Optional<String> foreign = MapTexts.foreignPrefix(project.texts(), project.game());
+    banner.setVisible(foreign.isPresent());
+    foreign.ifPresent(
+        old ->
+            bannerText.setText(
+                "<html><div style='width:"
+                    + Theme.htmlWidth(220)
+                    + "'>All "
+                    + keys(Kind.OBJECTIVES).stream().filter(k -> k.startsWith(old)).count()
+                    + " keys start with “"
+                    + SearchList.escape(old)
+                    + "”. This game reads “"
+                    + SearchList.escape(MapTexts.objectivesPrefix(project.game()))
+                    + "”</div></html>"));
+    final String hex = Theme.convertColorToHex(Theme.getSecondaryTextColor());
+    for (int i = 0; i < KINDS.size(); i++) {
+      final Kind each = KINDS.get(i);
+      final boolean unreadable = project.texts().unreadable().contains(each);
+      tabs.setTitleAt(
+          i,
+          "<html>"
+              + each.getTitle()
+              + " <font color="
+              + hex
+              + ">"
+              + (unreadable ? "!" : project.texts().entries(each).size())
+              + "</font></html>");
+    }
   }
 
-  private Kind kind() {
-    return (Kind) file.getSelectedItem();
-  }
-
-  private void choose(final String shown) {
+  private void choose(final String key) {
     commit();
-    selected = keyOf(shown);
+    selected = key;
     showInspector();
   }
 
   /** Offers the keys the game's conditions, triggers or units call for; any other may be typed. */
-  private void addEntry() {
-    final List<Entry> few = MapTexts.suggestions(kind(), project.game(), project.texts());
-    final List<Entry> all = MapTexts.allSuggestions(kind(), project.game(), project.texts());
+  private void addEntry(final Kind kind) {
+    commit();
+    final List<Entry> few = MapTexts.suggestions(kind, project.game(), project.texts());
+    final List<Entry> all = MapTexts.allSuggestions(kind, project.game(), project.texts());
     final JComboBox<String> key = new JComboBox<>(keysOf(few));
     key.setEditable(true);
-    final JPanel ask = new JPanel(new BorderLayout(0, 6));
-    ask.add(key, BorderLayout.CENTER);
+    final Form ask = new Form(360).field("Key", key);
     // a big map has thousands of conditions: those like objectives first, all on request
     if (all.size() > few.size()) {
-      final JCheckBox showAll = new JCheckBox("All conditions and triggers (" + all.size() + ")");
+      final JCheckBox showAll =
+          new JCheckBox("Show all conditions and triggers (" + all.size() + ")");
       showAll.addActionListener(
           e -> key.setModel(new DefaultComboBoxModel<>(keysOf(showAll.isSelected() ? all : few))));
-      ask.add(showAll, BorderLayout.SOUTH);
+      ask.row(showAll);
     }
-    final boolean ok = Panels.ask(page, ask, "Add entry: key");
-    final String chosen = String.valueOf(key.getSelectedItem()).strip();
+    final boolean ok = Dialogs.ask(page, addTitle(kind), ask.end(), "Add");
+    final String chosen = String.valueOf(key.getEditor().getItem()).strip();
     if (!ok || chosen.isEmpty() || chosen.equals("null")) {
       return;
     }
-    if (project.texts().value(kind(), chosen).isEmpty()) {
+    if (project.texts().value(kind, chosen).isEmpty()) {
       final String start =
           Stream.concat(few.stream(), all.stream())
               .filter(e -> e.key().equals(chosen))
               .map(Entry::value)
               .findFirst()
               .orElse("");
-      project.setText(kind(), chosen, start);
+      project.setText(kind, chosen, start);
     }
     selected = chosen;
-    list.choose(shown(chosen, keys()));
+    lists.get(kind).choose(chosen);
     showInspector();
   }
 
@@ -214,39 +345,113 @@ final class TextsEditor implements Editor {
 
   private void showInspector() {
     inspector.clear();
-    shownKind = kind();
-    final boolean readable = !project.texts().unreadable().contains(kind());
-    add.setEnabled(readable);
-    remove.setEnabled(readable);
-    if (!readable) {
-      selected = null;
-      inspector
-          .title(kind().getTitle(), kind().getHelp())
-          .note(kind().getFile() + " does not read: fix it in Files.")
-          .end();
-      return;
-    }
+    final Kind kind = kind();
+    shownKind = kind;
     final Optional<String> value =
-        Optional.ofNullable(selected).flatMap(key -> project.texts().value(kind(), key));
+        Optional.ofNullable(selected).flatMap(key -> project.texts().value(kind, key));
     if (value.isEmpty()) {
       selected = null;
-      final int count = project.texts().entries(kind()).size();
-      inspector
-          .title(kind().getTitle(), kind().getHelp())
-          .note(
-              count == 0
-                  ? "No entries in " + kind().getFile() + " yet. Add one with Add entry."
-                  : count + " entries in " + kind().getFile() + ".")
-          .end();
+      // with nothing to choose, the list's own empty state says it once
+      if (!keys(kind).isEmpty()) {
+        inspector.row(Panels.empty(Glyph.TEXTS, kind.getTitle(), kind.getHelp())).end();
+      }
+      inspector.revalidate();
+      inspector.repaint();
       return;
     }
     final String key = selected;
-    inspector.title(key).note(explain(key));
+    final Game game = project.game();
+    inspector
+        .title(MapTexts.title(kind, key, game))
+        .subtitle(
+            SearchList.cutMiddle(
+                kind.getFile() + " · " + key,
+                page.getFontMetrics(Theme.newSecondaryLabel("").getFont()),
+                NOTE_WIDTH))
+        .note(SearchList.escape(MapTexts.explain(kind, key, game)));
     if (!value.get().equals(text.getText())) {
       text.setText(value.get());
       text.setCaretPosition(0);
     }
-    inspector.field("Text", SwingComponents.newJScrollPane(text)).end();
+    final JComponent typed = SwingComponents.newJScrollPane(text);
+    // as wide as the column, not as the longest line
+    typed.setPreferredSize(new Dimension(0, typed.getPreferredSize().height));
+    if (kind == Kind.OBJECTIVES && key.contains(GROUP)) {
+      // a group's text is a list of condition names: shown in words, typed behind More
+      showGroup(value.get());
+      inspector.more(GROUP, "Edit the list as text", more -> more.field("Text", typed));
+    } else {
+      inspector.field("Text", typed);
+    }
+    if (previews(kind, key)) {
+      preview.setText(value.get());
+      final JComponent shown = SwingComponents.newJScrollPane(preview);
+      shown.setPreferredSize(new Dimension(0, PREVIEW_HEIGHT));
+      inspector.field("Preview", shown);
+    }
+    inspector.remove("Remove text…", this::removeChosen).end();
+    inspector.revalidate();
+    inspector.repaint();
+  }
+
+  /** HTML the game shows: messages, tool tips and the texts of actions, not a message's sounds. */
+  private static boolean previews(final Kind kind, final String key) {
+    return kind != Kind.OBJECTIVES && !key.endsWith("_sounds");
+  }
+
+  /** The group's conditions in plain words; a click chooses the one the file has a text for. */
+  private void showGroup(final String value) {
+    final List<String> names =
+        Stream.of(value.split(";")).map(String::strip).filter(n -> !n.isEmpty()).toList();
+    final List<String> keys = keys(Kind.OBJECTIVES);
+    final List<Optional<String>> found =
+        names.stream()
+            .map(
+                name ->
+                    keys.stream()
+                        .filter(k -> !k.contains(GROUP) && k.endsWith(";" + name))
+                        .findFirst())
+            .toList();
+    final JList<String> conditions =
+        new JList<>(
+            Stream.iterate(0, i -> i < names.size(), i -> i + 1)
+                .map(
+                    i ->
+                        found
+                            .get(i)
+                            .map(k -> MapTexts.title(Kind.OBJECTIVES, k, project.game()))
+                            .orElse(names.get(i)))
+                .toArray(String[]::new));
+    conditions.addListSelectionListener(
+        e -> {
+          if (!e.getValueIsAdjusting() && conditions.getSelectedIndex() >= 0) {
+            found
+                .get(conditions.getSelectedIndex())
+                .ifPresent(
+                    k -> {
+                      lists.get(Kind.OBJECTIVES).choose(k);
+                      choose(k);
+                    });
+          }
+        });
+    inspector.section("In this group (" + names.size() + ")").row(conditions);
+  }
+
+  private void removeChosen() {
+    Optional.ofNullable(selected)
+        .ifPresent(
+            key -> {
+              final Kind kind = shownKind;
+              if (Dialogs.confirmRemove(
+                  page,
+                  "Remove text",
+                  "Remove the text of " + MapTexts.title(kind, key, project.game()) + "?",
+                  List.of("The game then shows nothing for it."),
+                  "Remove")) {
+                pause.stop();
+                project.removeText(kind, key);
+              }
+            });
   }
 
   @Override
@@ -257,6 +462,9 @@ final class TextsEditor implements Editor {
     }
     final String key = selected;
     final String typed = text.getText();
+    if (previews(shownKind, key)) {
+      Panels.showKeepingPlace(preview, typed);
+    }
     if (project.texts().value(shownKind, key).filter(v -> !v.equals(typed)).isEmpty()) {
       return;
     }

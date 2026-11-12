@@ -1,29 +1,39 @@
 package eddies.mapeditor;
 
 import java.awt.BorderLayout;
+import java.util.List;
+import java.util.Set;
 import javax.annotation.Nullable;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.Timer;
 import org.triplea.swing.SwingComponents;
 import eddies.mapeditor.MakerIcon.Glyph;
+import eddies.mapeditor.MapChecks.Problem;
 
 /**
  * Which territories border each other: click one territory, then its neighbour to connect them or,
  * if they are, to part them.
  */
 final class ConnectionsEditor implements Editor {
+  private static final int NEWS_MS = 3000;
+
   private final MapProject project;
   private final MapView map;
   private final Form inspector = new Form(250);
   private final JComponent page;
+  // what a click did, shown in the banner for a while, then the instruction again
+  private final Timer backToInstruction = new Timer(NEWS_MS, e -> showInstructionAfterNews());
   private @Nullable String from;
+  private String news = "";
 
   ConnectionsEditor(final MapProject project, final MapView map) {
     this.project = project;
     this.map = map;
     page = SwingComponents.newJScrollPane(inspector);
+    backToInstruction.setRepeats(false);
     project.onChange(this::showInspector);
     showInspector();
   }
@@ -45,8 +55,7 @@ final class ConnectionsEditor implements Editor {
 
   @Override
   public String hint() {
-    return "Which territories border each other; units move along these lines. Click a"
-        + " territory, then a neighbour to connect them; click a connected one to part them.";
+    return "Click a territory, then its neighbours to connect or part them.";
   }
 
   @Override
@@ -56,10 +65,11 @@ final class ConnectionsEditor implements Editor {
 
   @Override
   public void showing() {
-    final JButton done = new JButton("Pick another territory");
-    done.addActionListener(e -> choose(null));
-    map.useFor(MapMode.CONNECTIONS, done, this::click);
+    map.useFor(MapMode.CONNECTIONS, new JPanel(), this::click);
     map.select(from);
+    if (from != null) {
+      showInstruction();
+    }
   }
 
   @Override
@@ -68,50 +78,143 @@ final class ConnectionsEditor implements Editor {
     map.scrollTo(territory);
   }
 
-  private void click(final String territory) {
+  /** A click on the map: chooses the territory, or connects or parts it and the chosen one. */
+  void click(final String territory) {
     if (from == null || from.equals(territory)) {
       choose(territory);
+    } else if (MapXml.neighbors(project.game(), from).contains(territory)) {
+      part(from, territory);
     } else {
       final String first = from;
-      final boolean connected = MapXml.neighbors(project.game(), first).contains(territory);
-      project.edit(
-          g ->
-              connected
-                  ? MapXml.withoutConnection(g, first, territory)
-                  : MapXml.withConnection(g, first, territory));
+      project.edit(g -> MapXml.withConnection(g, first, territory));
+      showNews("Connected " + first + " and " + territory + ".");
     }
+  }
+
+  private void part(final String territory, final String neighbour) {
+    project.edit(g -> MapXml.withoutConnection(g, territory, neighbour));
+    showNews("Parted " + territory + " and " + neighbour + ".");
   }
 
   private void choose(@Nullable final String territory) {
     from = territory;
     map.select(territory);
+    if (territory == null) {
+      backToInstruction.stop();
+      map.hideBanner();
+    } else {
+      showInstruction();
+    }
     showInspector();
+  }
+
+  private void showInstruction() {
+    backToInstruction.stop();
+    map.showBanner(
+        "Connecting "
+            + from
+            + ": click a territory to connect it, click a connected one to part them.",
+        () -> choose(null));
+  }
+
+  private void showNews(final String text) {
+    news = text;
+    map.showBanner(text, () -> choose(null));
+    backToInstruction.restart();
+  }
+
+  // only while the news still shows: another tool may have taken the map meanwhile
+  private void showInstructionAfterNews() {
+    if (from != null && map.bannerText().filter(news::equals).isPresent()) {
+      showInstruction();
+    }
   }
 
   private void showInspector() {
     inspector.clear();
-    if (from == null) {
+    if (!project.getFiles().hasOutlines()) {
       inspector
-          .note("Click a territory on the map.")
-          .note(MapXml.connections(project.game()).size() + " connections in this game.")
+          .row(
+              Panels.empty(
+                  Glyph.CONNECTIONS, "Connections need the map", "Load its picture first."))
           .end();
-      return;
+    } else if (from == null) {
+      showOverview();
+    } else {
+      showNeighbours(from);
     }
-    final String territory = from;
-    inspector.title(
-        territory,
-        "Click the territories that border it on the map; a click on one again parts them.");
-    inspector.section("Neighbours");
-    for (final String neighbour : MapXml.neighbors(project.game(), territory)) {
-      final JPanel row = new JPanel(new BorderLayout(8, 0));
-      row.add(new JLabel(neighbour), BorderLayout.CENTER);
-      final JButton part = new JButton("Remove");
-      part.setToolTipText("Parts " + territory + " and " + neighbour);
-      part.addActionListener(
-          e -> project.edit(g -> MapXml.withoutConnection(g, territory, neighbour)));
-      row.add(part, BorderLayout.EAST);
-      inspector.row(row);
+    inspector.revalidate();
+    inspector.repaint();
+  }
+
+  private void showOverview() {
+    final int connections = MapXml.connections(project.game()).size();
+    inspector
+        .subtitle(connections + (connections == 1 ? " connection" : " connections"))
+        .row(
+            Panels.empty(
+                Glyph.CONNECTIONS,
+                "Click a territory",
+                "Then click its neighbours to connect or part them."));
+    final List<Problem> problems =
+        project.problems().stream()
+            .filter(p -> p.tool().filter(title()::equals).isPresent())
+            .toList();
+    if (!problems.isEmpty()) {
+      inspector.section("Problems");
+      problems.forEach(p -> inspector.row(problemRow(p)));
     }
     inspector.end();
+  }
+
+  private JPanel problemRow(final Problem problem) {
+    final JPanel row = new JPanel(new BorderLayout(Theme.GAP_S, 0));
+    row.setOpaque(false);
+    // wrapped, as territory names can be long
+    final JLabel text =
+        new JLabel(
+            "<html><div style='width:"
+                + Theme.htmlWidth(200)
+                + "'>"
+                + SearchList.escape(Theme.Status.PROBLEM.mark() + " " + problem.text())
+                + "</div></html>");
+    text.setForeground(Theme.Status.PROBLEM.color());
+    row.add(text, BorderLayout.CENTER);
+    problem
+        .territory()
+        .ifPresent(
+            territory -> {
+              final JButton show = new JButton("Show");
+              Theme.setTertiaryButtonStyle(show);
+              show.setToolTipText("Choose " + territory + " and show it on the map");
+              show.addActionListener(e -> show(territory));
+              row.add(show, BorderLayout.EAST);
+            });
+    return row;
+  }
+
+  private void showNeighbours(final String territory) {
+    final Set<String> neighbours = MapXml.neighbors(project.game(), territory);
+    inspector
+        .title(territory)
+        .subtitle(neighbours.size() + (neighbours.size() == 1 ? " neighbour" : " neighbours"));
+    for (final String neighbour : neighbours) {
+      final JPanel row = new JPanel(new BorderLayout(Theme.GAP_S, 0));
+      row.setOpaque(false);
+      final JButton name = new JButton(neighbour);
+      Theme.setTertiaryButtonStyle(name);
+      name.setHorizontalAlignment(JButton.LEADING);
+      name.setToolTipText("Choose " + neighbour);
+      name.addActionListener(e -> choose(neighbour));
+      row.add(name, BorderLayout.CENTER);
+      row.add(
+          Theme.newIconButton(
+              "×",
+              "Part " + territory + " and " + neighbour,
+              () -> part(territory, neighbour)),
+          BorderLayout.EAST);
+      inspector.row(row);
+    }
+    inspector.note("Click a territory on the map to add it.").end();
   }
 }

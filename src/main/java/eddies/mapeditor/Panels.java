@@ -1,27 +1,31 @@
 package eddies.mapeditor;
 
+import com.formdev.flatlaf.FlatClientProperties;
+import eddies.mapeditor.MakerIcon.Glyph;
 import games.strategy.engine.framework.ui.GameNotesView;
-import java.awt.BorderLayout;
+import java.awt.Component;
 import java.awt.Dimension;
-import java.awt.GridLayout;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.GridBagLayout;
 import java.awt.Point;
-import java.util.Collection;
+import java.awt.image.BufferedImage;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
-import javax.swing.JCheckBox;
+import javax.swing.BorderFactory;
+import javax.swing.Box;
+import javax.swing.BoxLayout;
+import javax.swing.Icon;
+import javax.swing.JButton;
 import javax.swing.JComponent;
-import javax.swing.JOptionPane;
+import javax.swing.JLabel;
 import javax.swing.JPanel;
-import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
-import javax.swing.JTextField;
 import javax.swing.JViewport;
+import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
-import javax.swing.event.DocumentEvent;
-import javax.swing.event.DocumentListener;
+import javax.swing.UIManager;
 import lombok.experimental.UtilityClass;
-import org.triplea.swing.SwingComponents;
 
 /** How the tools lay out their panel: beside the map, or alone with the whole room. */
 @UtilityClass
@@ -29,6 +33,8 @@ class Panels {
   private static final int LIST_WIDTH = 320;
   private static final int LIST_MAX_WIDTH = 420;
   private static final int LIST_MIN_HEIGHT = 220;
+  private static final int EMPTY_GLYPH = 32;
+  private static final int EMPTY_LINE_WIDTH = 260;
 
   /** A list above the inspector of the chosen entry, the line between them movable. */
   static JSplitPane stacked(final JComponent list, final JComponent inspector) {
@@ -76,78 +82,108 @@ class Panels {
     SwingUtilities.invokeLater(() -> viewport.ifPresent(v -> v.setViewPosition(at)));
   }
 
-  /**
-   * Asks with the content, eg a few fields, and OK and Cancel in English as the rest of the
-   * editor, not in the system's language; whether OK was chosen.
-   */
-  static boolean ask(final JComponent parent, final JComponent content, final String title) {
-    return JOptionPane.showOptionDialog(
-            parent,
-            content,
-            title,
-            JOptionPane.OK_CANCEL_OPTION,
-            JOptionPane.PLAIN_MESSAGE,
-            null,
-            new Object[] {"OK", "Cancel"},
-            "OK")
-        == 0;
-  }
-
-  /**
-   * Asks which of the names to tick, those given ticked first, with a search above a long list;
-   * empty when cancelled.
-   */
-  static Optional<List<String>> pick(
-      final JComponent parent,
+  /** Nothing there yet: glyph, title, one line and the tool's main action. */
+  static JComponent empty(
+      final Glyph glyph,
       final String title,
-      final List<String> names,
-      final Collection<String> ticked) {
-    final JPanel ticks = new JPanel(new GridLayout(0, 1));
-    final List<JCheckBox> boxes =
-        names.stream().map(name -> new JCheckBox(name, ticked.contains(name))).toList();
-    boxes.forEach(ticks::add);
-    final JScrollPane scroll = SwingComponents.newJScrollPane(ticks);
-    scroll.setPreferredSize(
-        new Dimension(320, Math.min(420, ticks.getPreferredSize().height + 8)));
-    final JPanel content = new JPanel(new BorderLayout(0, 6));
-    content.add(scroll, BorderLayout.CENTER);
-    if (names.size() > 12) {
-      final JTextField search = new JTextField();
-      search.putClientProperty("JTextField.placeholderText", "Search");
-      search.getDocument().addDocumentListener(new Filter(search, boxes, ticks));
-      content.add(search, BorderLayout.NORTH);
-    }
-    return ask(parent, content, title)
-        ? Optional.of(boxes.stream().filter(JCheckBox::isSelected).map(JCheckBox::getText).toList())
-        : Optional.empty();
+      final String line,
+      final String verb,
+      final Runnable action) {
+    final JButton button = new JButton(verb);
+    Theme.setPrimaryButtonStyle(button);
+    button.addActionListener(e -> action.run());
+    return empty(glyph, title, line, List.of(button));
   }
 
-  /** Shows the boxes whose names hold the search, ticked or not; hidden ones keep their tick. */
-  private record Filter(JTextField search, List<JCheckBox> boxes, JPanel ticks)
-      implements DocumentListener {
+  /** Nothing chosen: glyph, title and one line that points to the list, no button. */
+  static JComponent empty(final Glyph glyph, final String title, final String line) {
+    return empty(glyph, title, line, List.of());
+  }
+
+  // shortcut: always centred; top-align it if a tool shows it in a strip under 240 px high
+  private static JComponent empty(
+      final Glyph glyph, final String title, final String line, final List<JButton> buttons) {
+    final JLabel picture = new JLabel(new SecondaryIcon(new MakerIcon(glyph, EMPTY_GLYPH)));
+    final JLabel heading = new JLabel(title);
+    heading.putClientProperty(FlatClientProperties.STYLE_CLASS, "h3");
+    final JLabel text = new JLabel("<html><center>" + SearchList.escape(line) + "</center></html>");
+    if (text.getPreferredSize().width > EMPTY_LINE_WIDTH) {
+      text.setText(
+          "<html><div style='width:"
+              + Theme.htmlWidth(EMPTY_LINE_WIDTH)
+              + ";text-align:center'>"
+              + SearchList.escape(line)
+              + "</div></html>");
+    }
+    text.setHorizontalAlignment(SwingConstants.CENTER);
+    text.setForeground(Theme.getSecondaryTextColor());
+    final JPanel block = new JPanel();
+    block.setLayout(new BoxLayout(block, BoxLayout.Y_AXIS));
+    block.setOpaque(false);
+    block.add(picture);
+    block.add(Box.createVerticalStrut(Theme.GAP_M));
+    block.add(heading);
+    block.add(Box.createVerticalStrut(Theme.GAP_XS));
+    block.add(text);
+    for (final JButton button : buttons) {
+      block.add(Box.createVerticalStrut(Theme.GAP_L));
+      block.add(button);
+    }
+    for (final Component part : block.getComponents()) {
+      ((JComponent) part).setAlignmentX(Component.CENTER_ALIGNMENT);
+    }
+    final JPanel centred = new JPanel(new GridBagLayout());
+    centred.setOpaque(false);
+    centred.setBorder(
+        BorderFactory.createEmptyBorder(
+            Theme.GAP_XXL, Theme.GAP_L, Theme.GAP_XXL, Theme.GAP_L));
+    centred.add(block);
+    return centred;
+  }
+
+  /**
+   * The icon's text-colored lines in the secondary text color, as the glyph only decorates; its own
+   * colors, eg the map picture's, stay. A disabled label would paint nothing, as Swing greys only
+   * image icons.
+   */
+  private record SecondaryIcon(Icon icon) implements Icon {
     @Override
-    public void insertUpdate(final DocumentEvent e) {
-      refill();
+    public void paintIcon(final Component c, final Graphics g, final int x, final int y) {
+      // drawn at the screen's scale, so it stays sharp on a HiDPI screen
+      final double scale = ((Graphics2D) g).getTransform().getScaleX();
+      final int width = (int) Math.ceil(getIconWidth() * scale);
+      final int height = (int) Math.ceil(getIconHeight() * scale);
+      final BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+      final Graphics2D painter = image.createGraphics();
+      painter.scale(scale, scale);
+      icon.paintIcon(c, painter, 0, 0);
+      painter.dispose();
+      // the color MakerIcon draws lines in
+      final int text =
+          Optional.ofNullable(UIManager.getColor("Label.foreground"))
+                  .orElseGet(c::getForeground)
+                  .getRGB()
+              & 0xFFFFFF;
+      final int secondary = Theme.getSecondaryTextColor().getRGB() & 0xFFFFFF;
+      for (int py = 0; py < height; py++) {
+        for (int px = 0; px < width; px++) {
+          final int argb = image.getRGB(px, py);
+          if ((argb & 0xFFFFFF) == text) {
+            image.setRGB(px, py, argb & 0xFF000000 | secondary);
+          }
+        }
+      }
+      g.drawImage(image, x, y, getIconWidth(), getIconHeight(), null);
     }
 
     @Override
-    public void removeUpdate(final DocumentEvent e) {
-      refill();
+    public int getIconWidth() {
+      return icon.getIconWidth();
     }
 
     @Override
-    public void changedUpdate(final DocumentEvent e) {
-      refill();
-    }
-
-    private void refill() {
-      final String filter = search.getText().strip().toLowerCase(Locale.ROOT);
-      ticks.removeAll();
-      boxes.stream()
-          .filter(box -> box.getText().toLowerCase(Locale.ROOT).contains(filter))
-          .forEach(ticks::add);
-      ticks.revalidate();
-      ticks.repaint();
+    public int getIconHeight() {
+      return icon.getIconHeight();
     }
   }
 }

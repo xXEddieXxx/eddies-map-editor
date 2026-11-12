@@ -19,6 +19,7 @@ import org.triplea.map.data.elements.AttachmentList;
 import org.triplea.map.data.elements.AttachmentList.Attachment;
 import org.triplea.map.data.elements.AttachmentList.Attachment.Option;
 import org.triplea.map.data.elements.Game;
+import org.triplea.map.data.elements.GamePlay.Sequence.Step;
 import org.triplea.map.data.elements.PropertyList.Property;
 import org.triplea.map.data.elements.PropertyList.Property.Value;
 import eddies.mapeditor.GameRulesXml.DelegateKind;
@@ -217,6 +218,79 @@ final class GameRulesXmlTest {
           .as("the battle delegate TripleA fights with")
           .isSameAs(data.getBattleDelegate());
     }
+  }
+
+  @DisplayName("A step of another kind gets its delegate and a name TripleA reads as that kind")
+  @Test
+  void changesStepKind(@TempDir final Path folder) {
+    final Game g40 = givenG40();
+    final int purchase = RulesXml.steps(g40).indexOf(step(g40, "germansPurchase"));
+
+    final Game changed = GameRulesXml.withStepKind(g40, purchase, kind("NonCombatMove"));
+
+    final Step step = RulesXml.steps(changed).get(purchase);
+    assertThat(step.getDelegate()).as("the game's move delegate").isEqualTo("move");
+    assertThat(GameRulesXml.kindOf(changed, step).map(DelegateKind::what))
+        .as("read back by its name, as the move delegate does both moves")
+        .contains("Move after battles");
+    assertThat(GameRulesXml.withStepKind(changed, purchase, kind("NonCombatMove")))
+        .as("the same kind is no change")
+        .isSameAs(changed);
+    final GameStep loaded =
+        RulesXmlTest.givenLoaded(changed, folder).getSequence().getStep(purchase);
+    assertThat(GameStep.isNonCombatMoveStepName(loaded.getName()))
+        .as("TripleA moves after battles in it, by its name: " + loaded.getName())
+        .isTrue();
+    assertThat(loaded.getDisplayName())
+        .as("the move delegate shows as combat move: the step says what it is")
+        .isEqualTo("Non Combat Move");
+  }
+
+  @DisplayName("A step of the round made a nation's gets the nation of its band, else the first")
+  @Test
+  void roundStepMadeNationsGetsANation(@TempDir final Path folder) {
+    final Game g40 = givenG40();
+    final int endRound = RulesXml.steps(g40).indexOf(step(g40, "endRoundStep"));
+
+    final Game afterFrench = GameRulesXml.withStepKind(g40, endRound, kind("Purchase"));
+    final Game first = GameRulesXml.withStepKind(afterFrench, 0, kind("Purchase"));
+
+    assertThat(RulesXml.steps(first).get(endRound).getPlayer())
+        .as("the round's end sits in the band of the French, the nation step before it")
+        .isEqualTo("French");
+    assertThat(RulesXml.steps(first).get(0).getPlayer())
+        .as("the first step has no nation before it: the first nation")
+        .isEqualTo(MapXml.nations(g40).getFirst());
+    final GameData data = RulesXmlTest.givenLoaded(first, folder);
+    assertThat(data.getSequence().getStep(endRound).getPlayerId())
+        .as("TripleA plays it for the French")
+        .isNotNull();
+  }
+
+  @DisplayName("A step's kind and name in the game are read as TripleA reads them")
+  @Test
+  void readsStepKind() {
+    final Game g40 = givenG40();
+
+    assertThat(GameRulesXml.kindOf(g40, step(g40, "germansCombatMove")).map(DelegateKind::what))
+        .as("of the move delegate's two kinds, the one its name ends with")
+        .contains("Move to attack");
+    assertThat(GameRulesXml.kindOf(g40, step(g40, "germansNonCombatMove")).map(DelegateKind::what))
+        .as("NonCombatMove also ends with CombatMove: the longer ending wins")
+        .contains("Move after battles");
+    assertThat(GameRulesXml.shownName(g40, step(g40, "germansPurchase")))
+        .as("without its own, the delegate's display")
+        .isEqualTo("Purchase Units");
+    assertThat(GameRulesXml.shownName(g40, step(g40, "germansNonCombatMove")))
+        .as("its own display")
+        .isEqualTo("Non Combat Move");
+  }
+
+  private static Step step(final Game game, final String name) {
+    return RulesXml.steps(game).stream()
+        .filter(s -> name.equals(s.getName()))
+        .findFirst()
+        .orElseThrow();
   }
 
   @DisplayName("A kind the game lacks brings its delegate under TripleA's name")

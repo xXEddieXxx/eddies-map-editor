@@ -74,6 +74,31 @@ class UnitsXml {
         : MapXml.withUnitOption(game, unit, option.name(), typed);
   }
 
+  /** Land, sea or air; empty for a unit that both sails and flies, which no kind describes. */
+  static Optional<UnitOptions.UnitKind> kind(final Game game, final String unit) {
+    final boolean sea = Boolean.parseBoolean(value(game, unit, UnitOptions.named("isSea")));
+    final boolean air = Boolean.parseBoolean(value(game, unit, UnitOptions.named("isAir")));
+    if (sea && air) {
+      return Optional.empty();
+    }
+    if (sea) {
+      return Optional.of(UnitOptions.UnitKind.SEA);
+    }
+    return Optional.of(air ? UnitOptions.UnitKind.AIR : UnitOptions.UnitKind.LAND);
+  }
+
+  /** The game with the unit of the kind: isSea and isAir set, false ones left out. */
+  static Game withKind(final Game game, final String unit, final UnitOptions.UnitKind kind) {
+    final Game sea =
+        withValue(
+            game,
+            unit,
+            UnitOptions.named("isSea"),
+            String.valueOf(kind == UnitOptions.UnitKind.SEA));
+    return withValue(
+        sea, unit, UnitOptions.named("isAir"), String.valueOf(kind == UnitOptions.UnitKind.AIR));
+  }
+
   /**
    * The old option, eg isTwoHit, that sets this one for the unit, so it is changed there: TripleA
    * reads it in its place among the options, and leaving the new one out would not undo it.

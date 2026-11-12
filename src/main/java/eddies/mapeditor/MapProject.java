@@ -1,10 +1,18 @@
 package eddies.mapeditor;
 
 import games.strategy.triplea.EngineImageLoader;
+import games.strategy.triplea.image.ImageTransformer;
 import games.strategy.triplea.ui.mapdata.MapData;
+import games.strategy.triplea.ui.mapdata.PlayerColors;
+import java.awt.BasicStroke;
 import java.awt.Color;
+import java.awt.Graphics2D;
 import java.awt.Image;
 import java.awt.Point;
+import java.awt.Polygon;
+import java.awt.Rectangle;
+import java.awt.Stroke;
+import java.awt.geom.Area;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
@@ -12,11 +20,15 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Deque;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.UnaryOperator;
@@ -36,6 +48,8 @@ import eddies.mapeditor.MapFiles.NationUnit;
 import eddies.mapeditor.MapFiles.Redrawn;
 import eddies.mapeditor.MapFiles.UnitPicture;
 import eddies.mapeditor.MapPicture.DetectedMap;
+import eddies.mapeditor.MapPicture.DetectedTerritory;
+import eddies.mapeditor.MapPicture.Neighbours;
 
 /**
  * A map open in the map maker: the game and its map files as last saved, as they are now, and the
@@ -68,6 +82,10 @@ final class MapProject {
   // the quick problems of a step, worked out once for the overview and the map's markers
   private @Nullable State problemsOf;
   private List<Problem> problems = List.of();
+  // how many territories changed since the save, worked out once per step and save for the legend
+  private @Nullable State changedOf;
+  private @Nullable State changedSince;
+  private long changedCount;
 
   /**
    * One step: the game, the map's files, which change together when a territory is renamed, and
@@ -118,7 +136,7 @@ final class MapProject {
    * The game's notes file, eg games/my_map.notes.html: the game shows the notes in it, and makes it
    * from the notes in the game file when it is missing.
    */
-  private static Path notesFile(final Path xmlFile) {
+  static Path notesFile(final Path xmlFile) {
     final String name = xmlFile.getFileName().toString();
     return xmlFile.resolveSibling(name.replaceFirst("\\.xml$", "") + ".notes.html");
   }
@@ -161,7 +179,14 @@ final class MapProject {
       }
     }
     made.saveAsNewMap(mapName, mapsFolder);
-    return new NewMap(open(made.getXmlFile().orElseThrow()), List.copyOf(refused));
+    final Path xml = made.getXmlFile().orElseThrow();
+    final MapProject opened = open(xml);
+    // the picture stays held, the same as the tiles just written, so a split can draw into it
+    return new NewMap(
+        picture == null
+            ? opened
+            : new MapProject(xml, opened.game(), opened.getFiles().withPicture(picture)),
+        List.copyOf(refused));
   }
 
   /** A map the new-map wizard made, and the nation names it refused, eg twice the same. */
@@ -347,6 +372,33 @@ final class MapProject {
     return isFreeName(game(), name);
   }
 
+  /**
+   * Why a new territory, nation or unit type may not take the name, as {@link #isFreeName} judges
+   * it; empty when it may, and for a blank name (the caller's button is off then).
+   */
+  Optional<String> nameProblem(final String name) {
+    if (name.isBlank() || isFreeName(name)) {
+      return Optional.empty();
+    }
+    if (name.chars().anyMatch(c -> ":<(".indexOf(c) >= 0)) {
+      return Optional.of("Must not contain : < or (");
+    }
+    return name.strip().equals(name)
+        ? Optional.of("Already used by a territory, nation or unit")
+        : Optional.of("No spaces at the start or end");
+  }
+
+  /**
+   * The first of base, "base 2", "base 3", ... that {@link #isFreeName} takes and alsoTaken has not.
+   */
+  String freeName(final String base, final Collection<String> alsoTaken) {
+    return IntStream.iterate(1, i -> i + 1)
+        .mapToObj(i -> i == 1 ? base : base + " " + i)
+        .filter(name -> isFreeName(name) && !alsoTaken.contains(name))
+        .findFirst()
+        .orElseThrow();
+  }
+
   private static boolean isFreeName(final Game game, final String name) {
     return !name.isBlank()
         && name.strip().equals(name)
@@ -412,6 +464,136 @@ final class MapProject {
   }
 
   /**
+   * Removes the territory, all that belongs to it, its outline and places, as one step; unless
+   * attachments, eg triggers, still name it, as the game would not load then.
+   *
+   * @return where it is still named, empty when it was removed
+   */
+  List<String> removeTerritory(final String territory) {
+    final Game without = MapXml.withoutTerritory(game(), territory);
+    final List<String> named = RulesXml.whereNamed(without, territory);
+    if (named.isEmpty()) {
+      step(state(without, current.files().withoutTerritory(territory)));
+    }
+    return named;
+  }
+
+  /**
+   * Splits the territory along the cut, as one step: it keeps the kept outlines with all that
+   * belongs to it; the split ones become a new territory, land or sea as it is, with its owner,
+   * connected to it and to the neighbours it touches. A neighbour only the new part touches is no
+   * longer the old one's; neighbours without an outline stay the old one's.
+   *
+   * @return false, changing nothing, for a name {@link #isFreeName} refuses
+   */
+  boolean splitTerritory(final String territory, final OutlineCut.Cut cut, final String newName) {
+    return splitTerritory(territory, cut, newName, Optional.empty());
+  }
+
+  /** A border line to draw into the map's picture: where, how wide in pixels, in which color. */
+  record BorderLine(List<Point> line, int width, Color color) {}
+
+  /**
+   * As {@link #splitTerritory(String, OutlineCut.Cut, String)}, the line also drawn into the map's
+   * picture, within the territory and up to its border, in the same step; without a picture held,
+   * ie one chosen in the editor, only the outlines change.
+   *
+   * <p>shortcut: a map whose picture is only in baseTiles gets no line, as writing it back means
+   * all tiles anew; write just the tiles the line touches, with their .bak, when that is wanted.
+   */
+  boolean splitTerritory(
+      final String territory,
+      final OutlineCut.Cut cut,
+      final String newName,
+      final Optional<BorderLine> drawn) {
+    if (!isFreeName(newName)) {
+      return false;
+    }
+    final MapFiles files = current.files();
+    Game changed = game();
+    final List<String> newNeighbours = new ArrayList<>(List.of(territory));
+    for (final String neighbour : MapXml.neighbors(changed, territory)) {
+      final List<Polygon> outlines = files.polygons().get(neighbour);
+      if (outlines != null && OutlineCut.touches(cut.split(), outlines)) {
+        newNeighbours.add(neighbour);
+        if (!OutlineCut.touches(cut.kept(), outlines)) {
+          changed = MapXml.withoutConnection(changed, territory, neighbour);
+        }
+      }
+    }
+    changed = MapXml.withTerritory(changed, newName, newNeighbours);
+    if (MapXml.isWater(game(), territory)) {
+      changed = MapXml.withWater(changed, newName);
+    }
+    final Optional<String> owner = MapXml.owner(game(), territory);
+    if (owner.isPresent()) {
+      changed = MapXml.withOwner(changed, newName, owner.get());
+    }
+    final MapFiles pictured =
+        drawn
+            .flatMap(
+                border ->
+                    files
+                        .picture()
+                        .map(
+                            picture ->
+                                files.withPicture(
+                                    withBorder(
+                                        picture,
+                                        files.polygons().getOrDefault(territory, List.of()),
+                                        border))))
+            .orElse(files);
+    step(
+        state(
+            changed,
+            pictured.withOutlines(territory, cut.kept()).withOutlines(newName, cut.split())));
+    return true;
+  }
+
+  /**
+   * A copy of the picture with the line drawn inside the outlines and beyond them only over the
+   * picture's dark border line there, so it meets that line and stops; crisp, in one color, like
+   * the picture's lines.
+   */
+  private static BufferedImage withBorder(
+      final BufferedImage picture, final List<Polygon> outlines, final BorderLine border) {
+    final BufferedImage copy =
+        new BufferedImage(picture.getWidth(), picture.getHeight(), BufferedImage.TYPE_INT_ARGB);
+    final Graphics2D g = copy.createGraphics();
+    g.drawImage(picture, 0, 0, null);
+    final Area within = new Area();
+    final Area inside = new Area();
+    final Stroke reach = new BasicStroke(border.width() * 2f + 2);
+    for (final Polygon outline : outlines) {
+      within.add(new Area(outline));
+      inside.add(new Area(reach.createStrokedShape(outline)));
+    }
+    inside.add(within);
+    g.setClip(inside);
+    g.setColor(border.color());
+    g.setStroke(new BasicStroke(border.width(), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+    final List<Point> line = border.line();
+    for (int i = 1; i < line.size(); i++) {
+      g.drawLine(line.get(i - 1).x, line.get(i - 1).y, line.get(i).x, line.get(i).y);
+    }
+    g.dispose();
+    // past the outline only where the picture already has its line, not into the neighbour
+    final Rectangle drawnIn =
+        inside.getBounds().intersection(new Rectangle(0, 0, copy.getWidth(), copy.getHeight()));
+    for (int y = drawnIn.y; y < drawnIn.y + drawnIn.height; y++) {
+      for (int x = drawnIn.x; x < drawnIn.x + drawnIn.width; x++) {
+        final int was = picture.getRGB(x, y);
+        if (copy.getRGB(x, y) != was
+            && !MapPicture.isBorder(was)
+            && !within.contains(x + 0.5, y + 0.5)) {
+          copy.setRGB(x, y, was);
+        }
+      }
+    }
+    return copy;
+  }
+
+  /**
    * The relief picture, drawn over the map, cut into relief tiles on the next save; one step. A
    * map told not to show its relief shows it again, as a new one is meant to be seen.
    */
@@ -444,8 +626,33 @@ final class MapProject {
     stepFiles(changed);
   }
 
+  /** The nation's color, and its units' tint along with it when it was the old color, one step. */
   void setNationColor(final String nation, final Color color) {
-    step(state(game(), current.files().withNationColor(nation, color)));
+    if (color.equals(nationColor(nation))) {
+      return;
+    }
+    final MapFiles files = current.files();
+    final MapFiles colored = files.withNationColor(nation, color);
+    step(
+        state(
+            game(),
+            files.unitTint(nation).equals(Optional.of(nationColor(nation)))
+                ? colored.withProperty(MapFiles.UNIT_TINT + nation, MapLookEditor.hex(color))
+                : colored));
+  }
+
+  /**
+   * Has the game tint these nations' unit pictures in their colors, as one step; a nation's color
+   * the map does not set yet is written too, so land and units agree in the game.
+   */
+  void tintUnits(final Collection<String> nations) {
+    final Map<String, String> values = new HashMap<>();
+    for (final String nation : nations) {
+      final String color = MapLookEditor.hex(nationColor(nation));
+      values.put(MapFiles.UNIT_TINT + nation, color);
+      values.put(PlayerColors.PROPERTY_COLOR_PREFIX + nation, color);
+    }
+    setMapProperties(values);
   }
 
   /** The picture as the unit type's for every nation from the next save on, as one step. */
@@ -494,16 +701,82 @@ final class MapProject {
 
   /**
    * Takes borders redrawn from a picture, {@link MapFiles#withBordersFrom}, as one step, if the
-   * files they were redrawn from are still the map's; a change meanwhile keeps it.
+   * files they were redrawn from are still the map's; a change meanwhile keeps it. Each merged
+   * area goes to its keeper, the others in it are removed, their neighbours going to the keeper;
+   * each chosen new area becomes a territory, connected as in the picture.
    *
-   * @return whether they were taken
+   * @return empty when not taken, else for each territory to go that rules still name, so it
+   *     stays with its old border, "territory: where"
    */
-  boolean takeRedrawn(final MapFiles from, final Redrawn redrawn) {
+  Optional<List<String>> takeRedrawn(
+      final MapFiles from, final Redrawn redrawn, final RedrawChoices choices) {
     if (getFiles() != from) {
-      return false;
+      return Optional.empty();
     }
-    step(state(game(), redrawn.files()));
-    return true;
+    Game g = game();
+    MapFiles f = redrawn.files();
+    final List<String> named = new ArrayList<>();
+    final Map<String, String> areaOf = new HashMap<>();
+    redrawn.takenBy().forEach((area, territory) -> areaOf.put(area.name(), territory));
+    for (final Map.Entry<DetectedTerritory, List<String>> merge : redrawn.merged().entrySet()) {
+      final String keeper =
+          choices.keepers().getOrDefault(merge.getKey(), merge.getValue().getFirst());
+      f = f.withOutlines(keeper, merge.getKey().outlines());
+      areaOf.put(merge.getKey().name(), keeper);
+      for (final String member : merge.getValue()) {
+        if (member.equals(keeper)) {
+          continue;
+        }
+        Game without = g;
+        for (final String neighbour : MapXml.neighbors(g, member)) {
+          if (!neighbour.equals(keeper) && !MapXml.neighbors(without, keeper).contains(neighbour)) {
+            without = MapXml.withConnection(without, keeper, neighbour);
+          }
+        }
+        without = MapXml.withoutTerritory(without, member);
+        final List<String> where = RulesXml.whereNamed(without, member);
+        if (where.isEmpty()) {
+          g = without;
+          f = f.withoutTerritory(member);
+        } else {
+          f = f.withOutlines(member, from.polygons().get(member));
+          where.forEach(w -> named.add(member + ": " + w));
+        }
+      }
+    }
+    choices.added().forEach((area, chosen) -> areaOf.put(area.name(), chosen.name()));
+    for (final Map.Entry<DetectedTerritory, DetectedTerritory> add : choices.added().entrySet()) {
+      final String area = add.getKey().name();
+      final DetectedTerritory chosen = add.getValue();
+      final Set<String> neighbours = new LinkedHashSet<>();
+      for (final Neighbours pair : redrawn.detected().connections()) {
+        final String other =
+            pair.t1().equals(area) ? pair.t2() : pair.t2().equals(area) ? pair.t1() : "";
+        Optional.ofNullable(areaOf.get(other)).ifPresent(neighbours::add);
+      }
+      g = MapXml.withTerritory(g, chosen.name(), neighbours);
+      if (chosen.water()) {
+        g = MapXml.withWater(g, chosen.name());
+      }
+      f = f.withOutlines(chosen.name(), chosen.outlines());
+    }
+    step(state(g, f));
+    return Optional.of(List.copyOf(named));
+  }
+
+  /**
+   * What the map maker chose for borders redrawn with new or merged areas.
+   *
+   * @param added the new areas to add, each as detected and as named in the dialog, its name and
+   *     water chosen there
+   * @param keepers the territory keeping each merged area; one not given goes to its first
+   */
+  record RedrawChoices(
+      Map<DetectedTerritory, DetectedTerritory> added, Map<DetectedTerritory, String> keepers) {
+
+    static RedrawChoices none() {
+      return new RedrawChoices(Map.of(), Map.of());
+    }
   }
 
   /** The unit type as the game draws it again, as one step; nothing without an uploaded one. */
@@ -584,10 +857,25 @@ final class MapProject {
   /** The problems {@link MapChecks#quick} finds in the map as it is now. */
   List<Problem> problems() {
     if (problemsOf != current) {
-      problems = MapChecks.quick(game(), getFiles());
+      problems =
+          Stream.concat(
+                  MapChecks.quick(game(), getFiles()).stream(),
+                  MapTexts.foreignObjectivesProblem(texts(), game()).stream()
+                      .map(t -> Problem.in("Texts", t)))
+              .toList();
       problemsOf = current;
     }
     return problems;
+  }
+
+  /** How many territories {@link #isChanged} finds changed. */
+  long changedCount() {
+    if (changedOf != current || changedSince != saved) {
+      changedCount = MapXml.territories(game()).stream().filter(this::isChanged).count();
+      changedOf = current;
+      changedSince = saved;
+    }
+    return changedCount;
   }
 
   /** Whether the territory differs from the last save in owner, value, units or its kind. */
@@ -655,7 +943,37 @@ final class MapProject {
   Optional<Image> unitPicture(final String nation, final Color color, final String unit) {
     return mapsUnitPicture(nation, color, unit)
         .or(() -> gamesUnitPicture(nation, unit))
-        .or(() -> gamesUnitPicture("Germans", unit));
+        .or(() -> gamesUnitPicture("Germans", unit))
+        .map(picture -> tinted(nation, unit, picture));
+  }
+
+  /** The picture as the game draws it with the map's tint for the nation, if it has one. */
+  private Image tinted(final String nation, final String unit, final Image picture) {
+    final Properties properties = getFiles().properties();
+    final Optional<Color> tint = getFiles().unitTint(nation);
+    if (tint.isEmpty()
+        || List.of(properties.getProperty("units.transform.ignore", "").split(",")).contains(unit)) {
+      return picture;
+    }
+    int brightness = 0;
+    try {
+      brightness =
+          Math.clamp(
+              Integer.parseInt(
+                  properties.getProperty("units.transform.brightness." + nation, "0")),
+              -100,
+              100);
+    } catch (final NumberFormatException e) {
+      // the game would not start with it; Check says so, the picture shows without it
+    }
+    final BufferedImage copy =
+        new BufferedImage(
+            picture.getWidth(null), picture.getHeight(null), BufferedImage.TYPE_INT_ARGB);
+    final Graphics2D g = copy.createGraphics();
+    g.drawImage(picture, 0, 0, null);
+    g.dispose();
+    ImageTransformer.colorize(tint.get(), brightness, copy);
+    return copy;
   }
 
   /** The nation's picture of the unit that the map has: imported, uploaded or in its folder. */
@@ -751,9 +1069,9 @@ final class MapProject {
     }
     // a map made here gets them also when its picture comes after the first save
     if (mapName != null) {
-      files.writeNamePlaces(saving.game(), saved.files().places());
+      files.writeNamePlaces(saving.game(), saved.files());
     }
-    files.writePlaces(saving.game(), saved.files().places());
+    files.writePlaces(saving.game(), saved.files());
     if (firstSave || !saving.files().properties().equals(saved.files().properties())) {
       files.writeProperties();
     }

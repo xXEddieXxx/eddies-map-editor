@@ -45,8 +45,8 @@ class TerritoryEffectsXml {
         .toList();
   }
 
-  /** How many territories have each effect, in one pass over the attachments of a big map. */
-  static Map<String, Long> territoryCounts(final Game game) {
+  /** The territories that have each effect, in one pass over the attachments of a big map. */
+  static Map<String, List<String>> territoriesWith(final Game game) {
     return AttachmentsXml.attachments(game).stream()
         .filter(a -> Constants.TERRITORY_ATTACHMENT_NAME.equals(a.getName()))
         .flatMap(
@@ -55,8 +55,13 @@ class TerritoryEffectsXml {
                     .filter(o -> TerritoryXml.EFFECT.equals(o.getName()) && o.getValue() != null)
                     .flatMap(o -> Arrays.stream(o.getValue().split(":")))
                     .map(String::strip)
-                    .distinct())
-        .collect(Collectors.groupingBy(effect -> effect, Collectors.counting()));
+                    .distinct()
+                    .map(effect -> Map.entry(effect, a.getAttachTo())))
+        .collect(
+            Collectors.groupingBy(
+                Map.Entry::getKey,
+                LinkedHashMap::new,
+                Collectors.mapping(Map.Entry::getValue, Collectors.toList())));
   }
 
   /** The game with a new effect after the others; none for a name taken or not allowed. */

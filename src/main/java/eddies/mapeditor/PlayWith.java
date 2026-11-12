@@ -12,7 +12,6 @@ import java.util.function.Supplier;
 import java.util.prefs.Preferences;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import javax.swing.JOptionPane;
 import lombok.experimental.UtilityClass;
 
 /**
@@ -125,28 +124,41 @@ class PlayWith {
         : List.of(program.toString(), game);
   }
 
+  /** The TripleA Play starts, for a menu: its folder's or app's name; empty if built in. */
+  static String describe() {
+    return program().map(PlayWith::describe).orElse("");
+  }
+
+  static String describe(final Path program) {
+    final String name = program.getFileName().toString();
+    return name.endsWith(".app")
+        ? name.substring(0, name.length() - ".app".length())
+        : Optional.ofNullable(program.getParent())
+            .map(Path::getFileName)
+            .map(Path::toString)
+            .orElse(name);
+  }
+
   /** Asks which TripleA Play starts and keeps the answer. */
   static void choose(final Component parent) {
     final Optional<Path> now = program();
-    final String[] choices = {"Choose TripleA...", "The editor's TripleA", "Cancel"};
-    final int answer =
-        JOptionPane.showOptionDialog(
+    final String own = "Your TripleA…";
+    final Optional<String> answer =
+        Dialogs.pick(
             parent,
+            "Play with",
             "Play starts "
-                + now.map(p -> "your TripleA:\n" + p).orElse("the TripleA the editor runs with.")
-                + "\n\nYour own TripleA tries the map in the version its players use.",
-            "TripleA for Play",
-            JOptionPane.DEFAULT_OPTION,
-            JOptionPane.QUESTION_MESSAGE,
-            null,
-            choices,
-            choices[0]);
-    if (answer == 0) {
+                + now.map(p -> "your TripleA: " + p).orElse("the TripleA the editor runs with.")
+                + "\nYour own TripleA tries the map in the version its players use.",
+            List.of(own, "The TripleA the editor runs with"),
+            choice -> choice,
+            "Choose");
+    if (answer.filter(own::equals).isPresent()) {
       final Path start =
           now.map(Path::getParent).orElseGet(() -> Path.of(System.getProperty("user.home")));
       MapMakerWindow.chooseFileToOpen(parent, "Choose TripleA", start, programExtensions())
           .ifPresent(PlayWith::keep);
-    } else if (answer == 1) {
+    } else if (answer.isPresent()) {
       preferences().put(KEY, BUILT_IN);
     }
   }

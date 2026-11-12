@@ -185,6 +185,26 @@ final class NewMapTest {
         .containsKeys("Territory 1", "Territory 4");
   }
 
+  @DisplayName("Skip in the wizard makes a map without a picture in the wizard's folder")
+  @Test
+  void skipsThePicture() throws Exception {
+    final Path folder = Files.createDirectory(maps.resolve("elsewhere"));
+    final NewMapWizard wizard = new NewMapWizard(folder, made -> {});
+    wizard.name.setText("Empty Isle");
+    wizard.next.doClick();
+
+    wizard.skip.doClick();
+    wizard.nations.setText("Red");
+    final MapProject made = wizard.making().call().project();
+
+    assertThat(made.getFolder())
+        .as("in the folder the wizard has")
+        .contains(folder.resolve("empty_isle"));
+    assertThat(made.getFiles().picture()).as("no picture").isEmpty();
+    assertThat(MapXml.territories(made.game())).as("no territories").isEmpty();
+    assertThat(MapXml.nations(made.game())).as("the nations typed").containsExactly("Red");
+  }
+
   @DisplayName("The wizard's map is saved with the picture's territories and its nations")
   @Test
   void makesTheWizardsMap() throws Exception {

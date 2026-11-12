@@ -1,59 +1,64 @@
 package eddies.mapeditor;
 
+import com.formdev.flatlaf.FlatClientProperties;
 import games.strategy.engine.ClientFileSystemHelper;
 import games.strategy.engine.framework.ui.GameNotesView;
 import java.awt.BorderLayout;
 import java.awt.Component;
+import java.awt.Desktop;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.FontMetrics;
-import java.awt.Graphics;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
 import java.awt.Image;
+import java.awt.Insets;
 import java.awt.Rectangle;
-import java.awt.event.ActionEvent;
-import java.awt.event.KeyEvent;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.Serial;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 import javax.annotation.Nullable;
 import javax.imageio.ImageIO;
-import javax.swing.AbstractAction;
+import javax.swing.BorderFactory;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JList;
-import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
-import javax.swing.JTextArea;
+import javax.swing.JSplitPane;
 import javax.swing.JTextField;
 import javax.swing.JTree;
-import javax.swing.KeyStroke;
 import javax.swing.SwingConstants;
 import javax.swing.SwingWorker;
 import javax.swing.Timer;
-import javax.swing.event.DocumentEvent;
-import javax.swing.event.DocumentListener;
 import javax.swing.event.TreeModelEvent;
 import javax.swing.event.TreeModelListener;
+import javax.swing.border.EmptyBorder;
 import javax.swing.text.BadLocationException;
 import javax.swing.tree.DefaultTreeCellRenderer;
 import javax.swing.tree.TreeModel;
@@ -65,13 +70,15 @@ import org.triplea.map.description.file.MapDescriptionYaml.MapGame;
 import org.triplea.swing.SwingComponents;
 import eddies.mapeditor.FileLint.Lint;
 import eddies.mapeditor.MakerIcon.Glyph;
+import eddies.mapeditor.MapGuide.Part;
+import eddies.mapeditor.Theme.Status;
 
 /**
- * The map's folder as in an editor for code: its files in a tree, the file browser beside the tools
- * ({@link #page()}), the chosen one in the middle ({@link #preview()}) to read and change, checked
- * as the game reads it while it is typed ({@link FileLint}), the problems below it. Folders of
- * other maps can be added to the tree to copy from; they are read only. Saving a file of the open
- * map reloads the map from its files.
+ * The map's folder as in an editor for code: its files in a tree left, the chosen one right to
+ * read and change, checked as the game reads it while it is typed ({@link FileLint}). With no file
+ * open, the right side explains what a map folder holds. Folders of other maps can be added to the
+ * tree to copy from; they are read only. Saving a file of the open map reloads the map from its
+ * files.
  */
 @Slf4j
 final class FilesEditor implements Editor {
@@ -83,29 +90,42 @@ final class FilesEditor implements Editor {
   private static final int PREVIEW_SIZE = 640;
   private static final String POLYGONS = "polygons.txt";
   private static final int THUMBNAIL = 32;
+  private static final int TREE_WIDTH = 260;
+  private static final int MAX_PROBLEM_ROWS = 6;
+  private static final int INDENT = 16;
+  private static final String OTHER_MAPS = "Other maps (read only)";
+  private static final String BACKUP = ".bak";
 
   private final Supplier<Optional<Path>> mapFolder;
   private final Supplier<Game> game;
+  private final Supplier<List<Part>> anatomy;
   private final BooleanSupplier mayWriteMapFile;
   private final Runnable reloadMap;
-  private final Runnable fileShown;
+  private final Consumer<String> openTool;
   private final List<Path> otherFolders = new ArrayList<>();
+  // backups are left out of the tree, but for those revealed, eg by the toast after a first save
+  private final Set<Path> revealedBackups = new HashSet<>();
   private final Folders folders = new Folders();
   // made once the map's folder is known, as the tree asks for the folders at once
   private final JTree tree;
-  private final JPanel page = new JPanel(new BorderLayout());
+  private final JSplitPane page;
   private final JPanel fileSlot = new JPanel(new BorderLayout());
-  private final JLabel fileLabel = new JLabel(" ");
+  private final JTextField search = new JTextField();
+  private final JLabel breadcrumb = new JLabel(" ");
+  private final JLabel readOnly = Theme.newSecondaryLabel("");
+  private final JLabel changed = new JLabel("• Changed");
   private final JButton save = new JButton("Save file");
   private final JButton revert = new JButton("Revert");
   private final XmlTextArea text = new XmlTextArea();
+  private final JScrollPane textScroll = SwingComponents.newJScrollPane(text);
+  private final JCheckBox wrap = new JCheckBox("Wrap lines");
   // an HTML file as the game shows it, right of its text
   private final GameNotesView htmlPreview = new GameNotesView();
-  // one for the text area, which every file shares
-  private final LineNumbers lineNumbers = new LineNumbers(text);
   private final DefaultListModel<Lint> problems = new DefaultListModel<>();
   private final JList<Lint> problemList = new JList<>(problems);
-  private final JLabel problemsTitle = Theme.newSectionLabel("Problems");
+  private final JScrollPane problemScroll = SwingComponents.newJScrollPane(problemList);
+  // "✓ The game reads this file" or "! n problems ▾", which opens the list
+  private final JButton status = new JButton();
   // a pause in typing: check the text and show an HTML file again
   private final Timer lintLater =
       new Timer(
@@ -114,6 +134,8 @@ final class FilesEditor implements Editor {
             previewHtml();
             lint();
           });
+  // a pause in typing the search: walk the folders once for it
+  private final Timer searchLater = new Timer(300, e -> searchChanged());
   private @Nullable Path open;
   private boolean editable;
   private boolean dirty;
@@ -121,28 +143,48 @@ final class FilesEditor implements Editor {
   private boolean html;
   // counts the edits, so a check of an older text is not shown
   private int edits;
+  // the names the tree shows, in lower case; empty for all
+  private String filter = "";
+  // with a search: the matching files and the folders they are in
+  private Set<Path> matching = Set.of();
 
   /**
-   * @param mapFolder the open map's folder, with its map.yml
+   * @param project the open map, for its folder, its game and what its folder should hold
    * @param mayWriteMapFile asks whether a file of the open map may be written now, eg after saving
    *     the map's own changes; false to leave it
    * @param reloadMap reads the open map again from its files
-   * @param fileShown brings the open file to the middle, eg when it is chosen in the tree
-   * @param game the open map's game, for the pictures its folders should have
+   * @param openTool shows the tool of this title, eg the one that makes a file
    */
   FilesEditor(
-      final Supplier<Optional<Path>> mapFolder,
-      final Supplier<Game> game,
+      final Supplier<MapProject> project,
       final BooleanSupplier mayWriteMapFile,
       final Runnable reloadMap,
-      final Runnable fileShown) {
+      final Consumer<String> openTool) {
+    this(
+        () -> project.get().getFolder().map(MapFolder::rootOf),
+        () -> project.get().game(),
+        () -> MapGuide.anatomy(project.get()),
+        mayWriteMapFile,
+        reloadMap,
+        openTool);
+  }
+
+  private FilesEditor(
+      final Supplier<Optional<Path>> mapFolder,
+      final Supplier<Game> game,
+      final Supplier<List<Part>> anatomy,
+      final BooleanSupplier mayWriteMapFile,
+      final Runnable reloadMap,
+      final Consumer<String> openTool) {
     this.mapFolder = mapFolder;
-    this.fileShown = fileShown;
+    this.game = game;
+    this.anatomy = anatomy;
     this.mayWriteMapFile = mayWriteMapFile;
     this.reloadMap = reloadMap;
-    this.game = game;
+    this.openTool = openTool;
     tree = new JTree(folders);
     lintLater.setRepeats(false);
+    searchLater.setRepeats(false);
     tree.setRootVisible(false);
     tree.setShowsRootHandles(true);
     tree.setCellRenderer(new FileRenderer());
@@ -154,64 +196,53 @@ final class FilesEditor implements Editor {
                 .map(Path.class::cast)
                 .filter(p -> Files.isRegularFile(p) || hasFolderView(p))
                 .ifPresent(this::openFile));
-    // a click on the file already chosen brings it back to the middle, eg after a tool's view
-    tree.addMouseListener(
-        new MouseAdapter() {
-          @Override
-          public void mouseClicked(final MouseEvent e) {
-            Optional.ofNullable(tree.getPathForLocation(e.getX(), e.getY()))
-                .map(TreePath::getLastPathComponent)
-                .filter(clicked -> clicked.equals(open))
-                .ifPresent(same -> fileShown.run());
-          }
-        });
-    // and Enter on it, for the keyboard
-    tree.getInputMap(JComponent.WHEN_FOCUSED)
-        .put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "showFile");
-    tree.getActionMap()
-        .put(
-            "showFile",
-            new AbstractAction() {
-              @Serial private static final long serialVersionUID = 1L;
-
-              @Override
-              public void actionPerformed(final ActionEvent e) {
-                Optional.ofNullable(tree.getSelectionPath())
-                    .map(TreePath::getLastPathComponent)
-                    .filter(Path.class::isInstance)
-                    .map(Path.class::cast)
-                    .filter(Files::isRegularFile)
-                    .ifPresent(FilesEditor.this::openFile);
-              }
-            });
-    final JButton addFolder = new JButton("Add map...", MakerIcon.small(Glyph.FILES));
-    addFolder.addActionListener(e -> addFolder());
-    final JButton refresh = new JButton("Refresh");
-    refresh.setToolTipText("Reads the folders again, eg after files were added outside");
-    refresh.addActionListener(e -> folders.refresh());
-    final JPanel treeButtons = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
-    treeButtons.add(
-        Help.with(
-            addFolder,
-            "Shows another map's folder below this one, read only: open its files and copy what"
-                + " you need into yours."));
-    treeButtons.add(refresh);
-    final JPanel treeColumn = new JPanel(new BorderLayout(0, 8));
+    search.putClientProperty(FlatClientProperties.PLACEHOLDER_TEXT, "Search files");
+    search.putClientProperty(FlatClientProperties.TEXT_FIELD_SHOW_CLEAR_BUTTON, true);
+    OnTyping.attach(search, searchLater::restart);
+    final JPopupMenu more = new JPopupMenu();
+    more.add("Refresh").addActionListener(e -> folders.refresh());
+    more.add(
+            System.getProperty("os.name").startsWith("Mac")
+                ? "Show in Finder"
+                : "Show in Explorer")
+        .addActionListener(e -> showInExplorer());
+    more.add("Add a map to copy from…").addActionListener(e -> addFolder());
+    final JButton moreButton = Theme.newIconButton("⋯", "More", () -> {});
+    moreButton.addActionListener(e -> more.show(moreButton, 0, moreButton.getHeight()));
+    final JPanel treeHeader = new JPanel(new BorderLayout(Theme.GAP_XS, 0));
+    treeHeader.add(search, BorderLayout.CENTER);
+    treeHeader.add(moreButton, BorderLayout.EAST);
+    final JPanel treeColumn = new JPanel(new BorderLayout(0, Theme.GAP_S));
+    treeColumn.setBorder(
+        BorderFactory.createEmptyBorder(Theme.GAP_S, Theme.GAP_S, 0, Theme.GAP_S));
+    treeColumn.add(treeHeader, BorderLayout.NORTH);
     treeColumn.add(SwingComponents.newJScrollPane(tree), BorderLayout.CENTER);
-    treeColumn.add(treeButtons, BorderLayout.SOUTH);
+    treeColumn.setMinimumSize(new Dimension(200, 0));
+    treeColumn.setPreferredSize(new Dimension(TREE_WIDTH, 0));
 
-    text.getDocument().addDocumentListener(new Typed());
+    OnTyping.attach(text, this::typed);
     save.addActionListener(e -> saveFile());
     revert.addActionListener(e -> Optional.ofNullable(open).ifPresent(this::showFile));
     Theme.setPrimaryButtonStyle(save);
+    Theme.setTertiaryButtonStyle(revert);
+    changed.setForeground(Theme.getWarningColor());
+    wrap.setToolTipText("Long lines wrap at the edge");
+    wrap.addActionListener(e -> text.setLineWrap(wrap.isSelected()));
+    textScroll.setRowHeaderView(new LineNumbers(text));
+    Theme.setBorderlessButtonStyle(status);
+    status.addActionListener(e -> toggleProblems());
     problemList.setCellRenderer(new LintRenderer());
+    // a long message is cut, its whole text in the tool tip: a scroll bar would hide the one row
+    problemScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
     problemList.addListSelectionListener(
         e -> {
           if (!e.getValueIsAdjusting() && problemList.getSelectedValue() != null) {
             goToLine(problemList.getSelectedValue().line());
           }
         });
-    page.add(treeColumn, BorderLayout.CENTER);
+    page = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, treeColumn, fileSlot);
+    page.setBorder(null);
+    page.setContinuousLayout(true);
     showNothing();
   }
 
@@ -227,20 +258,13 @@ final class FilesEditor implements Editor {
 
   @Override
   public String hint() {
-    return "The map's files as on disk. Choose one in the tree to change it in the middle; the"
-        + " game's files are checked as you type and their problems listed below them. Add other"
-        + " maps to copy from. Save file keeps the first version as .bak and reads the map again.";
+    return "The map's files as on disk. Open one to change it; the game's files are checked as you"
+        + " type. Save file keeps the first version as .bak and reads the map again.";
   }
 
   @Override
   public JComponent page() {
     return page;
-  }
-
-  /** The chosen file in the middle, with its problems below it. */
-  @Override
-  public Optional<JComponent> preview() {
-    return Optional.of(fileSlot);
   }
 
   /**
@@ -250,10 +274,12 @@ final class FilesEditor implements Editor {
   @Override
   public void showing() {
     folders.refresh();
-    if (open != null && !dirty) {
+    if (open == null) {
+      // the folder's files may have changed meanwhile
+      showNothing();
+    } else if (!dirty) {
       final Path shown = open;
-      if (Files.isRegularFile(shown)
-          && folders.children(folders.root).stream().anyMatch(shown::startsWith)) {
+      if (Files.exists(shown) && tops().stream().anyMatch(shown::startsWith)) {
         showFile(shown);
       } else {
         open = null;
@@ -269,24 +295,28 @@ final class FilesEditor implements Editor {
    */
   boolean mayDropText() {
     return !dirty
-        || JOptionPane.showConfirmDialog(
-                page,
-                "Drop your changes to " + shortName(open) + " in Files?",
-                "Files",
-                JOptionPane.OK_CANCEL_OPTION)
-            == JOptionPane.OK_OPTION;
+        || Dialogs.confirmRemove(
+            page,
+            "Drop changes",
+            "Drop your changes to " + shortName(open) + "?\nWhat you typed there is not saved.",
+            List.of(),
+            "Drop");
   }
 
-  /**
-   * Shows the file or folder in the tree, eg from the map's anatomy; a file opens in the middle.
-   */
+  /** Shows the file or folder in the tree, eg from the map's anatomy; a file opens beside it. */
   void reveal(final Path file) {
-    final Optional<Path> top =
-        folders.children(folders.root).stream().filter(file::startsWith).findFirst();
+    final Optional<Path> top = tops().stream().filter(file::startsWith).findFirst();
     if (top.isEmpty()) {
       return;
     }
-    final List<Object> nodes = new ArrayList<>(List.of(folders.root, top.get()));
+    if (isBackup(file) && revealedBackups.add(file)) {
+      folders.refresh();
+    }
+    final List<Object> nodes = new ArrayList<>(List.of(folders.root));
+    if (otherFolders.contains(top.get())) {
+      nodes.add(OTHER_MAPS);
+    }
+    nodes.add(top.get());
     Path at = top.get();
     if (!file.equals(at)) {
       for (final Path name : top.get().relativize(file)) {
@@ -295,8 +325,9 @@ final class FilesEditor implements Editor {
       }
     }
     final TreePath path = new TreePath(nodes.toArray());
-    if (path.equals(tree.getSelectionPath()) && Files.isRegularFile(file)) {
-      // no selection change, so the listener stays quiet: bring the file back to the middle
+    if (path.equals(tree.getSelectionPath())
+        && (Files.isRegularFile(file) || hasFolderView(file))) {
+      // no selection change, so the listener stays quiet: bring the file back
       openFile(file);
     } else {
       // the selection listener opens a file
@@ -328,15 +359,56 @@ final class FilesEditor implements Editor {
             });
   }
 
-  /** Opens the file, after asking whether to drop the changes to the one open now. */
+  private void showInExplorer() {
+    mapFolder
+        .get()
+        .filter(folder -> Desktop.isDesktopSupported())
+        .ifPresent(
+            folder -> {
+              try {
+                Desktop.getDesktop().open(folder.toFile());
+              } catch (final IOException | UnsupportedOperationException e) {
+                log.info("Could not show {}", folder, e);
+              }
+            });
+  }
+
+  /** The map's folder, then the maps added to copy from. */
+  private List<Path> tops() {
+    final List<Path> tops = new ArrayList<>();
+    mapFolder.get().ifPresent(tops::add);
+    tops.addAll(otherFolders);
+    return tops;
+  }
+
+  private void searchChanged() {
+    filter = search.getText().strip().toLowerCase(Locale.ROOT);
+    folders.refresh();
+    if (!filter.isEmpty()) {
+      // the matches are deep down, eg a unit picture: show them all
+      for (int row = 0; row < tree.getRowCount(); row++) {
+        tree.expandRow(row);
+      }
+    }
+  }
+
+  /**
+   * Opens the file, after asking whether to drop the changes to the one open now; the map's folder
+   * itself shows what a map folder holds.
+   */
   private void openFile(final Path file) {
-    if (file.equals(open)) {
-      fileShown.run();
+    final boolean mapRoot = mapFolder.get().filter(file::equals).isPresent();
+    if (file.equals(open) && !mapRoot) {
       return;
     }
     if (mayDropText()) {
-      showFile(file);
-      fileShown.run();
+      if (mapRoot) {
+        open = null;
+        dirty = false;
+        showNothing();
+      } else {
+        showFile(file);
+      }
     } else {
       // the open file stays: the tree no longer points at the other one
       tree.clearSelection();
@@ -350,7 +422,8 @@ final class FilesEditor implements Editor {
     edits++;
     problems.clear();
     fileSlot.removeAll();
-    final String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
+    // a backup shows as the file it was
+    final String name = typeName(file);
     if (Files.isDirectory(file)) {
       showFolder(file);
     } else if (TEXT_FILES.stream().anyMatch(name::endsWith)) {
@@ -368,9 +441,10 @@ final class FilesEditor implements Editor {
     try {
       final boolean ofThisMap = mapFolder.get().filter(file::startsWith).isPresent();
       final boolean small = Files.size(file) <= MAX_EDITED_SIZE;
-      editable = ofThisMap && small;
+      final boolean backup = isBackup(file);
+      editable = ofThisMap && small && !backup;
       filling = true;
-      final String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
+      final String name = typeName(file);
       html = name.matches(".*\\.html?");
       if (html || name.endsWith(".xml")) {
         text.colorAsXml();
@@ -380,35 +454,30 @@ final class FilesEditor implements Editor {
       text.setText(MapFolder.readText(file));
       text.setCaretPosition(0);
       text.setEditable(editable);
-      fileLabel.setText(
-          shortName(file)
-              + (ofThisMap ? "" : "  (another map: read only)")
-              + (small ? "" : "  (too large to change here)"));
-      final JScrollPane scroll = SwingComponents.newJScrollPane(text);
-      scroll.setRowHeaderView(lineNumbers);
-      final JPanel bar = new JPanel(new BorderLayout(8, 0));
-      bar.add(fileLabel, BorderLayout.CENTER);
-      final JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
-      buttons.add(revert);
-      buttons.add(save);
-      buttons.setVisible(editable);
-      bar.add(buttons, BorderLayout.EAST);
-      final JPanel below = new JPanel(new BorderLayout(0, 4));
-      below.add(problemsTitle, BorderLayout.NORTH);
-      final JScrollPane problemScroll = SwingComponents.newJScrollPane(problemList);
-      problemScroll.setPreferredSize(new Dimension(0, 110));
-      below.add(problemScroll, BorderLayout.CENTER);
-      below.setVisible(FileLint.isChecked(file.getFileName().toString()));
-      final JPanel editor = new JPanel(new BorderLayout(0, 8));
-      editor.add(bar, BorderLayout.NORTH);
+      readOnly.setText(
+          !ofThisMap
+              ? "Read only: another map"
+              : backup ? "Read only: a first version" : small ? "" : "Too large to change here");
+      final JPanel editor = new JPanel(new BorderLayout(0, Theme.GAP_S));
+      editor.setBorder(
+          BorderFactory.createEmptyBorder(Theme.GAP_S, Theme.GAP_M, Theme.GAP_XS, Theme.GAP_M));
+      editor.add(fileBar(file), BorderLayout.NORTH);
       if (html) {
         htmlPreview.setText(text.getText());
         editor.add(
-            Panels.textAndPreview(scroll, SwingComponents.newJScrollPane(htmlPreview)),
+            Panels.textAndPreview(textScroll, SwingComponents.newJScrollPane(htmlPreview)),
             BorderLayout.CENTER);
       } else {
-        editor.add(scroll, BorderLayout.CENTER);
+        editor.add(textScroll, BorderLayout.CENTER);
       }
+      final JPanel statusLine = new JPanel(new BorderLayout(Theme.GAP_S, 0));
+      statusLine.add(status, BorderLayout.WEST);
+      statusLine.add(wrap, BorderLayout.EAST);
+      status.setText(" ");
+      problemScroll.setVisible(false);
+      final JPanel below = new JPanel(new BorderLayout(0, Theme.GAP_XS));
+      below.add(problemScroll, BorderLayout.CENTER);
+      below.add(statusLine, BorderLayout.SOUTH);
       editor.add(below, BorderLayout.SOUTH);
       fileSlot.add(editor, BorderLayout.CENTER);
       updateButtons();
@@ -421,12 +490,56 @@ final class FilesEditor implements Editor {
     }
   }
 
-  /** The file as "map folder / path in it", eg theatre / map/games/theatre.xml. */
-  private String shortName(final Path file) {
-    return folders.children(folders.root).stream()
+  /** Where the file is, and what may be done with it: "• Changed", Revert and Save file. */
+  private JPanel fileBar(final Path file) {
+    breadcrumb.setText(shortName(file));
+    breadcrumb.setToolTipText(file.toString());
+    final JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, Theme.GAP_S, 0));
+    actions.add(readOnly);
+    actions.add(changed);
+    actions.add(revert);
+    actions.add(save);
+    final JPanel bar = new JPanel(new BorderLayout(Theme.GAP_S, 0));
+    bar.add(breadcrumb, BorderLayout.CENTER);
+    bar.add(actions, BorderLayout.EAST);
+    return bar;
+  }
+
+  private static boolean isBackup(final Path file) {
+    return file.getFileName().toString().endsWith(BACKUP);
+  }
+
+  /** The file's name in lower case, of a backup without ".bak", which tells its type. */
+  private static String typeName(final Path file) {
+    final String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
+    return isBackup(file) ? name.substring(0, name.length() - BACKUP.length()) : name;
+  }
+
+  /** The problems' list opens and closes below the text. */
+  private void toggleProblems() {
+    problemScroll.setVisible(!problemScroll.isVisible() && !problems.isEmpty());
+    problemList.setVisibleRowCount(Math.min(MAX_PROBLEM_ROWS, problems.size()));
+    showStatus();
+    fileSlot.revalidate();
+  }
+
+  /** The file as the path in its map's folder, eg map › games › theatre.xml. */
+  private String shortName(@Nullable final Path file) {
+    if (file == null) {
+      return "";
+    }
+    return tops().stream()
         .filter(file::startsWith)
         .findFirst()
-        .map(top -> top.getFileName() + " / " + top.relativize(file).toString().replace('\\', '/'))
+        .map(
+            top ->
+                Stream.concat(
+                        otherFolders.contains(top)
+                            ? Stream.of(top.getFileName().toString())
+                            : Stream.empty(),
+                        StreamSupport.stream(top.relativize(file).spliterator(), false)
+                            .map(Path::toString))
+                    .collect(Collectors.joining(" › ")))
         .orElse(file.toString());
   }
 
@@ -449,10 +562,14 @@ final class FilesEditor implements Editor {
       final JLabel label = new JLabel(new ImageIcon(shown));
       label.setVerticalAlignment(SwingConstants.TOP);
       label.setHorizontalAlignment(SwingConstants.LEFT);
-      fileSlot.add(
+      final JLabel title =
           new JLabel(
-              shortName(file) + "  (" + picture.getWidth() + "×" + picture.getHeight() + ")"),
-          BorderLayout.NORTH);
+              shortName(file) + "  (" + picture.getWidth() + "×" + picture.getHeight() + ")");
+      title.setToolTipText(file.toString());
+      title.setBorder(
+          BorderFactory.createEmptyBorder(
+              Theme.GAP_S, Theme.GAP_M, Theme.GAP_S, Theme.GAP_M));
+      fileSlot.add(title, BorderLayout.NORTH);
       fileSlot.add(SwingComponents.newJScrollPane(label), BorderLayout.CENTER);
     } catch (final IOException e) {
       fileSlot.add(note("Could not read " + file.getFileName() + ": " + e.getMessage()));
@@ -460,8 +577,8 @@ final class FilesEditor implements Editor {
   }
 
   /**
-   * Whether the middle has something for the folder of the open map: map.yml's games, the picture
-   * folders the map lacks, or one of the picture folders.
+   * Whether there is a view for the folder of the open map: map.yml's games, the picture folders
+   * the map lacks, or one of the picture folders.
    */
   private boolean hasFolderView(final Path folder) {
     return Files.isDirectory(folder)
@@ -490,9 +607,9 @@ final class FilesEditor implements Editor {
   /** The map's name and its games as map.yml lists them, each game to rename. */
   private void showGames(final Form form, final Path folder, final Path yml) {
     form.section(
-        "map.yml",
-        "How the game lists the map and its games. The games find the map by its name, so the"
-            + " name stays; a game's name is the one players choose it by.");
+        "Games",
+        "How the game lists the map and its games, in map.yml. The games find the map by its name,"
+            + " so the name stays; a game's name is the one players choose it by.");
     final Optional<MapDescriptionYaml> yaml = MapDescriptionYaml.fromFile(yml);
     if (yaml.isEmpty()) {
       form.note("map.yml does not read: open it to fix it.");
@@ -507,10 +624,13 @@ final class FilesEditor implements Editor {
       rename.addActionListener(
           e -> renameGame(folder, yml, mapGame, name.getText().strip(), names));
       name.addActionListener(e -> rename.doClick());
-      final JPanel row = new JPanel(new BorderLayout(6, 0));
-      row.add(name, BorderLayout.CENTER);
-      row.add(rename, BorderLayout.EAST);
-      form.field("Game in " + mapGame.getXmlFileName(), row);
+      final JPanel line = new JPanel(new BorderLayout(Theme.GAP_S, 0));
+      line.add(name, BorderLayout.CENTER);
+      line.add(rename, BorderLayout.EAST);
+      final JPanel row = new JPanel(new BorderLayout(0, Theme.GAP_XS));
+      row.add(line, BorderLayout.CENTER);
+      row.add(Theme.newSecondaryLabel("in " + mapGame.getXmlFileName()), BorderLayout.SOUTH);
+      form.field("Game name", row);
     }
   }
 
@@ -524,19 +644,17 @@ final class FilesEditor implements Editor {
       return;
     }
     if (name.isEmpty() || names.contains(name)) {
-      JOptionPane.showMessageDialog(
+      Dialogs.warn(
           page,
-          name.isEmpty() ? "A game needs a name." : "Another game has the name " + name + ".",
-          "map.yml",
-          JOptionPane.WARNING_MESSAGE);
+          "Rename game",
+          name.isEmpty() ? "A game needs a name." : "Another game has the name " + name + ".");
       return;
     }
     try {
       MapFolder.renameGame(yml, mapGame.getXmlFileName(), name);
     } catch (final IOException e) {
       log.warn("Could not rename the game in {}", yml, e);
-      JOptionPane.showMessageDialog(
-          page, "Could not write map.yml:\n" + e.getMessage(), "map.yml", JOptionPane.WARNING_MESSAGE);
+      Dialogs.warn(page, "Rename game", "Could not write map.yml\n" + e.getMessage());
     }
     showFile(folder);
   }
@@ -555,20 +673,23 @@ final class FilesEditor implements Editor {
         "Picture folders", "Folders of pictures the game takes in place of its own drawing.");
     for (final String name : missing) {
       final JButton add = new JButton("Add");
-      add.addActionListener(
-          e -> {
-            try {
-              Files.createDirectories(folder.resolve(name));
-            } catch (final IOException ex) {
-              log.warn("Could not make {}", folder.resolve(name), ex);
-              return;
-            }
-            folders.refresh();
-            reveal(folder.resolve(name));
-          });
+      add.addActionListener(e -> addPictureFolder(folder.resolve(name)));
       form.row(
           slotRow(name + ": " + MapFolder.PICTURE_FOLDERS.get(name), true, add, Optional.empty()));
     }
+  }
+
+  /** Makes the picture folder if needed and shows it, with the pictures to import. */
+  private void addPictureFolder(final Path pictures) {
+    try {
+      Files.createDirectories(pictures);
+    } catch (final IOException e) {
+      log.warn("Could not make {}", pictures, e);
+      Dialogs.warn(page, "Add folder", "Could not make " + pictures.getFileName() + "\n" + e);
+      return;
+    }
+    folders.refresh();
+    reveal(pictures);
   }
 
   /** The pictures the game looks for in the folder, those missing marked, each to import. */
@@ -582,7 +703,7 @@ final class FilesEditor implements Editor {
             + " of "
             + pictures.size()
             + " there; the game draws its own where one is missing.");
-    final JButton importHere = new JButton("Import picture here...");
+    final JButton importHere = new JButton("Import picture here…");
     importHere.setToolTipText("Copies a picture into this folder under its own name");
     importHere.addActionListener(
         e ->
@@ -599,7 +720,7 @@ final class FilesEditor implements Editor {
     importRow.add(importHere);
     form.row(importRow);
     for (final String picture : pictures) {
-      final JButton take = new JButton("Import...");
+      final JButton take = new JButton("Import…");
       take.addActionListener(
           e ->
               choosePicture(folder)
@@ -612,7 +733,7 @@ final class FilesEditor implements Editor {
       final boolean present = Files.exists(folder.resolve(picture));
       form.row(
           slotRow(
-              picture + (present ? "" : "  · missing"),
+              present ? picture : Status.TODO.mark() + " " + picture,
               !present,
               take,
               present ? thumbnail(folder.resolve(picture)) : Optional.empty()));
@@ -649,7 +770,7 @@ final class FilesEditor implements Editor {
     if (quiet) {
       label.setForeground(Theme.getSecondaryTextColor());
     }
-    final JPanel row = new JPanel(new BorderLayout(8, 0));
+    final JPanel row = new JPanel(new BorderLayout(Theme.GAP_S, 0));
     row.add(label, BorderLayout.CENTER);
     row.add(action, BorderLayout.EAST);
     return row;
@@ -666,11 +787,10 @@ final class FilesEditor implements Editor {
       write.run();
     } catch (final IOException e) {
       log.warn("Could not import {}", chosen, e);
-      JOptionPane.showMessageDialog(
+      Dialogs.warn(
           page,
-          "Could not import " + chosen.getFileName() + ":\n" + e.getMessage(),
           "Import picture",
-          JOptionPane.WARNING_MESSAGE);
+          "Could not import " + chosen.getFileName() + "\n" + e.getMessage());
     }
     folders.refresh();
     reveal(folder);
@@ -682,24 +802,165 @@ final class FilesEditor implements Editor {
     void run() throws IOException;
   }
 
+  /** No file open: what a map folder holds, each part to open or to make in its tool. */
   private void showNothing() {
     fileSlot.removeAll();
-    fileSlot.add(
-        note(
-            "Choose a file in the tree. The map's game, map.yml, point files and map.properties"
-                + " are checked as you type."),
-        BorderLayout.CENTER);
+    final List<Part> parts = anatomy.get();
+    if (parts.isEmpty()) {
+      fileSlot.add(
+          mapFolder.get().isPresent()
+              ? Panels.empty(Glyph.FILES, "Choose a file", "Open a file in the tree to change it.")
+              : Panels.empty(
+                  Glyph.FILES, "No files yet", "The map's files show here once it is saved."),
+          BorderLayout.CENTER);
+    } else {
+      final Form form = new Form(PREVIEW_SIZE);
+      form.title("What's in a map folder");
+      final JPanel legend = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_L, 0));
+      legend.add(Theme.newStatusLabel(Status.DONE, "there"));
+      legend.add(Theme.newStatusLabel(Status.PROBLEM, "missing, the game needs it"));
+      legend.add(Theme.newStatusLabel(Status.TODO, "missing, optional"));
+      form.row(legend);
+      form.row(anatomyRows(parts));
+      form.end();
+      fileSlot.add(SwingComponents.newJScrollPane(form), BorderLayout.CENTER);
+    }
+    fileSlot.revalidate();
+    fileSlot.repaint();
   }
 
-  private static JLabel note(final String message) {
+  /**
+   * One row per part: its mark, its name (a click opens it), what it is for, and where it is made;
+   * then the picture folders, with how many of the game's pictures they have.
+   */
+  private JPanel anatomyRows(final List<Part> parts) {
+    final JPanel rows = new JPanel(new GridBagLayout());
+    rows.setOpaque(false);
+    int row = 0;
+    for (final Part part : parts) {
+      final Optional<JButton> link =
+          part.name().equals(MapDescriptionYaml.MAP_YAML_FILE_NAME) && part.present()
+              ? Optional.of(link("Games…", () -> showFile(part.file().getParent())))
+              : Optional.ofNullable(part.tool())
+                  .map(tool -> link(verb(part) + " in " + tool, () -> openTool.accept(tool)));
+      addAnatomyRow(
+          rows,
+          row++,
+          part.depth(),
+          part.present() ? Status.DONE : part.required() ? Status.PROBLEM : Status.TODO,
+          part.name(),
+          part.present() ? Optional.of(part.file()) : Optional.empty(),
+          part.purpose(),
+          link);
+    }
+    // the picture folders sit beside polygons.txt
+    final Optional<Part> polygons =
+        parts.stream().filter(part -> part.name().equals(POLYGONS)).findFirst();
+    if (polygons.isPresent()) {
+      final Path content = polygons.get().file().getParent();
+      for (final String name : MapFolder.PICTURE_FOLDERS.keySet().stream().sorted().toList()) {
+        final Path folder = content.resolve(name);
+        final boolean present = Files.isDirectory(folder);
+        final String purpose = MapFolder.PICTURE_FOLDERS.get(name).replaceFirst("\\.$", "");
+        addAnatomyRow(
+            rows,
+            row++,
+            polygons.get().depth(),
+            present ? Status.DONE : Status.TODO,
+            name + "/",
+            present ? Optional.of(folder) : Optional.empty(),
+            present ? purpose + " · " + picturesThere(folder) : purpose,
+            Optional.of(link("Import…", () -> addPictureFolder(folder))));
+      }
+    }
+    return rows;
+  }
+
+  /** "Make" for a part not there yet and for the relief, which is made again, else "Edit". */
+  private static String verb(final Part part) {
+    return part.present() && !part.name().startsWith("reliefTiles") ? "Edit" : "Make";
+  }
+
+  /** "3 of 12 pictures": of those the game looks for in the folder. */
+  private String picturesThere(final Path folder) {
+    final List<String> pictures =
+        MapFolder.picturesFor(folder.getFileName().toString(), game.get());
+    return pictures.stream().filter(p -> Files.exists(folder.resolve(p))).count()
+        + " of "
+        + pictures.size()
+        + " pictures";
+  }
+
+  private void addAnatomyRow(
+      final JPanel rows,
+      final int row,
+      final int depth,
+      final Status mark,
+      final String name,
+      final Optional<Path> file,
+      final String purpose,
+      final Optional<JButton> link) {
+    final JLabel markLabel = new JLabel(mark.mark());
+    markLabel.setForeground(mark.color());
+    markLabel.getAccessibleContext().setAccessibleName(
+        switch (mark) {
+          case DONE -> "there";
+          case PROBLEM, WARNING -> "missing";
+          case TODO -> "optional";
+        });
+    // one width for every mark, so the names line up whatever the mark
+    final FontMetrics metrics = markLabel.getFontMetrics(markLabel.getFont());
+    final int markWidth =
+        Stream.of(Status.values()).mapToInt(s -> metrics.stringWidth(s.mark())).max().orElse(0);
+    markLabel.setHorizontalAlignment(SwingConstants.CENTER);
+    markLabel.setPreferredSize(new Dimension(markWidth, markLabel.getPreferredSize().height));
+    final JButton nameLink = link(name, () -> file.ifPresent(this::reveal));
+    final JLabel plainName = new JLabel(name);
+    // where the link's text starts, so that all names line up
+    plainName.setBorder(new EmptyBorder(nameLink.getInsets()));
+    final JComponent nameLabel = file.isPresent() ? nameLink : plainName;
+    final JPanel nameCell = new JPanel(new BorderLayout(Theme.GAP_S, 0));
+    nameCell.setOpaque(false);
+    nameCell.setBorder(BorderFactory.createEmptyBorder(0, depth * INDENT, 0, 0));
+    nameCell.add(markLabel, BorderLayout.WEST);
+    nameCell.add(nameLabel, BorderLayout.CENTER);
+    final GridBagConstraints at = new GridBagConstraints();
+    at.gridy = row;
+    at.anchor = GridBagConstraints.WEST;
+    at.insets = new Insets(1, 0, 1, Theme.GAP_L);
+    at.ipady = 4;
+    rows.add(nameCell, at);
+    at.weightx = 1;
+    at.fill = GridBagConstraints.HORIZONTAL;
+    rows.add(Theme.newSecondaryLabel(purpose), at);
+    at.weightx = 0;
+    at.fill = GridBagConstraints.NONE;
+    at.anchor = GridBagConstraints.EAST;
+    at.insets = new Insets(1, 0, 1, 0);
+    rows.add(link.<JComponent>map(b -> b).orElseGet(JLabel::new), at);
+  }
+
+  private static JButton link(final String text, final Runnable action) {
+    final JButton link = new JButton(text);
+    Theme.setTertiaryButtonStyle(link);
+    link.addActionListener(e -> action.run());
+    return link;
+  }
+
+  private static JComponent note(final String message) {
     final JLabel note = new JLabel(message, SwingConstants.CENTER);
     note.setForeground(Theme.getSecondaryTextColor());
     return note;
   }
 
+  /** "• Changed", Revert and Save file show only while there is something to save. */
   private void updateButtons() {
-    save.setEnabled(editable && dirty);
-    revert.setEnabled(editable && dirty);
+    final boolean toSave = editable && dirty;
+    changed.setVisible(toSave);
+    revert.setVisible(toSave);
+    save.setVisible(toSave);
+    readOnly.setVisible(!editable);
+    fileSlot.revalidate();
   }
 
   /** Shows the typed HTML beside it, where the reader was in it; called when typing pauses. */
@@ -718,7 +979,7 @@ final class FilesEditor implements Editor {
     }
     final String checked = text.getText();
     final int edit = edits;
-    problemsTitle.setText("PROBLEMS · checking...");
+    setStatus(Status.TODO, "Checking…");
     new SwingWorker<List<Lint>, Void>() {
       @Override
       protected List<Lint> doInBackground() {
@@ -734,18 +995,38 @@ final class FilesEditor implements Editor {
           final List<Lint> found = get();
           problems.clear();
           found.forEach(problems::addElement);
-          problemsTitle.setText(
-              found.isEmpty()
-                  ? "PROBLEMS · none, the game reads it"
-                  : "PROBLEMS · " + found.size());
+          if (found.isEmpty()) {
+            problemScroll.setVisible(false);
+          }
+          problemList.setVisibleRowCount(Math.min(MAX_PROBLEM_ROWS, found.size()));
+          showStatus();
+          fileSlot.revalidate();
         } catch (final InterruptedException e) {
           Thread.currentThread().interrupt();
         } catch (final ExecutionException e) {
           log.info("Could not check {}", file, e);
-          problemsTitle.setText("PROBLEMS · could not check");
+          setStatus(Status.WARNING, "Could not check");
         }
       }
     }.execute();
+  }
+
+  /** The checked file's problems: none, or how many, with the list open or closed. */
+  private void showStatus() {
+    if (problems.isEmpty()) {
+      setStatus(Status.DONE, "The game reads this file");
+    } else {
+      setStatus(
+          Status.PROBLEM,
+          problems.size()
+              + (problems.size() == 1 ? " problem " : " problems ")
+              + (problemScroll.isVisible() ? "▴" : "▾"));
+    }
+  }
+
+  private void setStatus(final Status shown, final String words) {
+    status.setText(shown.mark() + " " + words);
+    status.setForeground(shown.color());
   }
 
   private void goToLine(final int line) {
@@ -777,40 +1058,25 @@ final class FilesEditor implements Editor {
       reloadMap.run();
     } catch (final IOException e) {
       log.warn("Could not save {}", file, e);
+      Dialogs.warn(page, "Save file", "Could not save " + file.getFileName() + "\n" + e);
     }
   }
 
   /** Each change of the text marks it changed and checks it again after a pause. */
-  private final class Typed implements DocumentListener {
-    @Override
-    public void insertUpdate(final DocumentEvent e) {
-      changed();
+  private void typed() {
+    if (filling) {
+      return;
     }
-
-    @Override
-    public void removeUpdate(final DocumentEvent e) {
-      changed();
-    }
-
-    @Override
-    public void changedUpdate(final DocumentEvent e) {
-      changed();
-    }
-
-    private void changed() {
-      if (filling) {
-        return;
-      }
-      edits++;
-      dirty = true;
-      updateButtons();
-      lintLater.restart();
-    }
+    edits++;
+    dirty = true;
+    updateButtons();
+    lintLater.restart();
   }
 
   /**
-   * The folders of the tree: the open map's first, then the maps added to copy from; directories
-   * before files, by name, read when first opened.
+   * The folders of the tree: the open map's first, then the maps added to copy from under their
+   * own heading; directories before files, by name, read when first opened. A search shows only
+   * what matches and the folders with matches in them.
    */
   private final class Folders implements TreeModel {
     private final Object root = "Folders";
@@ -819,21 +1085,16 @@ final class FilesEditor implements Editor {
 
     void refresh() {
       listed.clear();
+      matching = filter.isEmpty() ? Set.of() : findMatching();
       final TreeModelEvent changed = new TreeModelEvent(this, new Object[] {root});
       listeners.forEach(l -> l.treeStructureChanged(changed));
       if (getChildCount(root) > 0) {
         tree.expandRow(0);
       }
-    }
-
-    private List<Path> children(final Object node) {
-      if (node == root) {
-        final List<Path> roots = new ArrayList<>();
-        mapFolder.get().ifPresent(roots::add);
-        roots.addAll(otherFolders);
-        return roots;
+      // the new structure dropped the selection: the open file stays marked in the tree
+      if (open != null && filter.isEmpty() && Files.exists(open)) {
+        reveal(open);
       }
-      return listed.computeIfAbsent((Path) node, FilesEditor::list);
     }
 
     @Override
@@ -843,17 +1104,17 @@ final class FilesEditor implements Editor {
 
     @Override
     public Object getChild(final Object parent, final int index) {
-      return children(parent).get(index);
+      return childrenOf(parent).get(index);
     }
 
     @Override
     public int getChildCount(final Object parent) {
-      return children(parent).size();
+      return childrenOf(parent).size();
     }
 
     @Override
     public boolean isLeaf(final Object node) {
-      return node != root && !Files.isDirectory((Path) node);
+      return node instanceof Path path && !Files.isDirectory(path);
     }
 
     @Override
@@ -863,7 +1124,25 @@ final class FilesEditor implements Editor {
 
     @Override
     public int getIndexOfChild(final Object parent, final Object child) {
-      return children(parent).indexOf(child);
+      return childrenOf(parent).indexOf(child);
+    }
+
+    /** The children, the heading of the other maps among them. */
+    private List<?> childrenOf(final Object parent) {
+      if (parent == root) {
+        final List<Object> tops = new ArrayList<>();
+        mapFolder.get().ifPresent(tops::add);
+        if (!otherFolders.isEmpty()) {
+          tops.add(OTHER_MAPS);
+        }
+        return tops;
+      }
+      if (parent == OTHER_MAPS) {
+        return otherFolders;
+      }
+      return listed.computeIfAbsent(
+          (Path) parent,
+          folder -> list(folder).stream().filter(FilesEditor.this::matchesSearch).toList());
     }
 
     @Override
@@ -877,12 +1156,57 @@ final class FilesEditor implements Editor {
     }
   }
 
+  /** Whether the file's name has the searched text, or the folder has such a file in it. */
+  private boolean matchesSearch(final Path file) {
+    return filter.isEmpty() || matching.contains(file);
+  }
+
+  /**
+   * The files below the tree's folders whose name has the searched text, and the folders they are
+   * in; what the tree leaves out is left out here too.
+   */
+  private Set<Path> findMatching() {
+    final Set<Path> found = new HashSet<>();
+    for (final Path top : tops()) {
+      try (Stream<Path> inside = Files.walk(top)) {
+        inside
+            .filter(p -> !p.equals(top))
+            .filter(p -> p.getFileName().toString().toLowerCase(Locale.ROOT).contains(filter))
+            .filter(p -> isShownBelow(top, p))
+            .forEach(
+                p -> {
+                  for (Path at = p; !at.equals(top); at = at.getParent()) {
+                    found.add(at);
+                  }
+                });
+      } catch (final IOException | UncheckedIOException e) {
+        log.info("Could not search {}", top, e);
+      }
+    }
+    return Set.copyOf(found);
+  }
+
+  /** Whether the tree shows the file and every folder between it and the top. */
+  private boolean isShownBelow(final Path top, final Path file) {
+    for (Path at = file; !at.equals(top); at = at.getParent()) {
+      if (!isShown(at)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** Hidden files are left out, and backups but for those revealed. */
+  private boolean isShown(final Path file) {
+    return !file.getFileName().toString().startsWith(".")
+        && (!isBackup(file) || revealedBackups.contains(file));
+  }
+
   /** A folder's entries: folders first, then files, by name; hidden ones and backups left out. */
-  private static List<Path> list(final Path folder) {
+  private List<Path> list(final Path folder) {
     try (Stream<Path> entries = Files.list(folder)) {
       return entries
-          .filter(p -> !p.getFileName().toString().startsWith("."))
-          .filter(p -> !p.getFileName().toString().endsWith(".bak"))
+          .filter(this::isShown)
           .sorted(
               Comparator.comparing((Path p) -> !Files.isDirectory(p))
                   .thenComparing(p -> p.getFileName().toString().toLowerCase(Locale.ROOT)))
@@ -893,8 +1217,8 @@ final class FilesEditor implements Editor {
     }
   }
 
-  /** Shows a file or folder by its name, a top folder by its whole path. */
-  private final class FileRenderer extends DefaultTreeCellRenderer {
+  /** Shows a file or folder by its name, the heading of the other maps as it is. */
+  private static final class FileRenderer extends DefaultTreeCellRenderer {
     @Serial private static final long serialVersionUID = 1L;
 
     @Override
@@ -907,11 +1231,7 @@ final class FilesEditor implements Editor {
         final int row,
         final boolean hasFocus) {
       final String name =
-          value instanceof Path path
-              ? (folders.children(folders.root).contains(path)
-                  ? path.getFileName() + (otherFolders.contains(path) ? "  (to copy from)" : "")
-                  : path.getFileName().toString())
-              : String.valueOf(value);
+          value instanceof Path path ? path.getFileName().toString() : String.valueOf(value);
       return super.getTreeCellRendererComponent(
           shownIn, name, selected, expanded, leaf, row, hasFocus);
     }
@@ -929,74 +1249,11 @@ final class FilesEditor implements Editor {
         final boolean selected,
         final boolean focused) {
       final Lint lint = (Lint) value;
-      return super.getListCellRendererComponent(
-          list,
-          (lint.line() > 0 ? "Line " + lint.line() + ": " : "") + lint.message(),
-          index,
-          selected,
-          focused);
-    }
-  }
-
-  /** The line numbers left of the text, as editors for code show them. */
-  static final class LineNumbers extends JComponent {
-    @Serial private static final long serialVersionUID = 1L;
-
-    private final JTextArea text;
-
-    LineNumbers(final JTextArea text) {
-      this.text = text;
-      setForeground(Theme.getSecondaryTextColor());
-      text.getDocument()
-          .addDocumentListener(
-              new DocumentListener() {
-                @Override
-                public void insertUpdate(final DocumentEvent e) {
-                  changed();
-                }
-
-                @Override
-                public void removeUpdate(final DocumentEvent e) {
-                  changed();
-                }
-
-                @Override
-                public void changedUpdate(final DocumentEvent e) {
-                  changed();
-                }
-              });
-    }
-
-    private void changed() {
-      revalidate();
-      repaint();
-    }
-
-    @Override
-    public Dimension getPreferredSize() {
-      final FontMetrics metrics = getFontMetrics(text.getFont());
-      final int digits = String.valueOf(Math.max(1, text.getLineCount())).length();
-      return new Dimension(
-          metrics.charWidth('0') * (digits + 2), metrics.getHeight() * text.getLineCount());
-    }
-
-    @Override
-    protected void paintComponent(final Graphics g) {
-      // the text's font and metrics, as the text places its lines with them
-      final FontMetrics metrics = text.getFontMetrics(text.getFont());
-      g.setFont(text.getFont());
-      final int lineHeight = metrics.getHeight();
-      final Rectangle shown = g.getClipBounds();
-      final int first = Math.max(0, shown.y / lineHeight);
-      final int last = Math.min(text.getLineCount(), (shown.y + shown.height) / lineHeight + 1);
-      g.setColor(getForeground());
-      for (int line = first; line < last; line++) {
-        final String number = String.valueOf(line + 1);
-        g.drawString(
-            number,
-            getWidth() - metrics.stringWidth(number) - metrics.charWidth('0'),
-            (line + 1) * lineHeight - metrics.getDescent() + text.getInsets().top);
-      }
+      final String shown = (lint.line() > 0 ? "Line " + lint.line() + ": " : "") + lint.message();
+      final Component row =
+          super.getListCellRendererComponent(list, shown, index, selected, focused);
+      setToolTipText(shown);
+      return row;
     }
   }
 }

@@ -1,10 +1,12 @@
 package eddies.mapeditor;
 
+import com.formdev.flatlaf.FlatClientProperties;
 import games.strategy.engine.data.GameStep;
 import java.awt.BorderLayout;
+import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
-import java.awt.GridLayout;
+import java.awt.Font;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
 import java.io.Serial;
@@ -12,31 +14,41 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.UnaryOperator;
-import javax.swing.JButton;
+import javax.swing.BorderFactory;
+import javax.swing.Box;
+import javax.swing.BoxLayout;
+import javax.swing.ButtonGroup;
+import javax.swing.DefaultListCellRenderer;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
+import javax.swing.JList;
 import javax.swing.JPanel;
+import javax.swing.JRadioButton;
 import javax.swing.JScrollPane;
+import javax.swing.JSpinner;
 import javax.swing.JSplitPane;
 import javax.swing.JTable;
 import javax.swing.JTextField;
 import javax.swing.ListSelectionModel;
 import javax.swing.table.AbstractTableModel;
+import javax.swing.table.DefaultTableCellRenderer;
 import lombok.experimental.ExtensionMethod;
 import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.GamePlay.Sequence.Step;
 import org.triplea.map.data.elements.GamePlay.Sequence.Step.StepProperty;
-import org.triplea.swing.DocumentListenerBuilder;
 import org.triplea.swing.SwingComponents;
 import eddies.mapeditor.GameRulesXml.DelegateKind;
 import eddies.mapeditor.MakerIcon.Glyph;
 
-/** The turn order: the steps of a round, each of a delegate and mostly of a nation. */
+/**
+ * The turn order: the steps of a round, each of a delegate and mostly of a nation, in bands of the
+ * nation whose steps follow each other.
+ */
 @ExtensionMethod(Builders.class)
 final class TurnOrderEditor implements Editor {
   // what the engine reads from a step, from its list of them
@@ -45,14 +57,20 @@ final class TurnOrderEditor implements Editor {
           .map(TurnOrderEditor::constant)
           .toList();
   private static final String NO_NATION = "(none)";
-  private static final int STEPS_WIDTH = 520;
-  private static final int FIELD_WIDTH = 300;
+  // the separator item of the kinds' combo, before the rare kinds
+  private static final String LESS_COMMON = "Less common";
+  private static final int STEPS_WIDTH = 560;
+  private static final int FIELD_WIDTH = 320;
 
   private final MapProject project;
-  private final JPanel page = new JPanel(new BorderLayout(8, 0));
-  private final StepsTable steps;
+  private final JPanel page = new JPanel(new BorderLayout(0, Theme.GAP_S));
+  private final JLabel count = Theme.newSecondaryLabel("");
+  private final StepsTable steps = new StepsTable();
   private final JTable table;
-  private final Form inspector = new Form(280);
+  private final Form inspector = new Form(FIELD_WIDTH);
+  private final JScrollPane inspectorScroll = SwingComponents.newJScrollPane(inspector);
+  private final JPanel inspectorSlot = new JPanel(new BorderLayout());
+  // the chosen step's index in the steps, -1 for none
   private int selected = -1;
   private boolean editingHere;
   // the commit of a text being typed, made a step by commit()
@@ -60,42 +78,61 @@ final class TurnOrderEditor implements Editor {
 
   TurnOrderEditor(final MapProject project) {
     this.project = project;
-    steps = new StepsTable(project);
-    table = new JTable(steps);
+    steps.refresh(project.game());
+    table =
+        new JTable(steps) {
+          @Serial private static final long serialVersionUID = 1L;
+
+          // a band is no step: up from below goes on up, anything else to the step after it
+          @Override
+          public void changeSelection(
+              final int row, final int column, final boolean toggle, final boolean extend) {
+            if (steps.step(row).isPresent()) {
+              super.changeSelection(row, column, toggle, extend);
+              return;
+            }
+            final int to = getSelectedRow() == row + 1 && row > 0 ? row - 1 : row + 1;
+            if (to < getRowCount()) {
+              super.changeSelection(to, column, toggle, extend);
+            }
+          }
+        };
     table.setRowHeight(table.getRowHeight() + 8);
     table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-    table.getColumnModel().getColumn(0).setMaxWidth(40);
+    table.setShowGrid(false);
+    table.setDefaultRenderer(Object.class, new BandRenderer());
+    table.getColumnModel().getColumn(0).setMaxWidth(44);
+    table.getColumnModel().getColumn(1).setPreferredWidth(280);
+    table.getColumnModel().getColumn(2).setPreferredWidth(220);
     table
         .getSelectionModel()
         .addListSelectionListener(
             e -> {
               // a row chosen again after a change keeps the inspector, eg a spinner in use
-              if (!e.getValueIsAdjusting()
-                  && table.getSelectedRow() >= 0
-                  && table.getSelectedRow() != selected) {
-                selected = table.getSelectedRow();
+              final Optional<Integer> step = steps.step(table.getSelectedRow());
+              if (!e.getValueIsAdjusting() && step.isPresent() && step.get() != selected) {
+                selected = step.get();
                 showInspector();
               }
             });
     final JScrollPane tableScroll = SwingComponents.newJScrollPane(table);
     // the header also before the table is shown in a window, eg in an offscreen picture
     tableScroll.setColumnHeaderView(table.getTableHeader());
-    final JPanel listColumn = new JPanel(new BorderLayout(0, 8));
+    final JPanel listColumn = new JPanel(new BorderLayout(0, Theme.GAP_S));
+    listColumn.add(newButtons(), BorderLayout.NORTH);
     listColumn.add(tableScroll, BorderLayout.CENTER);
-    listColumn.add(newButtons(), BorderLayout.SOUTH);
-    final JSplitPane columns =
-        Panels.sideBySide(listColumn, SwingComponents.newJScrollPane(inspector));
-    // the steps with what happens in them, the step's fields need less
+    final JSplitPane columns = Panels.sideBySide(listColumn, inspectorSlot);
     columns.setDividerLocation(STEPS_WIDTH);
+    page.add(count, BorderLayout.NORTH);
     page.add(columns, BorderLayout.CENTER);
     project.onChange(
         () -> {
+          steps.refresh(project.game());
           steps.fireTableDataChanged();
-          if (selected >= 0 && selected < steps.getRowCount()) {
-            table.setRowSelectionInterval(selected, selected);
-          } else {
+          if (selected >= steps.stepCount()) {
             selected = -1;
           }
+          selectRow();
           if (!editingHere) {
             showInspector();
           }
@@ -123,8 +160,8 @@ final class TurnOrderEditor implements Editor {
 
   @Override
   public String hint() {
-    return "The steps of a round in their order: what happens in each, eg purchase or combat"
-        + " move, and whose step it is. Add, move or remove steps; choose one to change it.";
+    return "The steps of a round, top to bottom: what happens in each, eg buying or battles, and"
+        + " whose step it is. Add, move or remove steps; choose one to change it.";
   }
 
   @Override
@@ -138,133 +175,197 @@ final class TurnOrderEditor implements Editor {
   }
 
   private JPanel newButtons() {
-    final JButton add = new JButton("Add step");
-    add.setToolTipText("A new step after the chosen one, of its kind and nation");
-    add.addActionListener(e -> addStep());
-    final JButton kind = new JButton("Add kind...");
-    kind.setToolTipText("A step of a kind TripleA has, eg politics or user actions");
-    kind.addActionListener(e -> addKind());
-    final JButton up = new JButton("▲");
-    up.setToolTipText("Move the step up");
-    up.addActionListener(e -> move(-1));
-    final JButton down = new JButton("▼");
-    down.setToolTipText("Move the step down");
-    down.addActionListener(e -> move(1));
-    final JButton remove = new JButton("Remove");
-    remove.setToolTipText("Remove the step; undo takes it back");
-    remove.addActionListener(
-        e -> {
-          if (selected >= 0) {
-            final int removed = selected;
-            selected = Math.min(removed, steps.getRowCount() - 2);
-            project.edit(g -> RulesXml.withoutStep(g, removed));
-          }
-        });
-    final JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
-    buttons.add(add);
-    buttons.add(kind);
-    buttons.add(up);
-    buttons.add(down);
-    buttons.add(remove);
+    final JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_XS, 0));
+    buttons.add(Theme.newAddButton("Add step...", "Add a step after the chosen one", this::addStep));
+    buttons.add(Box.createHorizontalStrut(Theme.GAP_S));
+    buttons.add(Theme.newIconButton("▲", "Move the step up", () -> move(-1)));
+    buttons.add(Theme.newIconButton("▼", "Move the step down", () -> move(1)));
     return buttons;
   }
 
+  /** Asks what happens in the new step and whose it is, and adds it after the chosen one. */
   private void addStep() {
-    final List<Step> all = RulesXml.steps(project.game());
-    final List<String> delegates = RulesXml.delegates(project.game());
-    if (delegates.isEmpty()) {
-      return;
-    }
+    final Game game = project.game();
+    final List<Step> all = RulesXml.steps(game);
     final Optional<Step> like = selected >= 0 ? Optional.of(all.get(selected)) : Optional.empty();
-    final int at = selected >= 0 ? selected + 1 : all.size();
-    selected = at;
-    project.edit(
-        g ->
-            RulesXml.withStepAdded(
-                g,
-                at,
-                like.map(Step::getDelegate).orElse(delegates.get(0)),
-                like.map(Step::getPlayer).orElse(null)));
-  }
-
-  /** Asks for a kind of step TripleA has, and adds it with a step after the chosen one. */
-  private void addKind() {
-    final JComboBox<DelegateKind> kinds =
-        new JComboBox<>(GameRulesXml.DELEGATE_KINDS.toArray(DelegateKind[]::new));
+    final JComboBox<Object> kinds = newKinds();
+    kinds.setSelectedItem(
+        like.flatMap(s -> GameRulesXml.kindOf(game, s)).orElse(GameRulesXml.DELEGATE_KINDS.get(0)));
     final JComboBox<String> nations =
-        new JComboBox<>(MapXml.nations(project.game()).toArray(String[]::new));
-    final List<Step> all = RulesXml.steps(project.game());
-    if (selected >= 0 && all.get(selected).getPlayer() != null) {
-      nations.setSelectedItem(all.get(selected).getPlayer());
-    }
+        new JComboBox<>(MapXml.nations(game).toArray(String[]::new));
+    like.map(Step::getPlayer).ifPresent(nations::setSelectedItem);
+    final JPanel nation = labelled("Nation", nations);
     // steps of the whole round have no nation
-    kinds.addActionListener(
-        e -> nations.setEnabled(!((DelegateKind) kinds.getSelectedItem()).isOfRound()));
-    nations.setEnabled(!((DelegateKind) kinds.getSelectedItem()).isOfRound());
-    final JPanel fields = new JPanel(new GridLayout(0, 1, 0, 4));
-    fields.add(labelFor("Kind of step", kinds));
-    fields.add(kinds);
-    fields.add(labelFor("Nation", nations));
-    fields.add(nations);
-    if (!Panels.ask(page, fields, "Add kind of step")) {
+    final Runnable showNation =
+        () -> nation.setVisible(!((DelegateKind) kinds.getSelectedItem()).isOfRound());
+    kinds.addActionListener(e -> showNation.run());
+    showNation.run();
+    final JPanel content = new JPanel();
+    content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
+    content.setOpaque(false);
+    content.add(labelled("What happens", kinds));
+    content.add(nation);
+    content.add(
+        Theme.newSecondaryLabel(
+            like.map(
+                    s ->
+                        "Goes after step "
+                            + (selected + 1)
+                            + " ("
+                            + what(game, s)
+                            + Optional.ofNullable(s.getPlayer()).map(p -> ", " + p).orElse("")
+                            + ").")
+                .orElse(all.isEmpty() ? "It is the first step." : "Goes at the end.")));
+    for (final Component part : content.getComponents()) {
+      ((JComponent) part).setAlignmentX(Component.LEFT_ALIGNMENT);
+    }
+    if (!Dialogs.ask(page, "Add step", content, "Add step")) {
       return;
     }
     final DelegateKind kind = (DelegateKind) kinds.getSelectedItem();
-    final String nation = (String) nations.getSelectedItem();
+    final String player = (String) nations.getSelectedItem();
     final int at = selected >= 0 ? selected + 1 : all.size();
     selected = at;
-    project.edit(g -> GameRulesXml.withDelegateStep(g, at, kind, nation));
+    project.edit(g -> GameRulesXml.withDelegateStep(g, at, kind, player));
   }
 
-  private static JLabel labelFor(final String text, final JComponent field) {
+  /** The label above the field, with the room below it a form has between fields. */
+  private static JPanel labelled(final String text, final JComponent field) {
     final JLabel label = new JLabel(text);
     label.setLabelFor(field);
-    return label;
+    final JPanel part = new JPanel(new BorderLayout(0, Theme.GAP_XS));
+    part.setOpaque(false);
+    part.setBorder(BorderFactory.createEmptyBorder(0, 0, Theme.GAP_M, 0));
+    part.add(label, BorderLayout.NORTH);
+    part.add(field, BorderLayout.CENTER);
+    return part;
+  }
+
+  /** TripleA's kinds of step, the common ones first, then the rare below "Less common". */
+  private static JComboBox<Object> newKinds() {
+    final List<Object> items = new ArrayList<>();
+    GameRulesXml.DELEGATE_KINDS.stream().filter(DelegateKind::common).forEach(items::add);
+    items.add(LESS_COMMON);
+    GameRulesXml.DELEGATE_KINDS.stream().filter(k -> !k.common()).forEach(items::add);
+    final JComboBox<Object> kinds = new JComboBox<>(items.toArray());
+    kinds.setMaximumRowCount(items.size());
+    kinds.setRenderer(
+        new DefaultListCellRenderer() {
+          @Serial private static final long serialVersionUID = 1L;
+
+          @Override
+          public Component getListCellRendererComponent(
+              final JList<?> list,
+              final Object value,
+              final int index,
+              final boolean isSelected,
+              final boolean cellHasFocus) {
+            final boolean separator = LESS_COMMON.equals(value);
+            super.getListCellRendererComponent(
+                list, value, index, isSelected && !separator, cellHasFocus && !separator);
+            if (separator) {
+              setForeground(Theme.getSecondaryTextColor());
+            } else if (value instanceof final DelegateKind kind && index >= 0) {
+              // TripleA's name for it in the list only, the field stays short
+              setText(
+                  "<html>"
+                      + kind.what()
+                      + " <font color='"
+                      + Theme.convertColorToHex(
+                          isSelected
+                              ? Theme.getSelectionSecondaryTextColor()
+                              : Theme.getSecondaryTextColor())
+                      + "'>· "
+                      + kind.display()
+                      + "</font></html>");
+            }
+            return this;
+          }
+        });
+    // the separator is no choice: on to the kind below it
+    kinds.addActionListener(
+        e -> {
+          if (LESS_COMMON.equals(kinds.getSelectedItem())) {
+            kinds.setSelectedIndex(kinds.getSelectedIndex() + 1);
+          }
+        });
+    return kinds;
   }
 
   private void move(final int by) {
     final int to = selected + by;
-    if (selected >= 0 && to >= 0 && to < steps.getRowCount()) {
+    if (selected >= 0 && to >= 0 && to < steps.stepCount()) {
       final int from = selected;
       selected = to;
       project.edit(g -> RulesXml.withStepMoved(g, from, to));
     }
   }
 
+  private void selectRow() {
+    final int row = steps.rowOf(selected);
+    if (row >= 0) {
+      table.setRowSelectionInterval(row, row);
+      table.scrollRectToVisible(table.getCellRect(row, 0, true));
+    } else {
+      table.clearSelection();
+    }
+  }
+
   private void showInspector() {
     inspector.clear();
     typing = Optional.empty();
+    inspectorSlot.removeAll();
     final Game game = project.game();
     final List<Step> all = RulesXml.steps(game);
-    if (selected < 0 || selected >= all.size()) {
-      inspector.note(all.size() + " steps in a round. Choose one to change it.").end();
+    count.setText(all.size() + " steps · a round runs top to bottom");
+    if (all.isEmpty() || selected < 0 || selected >= all.size()) {
+      inspectorSlot.add(
+          all.isEmpty()
+              ? Panels.empty(
+                  Glyph.TURN_ORDER,
+                  "No turn order yet",
+                  "Each round runs these steps top to bottom. Add the first with Add step.")
+              : Panels.empty(Glyph.TURN_ORDER, "Choose a step", "Choose a step to change it."),
+          BorderLayout.CENTER);
+      inspectorSlot.revalidate();
+      inspectorSlot.repaint();
       return;
     }
+    inspectorSlot.add(inspectorScroll, BorderLayout.CENTER);
     final int index = selected;
-    final Step step = all.get(index);
-    inspector.title(step.getName());
+    // the step as this inspector last changed it; one changed elsewhere meanwhile is left alone
+    final AtomicReference<Step> step = new AtomicReference<>(all.get(index));
+    inspector.title(what(game, step.get()));
+    inspector.subtitle(
+        Optional.ofNullable(step.get().getPlayer()).map(p -> p + " · ").orElse("")
+            + "step "
+            + step.get().getName());
 
-    final JComboBox<String> delegate = new JComboBox<>();
-    RulesXml.delegates(game).forEach(delegate::addItem);
-    delegate.setSelectedItem(step.getDelegate());
-    delegate.addActionListener(
-        e ->
-            change(
-                index,
-                step,
-                s -> s.toBuilder().delegate((String) delegate.getSelectedItem()).build()));
-    inspector.field(
-        "What happens",
-        "The delegate that runs the step, eg purchase or battle.",
-        ofFieldWidth("What happens", delegate));
+    final JComboBox<Object> kinds = newKinds();
+    GameRulesXml.kindOf(game, step.get())
+        .<Object>map(k -> k)
+        .ifPresentOrElse(
+            kinds::setSelectedItem,
+            () -> {
+              // a delegate of the map's own: shown by its name, kept until another is chosen
+              kinds.insertItemAt(step.get().getDelegate(), 0);
+              kinds.setSelectedIndex(0);
+            });
+    kinds.addActionListener(
+        e -> {
+          if (kinds.getSelectedItem() instanceof final DelegateKind kind) {
+            changeKind(index, step, kind);
+          }
+        });
+    inspector.field("What happens", ofFieldWidth("What happens", kinds));
 
     final JComboBox<String> nation = new JComboBox<>();
     nation.addItem(NO_NATION);
     MapXml.nations(game).forEach(nation::addItem);
-    nation.setSelectedItem(Optional.ofNullable(step.getPlayer()).orElse(NO_NATION));
+    nation.setSelectedItem(Optional.ofNullable(step.get().getPlayer()).orElse(NO_NATION));
     nation.addActionListener(
         e ->
-            change(
+            changeStep(
                 index,
                 step,
                 s ->
@@ -274,84 +375,162 @@ final class TurnOrderEditor implements Editor {
                                 ? null
                                 : (String) nation.getSelectedItem())
                         .build()));
-    inspector.field(
-        "Nation",
-        "Whose step it is; none for steps of the whole round, eg its end.",
-        ofFieldWidth("Nation", nation));
+    inspector.field("Nation", ofFieldWidth("Nation", nation));
 
-    inspector.field(
-        "Shown as",
-        "The step's name in the game; empty for the delegate's.",
-        ofFieldWidth(
-            "Shown as",
-            newText(
-                Optional.ofNullable(step.getDisplay()).orElse(""),
-                text ->
-                    change(
-                        index,
-                        step,
-                        s -> s.toBuilder().display(text.isBlank() ? null : text).build()))));
+    final JTextField shown =
+        newText(
+            Optional.ofNullable(step.get().getDisplay()).orElse(""),
+            text ->
+                changeStep(
+                    index, step, s -> s.toBuilder().display(text.isBlank() ? null : text).build()));
+    // empty, the game shows the delegate's name
+    shown.putClientProperty(
+        FlatClientProperties.PLACEHOLDER_TEXT,
+        GameRulesXml.shownName(game, step.get().toBuilder().display(null).build()));
+    inspector.field("Name in game", ofFieldWidth("Name in game", shown));
 
-    inspector.field(
-        "Runs at most",
-        "How many times the step runs in the whole game, eg 1 for a bid at the start; 0 for"
-            + " every round.",
-        Form.newNumber(
-            Optional.ofNullable(step.getMaxRunCount()).orElse(0),
-            99,
-            value -> {
-              editingHere = true;
-              try {
-                change(
-                    index, step, s -> s.toBuilder().maxRunCount(value == 0 ? null : value).build());
-              } finally {
-                editingHere = false;
-              }
-            }));
-    showProperties(index, step);
+    inspector.field("Runs", newRuns(index, step));
+    final List<StepProperty> properties = RulesXml.stepProperties(step.get());
+    inspector.more("step-properties", properties.size(), more -> showProperties(more, index, step));
+    inspector.remove(
+        "Remove step",
+        () -> {
+          selected = Math.min(index, all.size() - 2);
+          project.edit(g -> RulesXml.withoutStep(g, index));
+        });
     inspector.end();
+    inspectorSlot.revalidate();
+    inspectorSlot.repaint();
   }
 
-  /** The step's properties, each with its value, and a box to add one the engine knows. */
-  private void showProperties(final int index, final Step step) {
-    inspector.section(
-        "Properties",
-        "Settings the engine reads from a step, eg resetUnitStateAtStart true, or"
-            + " turnSummaryPlayers with nations joined by colons. Without them the engine goes by"
-            + " the step's name.");
-    final List<StepProperty> properties = RulesXml.stepProperties(step);
+  /** What happens in the step in plain words, else its delegate's name. */
+  private static String what(final Game game, final Step step) {
+    return GameRulesXml.kindOf(game, step).map(DelegateKind::what).orElse(step.getDelegate());
+  }
+
+  /**
+   * Makes the step of the kind; refused while others name it by the name that must change, as they
+   * would no longer find it.
+   */
+  private void changeKind(final int index, final AtomicReference<Step> step, final DelegateKind kind) {
+    final Game game = project.game();
+    final String name = step.get().getName();
+    final Game changed = GameRulesXml.withStepKind(game, index, kind);
+    final List<String> naming = RulesXml.whereNamed(game, name);
+    if (!naming.isEmpty() && !name.equals(RulesXml.steps(changed).get(index).getName())) {
+      Dialogs.warn(
+          page,
+          "Change what happens",
+          "TripleA tells by a step's name what happens in it, so the name "
+              + name
+              + " would change. These still name it: "
+              + String.join(", ", naming)
+              + ". Change them first.");
+      showInspector();
+      return;
+    }
+    change(index, step, g -> GameRulesXml.withStepKind(g, index, kind));
+  }
+
+  /** "Every round" or "Only in the first n rounds", which writes maxRunCount. */
+  private JPanel newRuns(final int index, final AtomicReference<Step> step) {
+    final int runs = Optional.ofNullable(step.get().getMaxRunCount()).orElse(0);
+    final JRadioButton every = new JRadioButton("Every round", runs == 0);
+    final JRadioButton first = new JRadioButton("Only in the first", runs > 0);
+    final ButtonGroup group = new ButtonGroup();
+    group.add(every);
+    group.add(first);
+    final JLabel rounds = new JLabel("rounds");
+    final JSpinner number =
+        Form.newNumber(Math.max(1, runs), 1, 99, value -> setRuns(index, step, value));
+    number.setPreferredSize(new Dimension(72, number.getPreferredSize().height));
+    final Runnable showNumber =
+        () -> {
+          number.setVisible(first.isSelected());
+          rounds.setVisible(first.isSelected());
+        };
+    showNumber.run();
+    every.addActionListener(
+        e -> {
+          showNumber.run();
+          setRuns(index, step, 0);
+        });
+    first.addActionListener(
+        e -> {
+          showNumber.run();
+          setRuns(index, step, (Integer) number.getValue());
+        });
+    final JPanel firstRow = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_XS, 0));
+    firstRow.setOpaque(false);
+    firstRow.add(first);
+    firstRow.add(number);
+    firstRow.add(rounds);
+    final JPanel both = new JPanel();
+    both.setLayout(new BoxLayout(both, BoxLayout.Y_AXIS));
+    both.setOpaque(false);
+    for (final JComponent part : List.of(every, firstRow)) {
+      part.setAlignmentX(Component.LEFT_ALIGNMENT);
+      both.add(part);
+    }
+    return both;
+  }
+
+  // the inspector stays, so the spinner keeps the focus while it changes
+  private void setRuns(final int index, final AtomicReference<Step> step, final int runs) {
+    editingHere = true;
+    try {
+      changeStep(
+          index, step, s -> s.toBuilder().maxRunCount(runs == 0 ? null : runs).build());
+    } finally {
+      editingHere = false;
+    }
+  }
+
+  /** The step's properties, each with its value, and a button to add one the engine knows. */
+  private void showProperties(final Form more, final int index, final AtomicReference<Step> step) {
+    final List<StepProperty> properties = RulesXml.stepProperties(step.get());
     for (final StepProperty property : properties) {
-      final JButton remove = new JButton("×");
-      remove.setToolTipText("Remove " + property.getName());
-      remove.addActionListener(
-          e -> change(index, step, s -> RulesXml.withoutStepProperty(s, property.getName())));
-      final JPanel row = new JPanel(new BorderLayout(6, 0));
+      final JPanel row = new JPanel(new BorderLayout(Theme.GAP_S, 0));
+      row.setOpaque(false);
       row.add(new JLabel(property.getName()), BorderLayout.WEST);
       row.add(
           newText(
               Optional.ofNullable(property.getValue()).orElse(""),
               text ->
-                  change(
+                  changeStep(
                       index, step, s -> RulesXml.withStepProperty(s, property.getName(), text))),
           BorderLayout.CENTER);
-      row.add(remove, BorderLayout.EAST);
-      inspector.row(row);
+      row.add(
+          Theme.newIconButton(
+              "×",
+              "Remove " + property.getName(),
+              () ->
+                  changeStep(
+                      index, step, s -> RulesXml.withoutStepProperty(s, property.getName()))),
+          BorderLayout.EAST);
+      more.row(row);
     }
     final List<String> names = properties.stream().map(StepProperty::getName).toList();
-    final List<String> addable = new ArrayList<>();
-    addable.add("Add a property...");
-    STEP_PROPERTIES.stream().filter(p -> !names.contains(p)).forEach(addable::add);
-    final JComboBox<String> add = new JComboBox<>(addable.toArray(String[]::new));
-    add.addActionListener(
-        e -> {
-          if (add.getSelectedIndex() > 0) {
-            final String name = (String) add.getSelectedItem();
-            change(index, step, s -> RulesXml.withStepProperty(s, name, "true"));
-          }
-        });
+    final List<String> addable = STEP_PROPERTIES.stream().filter(p -> !names.contains(p)).toList();
     final JPanel addRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-    addRow.add(add);
-    inspector.row(addRow);
+    addRow.setOpaque(false);
+    addRow.add(
+        Theme.newAddButton(
+            "Add property...",
+            "A setting the engine reads from a step, eg resetUnitStateAtStart",
+            () ->
+                Dialogs.pick(
+                        page,
+                        "Add property",
+                        "Settings the engine reads from a step.",
+                        addable,
+                        n -> n,
+                        "Add property")
+                    .ifPresent(
+                        name ->
+                            changeStep(
+                                index, step, s -> RulesXml.withStepProperty(s, name, "true")))));
+    more.row(addRow);
   }
 
   /**
@@ -362,6 +541,7 @@ final class TurnOrderEditor implements Editor {
     field.getAccessibleContext().setAccessibleName(name);
     field.setPreferredSize(new Dimension(FIELD_WIDTH, field.getPreferredSize().height));
     final JPanel left = new JPanel(new BorderLayout());
+    left.setOpaque(false);
     left.add(field, BorderLayout.WEST);
     return left;
   }
@@ -376,7 +556,7 @@ final class TurnOrderEditor implements Editor {
             onCommit.accept(field.getText().strip());
           }
         };
-    new DocumentListenerBuilder(() -> typing = Optional.of(commit)).attachTo(field);
+    OnTyping.attach(field, () -> typing = Optional.of(commit));
     field.addActionListener(e -> commit.run());
     field.addFocusListener(
         new FocusAdapter() {
@@ -388,52 +568,171 @@ final class TurnOrderEditor implements Editor {
     return field;
   }
 
+  private void changeStep(
+      final int index, final AtomicReference<Step> step, final UnaryOperator<Step> change) {
+    change(index, step, g -> RulesXml.withStep(g, index, change.apply(step.get())));
+  }
+
   /**
-   * Changes the step as one undo step, if it is still the one shown: a text committed late, eg
-   * after a move, must not change another step.
+   * Changes the game as one undo step, if the step is still the one shown: a text committed late,
+   * eg after a move, must not change another step.
    */
-  private void change(final int index, final Step step, final UnaryOperator<Step> change) {
-    project.edit(
-        g -> {
-          final List<Step> now = RulesXml.steps(g);
-          return index < now.size() && now.get(index) == step
-              ? RulesXml.withStep(g, index, change.apply(step))
-              : g;
-        });
+  private void change(
+      final int index, final AtomicReference<Step> step, final UnaryOperator<Game> change) {
+    final List<Step> before = RulesXml.steps(project.game());
+    if (index < before.size() && before.get(index) == step.get()) {
+      project.edit(change);
+      step.set(RulesXml.steps(project.game()).get(index));
+    }
+  }
+
+  /** A row of the table: a step by its index, or the band before the steps of one nation. */
+  record Row(Optional<Integer> step, String band) {}
+
+  /**
+   * The rows: before each run of steps of one nation a band with its name; bids in one band, as
+   * nations take turns there; steps of no nation are "Game start" before the first nation's,
+   * "End of round" after the last, else "Whole round".
+   */
+  static List<Row> rows(final Game game) {
+    final List<Step> all = RulesXml.steps(game);
+    int firstOfNation = all.size();
+    int lastOfNation = -1;
+    for (int i = 0; i < all.size(); i++) {
+      if (all.get(i).getPlayer() != null) {
+        firstOfNation = Math.min(firstOfNation, i);
+        lastOfNation = i;
+      }
+    }
+    final List<Row> rows = new ArrayList<>();
+    String band = null;
+    for (int i = 0; i < all.size(); i++) {
+      final Step step = all.get(i);
+      final String ending = GameRulesXml.kindOf(game, step).map(DelegateKind::ending).orElse("");
+      final String now;
+      if (ending.equals("Bid") || ending.equals("BidPlace")) {
+        now = "Bids";
+      } else if (step.getPlayer() != null) {
+        now = step.getPlayer();
+      } else if (i < firstOfNation) {
+        now = "Game start";
+      } else if (i > lastOfNation) {
+        now = "End of round";
+      } else {
+        now = "Whole round";
+      }
+      if (!now.equals(band)) {
+        band = now;
+        rows.add(new Row(Optional.empty(), now));
+      }
+      rows.add(new Row(Optional.of(i), now));
+    }
+    return List.copyOf(rows);
   }
 
   private static final class StepsTable extends AbstractTableModel {
     @Serial private static final long serialVersionUID = 1L;
-    private final transient MapProject project;
+    private transient Game game;
+    private transient List<Step> all = List.of();
+    private transient List<Row> rows = List.of();
 
-    StepsTable(final MapProject project) {
-      this.project = project;
+    void refresh(final Game game) {
+      this.game = game;
+      all = RulesXml.steps(game);
+      rows = rows(game);
+    }
+
+    int stepCount() {
+      return all.size();
+    }
+
+    Optional<Integer> step(final int row) {
+      return row >= 0 && row < rows.size() ? rows.get(row).step() : Optional.empty();
+    }
+
+    int rowOf(final int step) {
+      for (int row = 0; row < rows.size(); row++) {
+        if (rows.get(row).step().filter(s -> s == step).isPresent()) {
+          return row;
+        }
+      }
+      return -1;
+    }
+
+    boolean isBand(final int row) {
+      return rows.get(row).step().isEmpty();
     }
 
     @Override
     public int getRowCount() {
-      return RulesXml.steps(project.game()).size();
+      return rows.size();
     }
 
     @Override
     public int getColumnCount() {
-      return 4;
+      return 3;
     }
 
     @Override
     public String getColumnName(final int column) {
-      return List.of("#", "Step", "Nation", "What happens").get(column);
+      return List.of("#", "What happens", "Shown in the game").get(column);
     }
 
     @Override
     public Object getValueAt(final int row, final int column) {
-      final Step step = RulesXml.steps(project.game()).get(row);
+      final Row shown = rows.get(row);
+      if (shown.step().isEmpty()) {
+        return column == 1 ? shown.band() : "";
+      }
+      final Step step = all.get(shown.step().get());
       return switch (column) {
-        case 0 -> row + 1;
-        case 1 -> Objects.requireNonNullElse(step.getDisplay(), step.getName());
-        case 2 -> Optional.ofNullable(step.getPlayer()).orElse("");
-        default -> step.getDelegate();
+        case 0 -> shown.step().get() + 1;
+        // in a band of several nations, eg bids, whose step it is
+        case 1 ->
+            what(game, step)
+                + Optional.ofNullable(step.getPlayer())
+                    .filter(p -> !p.equals(shown.band()))
+                    .map(p -> " · " + p)
+                    .orElse("");
+        default -> GameRulesXml.shownName(game, step);
       };
+    }
+  }
+
+  /**
+   * Steps as usual; a band in the secondary color, semibold, with a line above across the row that
+   * parts it from the group before.
+   */
+  private final class BandRenderer extends DefaultTableCellRenderer {
+    @Serial private static final long serialVersionUID = 1L;
+
+    @Override
+    public Component getTableCellRendererComponent(
+        final JTable table,
+        final Object value,
+        final boolean isSelected,
+        final boolean hasFocus,
+        final int row,
+        final int column) {
+      final boolean band = steps.isBand(row);
+      super.getTableCellRendererComponent(
+          table, value, isSelected && !band, hasFocus && !band, row, column);
+      setHorizontalAlignment(column == 0 ? RIGHT : LEFT);
+      if (band) {
+        setFont(getFont().deriveFont(Font.BOLD));
+        setForeground(Theme.getSecondaryTextColor());
+        setBorder(
+            BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(row > 0 ? 1 : 0, 0, 0, 0, Theme.getSeparatorColor()),
+                BorderFactory.createEmptyBorder(0, Theme.GAP_XS, 0, Theme.GAP_XS)));
+      } else {
+        // the renderer keeps a color set once: a band's must not stay for the steps
+        if (!isSelected) {
+          setForeground(table.getForeground());
+        }
+        setBorder(BorderFactory.createEmptyBorder(0, Theme.GAP_XS, 0, Theme.GAP_S));
+      }
+      return this;
     }
   }
 }

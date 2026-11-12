@@ -1,71 +1,118 @@
 package eddies.mapeditor;
 
 import java.awt.BorderLayout;
+import java.awt.Component;
+import java.awt.Dimension;
 import java.awt.FlowLayout;
-import java.awt.GridLayout;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
+import java.awt.event.MouseEvent;
 import java.io.Serial;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Consumer;
 import javax.annotation.Nullable;
-import javax.swing.DefaultCellEditor;
+import javax.swing.BorderFactory;
+import javax.swing.Box;
+import javax.swing.BoxLayout;
+import javax.swing.ButtonGroup;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
-import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JRadioButton;
 import javax.swing.JTable;
 import javax.swing.JTextField;
+import javax.swing.ToolTipManager;
 import javax.swing.table.AbstractTableModel;
+import javax.swing.table.JTableHeader;
+import org.triplea.map.data.elements.AttachmentList.Attachment;
 import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.Technology.Technologies.TechName;
 import org.triplea.swing.SwingComponents;
 import eddies.mapeditor.MakerIcon.Glyph;
 
 /**
- * The technologies: adding and removing them, the category each nation researches one in, and the
- * built-in ones a nation has at the start.
+ * The technologies: adding and removing them, the research chart each nation researches one in,
+ * and the built-in ones a nation has at the start. A game without a list shows TripleA's standard
+ * technologies; the first change writes them into the game with it, as one step.
  */
 final class TechnologyEditor implements Editor {
-  private static final String OWN = "none: attachments give its effects";
-  private static final String NOT_RESEARCHED = "";
+  private static final String NOT_RESEARCHED = "Not researched";
+  private static final String AT_START_TIP =
+      "Only TripleA's built-in technologies can be given at the start.";
+  private static final int TABLE_WIDTH = 620;
+  private static final int DETAILS_WIDTH = 760;
 
   private final MapProject project;
-  private final JPanel page = new JPanel(new BorderLayout(8, 0));
+  private final Consumer<String> openTool;
+  private final JPanel page = new JPanel(new BorderLayout(Theme.GAP_S, 0));
   private final SearchList list;
-  private final Form inspector = new Form(280);
+  private final JLabel standardNote =
+      Theme.newSecondaryLabel(
+          "<html><div style='width:" + Theme.htmlWidth(260) + "'>This game uses TripleA's standard technologies."
+              + " Changing one writes the list into the game.</div></html>");
+  private final Form details = new Form(420);
   private @Nullable String selected;
   private Optional<JTable> nationsShown = Optional.empty();
+  // withStandardTechs builds a GameData: once per game, not per row
+  private @Nullable Game listedFor;
+  private @Nullable Game listed;
 
   TechnologyEditor(final MapProject project) {
+    this(project, tool -> {});
+  }
+
+  /**
+   * @param openTool switches to the tool of the title, eg "Attachments"
+   */
+  TechnologyEditor(final MapProject project, final Consumer<String> openTool) {
     this.project = project;
+    this.openTool = openTool;
     list =
         new SearchList(
-            "Search technology",
-            () -> TechXml.techNames(project.game()),
-            name ->
-                techOf(name)
-                    .flatMap(TechXml::builtIn)
-                    .map(b -> b.equals(name) ? "built in" : "built in: " + b)
-                    .orElse("own"),
-            this::choose);
-    final JButton add = new JButton("Add technology...");
-    add.setToolTipText("A new technology, your own or one of TripleA's built-in ones");
-    add.addActionListener(e -> addTech());
-    final JPanel listColumn = new JPanel(new BorderLayout(0, 8));
+                "technology",
+                "technologies",
+                this::names,
+                t -> t,
+                this::rowDetail,
+                this::choose)
+            .withAdd("Add", "Add a technology", this::addTech)
+            .withEmpty(
+                Panels.empty(
+                    Glyph.TECHNOLOGY,
+                    "No technologies",
+                    "Nations can research nothing in this game.",
+                    "Add technology",
+                    this::addTech));
+    standardNote.setBorder(BorderFactory.createEmptyBorder(0, 0, Theme.GAP_S, Theme.GAP_S));
+    final JPanel listColumn = new JPanel(new BorderLayout());
+    listColumn.add(standardNote, BorderLayout.NORTH);
     listColumn.add(list, BorderLayout.CENTER);
-    final JPanel addRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-    addRow.add(add);
-    listColumn.add(addRow, BorderLayout.SOUTH);
+    details.addComponentListener(
+        new ComponentAdapter() {
+          @Override
+          public void componentResized(final ComponentEvent e) {
+            // the content at most 760 px wide, at the left: the rest a right margin
+            details.setBorder(
+                BorderFactory.createEmptyBorder(
+                    Theme.GAP_XS,
+                    Theme.GAP_L,
+                    Theme.GAP_L,
+                    Math.max(Theme.GAP_L, details.getWidth() - Theme.GAP_L - DETAILS_WIDTH)));
+          }
+        });
     page.add(
-        Panels.sideBySide(listColumn, SwingComponents.newJScrollPane(inspector)),
+        Panels.sideBySide(listColumn, SwingComponents.newJScrollPane(details)),
         BorderLayout.CENTER);
     project.onChange(
         () -> {
           list.refresh();
-          showInspector();
+          showDetails();
         });
-    showInspector();
+    // the first technology chosen on open
+    showDetails();
   }
 
   @Override
@@ -80,8 +127,8 @@ final class TechnologyEditor implements Editor {
 
   @Override
   public String hint() {
-    return "The technologies nations can research, in which category each nation has them, and"
-        + " which built-in ones a nation has at the start.";
+    return "Technologies nations can research. Give each nation a research chart for it;"
+        + " leave Not researched where a nation should not get it.";
   }
 
   @Override
@@ -94,98 +141,171 @@ final class TechnologyEditor implements Editor {
     nationsShown.filter(JTable::isEditing).ifPresent(t -> t.getCellEditor().stopCellEditing());
   }
 
+  /** The game's technologies, or TripleA's standard ones when it has no list; nothing written. */
+  private Game listed() {
+    final Game game = project.game();
+    if (game != listedFor || listed == null) {
+      listedFor = game;
+      listed = TechXml.withStandardTechs(game);
+    }
+    return listed;
+  }
+
+  List<String> names() {
+    return TechXml.techNames(listed());
+  }
+
+  private boolean isStandard() {
+    return project.game().getTechnology() == null;
+  }
+
+  private String rowDetail(final String name) {
+    if (isStandard()) {
+      return "Standard";
+    }
+    return techOf(name)
+        .flatMap(TechXml::builtIn)
+        .map(b -> b.equals(name) ? "Built-in" : "Built-in as " + b)
+        .orElse("Own");
+  }
+
   private Optional<TechName> techOf(final String name) {
-    return TechXml.techs(project.game()).stream()
-        .filter(t -> name.equals(t.getName()))
-        .findFirst();
+    return TechXml.techs(listed()).stream().filter(t -> name.equals(t.getName())).findFirst();
   }
 
   private void choose(final String tech) {
     selected = tech;
-    showInspector();
+    showDetails();
   }
 
-  /** Asks the name and whether it is one of the engine's own technologies. */
+  /**
+   * The nation researches the technology in the chart, a new one if the nation has none of the
+   * name; not at all for "Not researched" or blank. A game without a list gets the standard one
+   * with it, as one step.
+   */
+  void setChart(final String nation, final String tech, final String chart) {
+    final String name = chart.strip();
+    project.edit(
+        g ->
+            name.isEmpty() || NOT_RESEARCHED.equals(name)
+                ? TechXml.withoutTechIn(TechXml.withStandardTechs(g), nation, tech)
+                : TechXml.withTechIn(TechXml.withStandardTechs(g), nation, tech, name));
+  }
+
   private void addTech() {
+    final JRadioButton builtInKind = new JRadioButton("TripleA built-in", true);
+    final JRadioButton ownKind = new JRadioButton("Own (its effects come from attachments)");
+    final ButtonGroup kinds = new ButtonGroup();
+    kinds.add(builtInKind);
+    kinds.add(ownKind);
+    final JComboBox<String> builtIn = new JComboBox<>(TechXml.BUILT_IN.toArray(String[]::new));
     final JTextField name = new JTextField(20);
-    final JComboBox<String> builtIn = new JComboBox<>();
-    builtIn.addItem(OWN);
-    TechXml.BUILT_IN.forEach(builtIn::addItem);
-    final JPanel ask = new JPanel(new GridLayout(0, 1, 0, 4));
-    ask.add(new JLabel("Name of the new technology:"));
-    ask.add(name);
-    ask.add(new JLabel("Built-in technology it is:"));
-    ask.add(builtIn);
-    builtIn.addActionListener(
-        e -> {
-          if (name.getText().isBlank() && builtIn.getSelectedIndex() > 0) {
+    final FieldError error = new FieldError(name);
+    final Runnable fill =
+        () -> {
+          builtIn.setEnabled(builtInKind.isSelected());
+          if (name.getText().isBlank() && builtInKind.isSelected()) {
             name.setText((String) builtIn.getSelectedItem());
           }
-        });
-    if (JOptionPane.showConfirmDialog(
-            page, ask, "Add technology", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE)
-        != JOptionPane.OK_OPTION) {
+        };
+    builtIn.addActionListener(e -> fill.run());
+    builtInKind.addActionListener(e -> fill.run());
+    ownKind.addActionListener(e -> fill.run());
+    OnTyping.attach(
+        name,
+        () ->
+            error.setProblem(
+                names().contains(name.getText().strip())
+                    ? Optional.of("Already a technology")
+                    : Optional.empty()));
+    fill.run();
+    final JPanel builtInRow = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_S, 0));
+    builtInRow.add(builtInKind);
+    builtInRow.add(builtIn);
+    final JPanel content = new JPanel();
+    content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
+    for (final JComponent part :
+        List.<JComponent>of(
+            new JLabel("Kind"), builtInRow, ownKind, new JLabel("Name"), name, error)) {
+      part.setAlignmentX(Component.LEFT_ALIGNMENT);
+      content.add(part);
+      content.add(Box.createVerticalStrut(Theme.GAP_XS));
+    }
+    name.setMaximumSize(new Dimension(Integer.MAX_VALUE, name.getPreferredSize().height));
+    if (!Dialogs.ask(
+        page,
+        "Add technology",
+        content,
+        "Add",
+        () -> !name.getText().isBlank() && !names().contains(name.getText().strip()))) {
       return;
     }
     final String tech = name.getText().strip();
     final String engineTech =
-        builtIn.getSelectedIndex() > 0 ? (String) builtIn.getSelectedItem() : null;
-    final Game game = project.game();
-    if (TechXml.withTech(game, tech, engineTech) == game) {
-      JOptionPane.showMessageDialog(
-          page,
-          "The name must not be empty or another technology's.",
-          "Add technology",
-          JOptionPane.WARNING_MESSAGE);
-      return;
-    }
+        builtInKind.isSelected() ? (String) builtIn.getSelectedItem() : null;
     project.edit(g -> TechXml.withTech(g, tech, engineTech));
     choose(tech);
     list.choose(tech);
   }
 
-  private void showInspector() {
-    inspector.clear();
+  private void showDetails() {
+    standardNote.setVisible(isStandard());
+    details.clear();
     nationsShown = Optional.empty();
-    final Game game = project.game();
+    if (selected == null || techOf(selected).isEmpty()) {
+      selected = names().stream().findFirst().orElse(null);
+      list.choose(selected);
+    }
     final Optional<TechName> tech = Optional.ofNullable(selected).flatMap(this::techOf);
     if (tech.isEmpty()) {
-      inspector
-          .note(
-              game.getTechnology() == null
-                  ? "This game has no list of technologies, so it has TripleA's standard ones."
-                      + " Adding a technology writes them into the game first, so they stay."
-                  : TechXml.techNames(game).size() + " technologies. Choose one to change it.")
-          .end();
+      details.end();
+      details.revalidate();
+      details.repaint();
       return;
     }
     final String name = tech.get().getName();
     final Optional<String> builtIn = TechXml.builtIn(tech.get());
-    inspector.title(name);
-    inspector.note(
+    final List<String> nations = MapXml.nations(project.game());
+    final long researching =
+        nations.stream().filter(n -> TechXml.categoryOf(listed(), n, name).isPresent()).count();
+    details.title(name);
+    details.subtitle(
         builtIn
-            .map(b -> "TripleA's built-in technology " + b + ".")
-            .orElse(
-                "Its own technology: attachments, eg techAbilityAttachment, give its effects."));
-    inspector.section(
-        "Nations",
-        "The category, a research chart, each nation researches it in; empty for not at all. Type a"
-            + " name for a new category."
-            + (builtIn.isPresent() ? " Tick those that have it at the start." : ""));
-    final NationsTable model = new NationsTable(project, name, builtIn);
-    final JTable table = new JTable(model);
-    table.setRowHeight(table.getRowHeight() + 8);
+            .map(
+                b ->
+                    "TripleA built-in · researched by "
+                        + researching
+                        + " nations · "
+                        + nations.stream()
+                            .filter(n -> TechXml.hasAtStart(project.game(), n, b))
+                            .count()
+                        + " have it at the start")
+            .orElse("Own technology · researched by " + researching + " nations"));
+    details.row(nationsTable(name, builtIn));
+    details.section("Its effects");
+    details.row(effects(name, builtIn));
+    details.remove("Remove technology", () -> removeTech(name));
+    details.end();
+    details.revalidate();
+    details.repaint();
+  }
+
+  private JComponent nationsTable(final String tech, final Optional<String> builtIn) {
+    final JTable table = new JTable(new NationsTable(this, tech, builtIn));
+    table.setTableHeader(new AtStartHeader(table));
+    table.setRowHeight(table.getRowHeight() + Theme.GAP_S);
     table.putClientProperty("terminateEditOnFocusLost", true);
-    final JComboBox<String> categories = new JComboBox<>();
-    categories.setEditable(true);
-    categories.addItem(NOT_RESEARCHED);
-    MapXml.nations(game).stream()
-        .flatMap(n -> TechXml.categories(game, n).stream())
+    final JComboBox<String> charts = new JComboBox<>();
+    charts.setEditable(true);
+    charts.setToolTipText("Type a name for a new chart.");
+    charts.addItem(NOT_RESEARCHED);
+    MapXml.nations(project.game()).stream()
+        .flatMap(n -> TechXml.categories(listed(), n).stream())
         .distinct()
-        .forEach(categories::addItem);
-    table.getColumnModel().getColumn(1).setCellEditor(new DefaultCellEditor(categories));
+        .forEach(charts::addItem);
+    Details.comboColumn(table, 1, charts);
     if (builtIn.isPresent()) {
-      // a tick needs little room, the category more
+      // a tick needs little room, the chart more
       table.getColumnModel().getColumn(2).setPreferredWidth(120);
       table.getColumnModel().getColumn(2).setMaxWidth(150);
     }
@@ -193,44 +313,88 @@ final class TechnologyEditor implements Editor {
     final JPanel nations = new JPanel(new BorderLayout());
     nations.add(table.getTableHeader(), BorderLayout.NORTH);
     nations.add(table, BorderLayout.CENTER);
-    inspector.row(nations);
+    // at most 620 px at the left, narrower in a narrow window
+    final int height = nations.getPreferredSize().height;
+    nations.setPreferredSize(new Dimension(TABLE_WIDTH, height));
+    nations.setMaximumSize(new Dimension(TABLE_WIDTH, height));
+    final JPanel holder = new JPanel();
+    holder.setLayout(new BoxLayout(holder, BoxLayout.X_AXIS));
+    holder.add(nations);
+    holder.add(Box.createHorizontalGlue());
+    return holder;
+  }
 
-    final JButton remove = new JButton("Remove technology");
-    remove.setToolTipText("Removes it, also from each nation's categories. Undo takes it back");
-    remove.addActionListener(e -> removeTech(name));
-    final JPanel removeRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-    removeRow.add(remove);
-    inspector.row(removeRow);
-    inspector.end();
+  private JComponent effects(final String tech, final Optional<String> builtIn) {
+    final JPanel line = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_S, 0));
+    if (builtIn.isPresent()) {
+      line.add(new JLabel("Built into TripleA."));
+      return line;
+    }
+    final List<String> setBy =
+        AttachmentsXml.attachments(project.game()).stream()
+            .filter(a -> tech.equals(a.getAttachTo()))
+            .filter(a -> "TechAbilityAttachment".equals(AttachmentsXml.kind(a)))
+            .map(Attachment::getName)
+            .toList();
+    if (setBy.isEmpty()) {
+      line.add(new JLabel("None yet: add a techAbilityAttachment in Attachments."));
+      return line;
+    }
+    line.add(new JLabel("Set by " + String.join(", ", setBy)));
+    final JButton open = new JButton("Open in Attachments ›");
+    Theme.setTertiaryButtonStyle(open);
+    open.addActionListener(e -> openTool.accept("Attachments"));
+    line.add(open);
+    return line;
   }
 
   private void removeTech(final String tech) {
     if (RulesXml.isNamedInAttachments(project.game(), tech)) {
-      JOptionPane.showMessageDialog(
+      Dialogs.warn(
           page,
-          tech + " is named in an attachment, eg its techAbilityAttachment; it stays.",
           "Remove technology",
-          JOptionPane.WARNING_MESSAGE);
-    } else {
-      project.edit(g -> TechXml.withoutTech(g, tech));
+          tech + " is named in an attachment, eg its techAbilityAttachment; it stays.");
+    } else if (Dialogs.confirmRemove(
+        page,
+        "Remove technology",
+        "Remove " + tech + "?\nIt is also taken out of every nation's research chart.",
+        List.of(),
+        "Remove")) {
+      project.edit(g -> TechXml.withoutTech(TechXml.withStandardTechs(g), tech));
     }
   }
 
-  /** A row per nation: the category it researches the technology in, and whether it has it. */
+  /** The header, its "Has it at start" column telling why only built-in ones have it. */
+  private static final class AtStartHeader extends JTableHeader {
+    @Serial private static final long serialVersionUID = 1L;
+
+    AtStartHeader(final JTable table) {
+      super(table.getColumnModel());
+      ToolTipManager.sharedInstance().registerComponent(this);
+    }
+
+    @Override
+    public String getToolTipText(final MouseEvent event) {
+      return columnAtPoint(event.getPoint()) == 2 ? AT_START_TIP : null;
+    }
+  }
+
+  /** A row per nation: the chart it researches the technology in, and whether it has it. */
   private static final class NationsTable extends AbstractTableModel {
     @Serial private static final long serialVersionUID = 1L;
-    private final transient MapProject project;
+    private final transient TechnologyEditor editor;
     private final String tech;
     private final transient Optional<String> builtIn;
 
-    NationsTable(final MapProject project, final String tech, final Optional<String> builtIn) {
-      this.project = project;
+    NationsTable(
+        final TechnologyEditor editor, final String tech, final Optional<String> builtIn) {
+      this.editor = editor;
       this.tech = tech;
       this.builtIn = builtIn;
     }
 
     private List<String> nations() {
-      return MapXml.nations(project.game());
+      return MapXml.nations(editor.project.game());
     }
 
     @Override
@@ -245,7 +409,7 @@ final class TechnologyEditor implements Editor {
 
     @Override
     public String getColumnName(final int column) {
-      return List.of("Nation", "Researches it in", "Has it at the start").get(column);
+      return List.of("Nation", "Research chart", "Has it at start").get(column);
     }
 
     @Override
@@ -261,11 +425,10 @@ final class TechnologyEditor implements Editor {
     @Override
     public Object getValueAt(final int row, final int column) {
       final String nation = nations().get(row);
-      final Game game = project.game();
       return switch (column) {
         case 0 -> nation;
-        case 1 -> TechXml.categoryOf(game, nation, tech).orElse(NOT_RESEARCHED);
-        default -> TechXml.hasAtStart(game, nation, builtIn.orElseThrow());
+        case 1 -> TechXml.categoryOf(editor.listed(), nation, tech).orElse(NOT_RESEARCHED);
+        default -> TechXml.hasAtStart(editor.project.game(), nation, builtIn.orElseThrow());
       };
     }
 
@@ -276,15 +439,10 @@ final class TechnologyEditor implements Editor {
       }
       final String nation = nations().get(row);
       if (column == 1) {
-        final String category = String.valueOf(value).strip();
-        project.edit(
-            g ->
-                category.isEmpty()
-                    ? TechXml.withoutTechIn(g, nation, tech)
-                    : TechXml.withTechIn(g, nation, tech, category));
+        editor.setChart(nation, tech, String.valueOf(value));
       } else {
         final String engineTech = builtIn.orElseThrow();
-        project.edit(
+        editor.project.edit(
             g ->
                 (Boolean) value
                     ? TechXml.withAtStart(g, nation, engineTech)

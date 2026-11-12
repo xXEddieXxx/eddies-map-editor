@@ -14,12 +14,17 @@ import java.awt.Point;
 import java.awt.Polygon;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
+import java.awt.TexturePaint;
 import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseWheelEvent;
+import java.awt.geom.AffineTransform;
+import java.awt.geom.Ellipse2D;
+import java.awt.geom.Path2D;
+import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.Serial;
@@ -35,6 +40,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import javax.imageio.ImageIO;
@@ -45,6 +51,7 @@ import javax.swing.JViewport;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
+import javax.swing.Timer;
 import javax.swing.ToolTipManager;
 import lombok.extern.slf4j.Slf4j;
 import org.triplea.map.data.elements.Game;
@@ -65,6 +72,8 @@ final class MapCanvas extends JComponent {
   // shared with the legend below the map
   static final Color SEA = new Color(0x3E6A8A);
   static final Color NEUTRAL = new Color(0xA89F86);
+  // the map is content: the same under a light and a dark theme
+  static final Color MAP_BACKGROUND = new Color(0xE8E4D8);
   private static final Color OUTLINE = new Color(0, 0, 0, 0x99);
   static final Color PROBLEM = new Color(0xE53935);
   private static final Color BADGE = new Color(0x14, 0x14, 0x14, 0xC0);
@@ -81,6 +90,7 @@ final class MapCanvas extends JComponent {
   private static final int PLACE_DOT = 8;
   // the size of a decoration whose picture is missing, so it can still be moved or removed
   private static final int MISSING_DECORATION = 16;
+  private static final int LINE_CHECK_MS = 100;
 
   private final transient MapProject project;
   // the tiles seen last, enough for a screen at any zoom; a big map has far more than fit memory
@@ -94,6 +104,8 @@ final class MapCanvas extends JComponent {
   // what the territories show, worked out when first shown after a change, not on every repaint
   private final transient Map<String, Look> looks = new HashMap<>();
   private transient @Nullable Set<String> problemTerritories;
+  // nations' colors shown while one is being chosen, before it is taken
+  private transient Map<String, Color> previewColors = Map.of();
   // these follow the map's files: the territories' bounds, units' places and pictures
   private transient @Nullable MapFiles filesSeen;
   private transient Optional<BufferedImage> reliefSeen = Optional.empty();
@@ -112,6 +124,8 @@ final class MapCanvas extends JComponent {
   // territories a tool shows together, eg a canal's sea zones and land
   private transient Set<String> marked = Set.of();
   private transient Consumer<String> onClick = territory -> {};
+  // what Esc does, while a tool's mode is on
+  private transient Optional<Runnable> onEscape = Optional.empty();
   // the selected territory's places shown to move, add and remove
   private boolean editingPlaces;
   // the place being dragged and how far, in pixels of the screen
@@ -122,6 +136,17 @@ final class MapCanvas extends JComponent {
   private transient Optional<Place> hoveredPlace = Optional.empty();
   // the misc picture a click places while decorations are edited
   private Optional<String> decorating = Optional.empty();
+  // what a line dragged on the map is for, and the line being dragged, in the map's pixels
+  private transient Optional<Consumer<List<Point>>> drawingLine = Optional.empty();
+  private transient List<Point> line = new ArrayList<>();
+  // whether the line cuts, asked at most every LINE_CHECK_MS: a big outline takes a moment
+  private transient Optional<Predicate<List<Point>>> lineCheck = Optional.empty();
+  private boolean lineCuts;
+  private final Timer lineCheckTimer = new Timer(LINE_CHECK_MS, e -> checkLine());
+  // the part a split would make, hatched, in the map's pixels
+  private transient List<Polygon> cut = List.of();
+  // the selected territory's neighbours, in the Connections view
+  private transient Set<String> neighbours = Set.of();
   // the pictures of decorations, by their file
   private final transient Map<Path, Optional<Image>> decorationPictures = new HashMap<>();
 
@@ -169,6 +194,7 @@ final class MapCanvas extends JComponent {
 
   MapCanvas(final MapProject project) {
     this.project = project;
+    lineCheckTimer.setRepeats(false);
     // a new picture may change the map's size
     project.onChange(
         () -> {
@@ -198,6 +224,25 @@ final class MapCanvas extends JComponent {
                     .flatMap(MapCanvas.this::placeAt)
                     .filter(place -> place.marker().isEmpty())
                     .ifPresent(MapCanvas.this::remove);
+              }
+            });
+    // like Delete, wherever the focus is in the window; without a mode Esc stays free for others
+    getInputMap(WHEN_IN_FOCUSED_WINDOW)
+        .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "escape");
+    getActionMap()
+        .put(
+            "escape",
+            new AbstractAction() {
+              @Serial private static final long serialVersionUID = 1L;
+
+              @Override
+              public boolean isEnabled() {
+                return onEscape.isPresent();
+              }
+
+              @Override
+              public void actionPerformed(final ActionEvent e) {
+                onEscape.ifPresent(Runnable::run);
               }
             });
   }
@@ -234,11 +279,17 @@ final class MapCanvas extends JComponent {
     this.onClick = onClick;
   }
 
+  /** What Esc does from now on, eg end a tool's mode; empty: nothing. */
+  void onEscape(final Optional<Runnable> onEscape) {
+    this.onEscape = onEscape;
+  }
+
   /**
    * Shows the selected territory's places: dragging one moves it, a click into the territory adds
    * a place for units, a right-click removes one.
    */
   void editPlaces() {
+    stopEditingPlaces();
     editingPlaces = true;
     repaint();
   }
@@ -252,15 +303,64 @@ final class MapCanvas extends JComponent {
     decorating = Optional.of(picture);
   }
 
+  /** A line dragged with the left button goes to onLine instead of moving the map. */
+  void drawLine(final Consumer<List<Point>> onLine) {
+    stopEditingPlaces();
+    drawingLine = Optional.of(onLine);
+    setCursor(Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR));
+    repaint();
+  }
+
+  /**
+   * Like {@link #drawLine(Consumer)}; while dragged the line is green when cuts says it cuts the
+   * selected territory, else red.
+   */
+  void drawLine(final Consumer<List<Point>> onLine, final Predicate<List<Point>> cuts) {
+    drawLine(onLine);
+    lineCheck = Optional.of(cuts);
+  }
+
+  /** Hatches the part a split would make, in the map's pixels; none clears it. */
+  void setCut(final List<Polygon> part) {
+    cut = List.copyOf(part);
+    repaint();
+  }
+
+  private void checkLine() {
+    if (line.size() >= 2 && lineCheck.isPresent()) {
+      lineCuts = lineCheck.get().test(List.copyOf(line));
+      repaint();
+    }
+  }
+
   void stopEditingPlaces() {
     editingPlaces = false;
     decorating = Optional.empty();
+    drawingLine = Optional.empty();
+    line = new ArrayList<>();
+    lineCheck = Optional.empty();
+    lineCheckTimer.stop();
+    cut = List.of();
+    setCursor(Cursor.getDefaultCursor());
     dragged = null;
     repaint();
   }
 
   void setSelected(@Nullable final String territory) {
     selected = territory;
+    repaint();
+  }
+
+  /** Shows the nation's land in this color until {@link #endPreview}, without a change. */
+  void previewColor(final String nation, final Color color) {
+    previewColors = Map.of(nation, color);
+    changes++;
+    repaint();
+  }
+
+  void endPreview() {
+    previewColors = Map.of();
+    changes++;
     repaint();
   }
 
@@ -338,6 +438,10 @@ final class MapCanvas extends JComponent {
     if (!drawn.equals(layerOf)) {
       layer.clear();
       layerOf = drawn;
+      neighbours =
+          mode == MapMode.CONNECTIONS && selected != null
+              ? MapXml.neighbors(project.game(), selected)
+              : Set.of();
     }
     final Rectangle visible =
         Optional.ofNullable(g.getClipBounds()).orElseGet(() -> new Rectangle(getSize()));
@@ -366,7 +470,96 @@ final class MapCanvas extends JComponent {
                 (int) Math.ceil(visible.height / zoom)))
         .forEach(territory -> paintBadges(g, territory));
     places().forEach(place -> paintPlace(g, place));
+    paintVeil(g, visible);
+    paintCut(g);
+    paintLine(g);
     g.dispose();
+  }
+
+  /** While a line is drawn, a white veil over all but the selected territory, so it stands out. */
+  private void paintVeil(final Graphics2D g, final Rectangle visible) {
+    if (drawingLine.isEmpty() || selected == null) {
+      return;
+    }
+    // even-odd: the outlines are holes in the veil
+    final Path2D veil = new Path2D.Double(Path2D.WIND_EVEN_ODD);
+    veil.append(visible, false);
+    final AffineTransform toScreen = AffineTransform.getScaleInstance(zoom, zoom);
+    project
+        .getFiles()
+        .polygons()
+        .getOrDefault(selected, List.of())
+        .forEach(shape -> veil.append(shape.getPathIterator(toScreen), false));
+    g.setColor(withAlpha(Color.WHITE, 0x73));
+    g.fill(veil);
+  }
+
+  private void paintCut(final Graphics2D g) {
+    final AffineTransform toScreen = AffineTransform.getScaleInstance(zoom, zoom);
+    g.setPaint(hatch(8));
+    cut.forEach(part -> g.fill(toScreen.createTransformedShape(part)));
+  }
+
+  /** Accent stripes repeating every so many units of the graphics, for a part set apart. */
+  private static TexturePaint hatch(final double every) {
+    final BufferedImage stripes = new BufferedImage(8, 8, BufferedImage.TYPE_INT_ARGB);
+    final Graphics2D g = stripes.createGraphics();
+    g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+    g.setColor(Theme.getAccentColor());
+    g.setStroke(new BasicStroke(2));
+    // the corners too, so the stripes run on across tiles
+    g.drawLine(-1, 9, 9, -1);
+    g.drawLine(-1, 1, 1, -1);
+    g.drawLine(7, 9, 9, 7);
+    g.dispose();
+    return new TexturePaint(stripes, new Rectangle2D.Double(0, 0, every, every));
+  }
+
+  /**
+   * The line being drawn: a dashed core on a dark halo with round ends; with a check, green when it
+   * cuts the selected territory, else red, and saying so at its end.
+   */
+  private void paintLine(final Graphics2D g) {
+    if (line.size() < 2) {
+      return;
+    }
+    final Path2D path = new Path2D.Double();
+    path.moveTo(line.get(0).x * zoom, line.get(0).y * zoom);
+    line.stream().skip(1).forEach(p -> path.lineTo(p.x * zoom, p.y * zoom));
+    final Color tint =
+        lineCheck.isEmpty()
+            ? Color.DARK_GRAY
+            : lineCuts ? Theme.getSuccessColor() : Theme.getDangerColor();
+    final Color halo = new Color(0, 0, 0, 0xC0);
+    // a dark halo under a white line shows on land, sea and the selected (accent) border alike
+    g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+    g.setColor(halo);
+    g.setStroke(new BasicStroke(8, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+    g.draw(path);
+    g.setColor(Color.WHITE);
+    g.setStroke(new BasicStroke(4, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+    g.draw(path);
+    g.setColor(tint);
+    g.setStroke(
+        new BasicStroke(
+            4, BasicStroke.CAP_BUTT, BasicStroke.JOIN_ROUND, 10, new float[] {10, 6}, 0));
+    g.draw(path);
+    g.setStroke(new BasicStroke(2));
+    for (final Point end : List.of(line.get(0), line.get(line.size() - 1))) {
+      final Ellipse2D handle = new Ellipse2D.Double(end.x * zoom - 6, end.y * zoom - 6, 12, 12);
+      g.setColor(tint);
+      g.fill(handle);
+      g.setColor(halo);
+      g.draw(handle);
+    }
+    if (lineCheck.isPresent()) {
+      final Point end = line.get(line.size() - 1);
+      paintBadge(
+          g,
+          lineCuts ? "Cuts in two" : "Start and end outside " + Objects.toString(selected, "it"),
+          (int) (end.x * zoom),
+          (int) (end.y * zoom) - 20);
+    }
   }
 
   /**
@@ -579,7 +772,7 @@ final class MapCanvas extends JComponent {
     final int pixels = (int) Math.ceil(LAYER_SIZE * screenScale);
     final BufferedImage drawn = new BufferedImage(pixels, pixels, BufferedImage.TYPE_INT_RGB);
     final Graphics2D g = drawn.createGraphics();
-    g.setColor(getBackground());
+    g.setColor(MAP_BACKGROUND);
     g.fillRect(0, 0, pixels, pixels);
     g.scale(screenScale, screenScale);
     g.setClip(0, 0, LAYER_SIZE, LAYER_SIZE);
@@ -854,22 +1047,36 @@ final class MapCanvas extends JComponent {
     }
     final boolean isMarked = marked.contains(territory);
     if (isMarked) {
-      g.setColor(withAlpha(Theme.getAccentColor(), 0x66));
+      // a canal's sea zones filled, its land hatched, so the two read apart
+      if (look.water()) {
+        g.setColor(withAlpha(Theme.getAccentColor(), 0x59));
+      } else {
+        g.setPaint(hatch(8 / zoom));
+      }
+      shapes.forEach(g::fill);
+    }
+    if (neighbours.contains(territory)) {
+      g.setColor(withAlpha(Theme.getAccentColor(), 0x40));
       shapes.forEach(g::fill);
     }
     final boolean isSelected = territory.equals(selected) || isMarked;
     // a territory with a problem stands out in red, as the legend says
     final boolean problem = !isSelected && problemTerritories().contains(territory);
-    g.setColor(isSelected ? Theme.getAccentColor() : problem ? PROBLEM : OUTLINE);
-    g.setStroke(new BasicStroke((float) ((isSelected ? 4 : problem ? 3 : 1) / zoom)));
-    shapes.forEach(g::draw);
+    // over a picture its own lines are the borders: a thin outline beside them only doubles them
+    if (isSelected || problem || !overPicture) {
+      g.setColor(isSelected ? Theme.getAccentColor() : problem ? PROBLEM : OUTLINE);
+      g.setStroke(new BasicStroke((float) ((isSelected ? 4 : problem ? 3 : 1) / zoom)));
+      shapes.forEach(g::draw);
+    }
   }
 
   private Color fill(final Look look) {
     if (look.water()) {
       return SEA;
     }
-    final Color owner = Optional.ofNullable(look.owner()).map(project::nationColor).orElse(NEUTRAL);
+    final Color owner = Optional.ofNullable(look.owner())
+            .map(n -> previewColors.getOrDefault(n, project.nationColor(n)))
+            .orElse(NEUTRAL);
     return switch (mode) {
       case GAME, OWNERS -> owner;
       case VALUES, UNITS, CONNECTIONS -> blend(owner, NEUTRAL);
@@ -887,17 +1094,40 @@ final class MapCanvas extends JComponent {
     return new Color(color.getRed(), color.getGreen(), color.getBlue(), alpha);
   }
 
+  /**
+   * Each connection as a line between centers; with a territory selected its lines stand out above
+   * the others, which fade.
+   */
   private void paintConnections(final Graphics2D g, final Game game) {
+    final List<Connection> ofSelected = new ArrayList<>();
     for (final Connection connection : MapXml.connections(game)) {
       final Point from = center(connection.getT1());
       final Point to = center(connection.getT2());
-      final boolean ofSelected =
-          connection.getT1().equals(selected) || connection.getT2().equals(selected);
-      g.setStroke(new BasicStroke((float) ((ofSelected ? 5 : 3) / zoom)));
-      g.setColor(Color.WHITE);
+      if (selected == null) {
+        g.setStroke(new BasicStroke((float) (3 / zoom)));
+        g.setColor(Color.WHITE);
+        g.drawLine(from.x, from.y, to.x, to.y);
+        g.setStroke(new BasicStroke((float) (1.5 / zoom)));
+        g.setColor(Color.DARK_GRAY);
+        g.drawLine(from.x, from.y, to.x, to.y);
+      } else if (connection.getT1().equals(selected) || connection.getT2().equals(selected)) {
+        ofSelected.add(connection);
+      } else {
+        g.setStroke(new BasicStroke((float) (1 / zoom)));
+        g.setColor(withAlpha(Color.DARK_GRAY, 0x66));
+        g.drawLine(from.x, from.y, to.x, to.y);
+      }
+    }
+    for (final Connection connection : ofSelected) {
+      final Point from = center(connection.getT1());
+      final Point to = center(connection.getT2());
+      g.setStroke(
+          new BasicStroke((float) (8 / zoom), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+      g.setColor(new Color(0, 0, 0, 0xC0));
       g.drawLine(from.x, from.y, to.x, to.y);
-      g.setStroke(new BasicStroke((float) ((ofSelected ? 3 : 1.5) / zoom)));
-      g.setColor(ofSelected ? Theme.getAccentColor() : Color.DARK_GRAY);
+      g.setStroke(
+          new BasicStroke((float) (4 / zoom), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+      g.setColor(Theme.getAccentColor());
       g.drawLine(from.x, from.y, to.x, to.y);
     }
   }
@@ -1085,6 +1315,14 @@ final class MapCanvas extends JComponent {
       dragFrom = e.getLocationOnScreen();
       dragged = SwingUtilities.isLeftMouseButton(e) ? placeAt(e.getPoint()).orElse(null) : null;
       draggedBy = new Point();
+      if (drawingLine.isPresent() && SwingUtilities.isLeftMouseButton(e)) {
+        line = new ArrayList<>(List.of(onMap(e.getPoint())));
+        lineCuts = false;
+      }
+    }
+
+    private Point onMap(final Point onScreen) {
+      return new Point((int) Math.round(onScreen.x / zoom), (int) Math.round(onScreen.y / zoom));
     }
 
     @Override
@@ -1094,7 +1332,18 @@ final class MapCanvas extends JComponent {
       }
       dragged = null;
       dragFrom = null;
-      setCursor(Cursor.getDefaultCursor());
+      if (drawingLine.isPresent()) {
+        final List<Point> drawn = List.copyOf(line);
+        line = new ArrayList<>();
+        lineCheckTimer.stop();
+        repaint();
+        setCursor(Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR));
+        if (drawn.size() >= 2 && SwingUtilities.isLeftMouseButton(e)) {
+          drawingLine.get().accept(drawn);
+        }
+      } else {
+        setCursor(Cursor.getDefaultCursor());
+      }
     }
 
     @Override
@@ -1141,7 +1390,17 @@ final class MapCanvas extends JComponent {
     @Override
     public void mouseDragged(final MouseEvent e) {
       hovered = Optional.empty();
-      if (dragged != null && dragFrom != null) {
+      if (!line.isEmpty() && SwingUtilities.isLeftMouseButton(e)) {
+        final Point at = onMap(e.getPoint());
+        if (!at.equals(line.get(line.size() - 1))) {
+          line.add(at);
+          // the moves of the next LINE_CHECK_MS are checked together, at its end
+          if (lineCheck.isPresent() && !lineCheckTimer.isRunning()) {
+            lineCheckTimer.start();
+          }
+          repaint();
+        }
+      } else if (dragged != null && dragFrom != null) {
         final Point now = e.getLocationOnScreen();
         draggedBy = new Point(now.x - dragFrom.x, now.y - dragFrom.y);
         repaint();

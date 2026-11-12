@@ -27,19 +27,33 @@ import org.triplea.map.xml.writer.GameXmlWriter;
 @UtilityClass
 class MapChecks {
 
-  /** A problem, worded for the map maker, and where it is. */
-  record Problem(String text, @Nullable String place) {
+  /**
+   * A problem, worded for the map maker, and where it is.
+   *
+   * @param place the territory to show for it, if it is about one
+   * @param fixedIn the title of the tool that fixes it, if the text names one
+   */
+  record Problem(String text, @Nullable String place, @Nullable String fixedIn) {
     static Problem of(final String text) {
-      return new Problem(text, null);
+      return new Problem(text, null, null);
     }
 
     static Problem at(final String territory, final String text) {
-      return new Problem(text, territory);
+      return new Problem(text, territory, null);
+    }
+
+    static Problem in(final String tool, final String text) {
+      return new Problem(text, null, tool);
     }
 
     /** The territory to show for the problem, if it is about one. */
     Optional<String> territory() {
       return Optional.ofNullable(place);
+    }
+
+    /** The tool that fixes the problem, if the problem names one. */
+    Optional<String> tool() {
+      return Optional.ofNullable(fixedIn);
     }
   }
 
@@ -51,13 +65,14 @@ class MapChecks {
     final Set<String> nations = new HashSet<>(MapXml.nations(game));
     if (!files.hasOutlines()) {
       problems.add(
-          Problem.of(
+          Problem.in(
+              "Territories",
               files.picture().isPresent()
                   ? "No territories yet: press Find territories in Territories"
                   : "No picture yet: load one in Territories"));
     }
     if (nations.isEmpty()) {
-      problems.add(Problem.of("No nations yet: add them in Nations"));
+      problems.add(Problem.in("Nations", "No nations yet: add them in Nations"));
     } else if (!territories.isEmpty()) {
       final Set<String> owning =
           territories.stream()
@@ -67,7 +82,8 @@ class MapChecks {
       MapXml.nations(game).stream()
           .filter(nation -> MapXml.takesTurns(game, nation))
           .filter(nation -> !owning.contains(nation))
-          .forEach(nation -> problems.add(Problem.of(nation + " owns no territory")));
+          .forEach(
+              nation -> problems.add(Problem.in("Territories", nation + " owns no territory")));
     }
     for (final String territory : territories) {
       if (files.hasOutlines() && !files.polygons().containsKey(territory)) {
@@ -75,7 +91,9 @@ class MapChecks {
       }
       // an impassable territory, eg marshes, may well stay apart
       if (MapXml.neighbors(game, territory).isEmpty() && !MapXml.isImpassable(game, territory)) {
-        problems.add(Problem.at(territory, territory + " is not connected to any territory"));
+        problems.add(
+            new Problem(
+                territory + " is not connected to any territory", territory, "Connections"));
       }
       // the engine's owner of neutral land is a player of every game without being listed
       MapXml.owner(game, territory)
@@ -95,7 +113,10 @@ class MapChecks {
         .flatMap(c -> Stream.of(c.getT1(), c.getT2()))
         .filter(t -> !known.contains(t))
         .distinct()
-        .forEach(t -> problems.add(Problem.of("A connection leads to " + t + ", no territory")));
+        .forEach(
+            t ->
+                problems.add(
+                    Problem.in("Connections", "A connection leads to " + t + ", no territory")));
     final boolean mapHasCapitals = territories.stream().anyMatch(t -> MapXml.isCapital(game, t));
     if (mapHasCapitals) {
       // a nation without land, eg the neutrals' player, needs none
@@ -125,7 +146,8 @@ class MapChecks {
                 "The canal "
                     + canal.name()
                     + " needs two sea zones and a land territory: change it in Canals",
-                canal.seaZones().isEmpty() ? null : canal.seaZones().getFirst()));
+                canal.seaZones().isEmpty() ? null : canal.seaZones().getFirst(),
+                "Canals"));
       }
     }
     return problems;

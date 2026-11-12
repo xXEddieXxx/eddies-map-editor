@@ -1,32 +1,41 @@
 package eddies.mapeditor;
 
 import java.awt.BorderLayout;
+import java.awt.CardLayout;
 import java.awt.FlowLayout;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
+import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
-import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JTextField;
 import org.triplea.map.data.elements.Game;
 import org.triplea.swing.SwingComponents;
 import eddies.mapeditor.CanalXml.Canal;
 import eddies.mapeditor.MakerIcon.Glyph;
+import eddies.mapeditor.Theme.Status;
 
 /**
  * The canals: a canal joins two sea zones, and ships pass it only while their side holds its land
  * territories. Choose or make one, then click its sea zones and land territories on the map.
  */
 final class CanalsEditor implements Editor {
+  private static final String LIST = "list";
+  private static final String CANAL = "canal";
+  private static final String NO_MAP = "no map";
+
   private final MapProject project;
   private final MapView map;
-  private final JPanel page = new JPanel(new BorderLayout(8, 0));
+  private final JPanel page = new JPanel(new CardLayout());
   private final SearchList list;
   private final Form inspector = new Form(250);
   private @Nullable String selected;
@@ -36,18 +45,27 @@ final class CanalsEditor implements Editor {
   CanalsEditor(final MapProject project, final MapView map) {
     this.project = project;
     this.map = map;
-    list = new SearchList("Search canal", this::names, this::detail, this::chooseInList);
-    final JButton add = new JButton("New canal...");
-    add.setToolTipText("A new canal: name it, then click its sea zones and land on the map");
-    add.addActionListener(e -> addCanal());
-    final JPanel addRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-    addRow.add(add);
-    final JPanel listColumn = new JPanel(new BorderLayout(0, 8));
-    listColumn.add(list, BorderLayout.CENTER);
-    listColumn.add(addRow, BorderLayout.SOUTH);
+    list =
+        new SearchList("canal", "canals", this::names, n -> n, this::detail, this::chooseInList)
+            .withAdd(
+                "New canal",
+                "A new canal: name it, then click its sea zones and land on the map",
+                this::addCanal)
+            .withEmpty(
+                Panels.empty(
+                    Glyph.CANALS,
+                    "No canals yet",
+                    "A canal lets ships pass between two sea zones while their side holds the"
+                        + " land, eg Suez.",
+                    "New canal…",
+                    this::addCanal));
+    // the fields start where the tool's title does: the panel has its margin already
+    inspector.setBorder(
+        BorderFactory.createEmptyBorder(Theme.GAP_XS, 0, Theme.GAP_L, Theme.GAP_L));
+    page.add(list, LIST);
+    page.add(SwingComponents.newJScrollPane(inspector), CANAL);
     page.add(
-        Panels.stacked(listColumn, SwingComponents.newJScrollPane(inspector)),
-        BorderLayout.CENTER);
+        Panels.empty(Glyph.CANALS, "Canals need the map", "Load its picture first."), NO_MAP);
     project.onChange(this::refresh);
     showInspector();
   }
@@ -83,7 +101,7 @@ final class CanalsEditor implements Editor {
   public void showing() {
     map.useFor(MapMode.GAME, new JPanel(), this::click);
     map.select(null);
-    markOnMap();
+    showOnMap();
   }
 
   private List<String> names() {
@@ -110,13 +128,17 @@ final class CanalsEditor implements Editor {
         .or(() -> draft.filter(d -> d.name().equals(name)));
   }
 
+  private Optional<Canal> shown() {
+    return Optional.ofNullable(selected).flatMap(this::canal);
+  }
+
   /** A choice in the list also brings the canal into view, at its first sea zone or land. */
   private void chooseInList(final String name) {
     choose(name);
     canal(name).flatMap(c -> territories(c).stream().findFirst()).ifPresent(map::scrollTo);
   }
 
-  private void choose(final String name) {
+  private void choose(@Nullable final String name) {
     selected = name;
     list.choose(name);
     refresh();
@@ -127,46 +149,54 @@ final class CanalsEditor implements Editor {
     showInspector();
     // the map is shared: only while this tool shows it
     if (page.isShowing()) {
-      markOnMap();
+      showOnMap();
     }
   }
 
-  private void markOnMap() {
-    map.mark(
-        Optional.ofNullable(selected)
-            .flatMap(this::canal)
-            .map(c -> Set.copyOf(territories(c)))
-            .orElse(Set.of()));
+  /** The open canal's territories marked, and the banner that says what a click does. */
+  private void showOnMap() {
+    final Optional<Canal> canal = shown();
+    map.mark(canal.map(c -> Set.copyOf(territories(c))).orElse(Set.of()));
+    canal.ifPresentOrElse(
+        c ->
+            map.showBanner(
+                "Editing "
+                    + c.name()
+                    + ": click sea zones and land territories to add or take them out.",
+                () -> choose(null)),
+        map::hideBanner);
   }
 
-  /** Adds or takes out the territory clicked; without a chosen canal, chooses the one there. */
-  private void click(final String territory) {
-    final Optional<Canal> shown = Optional.ofNullable(selected).flatMap(this::canal);
+  /**
+   * Adds or takes out the territory clicked; without an open canal, opens the one there, if any.
+   */
+  void click(final String territory) {
+    final Optional<Canal> shown = shown();
     if (shown.isEmpty()) {
       CanalXml.canals(project.game()).stream()
           .filter(c -> c.seaZones().contains(territory) || c.lands().contains(territory))
           .findFirst()
-          .ifPresent(c -> choose(c.name()));
+          .ifPresentOrElse(
+              c -> choose(c.name()),
+              () ->
+                  Dialogs.toast(
+                      page, "No canal there. Choose one in the list or make a new one."));
       return;
     }
     final Canal canal = shown.get();
     if (MapXml.isWater(project.game(), territory)) {
-      change(
-          canal,
-          new Canal(
-              canal.name(),
-              toggled(canal.seaZones(), territory),
-              canal.lands(),
-              canal.excludedUnits()));
+      change(canal, c -> withSeaZones(c, toggled(c.seaZones(), territory)));
     } else {
-      change(
-          canal,
-          new Canal(
-              canal.name(),
-              canal.seaZones(),
-              toggled(canal.lands(), territory),
-              canal.excludedUnits()));
+      change(canal, c -> withLands(c, toggled(c.lands(), territory)));
     }
+  }
+
+  private static Canal withSeaZones(final Canal canal, final List<String> seaZones) {
+    return new Canal(canal.name(), seaZones, canal.lands(), canal.excludedUnits());
+  }
+
+  private static Canal withLands(final Canal canal, final List<String> lands) {
+    return new Canal(canal.name(), canal.seaZones(), lands, canal.excludedUnits());
   }
 
   private static List<String> toggled(final List<String> names, final String name) {
@@ -176,7 +206,8 @@ final class CanalsEditor implements Editor {
   }
 
   /** The canal changed as one step; one left without sea zones stays here until it has one. */
-  private void change(final Canal old, final Canal changed) {
+  private void change(final Canal old, final UnaryOperator<Canal> how) {
+    final Canal changed = how.apply(old);
     draft = changed.seaZones().isEmpty() ? Optional.of(changed) : Optional.empty();
     selected = changed.name();
     project.edit(g -> CanalXml.withCanal(g, old.name(), changed));
@@ -185,146 +216,169 @@ final class CanalsEditor implements Editor {
   }
 
   private void addCanal() {
-    final String name =
-        Optional.ofNullable(
-                JOptionPane.showInputDialog(
-                    page, "Name of the new canal:", "New canal", JOptionPane.PLAIN_MESSAGE))
-            .map(String::strip)
-            .orElse("");
-    if (name.isEmpty()) {
-      return;
-    }
-    if (canal(name).isPresent()) {
-      JOptionPane.showMessageDialog(
-          page, "There is a canal of that name.", "New canal", JOptionPane.WARNING_MESSAGE);
-      return;
-    }
-    draft = Optional.of(new Canal(name, List.of(), List.of(), List.of()));
-    choose(name);
+    Dialogs.askName(
+            page,
+            "New canal",
+            "Name",
+            "",
+            "Create",
+            n ->
+                canal(n).isPresent()
+                    ? Optional.of("There is a canal of that name")
+                    : Optional.empty())
+        .ifPresent(
+            name -> {
+              draft = Optional.of(new Canal(name, List.of(), List.of(), List.of()));
+              choose(name);
+            });
   }
 
   private void showInspector() {
-    inspector.clear();
-    final Optional<Canal> shown = Optional.ofNullable(selected).flatMap(this::canal);
-    if (shown.isEmpty()) {
-      inspector
-          .note(
-              CanalXml.canals(project.game()).isEmpty()
-                  ? "No canals yet. Make one with New canal."
-                  : "Choose a canal in the list or click one on the map.")
-          .end();
-      return;
+    final Optional<Canal> shown = shown();
+    final String card;
+    if (shown.isPresent()) {
+      card = CANAL;
+    } else if (names().isEmpty() && !project.getFiles().hasOutlines()) {
+      // existing canals stay listable without the map's picture
+      card = NO_MAP;
+    } else {
+      card = LIST;
     }
-    final Canal canal = shown.get();
+    ((CardLayout) page.getLayout()).show(page, card);
+    inspector.clear();
+    shown.ifPresent(this::fillInspector);
+    inspector.revalidate();
+    inspector.repaint();
+  }
+
+  private void fillInspector(final Canal canal) {
     final Game game = project.game();
-    inspector.title(
-        canal.name(),
-        "Click its two sea zones and the land territories on the map; a click again takes one"
-            + " out. Ships pass between the sea zones while their side holds all its land.");
+    final JButton back = new JButton("← All canals");
+    Theme.setTertiaryButtonStyle(back);
+    back.addActionListener(e -> choose(null));
+    final JPanel backRow = leftAligned(back);
+    // the link's text in line with the fields; its hover background reaches out to the left
+    backRow.setBorder(BorderFactory.createEmptyBorder(0, -back.getInsets().left, 0, 0));
+    inspector
+        .row(backRow)
+        .title(canal.name())
+        .subtitle(
+            count(canal.seaZones().size(), "sea zone", "sea zones")
+                + " · "
+                + count(canal.lands().size(), "land", "lands"));
     final JTextField name = new JTextField(canal.name());
     name.getAccessibleContext().setAccessibleName("Name of the canal");
-    final JButton rename = new JButton("Rename");
-    rename.setToolTipText("Gives the canal the name typed, on both sea zones");
-    name.addActionListener(e -> rename(canal, name.getText()));
-    rename.addActionListener(e -> rename(canal, name.getText()));
-    final JPanel naming = new JPanel(new BorderLayout(6, 0));
-    naming.add(name, BorderLayout.CENTER);
-    naming.add(rename, BorderLayout.EAST);
-    inspector.field("Name", naming);
-    if (canal.seaZones().size() != 2 || canal.lands().isEmpty()) {
-      inspector.note("A canal needs two sea zones and at least one land territory.");
-    }
-    inspector.section("Sea zones");
+    inspector.field("Name", name);
+    final FieldError error = inspector.error(name);
+    name.addActionListener(e -> rename(canal.name(), name.getText(), error));
+    name.addFocusListener(
+        new FocusAdapter() {
+          @Override
+          public void focusLost(final FocusEvent e) {
+            rename(canal.name(), name.getText(), error);
+          }
+        });
+    final int seaZones = canal.seaZones().size();
+    inspector.row(
+        Theme.newStatusLabel(
+            seaZones == 2 ? Status.DONE : Status.TODO,
+            "Two sea zones"
+                + switch (seaZones) {
+                  case 2 -> "";
+                  case 0, 1 -> " (" + seaZones + " of 2)";
+                  default -> " (" + seaZones + " chosen)";
+                }));
     for (final String seaZone : canal.seaZones()) {
       inspector.row(
-          removableRow(
+          takeOutRow(
               seaZone,
-              () ->
-                  change(
-                      canal,
-                      new Canal(
-                          canal.name(),
-                          toggled(canal.seaZones(), seaZone),
-                          canal.lands(),
-                          canal.excludedUnits()))));
+              () -> change(canal, c -> withSeaZones(c, toggled(c.seaZones(), seaZone)))));
     }
-    inspector.section("Land territories", "Ships pass only while their side holds all of them.");
+    inspector.row(
+        Theme.newStatusLabel(
+            canal.lands().isEmpty() ? Status.TODO : Status.DONE, "At least one land"));
     for (final String land : canal.lands()) {
       inspector.row(
-          removableRow(
-              land,
-              () ->
-                  change(
-                      canal,
-                      new Canal(
-                          canal.name(),
-                          canal.seaZones(),
-                          toggled(canal.lands(), land),
-                          canal.excludedUnits()))));
+          takeOutRow(land, () -> change(canal, c -> withLands(c, toggled(c.lands(), land)))));
     }
-    inspector.section(
-        "Pass freely",
-        "Unit types the canal does not stop, eg submarines diving through. Without a choice the"
-            + " game lets air units pass.");
+    inspector.note("Ships pass while their side holds all of them.");
+    inspector.section("Units that pass freely");
     final List<String> free = CanalXml.passFreely(game, canal);
-    inspector.note(
-        canal.excludedUnits().isEmpty()
-            ? "Air units, the game's default"
-            : SearchList.escape(free.isEmpty() ? "None" : String.join(", ", free)));
-    final JButton choose = new JButton("Choose...");
+    final JLabel value =
+        new JLabel(
+            canal.excludedUnits().isEmpty()
+                ? "Air units (default)"
+                : free.isEmpty() ? "None" : String.join(", ", free));
+    final JButton choose = new JButton("Choose…");
+    Theme.setSecondaryButtonStyle(choose);
     choose.setToolTipText("Choose the unit types that pass freely");
     choose.addActionListener(
         e ->
-            Panels.pick(page, "Units that pass freely", MapXml.unitTypes(game), free)
+            Dialogs.pickMany(page, "Units that pass freely", MapXml.unitTypes(game), free, "Choose")
                 .ifPresent(
                     units ->
                         change(
                             canal,
-                            new Canal(
-                                canal.name(),
-                                canal.seaZones(),
-                                canal.lands(),
-                                CanalXml.excludedUnits(game, units)))));
-    final JButton remove = new JButton("Remove canal");
-    remove.setToolTipText("Removes it from both sea zones. Undo takes it back");
-    remove.addActionListener(
-        e -> {
-          draft = Optional.empty();
-          project.edit(g -> CanalXml.withoutCanal(g, canal.name()));
-          refresh();
-        });
-    final JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-    buttons.add(choose);
-    inspector.row(buttons);
-    final JPanel removeRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-    removeRow.add(remove);
-    inspector.row(removeRow);
-    inspector.end();
+                            c ->
+                                new Canal(
+                                    c.name(),
+                                    c.seaZones(),
+                                    c.lands(),
+                                    CanalXml.excludedUnits(game, units)))));
+    final JPanel units = new JPanel(new BorderLayout(Theme.GAP_S, 0));
+    units.setOpaque(false);
+    units.add(value, BorderLayout.CENTER);
+    units.add(choose, BorderLayout.EAST);
+    inspector.row(units);
+    inspector
+        .remove(
+            "Remove canal",
+            () -> {
+              draft = Optional.empty();
+              selected = null;
+              project.edit(g -> CanalXml.withoutCanal(g, canal.name()));
+              refresh();
+            })
+        .end();
   }
 
-  private static JPanel removableRow(final String name, final Runnable remove) {
-    final JPanel row = new JPanel(new BorderLayout(8, 0));
-    row.add(new JLabel(name), BorderLayout.CENTER);
-    final JButton button = new JButton("Remove");
-    button.setToolTipText("Takes " + name + " out of the canal");
-    button.addActionListener(e -> remove.run());
-    row.add(button, BorderLayout.EAST);
+  private static String count(final int count, final String noun, final String nounPlural) {
+    return count + " " + (count == 1 ? noun : nounPlural);
+  }
+
+  private static JPanel leftAligned(final JComponent component) {
+    final JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+    row.setOpaque(false);
+    row.add(component);
     return row;
   }
 
-  private void rename(final Canal canal, final String typed) {
+  private static JPanel takeOutRow(final String name, final Runnable takeOut) {
+    final JPanel row = new JPanel(new BorderLayout(Theme.GAP_S, 0));
+    row.setOpaque(false);
+    row.add(new JLabel(name), BorderLayout.CENTER);
+    row.add(
+        Theme.newIconButton("×", "Take " + name + " out of the canal", takeOut),
+        BorderLayout.EAST);
+    return row;
+  }
+
+  /**
+   * The canal of the old name renamed as typed, as one step; an empty or taken name keeps the old
+   * one and says so below the field, which keeps the text typed.
+   */
+  private void rename(final String old, final String typed, final FieldError error) {
     final String renamed = typed.strip();
-    if (renamed.equals(canal.name())) {
+    // the field of a canal renamed or closed meanwhile loses its focus too
+    final Optional<Canal> canal = canal(old).filter(c -> old.equals(selected));
+    if (canal.isEmpty() || renamed.equals(old)) {
+      error.setProblem(Optional.empty());
       return;
     }
     if (renamed.isEmpty() || canal(renamed).isPresent()) {
-      JOptionPane.showMessageDialog(
-          page,
-          "The name must not be empty or another canal's.",
-          "Rename",
-          JOptionPane.WARNING_MESSAGE);
+      error.setProblem(Optional.of("Empty or another canal's name. Kept \"" + old + "\"."));
       return;
     }
-    change(canal, new Canal(renamed, canal.seaZones(), canal.lands(), canal.excludedUnits()));
+    change(canal.get(), c -> new Canal(renamed, c.seaZones(), c.lands(), c.excludedUnits()));
   }
 }

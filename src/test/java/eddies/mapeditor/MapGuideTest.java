@@ -10,8 +10,12 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import eddies.mapeditor.MapChecks.Problem;
+import eddies.mapeditor.MapGuide.Next;
+import eddies.mapeditor.MapGuide.Next.Kind;
 import eddies.mapeditor.MapGuide.Part;
 import eddies.mapeditor.MapGuide.Step;
+import eddies.mapeditor.MapGuide.Step.State;
 
 final class MapGuideTest {
   @TempDir Path maps;
@@ -43,6 +47,11 @@ final class MapGuideTest {
         .filteredOn(part -> part.name().equals("place.txt"))
         .extracting(Part::tool)
         .containsExactly("Territories");
+    assertThat(parts)
+        .as("map.properties and the relief are made in Map look")
+        .filteredOn(part -> List.of("map.properties", "reliefTiles").contains(part.name()))
+        .extracting(Part::tool)
+        .containsOnly("Map look");
   }
 
   @DisplayName("A map keeping its files in map/ shows that folder, its files one level below")
@@ -86,5 +95,77 @@ final class MapGuideTest {
         .as("territories found and a nation added; no land, units or Check yet")
         .extracting(Step::done)
         .containsExactly(true, true, false, false, false, true, false);
+  }
+
+  @DisplayName("A step not done yet shows as such; only land and capitals fail once nations exist")
+  @Test
+  void stepsFailOnlyWhenDue() throws Exception {
+    final MapProject project = givenSavedMapWithPicture();
+    final List<State> before = MapGuide.steps(project).stream().map(Step::state).toList();
+
+    project.edit(g -> MapXml.withOwner(g, givenLand(project), "Red"));
+    final List<State> owning = MapGuide.steps(project).stream().map(Step::state).toList();
+
+    assertThat(before)
+        .as("land fails as Red has none; no capital is due while no nation owns land; no Check yet")
+        .containsExactly(
+            State.DONE,
+            State.DONE,
+            State.FAILING,
+            State.TODO,
+            State.TODO,
+            State.DONE,
+            State.TODO);
+    assertThat(owning)
+        .as("once Red owns land, its missing capital fails")
+        .containsExactly(
+            State.DONE,
+            State.DONE,
+            State.DONE,
+            State.FAILING,
+            State.TODO,
+            State.DONE,
+            State.TODO);
+  }
+
+  @DisplayName("The next step leads through the tools, the problems and Check to Save and Play")
+  @Test
+  void leadsToTheNextStep() throws Exception {
+    final MapProject project = givenSavedMapWithPicture();
+    final Next first = MapGuide.nextStep(project, List.of());
+    givenAllStepsDone(project);
+
+    final List<Kind> kinds =
+        List.of(
+            first.kind(),
+            MapGuide.nextStep(project, List.of(Problem.of("Something is wrong"))).kind(),
+            MapGuide.nextStep(project, List.of()).kind(),
+            MapGuide.nextStepAfterCheck(project, List.of()).kind(),
+            savedAndChecked(project).kind());
+
+    assertThat(kinds)
+        .as("a step not done, then problems, Check, Save and at last Play")
+        .containsExactly(Kind.GO_TO_TOOL, Kind.FIX_PROBLEMS, Kind.CHECK, Kind.SAVE, Kind.PLAY);
+    assertThat(first.tool()).as("Red's land is given in Territories").isEqualTo("Territories");
+  }
+
+  private static Next savedAndChecked(final MapProject project) throws Exception {
+    project.save();
+    return MapGuide.nextStepAfterCheck(project, List.of());
+  }
+
+  /** Red owns a territory with its capital and a unit there, not saved. */
+  private static void givenAllStepsDone(final MapProject project) {
+    final String land = givenLand(project);
+    project.edit(g -> MapXml.withOwner(g, land, "Red"));
+    project.edit(g -> MapXml.withCapital(g, land, "Red"));
+    project.edit(g -> MapXml.withUnits(g, land, "Red", MapXml.unitTypes(g).getFirst(), 1));
+  }
+
+  private static String givenLand(final MapProject project) {
+    return MapXml.territories(project.game()).stream()
+        .filter(t -> !MapXml.isWater(project.game(), t))
+        .findFirst()
+        .orElseThrow();
   }
 }

@@ -384,4 +384,56 @@ final class MapXmlTest {
         .as("the engine reads the new stat")
         .isEqualTo(3);
   }
+
+  @DisplayName("A removed territory is left in no list, connection, owner, units or attachment")
+  @Test
+  void removesTerritory() {
+    final Game given = minimap;
+
+    final Game without = MapXml.withoutTerritory(given, NORTH);
+
+    assertThat(MapXml.territories(without)).as("off the map").doesNotContain(NORTH);
+    assertThat(MapXml.connections(without))
+        .as("no connection names it")
+        .noneMatch(c -> NORTH.equals(c.getT1()) || NORTH.equals(c.getT2()));
+    assertThat(MapXml.owner(without, NORTH)).as("no owner at the start").isEmpty();
+    assertThat(MapXml.units(without, NORTH)).as("no units at the start").isEmpty();
+    assertThat(RulesXml.whereNamed(without, NORTH)).as("no attachment names it").isEmpty();
+    assertThat(MapXml.territories(without)).as("the others stay").hasSize(19);
+  }
+
+  @DisplayName("A territory goes with the canals through it; what else names it is told")
+  @Test
+  void removesCanalsWithTheTerritory() {
+    final Game g40 = GameRulesXmlTest.givenG40();
+
+    final Game withoutTransJordan = MapXml.withoutTerritory(g40, "Trans-Jordan");
+    final Game withoutEgypt = MapXml.withoutTerritory(g40, "Egypt");
+
+    assertThat(CanalXml.canals(withoutTransJordan))
+        .as("Suez, on both its sea zones, needs Trans-Jordan")
+        .noneMatch(c -> c.lands().contains("Trans-Jordan"));
+    assertThat(RulesXml.whereNamed(withoutTransJordan, "Trans-Jordan"))
+        .as("nothing else names it")
+        .isEmpty();
+    assertThat(RulesXml.whereNamed(withoutEgypt, "Egypt"))
+        .as("the rules still name Egypt, eg as directPresenceTerritories")
+        .isNotEmpty();
+  }
+
+  @DisplayName("A new territory is connected once to each neighbour")
+  @Test
+  void addsTerritory() {
+    final Game given = MapXml.withConnection(minimap, "Atlantis", NORTH);
+
+    final Game with = MapXml.withTerritory(given, "Atlantis", List.of(NORTH, CAPITAL));
+
+    assertThat(MapXml.territories(with)).as("last on the map").endsWith("Atlantis");
+    assertThat(MapXml.neighbors(with, "Atlantis"))
+        .as("its neighbours")
+        .containsExactlyInAnyOrder(NORTH, CAPITAL);
+    assertThat(MapXml.connections(with))
+        .as("the connection it had is not doubled")
+        .hasSize(MapXml.connections(minimap).size() + 2);
+  }
 }

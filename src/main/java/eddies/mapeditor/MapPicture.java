@@ -1,5 +1,6 @@
 package eddies.mapeditor;
 
+import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Point;
 import java.awt.Polygon;
@@ -7,6 +8,7 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -23,6 +25,8 @@ final class MapPicture {
   private static final int REACH = 4;
   private static final int MIN_SUPPORT = 3;
   private static final double EPSILON = 1.0;
+  // how far, in pixels, areas grow into the dark line around them, so outlines lie on the line
+  private static final int GROW = 2;
   // the 8 neighbours of a pixel, clockwise on the screen, starting west
   private static final int[] DX = {-1, -1, 0, 1, 1, 1, 0, -1};
   private static final int[] DY = {0, -1, -1, -1, 0, 1, 1, 1};
@@ -63,14 +67,60 @@ final class MapPicture {
     return image;
   }
 
+  /** How the picture's border lines are drawn: their width in pixels and their color. */
+  record LineStyle(int width, Color color) {}
+
+  /**
+   * The width and color most of the picture's border lines have: the commonest run of dark pixels
+   * between light ones across rows, up to 12 pixels; 2 pixels black for a picture without lines.
+   */
+  static LineStyle lineStyle(final BufferedImage image) {
+    final int[] widths = new int[13];
+    final Map<Integer, Integer> colors = new HashMap<>();
+    final int[] row = new int[image.getWidth()];
+    // every 4th row is plenty to find the commonest
+    for (int y = 0; y < image.getHeight(); y += 4) {
+      image.getRGB(0, y, row.length, 1, row, 0, row.length);
+      int start = -1;
+      for (int x = 0; x < row.length; x++) {
+        if (isBorder(row[x]) && (row[x] >>> 24) >= 128) {
+          if (start < 0) {
+            start = x;
+          }
+          colors.merge(row[x] | 0xFF000000, 1, Integer::sum);
+        } else {
+          if (start > 0 && x - start < widths.length) {
+            widths[x - start]++;
+          }
+          start = -1;
+        }
+      }
+    }
+    int width = 2;
+    for (int w = 1; w < widths.length; w++) {
+      if (widths[w] > widths[width]) {
+        width = w;
+      }
+    }
+    final Color color =
+        colors.entrySet().stream()
+            .max(Map.Entry.comparingByValue())
+            .map(e -> new Color(e.getKey()))
+            .orElse(Color.BLACK);
+    return new LineStyle(width, color);
+  }
+
   static DetectedMap detect(final BufferedImage image) {
     return new MapPicture(image).detect();
   }
 
   private DetectedMap detect() {
     final List<Region> kept = keptRegions();
+    final List<int[]> touching = touching();
     final Map<Integer, Point> centers = new HashMap<>();
     kept.forEach(r -> centers.put(r.label(), center(r)));
+    // traced from the first pixel of the grown area in scan order, which has none of it to the west
+    final Grown grown = grow();
     final List<Region> ordered =
         kept.stream()
             .sorted(
@@ -89,11 +139,11 @@ final class MapPicture {
           new DetectedTerritory(
               water ? "Sea Zone " + ++sea : "Territory " + ++land,
               water,
-              List.of(outline(region)),
+              List.of(outline(region.label(), grown)),
               centers.get(region.label())));
     }
     final List<Neighbours> connections =
-        touching().stream()
+        touching.stream()
             .map(pair -> new int[] {rank.get(pair[0]), rank.get(pair[1])})
             .map(pair -> new int[] {Math.min(pair[0], pair[1]), Math.max(pair[0], pair[1])})
             .sorted(Comparator.<int[]>comparingInt(p -> p[0]).thenComparingInt(p -> p[1]))
@@ -128,7 +178,7 @@ final class MapPicture {
   }
 
   /** A dark or mostly transparent pixel, part of a border line. */
-  private static boolean isBorder(final int argb) {
+  static boolean isBorder(final int argb) {
     final int alpha = argb >>> 24;
     final int r = (argb >> 16) & 0xFF;
     final int g = (argb >> 8) & 0xFF;
@@ -210,10 +260,58 @@ final class MapPicture {
         : new Point(region.first() % width, region.first() / width);
   }
 
-  /** The outer contour by Moore-neighbour tracing, simplified, as a polygon. */
-  private Polygon outline(final Region region) {
-    final int startX = region.first() % width;
-    final int startY = region.first() / width;
+  /**
+   * Grows each kept area into the dark line and left out pixels next to it, up to {@value #GROW}
+   * pixels, so neighbours' outlines meet on the line instead of beside it.
+   *
+   * @return each label's first pixel in scan order and its area after growing
+   */
+  private Grown grow() {
+    for (int pass = 0; pass < GROW; pass++) {
+      // a pixel taken in this pass is marked -2 - label, so it does not grow on in the same pass
+      for (int p = 0; p < labels.length; p++) {
+        if (labels[p] <= 0 && labels[p] > -2) {
+          final int x = p % width;
+          final int y = p / width;
+          final int[] around = {
+            x > 0 ? labels[p - 1] : 0,
+            y > 0 ? labels[p - width] : 0,
+            x < width - 1 ? labels[p + 1] : 0,
+            y < height - 1 ? labels[p + width] : 0
+          };
+          for (final int label : around) {
+            if (label > 0) {
+              labels[p] = -2 - label;
+              break;
+            }
+          }
+        }
+      }
+      for (int p = 0; p < labels.length; p++) {
+        if (labels[p] <= -2) {
+          labels[p] = -2 - labels[p];
+        }
+      }
+    }
+    final int labelCount = Arrays.stream(labels).max().orElse(0) + 1;
+    final int[] firsts = new int[labelCount];
+    final int[] areas = new int[labelCount];
+    for (int p = labels.length - 1; p >= 0; p--) {
+      if (labels[p] > 0) {
+        firsts[labels[p]] = p;
+        areas[labels[p]]++;
+      }
+    }
+    return new Grown(firsts, areas);
+  }
+
+  /** By label: the first pixel in scan order and the area, of the grown areas. */
+  private record Grown(int[] firsts, int[] areas) {}
+
+  /** The outer contour by Moore-neighbour tracing from the area's first pixel, simplified. */
+  private Polygon outline(final int label, final Grown grown) {
+    final int startX = grown.firsts()[label] % width;
+    final int startY = grown.firsts()[label] / width;
     final List<Point> ring = new ArrayList<>();
     ring.add(new Point(startX, startY));
     int x = startX;
@@ -221,9 +319,9 @@ final class MapPicture {
     // the first pixel in scan order has nothing of its area to the west
     int backtrack = 0;
     int firstStep = -1;
-    final int maxSteps = 8 * region.area() + 16;
+    final int maxSteps = 8 * grown.areas()[label] + 16;
     for (int step = 0; step < maxSteps; step++) {
-      final int found = nextStep(x, y, backtrack, region.label());
+      final int found = nextStep(x, y, backtrack, label);
       if (found < 0) {
         break; // a single pixel
       }

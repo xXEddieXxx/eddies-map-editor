@@ -134,6 +134,25 @@ final class MapTextsTest {
         .contains(new Entry("Minimap.Russians;triggerAttachmentHello", ""));
   }
 
+  @DisplayName("An objective of another game is told by its key, and explained in plain words")
+  @Test
+  void tellsForeignObjectives() throws Exception {
+    final Game game = givenMinimapWithTrigger(givenMinimapWithMessages());
+
+    final String foreign = MapTexts.explain(Kind.OBJECTIVES, "Big_World.Russians;x", game);
+
+    assertThat(MapTexts.isForeign("Big_World.Russians;x", game))
+        .as("a key with another game's start")
+        .isTrue();
+    assertThat(MapTexts.isForeign("Minimap.Russians;x", game))
+        .as("a key of this game")
+        .isFalse();
+    assertThat(MapTexts.isForeign("Objectives.Panel.Name", game))
+        .as("the tab's name belongs to every game")
+        .isFalse();
+    assertThat(foreign).as("plain words, no marker").isEqualTo("For another game");
+  }
+
   @DisplayName("Objectives offer the conditions and triggers like objectives, all on request")
   @Test
   void offersObjectivesFirst() throws Exception {
@@ -246,5 +265,136 @@ final class MapTextsTest {
     assertThat(keys)
         .as("the game's sounds, a nation's, and the one the trigger's message names")
         .contains("Sound.Default.Folder", "battle_land", "battle_land_Russians", "notification_fanfare");
+  }
+
+  private static final String G40_OBJECTIVES =
+      """
+      # copied from another game
+      Objectives.Panel.Name=Objectives
+      World_War_II_Global_1940_Alpha_3.TABLEGROUP.01;Russians=objectiveAttachment_Russians_1_Hold_Moscow
+      World_War_II_Global_1940_Alpha_3.Russians;objectiveAttachment_Russians_1_Hold_Moscow=Hold \\
+        Moscow
+      """;
+
+  private MapProject givenMinimapWithForeignObjectives() throws Exception {
+    final Path xml = givenMinimapWithMessages().getXmlFile().orElseThrow();
+    Files.writeString(folder.resolve("objectives.properties"), G40_OBJECTIVES);
+    return MapProject.open(xml);
+  }
+
+  @DisplayName("Each kind's keys get a title in plain words, the key when there is none")
+  @Test
+  void titlesInPlainWords() throws Exception {
+    final Game game = givenMinimapWithMessages().game();
+
+    assertThat(MapTexts.title(Kind.OBJECTIVES, "Objectives.Panel.Name", game))
+        .as("the tab's name")
+        .isEqualTo("Name of the objectives tab");
+    assertThat(MapTexts.title(Kind.OBJECTIVES, "Other_Game.TABLEGROUP.01;Germans", game))
+        .as("a group, its number without zeros, whatever the game's start")
+        .isEqualTo("Group 1 · Germans");
+    assertThat(
+            MapTexts.title(
+                Kind.OBJECTIVES, "A.B.Germans;objectiveAttachment_Germans_1_Trade_with_Russia", game))
+        .as("a condition without the kind of attachment, the nation and the number")
+        .isEqualTo("Germans · Trade with Russia");
+    assertThat(MapTexts.title(Kind.OBJECTIVES, "Minimap.Germans;objectiveAttachment_Germans_1", game))
+        .as("nothing left: the key")
+        .isEqualTo("Minimap.Germans;objectiveAttachment_Germans_1");
+    assertThat(MapTexts.title(Kind.NOTIFICATIONS, "Germans_Win_sounds", game))
+        .as("a message's sounds")
+        .isEqualTo("Sound of Germans_Win");
+    assertThat(MapTexts.title(Kind.NOTIFICATIONS, "Germans_Win", game))
+        .as("a message is its own name")
+        .isEqualTo("Germans_Win");
+    assertThat(MapTexts.title(Kind.TOOLTIPS, "tooltip.unit.infantry", game))
+        .as("a unit's tool tip")
+        .isEqualTo("Tool tip of infantry");
+    assertThat(MapTexts.title(Kind.TOOLTIPS, "tooltip.unit.infantry.append", game))
+        .as("added to a unit's tool tip")
+        .isEqualTo("Added to the tool tip of infantry");
+    assertThat(MapTexts.title(Kind.TOOLTIPS, "tooltip.unit.infantry.Russians", game))
+        .as("a nation's tool tip of a unit")
+        .isEqualTo("Tool tip of infantry for Russians");
+    assertThat(MapTexts.title(Kind.TOOLTIPS, "tooltip.unit.dragon", game))
+        .as("no such unit: the key")
+        .isEqualTo("tooltip.unit.dragon");
+    assertThat(MapTexts.title(Kind.POLITICS, "Axis_To_War.BUTTON", game))
+        .as("an action's text and its part")
+        .isEqualTo("Axis_To_War · Button");
+  }
+
+  @DisplayName("Objective keys all of another game are found, not once one is this game's")
+  @Test
+  void findsForeignPrefix() throws Exception {
+    final Game game = givenMinimapWithMessages().game();
+    final MapTexts foreign = new MapTexts(Map.of(Kind.OBJECTIVES, G40_OBJECTIVES));
+    final MapTexts groupsOnly =
+        new MapTexts(Map.of(Kind.OBJECTIVES, "Old.TABLEGROUP.01;Russians=a\n"));
+
+    final MapTexts oneOwn = foreign.with(Kind.OBJECTIVES, "Minimap.Russians;x", "X");
+
+    assertThat(MapTexts.foreignPrefix(foreign, game))
+        .as("the other game's start")
+        .contains("World_War_II_Global_1940_Alpha_3.");
+    assertThat(MapTexts.foreignPrefix(oneOwn, game))
+        .as("a key of this game: the rest is not all another game's")
+        .isEmpty();
+    assertThat(MapTexts.foreignPrefix(groupsOnly, game))
+        .as("groups alone also tell the start")
+        .contains("Old.");
+    assertThat(MapTexts.foreignObjectivesProblem(foreign, game))
+        .as("the problem counts the keys bar the tab's name")
+        .contains("2 objective texts are for another game");
+  }
+
+  @DisplayName("Renaming the keys' start keeps texts, order, comments and a key already there")
+  @Test
+  void renamesKeyPrefix() {
+    final MapTexts foreign =
+        new MapTexts(
+            Map.of(
+                Kind.OBJECTIVES,
+                G40_OBJECTIVES + "Minimap.TABLEGROUP.01;Russians=mine\n"));
+
+    final MapTexts renamed =
+        foreign.withKeyPrefix(Kind.OBJECTIVES, "World_War_II_Global_1940_Alpha_3.", "Minimap.");
+
+    assertThat(renamed.text(Kind.OBJECTIVES))
+        .as("only the start of the keys changed, the long text's lines kept")
+        .isEqualTo(
+            G40_OBJECTIVES.replace(
+                    "World_War_II_Global_1940_Alpha_3.Russians", "Minimap.Russians")
+                + "Minimap.TABLEGROUP.01;Russians=mine\n");
+    assertThat(renamed.value(Kind.OBJECTIVES, "Minimap.Russians;objectiveAttachment_Russians_1_Hold_Moscow"))
+        .as("the text reads as before")
+        .contains("Hold Moscow");
+    assertThat(foreign.withKeyPrefix(Kind.OBJECTIVES, "Nothing.", "Minimap."))
+        .as("nothing to rename changes nothing")
+        .isSameAs(foreign);
+  }
+
+  @DisplayName("Using foreign objective texts for this game is one step, and a problem before")
+  @Test
+  void foreignObjectivesAreAProblemAndOneStep() throws Exception {
+    final MapProject project = givenMinimapWithForeignObjectives();
+    final List<MapChecks.Problem> before = project.problems();
+
+    project.edit(
+        g -> g,
+        t -> t.withKeyPrefix(Kind.OBJECTIVES, "World_War_II_Global_1940_Alpha_3.", "Minimap."));
+    final List<MapChecks.Problem> after = project.problems();
+    project.undo();
+
+    assertThat(before)
+        .as("the problem is listed once, for the Texts tool")
+        .filteredOn(p -> p.text().equals("2 objective texts are for another game"))
+        .singleElement()
+        .extracting(MapChecks.Problem::fixedIn)
+        .isEqualTo("Texts");
+    assertThat(after).as("gone once renamed").noneMatch(p -> p.text().contains("another game"));
+    assertThat(MapTexts.foreignPrefix(project.texts(), project.game()))
+        .as("one undo brings all keys back")
+        .contains("World_War_II_Global_1940_Alpha_3.");
   }
 }

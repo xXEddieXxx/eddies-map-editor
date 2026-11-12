@@ -1,31 +1,47 @@
 package eddies.mapeditor;
 
+import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.FlowLayout;
 import java.awt.Graphics;
+import java.awt.GridLayout;
+import java.awt.Insets;
 import java.io.Serial;
+import java.util.ArrayList;
 import java.util.List;
+import javax.swing.BorderFactory;
 import javax.swing.Icon;
+import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 
 /**
- * The line below the map that says what its colors and marks mean in the shown view: the nations'
- * colors, the badges, the lines; a red outline is a territory with a problem.
+ * The line below the map: left what its colors and marks mean in the shown view, as many nations
+ * as fit and a button for all; right how many territories changed since the last save and how many
+ * problems are outlined red, a click on them shows the problem list.
  */
 final class MapLegend extends JPanel {
   @Serial private static final long serialVersionUID = 1L;
-
-  // more nations than fit in the line: the rest is in Nations
-  private static final int MAX_NATIONS = 6;
+  private static final int GAP = 12;
 
   private final transient MapProject project;
   private MapMode mode = MapMode.GAME;
+  private final JPanel keys = new JPanel(new FlowLayout(FlowLayout.LEFT, GAP, 2));
+  private final JPanel status = new JPanel(new FlowLayout(FlowLayout.RIGHT, GAP, 2));
+  private final List<JLabel> nationChips = new ArrayList<>();
+  private final JButton moreNations = new JButton();
+  private final JPopupMenu allNations = new JPopupMenu();
+  private transient Runnable showProblems = () -> {};
 
   MapLegend(final MapProject project) {
-    super(new FlowLayout(FlowLayout.LEFT, 12, 2));
+    super(new BorderLayout(GAP, 0));
     this.project = project;
+    add(keys, BorderLayout.WEST);
+    add(status, BorderLayout.EAST);
+    Theme.setTertiaryButtonStyle(moreNations);
+    moreNations.addActionListener(e -> allNations.show(moreNations, 0, moreNations.getHeight()));
     project.onChange(this::fill);
     fill();
   }
@@ -36,39 +52,121 @@ final class MapLegend extends JPanel {
     fill();
   }
 
+  /** What a click on the problems does, eg show the problem list. */
+  void onShowProblems(final Runnable showProblems) {
+    this.showProblems = showProblems;
+  }
+
   private void fill() {
-    removeAll();
+    keys.removeAll();
+    nationChips.clear();
     switch (mode) {
       case GAME, OWNERS -> {
         final List<String> nations = MapXml.nations(project.game());
-        nations.stream()
-            .limit(MAX_NATIONS)
-            .forEach(nation -> add(chip(project.nationColor(nation), nation)));
-        if (nations.size() > MAX_NATIONS) {
-          add(note("+" + (nations.size() - MAX_NATIONS) + " more"));
+        final JPanel all = new JPanel(new GridLayout(0, 2, GAP, Theme.GAP_XS));
+        all.setBorder(
+            BorderFactory.createEmptyBorder(Theme.GAP_S, Theme.GAP_M, Theme.GAP_S, Theme.GAP_M));
+        for (final String nation : nations) {
+          final JLabel chip = chip(project.nationColor(nation), nation);
+          nationChips.add(chip);
+          keys.add(chip);
+          all.add(chip(project.nationColor(nation), nation));
         }
-        add(chip(MapCanvas.NEUTRAL, "No owner"));
+        allNations.removeAll();
+        allNations.add(all);
+        keys.add(moreNations);
+        keys.add(chip(MapCanvas.NEUTRAL, "No owner"));
         // the game view leaves seas clear over the map's picture
         if (mode == MapMode.OWNERS) {
-          add(chip(MapCanvas.SEA, "Sea zone"));
+          keys.add(chip(MapCanvas.SEA, "Sea zone"));
         }
       }
-      case VALUES -> add(note("Badge: PUs per turn · ★ capital · VC victory city"));
-      case UNITS ->
-          add(
-              note(
-                  "The starting units where the game puts them, how many beside them; zoomed out,"
-                      + " a count"));
+      case VALUES -> keys.add(note("Badge: PUs per turn · ★ capital · VC victory city"));
+      case UNITS -> keys.add(note("Units where the game draws them"));
       case CONNECTIONS ->
-          add(note("A line joins two neighbours; the chosen territory's lines stand out"));
+          keys.add(note("Line = neighbours. The chosen territory's lines are thicker."));
       default -> throw new IllegalStateException("Unknown view: " + mode);
     }
-    if (project.problems().stream().anyMatch(problem -> problem.territory().isPresent())) {
-      add(chip(MapCanvas.PROBLEM, "Has a problem, see Overview"));
-    }
-    add(note("● not saved"));
+    fillStatus();
     revalidate();
     repaint();
+  }
+
+  /** The changed territories and the problems outlined red, each only when there are any. */
+  private void fillStatus() {
+    status.removeAll();
+    final long changed = project.changedCount();
+    if (changed > 0) {
+      final JLabel label = new JLabel("● " + changed + " changed");
+      label.setToolTipText("Changed since the last save. The list marks them with ●.");
+      status.add(label);
+    }
+    final long problems =
+        project.problems().stream().filter(problem -> problem.territory().isPresent()).count();
+    if (problems > 0) {
+      final JButton button =
+          new JButton("■ " + problems + (problems == 1 ? " problem" : " problems"));
+      Theme.setDestructiveButtonStyle(button);
+      button.setToolTipText("Outlined red on the map. Click for the list.");
+      button.addActionListener(e -> showProblems.run());
+      status.add(button);
+    }
+  }
+
+  /** Shows as many nations as fit beside the rest of the line, and how many more there are. */
+  @Override
+  public void doLayout() {
+    if (!nationChips.isEmpty()) {
+      final Insets insets = getInsets();
+      final Insets keyInsets = keys.getInsets();
+      int room =
+          getWidth()
+              - insets.left
+              - insets.right
+              - status.getPreferredSize().width
+              - GAP
+              - keyInsets.left
+              - keyInsets.right
+              - GAP;
+      // what always shows: the keys after the nations
+      for (final Component key : keys.getComponents()) {
+        if (!nationChips.contains(key) && key != moreNations) {
+          room -= key.getPreferredSize().width + GAP;
+        }
+      }
+      // measured, not set, as each new text would lay out the line again; with the most digits
+      final Insets buttonInsets = moreNations.getInsets();
+      final int moreWidth =
+          buttonInsets.left
+              + buttonInsets.right
+              + moreNations
+                  .getFontMetrics(moreNations.getFont())
+                  .stringWidth(moreText(nationChips.size()))
+              + GAP;
+      int shown = 0;
+      int width = 0;
+      for (final JLabel chip : nationChips) {
+        width += chip.getPreferredSize().width + GAP;
+        // the button for the rest needs room too, unless this is the last nation
+        final boolean last = shown == nationChips.size() - 1;
+        if (width + (last ? 0 : moreWidth) > room) {
+          break;
+        }
+        shown++;
+      }
+      for (int i = 0; i < nationChips.size(); i++) {
+        nationChips.get(i).setVisible(i < shown);
+      }
+      moreNations.setText(moreText(nationChips.size() - shown));
+      moreNations.setVisible(shown < nationChips.size());
+    } else {
+      moreNations.setVisible(false);
+    }
+    super.doLayout();
+  }
+
+  private static String moreText(final int hidden) {
+    return "+" + hidden + " nations";
   }
 
   private static JLabel chip(final Color color, final String text) {
@@ -82,7 +180,7 @@ final class MapLegend extends JPanel {
   }
 
   /** A small square of the color. */
-  private record Swatch(Color color) implements Icon {
+  record Swatch(Color color) implements Icon {
     @Override
     public void paintIcon(final Component c, final Graphics g, final int x, final int y) {
       g.setColor(color);

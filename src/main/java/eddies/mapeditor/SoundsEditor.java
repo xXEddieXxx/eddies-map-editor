@@ -1,8 +1,12 @@
 package eddies.mapeditor;
 
+import com.formdev.flatlaf.FlatClientProperties;
 import games.strategy.triplea.ResourceLoader;
 import java.awt.BorderLayout;
+import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
 import java.io.IOException;
@@ -12,19 +16,28 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
+import javax.swing.AbstractButton;
+import javax.swing.BorderFactory;
+import javax.swing.BoxLayout;
+import javax.swing.ButtonGroup;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
-import javax.swing.JOptionPane;
+import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTextField;
+import javax.swing.JToggleButton;
+import javax.swing.SwingUtilities;
 import javazoom.jl.player.advanced.AdvancedPlayer;
 import lombok.extern.slf4j.Slf4j;
 import org.triplea.swing.SwingComponents;
@@ -40,25 +53,56 @@ import eddies.mapeditor.MapTexts.Kind;
 @Slf4j
 final class SoundsEditor implements Editor {
   private static final String DEFAULT_FOLDER = "Sound.Default.Folder";
-  // the game's folders of sounds, one for each era
-  private static final List<String> ERAS =
-      List.of("ww2", "classical", "preindustrial", "future", "generic");
+  private static final String DEFAULT_ERA = "ww2";
+  // the game's folders of sounds, one for each era, named in words
+  private static final List<Folder> ERAS =
+      List.of(
+          new Folder(DEFAULT_ERA, "World War II (ww2)"),
+          new Folder("classical", "Classical (classical)"),
+          new Folder("preindustrial", "Pre-industrial (preindustrial)"),
+          new Folder("future", "Future (future)"),
+          new Folder("generic", "Generic (generic)"));
+  private static final List<String> GROUPS =
+      List.of("Battles", "Turns and phases", "Messages", "Other");
   private static final String ALL = "All nations";
   private static final String MP3 = ".mp3";
+  private static final String GAMES_OWN = "The game's own";
+  private static final int COMBO_WIDTH = 240;
+  private static final int SWITCH_HEIGHT = 28;
 
   private final MapProject project;
   private final JPanel page = new JPanel(new BorderLayout(8, 8));
   private final SearchList list;
   private final Form inspector = new Form(360);
   private final JTextField files = new JTextField();
+  private final JToggleButton all = newSwitchButton();
+  private final JToggleButton own = newSwitchButton();
+  private final JButton stop = Theme.newIconButton("■", "Stop", this::stopPlaying);
+  // whether each path is found, asked once per change of the map, not on every rebuild
+  private final Map<String, Boolean> found = new HashMap<>();
   private @Nullable String selected;
   private boolean editingHere;
-  // the sound playing, stopped when another starts
-  private volatile @Nullable AdvancedPlayer playing;
+  // the sound playing, stopped when another starts; set and cleared on the Swing thread
+  private @Nullable AdvancedPlayer playing;
+
+  /** A default folder: its value in sounds.properties, and how the list names it. */
+  private record Folder(String value, String label) {
+    @Override
+    public String toString() {
+      return label;
+    }
+  }
 
   SoundsEditor(final MapProject project) {
     this.project = project;
-    list = new SearchList("Search sound", this::keys, this::explain, this::choose);
+    list =
+        new SearchList("sound", "sounds", this::shownKeys, this::title, this::detail, this::choose)
+            .withEmpty(
+                Panels.empty(
+                    Glyph.SOUNDS,
+                    "No sounds of your own",
+                    "The game plays its own. Choose a sound under All to give it yours."));
+    stop.setEnabled(false);
     files.addActionListener(e -> commit());
     files.addFocusListener(
         new FocusAdapter() {
@@ -67,16 +111,51 @@ final class SoundsEditor implements Editor {
             commit();
           }
         });
+    final ButtonGroup filter = new ButtonGroup();
+    filter.add(all);
+    filter.add(own);
+    // the map's own sounds first, when it has any besides the folder
+    (keys().stream().anyMatch(k -> !k.equals(DEFAULT_FOLDER) && isOwn(k)) ? own : all)
+        .setSelected(true);
+    all.addActionListener(e -> list.refresh());
+    own.addActionListener(e -> list.refresh());
+    final JPanel switches = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+    switches.add(all);
+    switches.add(own);
+    final JPanel column = new JPanel(new BorderLayout(0, Theme.GAP_S));
+    column.add(switches, BorderLayout.NORTH);
+    column.add(list, BorderLayout.CENTER);
+    showSwitchCounts();
+    list.refresh();
     page.add(
-        Panels.sideBySide(list, SwingComponents.newJScrollPane(inspector)), BorderLayout.CENTER);
+        Panels.sideBySide(column, SwingComponents.newJScrollPane(inspector)), BorderLayout.CENTER);
     project.onChange(
         () -> {
+          found.clear();
+          showSwitchCounts();
           list.refresh();
           if (!editingHere) {
             showInspector();
           }
         });
     showInspector();
+  }
+
+  private static JToggleButton newSwitchButton() {
+    final JToggleButton button = new JToggleButton();
+    button.putClientProperty(
+        FlatClientProperties.BUTTON_TYPE, FlatClientProperties.BUTTON_TYPE_TOOLBAR_BUTTON);
+    return button;
+  }
+
+  private void showSwitchCounts() {
+    final List<String> keys = keys();
+    all.setText("All " + keys.size());
+    own.setText("Your own " + keys.stream().filter(this::isOwn).count());
+    for (final AbstractButton button : List.of(all, own)) {
+      button.setPreferredSize(null);
+      button.setPreferredSize(new Dimension(button.getPreferredSize().width, SWITCH_HEIGHT));
+    }
   }
 
   @Override
@@ -111,13 +190,57 @@ final class SoundsEditor implements Editor {
     return List.copyOf(keys);
   }
 
+  /** The default folder first, the rest by group, under "Your own" only the map's own. */
+  List<String> shownKeys() {
+    return keys().stream()
+        .filter(k -> all.isSelected() || isOwn(k))
+        .sorted(
+            Comparator.comparing(
+                (String k) -> k.equals(DEFAULT_FOLDER) ? -1 : GROUPS.indexOf(group(k))))
+        .toList();
+  }
+
+  private boolean isOwn(final String key) {
+    return project.texts().value(Kind.SOUNDS, key).isPresent();
+  }
+
+  /** Where a sound goes in the list: Battles, Turns and phases, Messages or Other. */
+  static String group(final String key) {
+    if (key.startsWith("battle_") || key.startsWith("bombing_")) {
+      return "Battles";
+    }
+    if (key.startsWith("phase_") || key.startsWith("required_your_turn_series")) {
+      return "Turns and phases";
+    }
+    if (Stream.of("notification_", "victory_", "defeat_").anyMatch(key::startsWith)) {
+      return "Messages";
+    }
+    return "Other";
+  }
+
   private boolean isNationsVariant(final String key) {
     return MapXml.nations(project.game()).stream().anyMatch(n -> key.endsWith("_" + n));
   }
 
-  private String explain(final String key) {
-    final String name = MapTexts.explain(Kind.SOUNDS, key, project.game());
-    return name + " · " + project.texts().value(Kind.SOUNDS, key).orElse("the game's own");
+  String title(final String key) {
+    if (key.equals(DEFAULT_FOLDER)) {
+      return "Default folder: " + defaultFolder();
+    }
+    return MapTexts.explain(Kind.SOUNDS, key, project.game());
+  }
+
+  private String defaultFolder() {
+    return project.texts().value(Kind.SOUNDS, DEFAULT_FOLDER).map(String::strip).orElse(DEFAULT_ERA);
+  }
+
+  String detail(final String key) {
+    if (key.equals(DEFAULT_FOLDER)) {
+      return isOwn(key) ? "Set by this map" : GAMES_OWN;
+    }
+    final int count = paths(key).size();
+    return group(key)
+        + " · "
+        + (isOwn(key) ? "Your own · " + count + (count == 1 ? " file" : " files") : GAMES_OWN);
   }
 
   private void choose(final String key) {
@@ -133,12 +256,14 @@ final class SoundsEditor implements Editor {
       return;
     }
     if (selected == null) {
-      // the first, the default folder, rather than an empty side
-      selected = keys().getFirst();
+      // the first, rather than an empty side
+      selected = shownKeys().stream().findFirst().orElse(DEFAULT_FOLDER);
       list.choose(selected);
     }
     final String key = selected;
-    inspector.title(MapTexts.explain(Kind.SOUNDS, key, project.game())).note(key);
+    inspector
+        .title(MapTexts.explain(Kind.SOUNDS, key, project.game()))
+        .subtitle(key + " · sounds.properties");
     if (key.equals(DEFAULT_FOLDER)) {
       showDefaultFolder();
       return;
@@ -146,7 +271,7 @@ final class SoundsEditor implements Editor {
     final String base = baseOf(key);
     final List<String> nations = MapXml.nations(project.game());
     // the sounds of messages are played to the nations of their trigger already
-    if (!nations.isEmpty() && Stream.of("notification_", "victory_", "defeat_").noneMatch(base::startsWith)) {
+    if (!nations.isEmpty() && !group(base).equals("Messages")) {
       final JComboBox<String> forNation = new JComboBox<>();
       forNation.addItem(ALL);
       nations.forEach(forNation::addItem);
@@ -156,37 +281,169 @@ final class SoundsEditor implements Editor {
             final String nation = (String) forNation.getSelectedItem();
             choose(ALL.equals(nation) ? base : base + "_" + nation);
           });
-      inspector.field("For", "A nation's own sound, played for its turns and its battles.", fitting(forNation));
+      inspector
+          .field("For", fitting(forNation))
+          .note("A nation's own sound, played for its turns and its battles.");
     }
-    files.setText(project.texts().value(Kind.SOUNDS, key).orElse(""));
-    inspector.field(
-        "Files",
-        "Paths below a sounds folder, separated by ;. The game picks one of them each time.",
-        files);
-    final JButton addFile = new JButton("Add file...");
+    showFiles(key);
+    inspector.end();
+  }
+
+  private void showFiles(final String key) {
+    inspector.section("Plays");
+    final String name = MapTexts.explain(Kind.SOUNDS, key, project.game());
+    final List<String> paths = paths(key);
+    final JPanel rows = new JPanel();
+    rows.setLayout(new BoxLayout(rows, BoxLayout.Y_AXIS));
+    rows.setOpaque(false);
+    if (paths.isEmpty()) {
+      rows.add(
+          newFileRow(
+              "The game's own sound",
+              "Play the game's own sound",
+              () -> play(key, name, gamesOwnPaths(key)),
+              Optional.empty(),
+              true));
+    }
+    for (final String path : paths) {
+      rows.add(
+          newFileRow(
+              path,
+              "Play " + path,
+              () -> play(key, name, List.of(path)),
+              Optional.of(() -> removePath(key, path)),
+              isFound(path)));
+    }
+    inspector.row(rows);
+    inspector.note("The game picks one of them each time.");
+
+    final JButton addFile = new JButton("Add file…");
+    Theme.setSecondaryButtonStyle(addFile);
     addFile.addActionListener(e -> addFile(key));
-    final JButton addFolder = new JButton("Add folder...");
+    final JButton addFolder = new JButton("Add folder…");
+    Theme.setSecondaryButtonStyle(addFolder);
     addFolder.setToolTipText("All mp3 files of a folder");
     addFolder.addActionListener(e -> addFolder(key));
-    final JButton play = new JButton("Play");
-    play.addActionListener(e -> play(key));
-    final JButton gamesOwn = new JButton("Game's own");
-    gamesOwn.setToolTipText("Takes the entry out of sounds.properties");
-    gamesOwn.setEnabled(project.texts().value(Kind.SOUNDS, key).isPresent());
-    gamesOwn.addActionListener(e -> project.removeText(Kind.SOUNDS, key));
     final boolean saved = project.getFolder().isPresent();
     addFile.setEnabled(saved);
     addFolder.setEnabled(saved);
-    final JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-    buttons.add(addFile);
-    buttons.add(addFolder);
-    buttons.add(play);
-    buttons.add(gamesOwn);
+    final JPanel adds = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_S, 0));
+    adds.setOpaque(false);
+    adds.add(addFile);
+    adds.add(addFolder);
+    final JPanel buttons = new JPanel(new BorderLayout());
+    buttons.setOpaque(false);
+    buttons.add(adds, BorderLayout.WEST);
+    buttons.add(stop, BorderLayout.EAST);
     inspector.row(buttons);
     if (!saved) {
-      inspector.note("Save the map first: chosen files are copied into its folder.");
+      inspector.note("Save the map first: files are copied into its folder.");
     }
-    inspector.end();
+
+    files.setText(project.texts().value(Kind.SOUNDS, key).orElse(""));
+    inspector.more("sound-text", 1, f -> f.field("Files as text", files));
+
+    if (!paths.isEmpty()) {
+      final JButton gamesOwn = new JButton("Use the game's own sound");
+      Theme.setTertiaryButtonStyle(gamesOwn);
+      gamesOwn.addActionListener(e -> useGamesOwn(key, name, paths.size()));
+      final JPanel bottom = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+      bottom.setOpaque(false);
+      bottom.setBorder(BorderFactory.createEmptyBorder(Theme.GAP_XL - 6, 0, 0, 0));
+      bottom.add(gamesOwn);
+      inspector.row(bottom);
+    }
+  }
+
+  /** ▶, the path cut in the middle to fit, "not found" when the game would not find it, ×. */
+  private JPanel newFileRow(
+      final String text,
+      final String playTip,
+      final Runnable onPlay,
+      final Optional<Runnable> onRemove,
+      final boolean isFound) {
+    final JPanel row = new JPanel(new BorderLayout(Theme.GAP_S, 0));
+    row.setOpaque(false);
+    row.add(Theme.newIconButton("▶", playTip, onPlay), BorderLayout.WEST);
+    final JLabel path = new JLabel(isFound ? text : "! " + text);
+    path.setToolTipText(text);
+    if (onRemove.isPresent()) {
+      path.putClientProperty(FlatClientProperties.STYLE_CLASS, "monospaced");
+    }
+    // as wide as the row gives, not the whole path: a long one is cut, not widening the form
+    path.setPreferredSize(new Dimension(0, path.getPreferredSize().height));
+    path.addComponentListener(
+        new ComponentAdapter() {
+          @Override
+          public void componentResized(final ComponentEvent e) {
+            final String whole = isFound ? text : "! " + text;
+            path.setText(
+                SearchList.cutMiddle(whole, path.getFontMetrics(path.getFont()), path.getWidth()));
+          }
+        });
+    row.add(path, BorderLayout.CENTER);
+    final JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, Theme.GAP_S, 0));
+    right.setOpaque(false);
+    if (!isFound) {
+      path.setForeground(Theme.getWarningColor());
+      final JLabel notFound = new JLabel("not found");
+      notFound.setForeground(Theme.getWarningColor());
+      right.add(notFound);
+    }
+    onRemove.ifPresent(
+        remove -> right.add(Theme.newIconButton("×", "Remove from this sound", remove)));
+    row.add(right, BorderLayout.EAST);
+    row.setAlignmentX(JComponent.LEFT_ALIGNMENT);
+    return row;
+  }
+
+  private boolean isFound(final String path) {
+    final Optional<Path> folder = project.getFolder();
+    return found.computeIfAbsent(
+        path,
+        p -> {
+          try (ResourceLoader loader = newLoader(folder)) {
+            return findClip(loader, List.of(p)).isPresent();
+          }
+        });
+  }
+
+  private void removePath(final String key, final String path) {
+    final String rest = without(project.texts().value(Kind.SOUNDS, key).orElse(""), path);
+    if (rest.isEmpty()) {
+      editingHere = true;
+      try {
+        project.removeText(Kind.SOUNDS, key);
+      } finally {
+        editingHere = false;
+      }
+      showInspector();
+    } else {
+      setSound(key, rest);
+    }
+  }
+
+  /** The sound's files without that path, every other entry kept as written, in its order. */
+  static String without(final String value, final String path) {
+    return String.join(
+        ";",
+        Arrays.stream(value.split(";"))
+            .map(String::strip)
+            .filter(p -> !p.isEmpty() && !p.equals(path))
+            .toList());
+  }
+
+  private void useGamesOwn(final String key, final String name, final int count) {
+    if (count >= 2
+        && !Dialogs.confirm(
+            page,
+            "Use the game's own sound",
+            "Remove the " + count + " files of " + name + "?\nThe game then plays its own.",
+            "Use the game's own")) {
+      return;
+    }
+    project.removeText(Kind.SOUNDS, key);
+    Dialogs.toast(page, "✓ " + name + " uses the game's own sound again", "Undo", project::undo);
   }
 
   /** The game's key without a nation's name at its end, eg battle_land for battle_land_Germans. */
@@ -199,24 +456,24 @@ final class SoundsEditor implements Editor {
   }
 
   private void showDefaultFolder() {
-    final JComboBox<String> folder = new JComboBox<>();
-    ERAS.forEach(folder::addItem);
-    mapSoundFolders().stream().filter(f -> !ERAS.contains(f)).forEach(folder::addItem);
-    folder.setEditable(true);
-    folder.setSelectedItem(project.texts().value(Kind.SOUNDS, DEFAULT_FOLDER).orElse("ww2"));
+    final List<Folder> folders = new ArrayList<>(ERAS);
+    mapSoundFolders().stream()
+        .filter(f -> ERAS.stream().noneMatch(era -> era.value().equals(f)))
+        .forEach(f -> folders.add(new Folder(f, "Map folder: " + f)));
+    final String value = defaultFolder();
+    if (folders.stream().noneMatch(f -> f.value().equals(value))) {
+      // kept as the file has it, eg a folder not there yet
+      folders.add(new Folder(value, value));
+    }
+    final JComboBox<Folder> folder = new JComboBox<>(folders.toArray(Folder[]::new));
+    folder.setSelectedItem(
+        folders.stream().filter(f -> f.value().equals(value)).findFirst().orElseThrow());
+    folder.setPreferredSize(new Dimension(COMBO_WIDTH, folder.getPreferredSize().height));
     folder.addActionListener(
-        e -> {
-          final String chosen = String.valueOf(folder.getSelectedItem()).strip();
-          if (!chosen.isEmpty()) {
-            setSound(DEFAULT_FOLDER, chosen);
-          }
-        });
+        e -> setSound(DEFAULT_FOLDER, ((Folder) folder.getSelectedItem()).value()));
     inspector
-        .field(
-            "Folder",
-            "A sound the map gives no files for comes from this folder of the game's, or of the"
-                + " map's sounds folder: the sound's own folder in it, eg ww2/battle_land.",
-            fitting(folder))
+        .field("Folder", fitting(folder))
+        .note("Sounds you don't set come from this folder.")
         .end();
   }
 
@@ -239,7 +496,11 @@ final class SoundsEditor implements Editor {
   }
 
   private static JPanel fitting(final JComponent component) {
+    if (component.getPreferredSize().width < COMBO_WIDTH) {
+      component.setPreferredSize(new Dimension(COMBO_WIDTH, component.getPreferredSize().height));
+    }
     final JPanel fitting = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+    fitting.setOpaque(false);
     fitting.add(component);
     return fitting;
   }
@@ -318,11 +579,11 @@ final class SoundsEditor implements Editor {
   }
 
   private String withPath(final String key, final String path) {
-    final List<String> all = new ArrayList<>(paths(key));
-    if (!all.contains(path)) {
-      all.add(path);
+    final List<String> paths = new ArrayList<>(paths(key));
+    if (!paths.contains(path)) {
+      paths.add(path);
     }
-    return String.join(";", all);
+    return String.join(";", paths);
   }
 
   private void setSound(final String key, final String value) {
@@ -336,12 +597,8 @@ final class SoundsEditor implements Editor {
   }
 
   private void showNotTaken(final Path file, final IOException e) {
-    log.warn("Could not take {}", file, e);
-    JOptionPane.showMessageDialog(
-        page,
-        "Could not take " + file.getFileName() + ":\n" + e.getMessage(),
-        "Sounds",
-        JOptionPane.WARNING_MESSAGE);
+    log.warn("Could not copy {}", file, e);
+    Dialogs.toast(page, "! Could not copy " + file.getFileName() + ": " + e.getMessage());
   }
 
   @Override
@@ -366,41 +623,49 @@ final class SoundsEditor implements Editor {
     }
   }
 
+  /** Where the game looks for a sound the map gives no files for. */
+  private List<String> gamesOwnPaths(final String key) {
+    return List.of(defaultFolder() + "/" + key, "generic/" + key);
+  }
+
+  private static ResourceLoader newLoader(final Optional<Path> folder) {
+    return new ResourceLoader(folder.map(List::of).orElse(List.of()));
+  }
+
   /**
-   * Plays one of the sound's files as the game finds them: in the map's sounds folder, else the
-   * game's; without files the default folder's, else the game's generic one.
+   * The first mp3 of the paths as the game finds them: in the map's sounds folder, else the
+   * game's; a folder stands for its files.
    */
-  private void play(final String key) {
+  static Optional<URL> findClip(final ResourceLoader loader, final List<String> paths) {
+    return paths.stream()
+        .flatMap(p -> loader.listResources("sounds/" + p).stream())
+        // as the game: it plays only files ending in exactly ".mp3"
+        .filter(u -> u.toString().endsWith(MP3))
+        .findFirst();
+  }
+
+  /** Plays the first file found of the paths; a toast when there is none. */
+  private void play(final String key, final String name, final List<String> paths) {
     commit();
-    final List<String> paths =
-        paths(key).isEmpty()
-            ? List.of(
-                project.texts().value(Kind.SOUNDS, DEFAULT_FOLDER).orElse("ww2").strip()
-                    + "/"
-                    + key,
-                "generic/" + key)
-            : paths(key);
     final Optional<Path> folder = project.getFolder();
+    final String where =
+        paths(key).isEmpty() ? " in " + defaultFolder() + "/ or generic/" : " in its files";
     stopPlaying();
     final Thread player =
         new Thread(
             () -> {
-              try (ResourceLoader loader =
-                  new ResourceLoader(folder.map(List::of).orElse(List.of()))) {
-                final Optional<URL> clip =
-                    paths.stream()
-                        .flatMap(p -> loader.listResources("sounds/" + p).stream())
-                        // as the game: it plays only files ending in exactly ".mp3"
-                        .filter(u -> u.toString().endsWith(MP3))
-                        .findFirst();
+              try (ResourceLoader loader = newLoader(folder)) {
+                final Optional<URL> clip = findClip(loader, paths);
                 if (clip.isEmpty()) {
-                  log.info("No sound found for {}", key);
+                  SwingUtilities.invokeLater(
+                      () -> Dialogs.toast(page, "! No mp3 found for " + name + where));
                   return;
                 }
                 try (InputStream in = clip.get().openStream()) {
                   final AdvancedPlayer advancedPlayer = new AdvancedPlayer(in);
-                  playing = advancedPlayer;
+                  SwingUtilities.invokeLater(() -> setPlaying(advancedPlayer));
                   advancedPlayer.play();
+                  SwingUtilities.invokeLater(() -> stopped(advancedPlayer));
                 }
               } catch (final Exception e) {
                 // eg no sound device
@@ -412,10 +677,24 @@ final class SoundsEditor implements Editor {
     player.start();
   }
 
+  private void setPlaying(final AdvancedPlayer player) {
+    stopPlaying();
+    playing = player;
+    stop.setEnabled(true);
+  }
+
+  private void stopped(final AdvancedPlayer player) {
+    if (playing == player) {
+      playing = null;
+      stop.setEnabled(false);
+    }
+  }
+
   private void stopPlaying() {
     final AdvancedPlayer before = playing;
     if (before != null) {
       before.close();
+      stopped(before);
     }
   }
 }

@@ -70,9 +70,9 @@ final class TerritoryEffectsXmlTest {
     final Game removed = TerritoryEffectsXml.withoutEffect(renamed, "woods");
 
     assertThat(TerritoryEffectsXml.effects(forest)).as("added").containsExactly(FOREST);
-    assertThat(TerritoryEffectsXml.territoryCounts(forest))
+    assertThat(TerritoryEffectsXml.territoriesWith(forest))
         .as("one territory has it")
-        .containsExactly(Map.entry(FOREST, 1L));
+        .containsExactly(Map.entry(FOREST, List.of(NORTH)));
     assertThat(TerritoryEffectsXml.effects(renamed)).as("renamed").containsExactly("woods");
     assertThat(MapXml.territoryEffects(renamed, NORTH)).as("on the territory").contains("woods");
     assertThat(TerritoryEffectsXml.unitValues(renamed, "woods", TerritoryEffectsXml.OFFENSE))

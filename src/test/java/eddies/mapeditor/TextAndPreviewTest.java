@@ -30,7 +30,6 @@ final class TextAndPreviewTest {
     notes.commit();
 
     final JSplitPane split = find(notes.page(), JSplitPane.class).orElseThrow();
-    assertThat(notes.preview()).as("no middle: the tool takes the whole width").isEmpty();
     assertThat(find((Container) split.getLeftComponent(), XmlTextArea.class))
         .as("the text on the left")
         .isPresent();
@@ -62,15 +61,12 @@ final class TextAndPreviewTest {
 
     // one text area serves every file: what each file shows is read before the next opens
     files.reveal(folder.resolve("description.html"));
-    final JSplitPane htmlSplit =
-        find(files.preview().orElseThrow(), JSplitPane.class).orElseThrow();
-    final boolean textLeft =
-        find((Container) htmlSplit.getLeftComponent(), XmlTextArea.class).isPresent();
+    final JSplitPane htmlSplit = findTextAndPreview(files.page()).orElseThrow();
     final String previewRight =
         find((Container) htmlSplit.getRightComponent(), GameNotesView.class)
             .map(GameNotesView::getText)
             .orElse("");
-    find(files.preview().orElseThrow(), XmlTextArea.class).orElseThrow().setText("<p>Typed</p>");
+    find(files.page(), XmlTextArea.class).orElseThrow().setText("<p>Typed</p>");
     files.previewHtml();
     final String previewTyped =
         find((Container) htmlSplit.getRightComponent(), GameNotesView.class)
@@ -79,12 +75,26 @@ final class TextAndPreviewTest {
     // the typing dropped, so the next file opens without asking
     files.forgetText();
     files.reveal(folder.resolve("notes.txt"));
-    final Optional<JSplitPane> textSplit = find(files.preview().orElseThrow(), JSplitPane.class);
+    final Optional<JSplitPane> textSplit = findTextAndPreview(files.page());
 
-    assertThat(textLeft).as("the HTML's text on the left").isTrue();
     assertThat(previewRight).as("its preview on the right, showing it").contains("A map");
     assertThat(previewTyped).as("a pause in typing shows the typed text").contains("Typed");
     assertThat(textSplit).as("a text file has no preview").isEmpty();
+  }
+
+  /** The split whose left side holds the text: the page itself is a split, tree | file. */
+  private static Optional<JSplitPane> findTextAndPreview(final Container in) {
+    return Stream.of(in.getComponents())
+        .flatMap(
+            c ->
+                c instanceof JSplitPane split
+                        && split.getLeftComponent() instanceof Container left
+                        && find(left, XmlTextArea.class).isPresent()
+                    ? Stream.of(split)
+                    : c instanceof Container inner
+                        ? findTextAndPreview(inner).stream()
+                        : Stream.empty())
+        .findFirst();
   }
 
   private FilesEditor givenFilesOf(final String... namesAndTexts) throws Exception {
@@ -92,9 +102,8 @@ final class TextAndPreviewTest {
     for (int i = 0; i < namesAndTexts.length; i += 2) {
       Files.writeString(folder.resolve(namesAndTexts[i]), namesAndTexts[i + 1]);
     }
-    final FilesEditor files =
-        new FilesEditor(
-            () -> Optional.of(folder), MapXmlTest::givenMinimap, () -> true, () -> {}, () -> {});
+    final MapProject project = givenMinimapProject();
+    final FilesEditor files = new FilesEditor(() -> project, () -> true, () -> {}, tool -> {});
     files.showing();
     return files;
   }

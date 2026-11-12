@@ -1,9 +1,12 @@
 package eddies.mapeditor;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 
 import java.io.InputStream;
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.triplea.generic.xml.reader.XmlMapper;
@@ -33,5 +36,27 @@ final class MapChecksTest {
     assertThat(shown.flatMap(territory -> MapXml.owner(game, territory)))
         .as("Show opens a territory the nation owns, where Territories sets its capital")
         .contains("Italians");
+  }
+
+  @DisplayName("A problem that names a tool tells it, so Home opens that tool")
+  @Test
+  void problemsNameTheirTool() throws Exception {
+    final Game withoutNations = MapProject.newEmpty().game();
+    final Game withLoneTerritory =
+        MapXml.withTerritory(givenMinimapWithoutItaliansCapital(), "Atlantis", List.of());
+
+    final List<Problem> problems =
+        Stream.concat(
+                MapChecks.quick(withoutNations, MapFiles.none()).stream(),
+                MapChecks.quick(withLoneTerritory, MapFiles.none()).stream())
+            .toList();
+
+    assertThat(problems)
+        .as("nations are added in Nations, borders checked in Connections")
+        .filteredOn(p -> p.text().startsWith("No nations yet") || p.text().startsWith("Atlantis "))
+        .extracting(Problem::text, p -> p.tool().orElse(""))
+        .containsExactly(
+            tuple("No nations yet: add them in Nations", "Nations"),
+            tuple("Atlantis is not connected to any territory", "Connections"));
   }
 }

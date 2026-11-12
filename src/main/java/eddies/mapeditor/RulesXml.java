@@ -338,6 +338,25 @@ class RulesXml {
         Constants.RELATIONSHIP_PROPERTY_DEFAULT.equals(value) ? null : value);
   }
 
+  /** How many pairs of nations start in the type; a pair given twice, either way round, once. */
+  static int pairsOf(final Game game, final String type) {
+    return (int)
+        relationships(game).stream()
+            .filter(r -> type.equals(r.getType()))
+            .map(r -> Stream.of(r.getPlayer1(), r.getPlayer2()).sorted().toList())
+            .distinct()
+            .count();
+  }
+
+  /** All options of the type's relationshipTypeAttachment in their order, its archetype too. */
+  static List<Option> relationshipOptions(final Game game, final String type) {
+    return AttachmentsXml.attachments(game).stream()
+        .filter(relationshipKey(type)::matches)
+        .findFirst()
+        .map(AttachmentsXml::options)
+        .orElse(List.of());
+  }
+
   // ---- nations: how they play and their own rules
 
   /** The nation as the player list gives it: optional, can be disabled, played by, hidden. */
@@ -473,6 +492,43 @@ class RulesXml {
   private static AttachmentKey playerKey(final String nation) {
     return new AttachmentKey(
         Constants.PLAYER_ATTACHMENT_NAME, PlayerAttachment.class.getName(), "player", nation);
+  }
+
+  /**
+   * The game with the nation's option at this row of {@link #playerOptions} given the value, eg
+   * one of two placementLimits; its count stays.
+   */
+  static Game withPlayerOptionAt(
+      final Game game, final String nation, final int row, final String value) {
+    return withPlayerAttachmentAt(
+        game,
+        nation,
+        row,
+        a ->
+            AttachmentsXml.withOption(
+                a, row, AttachmentsXml.options(a).get(row).toBuilder().value(value).build()));
+  }
+
+  /** The game without the nation's option at this row of {@link #playerOptions}. */
+  static Game withoutPlayerOptionAt(final Game game, final String nation, final int row) {
+    return withPlayerAttachmentAt(game, nation, row, a -> AttachmentsXml.withoutOption(a, row));
+  }
+
+  // the game unchanged when the nation has no option at the row
+  private static Game withPlayerAttachmentAt(
+      final Game game,
+      final String nation,
+      final int row,
+      final UnaryOperator<Attachment> change) {
+    final List<Attachment> attachments = AttachmentsXml.attachments(game);
+    for (int i = 0; i < attachments.size(); i++) {
+      if (playerKey(nation).matches(attachments.get(i))) {
+        return row >= 0 && row < AttachmentsXml.options(attachments.get(i)).size()
+            ? AttachmentsXml.withAttachment(game, i, change.apply(attachments.get(i)))
+            : game;
+      }
+    }
+    return game;
   }
 
   // ---- names

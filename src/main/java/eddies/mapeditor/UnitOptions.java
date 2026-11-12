@@ -1,5 +1,7 @@
 package eddies.mapeditor;
 
+import static java.util.Map.entry;
+
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -59,7 +61,7 @@ class UnitOptions {
                       "unitSupportCount",
                       "Units it supports",
                       -1,
-                      "How many units its support reaches, -1 for as many as the support says."),
+                      "How many units its support reaches; empty for as many as the support says."),
                   number(
                       "isMarine",
                       "Bonus when landing from sea",
@@ -89,23 +91,23 @@ class UnitOptions {
                       "transportCapacity",
                       "Transport capacity",
                       -1,
-                      "Room it has for land units, -1 for none."),
+                      "Room it has for land units."),
                   number(
                       "transportCost",
                       "Transport cost",
                       -1,
-                      "Room it takes on a transport, -1 for none."),
+                      "Room it takes on a transport."),
                   flag("isCombatTransport", "Fights as well as transports", ""),
                   number(
                       "carrierCapacity",
                       "Carrier capacity",
                       -1,
-                      "Room it has for planes, -1 for none."),
+                      "Room it has for planes."),
                   number(
                       "carrierCost",
                       "Carrier cost",
                       -1,
-                      "Room it takes on a carrier, -1 for none."),
+                      "Room it takes on a carrier."),
                   flag("isAirTransport", "Carries paratroopers", ""),
                   flag("isAirTransportable", "Can be carried by planes", ""),
                   flag("isLandTransport", "Carries land units on land", ""),
@@ -120,7 +122,7 @@ class UnitOptions {
                       "bombard",
                       "Bombard strength",
                       -1,
-                      "Hits on this or less when it bombards, -1 for its attack."),
+                      "Hits on this or less when it bombards; empty for its attack."),
                   number(
                       "blockade",
                       "Blockade",
@@ -170,7 +172,7 @@ class UnitOptions {
                       "canProduceXUnits",
                       "Units it produces",
                       -1,
-                      "Per turn, -1 for the territory's production."),
+                      "Per turn; empty for the territory's production."),
                   flag("canBeDamaged", "Can be damaged by bombing", ""),
                   number("maxDamage", "Most damage", 2, "Damage it takes at most."),
                   number(
@@ -187,12 +189,12 @@ class UnitOptions {
                       "A name; constructions of a kind count together."),
                   number("constructionsPerTerrPerTypePerTurn", "Constructions per turn", -1, ""),
                   number("maxConstructionsPerTypePerTerr", "Constructions per territory", -1, ""),
-                  number("maxBuiltPerPlayer", "Most a nation may have", -1, "-1 for no limit."),
+                  number("maxBuiltPerPlayer", "Most a nation may have", -1, ""),
                   number(
                       "canOnlyBePlacedInTerritoryValuedAtX",
                       "Placed only in territories worth",
                       -1,
-                      "The least production a territory needs, -1 for any."),
+                      "The least production a territory needs."),
                   territories(
                       "unitPlacementRestrictions",
                       "Never placed in",
@@ -209,7 +211,7 @@ class UnitOptions {
                       "bombingMaxDieSides",
                       "Bombing die",
                       -1,
-                      "Sides of its bombing die, -1 for the game's dice."),
+                      "Sides of its bombing die."),
                   number("bombingBonus", "Bombing bonus", 0, "Added to each bombing roll."),
                   units("bombingTargets", "Bombs", "Unit types it may bomb, empty for all."))),
           new Section(
@@ -219,7 +221,7 @@ class UnitOptions {
                       "tuv",
                       "Value",
                       -1,
-                      "What it is worth for the battle calculator, -1 for its cost."),
+                      "What it is worth for the battle calculator."),
                   number(
                       "whenCapturedSustainsDamage",
                       "Damage when captured",
@@ -234,12 +236,123 @@ class UnitOptions {
                       "Given with its territory to",
                       "Nations it goes to with its territory."))));
 
+  /** With the cost, the numbers in the row at the top, out of their sections. */
+  static final List<String> ESSENTIALS = List.of("attack", "defense", "movement", "hitPoints");
+
+  /** What a unit is: TripleA's isSea and isAir, both false for land. */
+  enum UnitKind {
+    LAND,
+    SEA,
+    AIR
+  }
+
+  /** The options the kind sets; in their sections only for a unit that both sails and flies. */
+  static final Set<String> KIND_FLAGS = Set.of("isSea", "isAir");
+
+  /** Shown in their section for every unit the section is for, set or not. */
+  static final Set<String> COMMON =
+      Set.of(
+          "attackRolls",
+          "defenseRolls",
+          "isFirstStrike",
+          "artillery",
+          "artillerySupportable",
+          "canBlitz",
+          "transportCapacity",
+          "transportCost",
+          "carrierCapacity",
+          "carrierCost",
+          "isDestroyer",
+          "canBombard",
+          "canIntercept",
+          "canEscort",
+          "canScramble",
+          "isAirBase",
+          "isInfrastructure",
+          "canProduceUnits",
+          "canBeDamaged",
+          "maxDamage",
+          "isStrategicBomber",
+          "tuv");
+
+  /** The word an empty number field shows for -1, TripleA's default "none" or "all". */
+  static final Map<String, String> BLANK_WORDS =
+      Map.ofEntries(
+          entry("unitSupportCount", "all"),
+          entry("transportCapacity", "none"),
+          entry("transportCost", "none"),
+          entry("carrierCapacity", "none"),
+          entry("carrierCost", "none"),
+          entry("maxScrambleDistance", "none"),
+          entry("maxBuiltPerPlayer", "no limit"),
+          entry("constructionsPerTerrPerTypePerTurn", "no limit"),
+          entry("maxConstructionsPerTypePerTerr", "no limit"),
+          entry("bombingMaxDieSides", "game's dice"),
+          entry("tuv", "its cost"),
+          entry("bombard", "its attack"),
+          entry("canProduceXUnits", "territory's"),
+          entry("canOnlyBePlacedInTerritoryValuedAtX", "any"));
+
+  /**
+   * @param phrase what the option is, in plain words
+   * @param format how its value is written, as UnitAttachment's setter reads it
+   */
+  record Hint(String phrase, String format) {}
+
+  /** Options the sections do not show, explained when adding one (as UnitAttachment reads them). */
+  static final Map<String, Hint> EXTRA_HINTS =
+      Map.ofEntries(
+          entry(
+              "consumesUnits",
+              new Hint("units it uses up when built", "Count and unit, eg 1:factory")),
+          entry(
+              "createsUnitsList",
+              new Hint("units it creates each turn", "Count and unit, eg 1:infantry")),
+          entry(
+              "createsResourcesList",
+              new Hint("resources it makes each turn", "Count and resource, eg 2:PUs")),
+          entry("fuelCost", new Hint("resources each move costs", "Count and resource, eg 1:Fuel")),
+          entry(
+              "fuelFlatCost",
+              new Hint(
+                  "resources it costs once a turn when it moves", "Count and resource, eg 1:Fuel")),
+          entry(
+              "givesMovement",
+              new Hint("movement it gives other units", "Count and units, eg 1:infantry:armour")),
+          entry("requiresUnits", new Hint("units needed to place it", "Units, eg factory")),
+          entry(
+              "requiresUnitsToMove",
+              new Hint("units needed with it to move", "Units, eg airfield")),
+          entry("repairsUnits", new Hint("units it repairs", "Units, eg battleship")),
+          entry(
+              "canInvadeOnlyFrom",
+              new Hint("what it may land from", "all, none or units, eg transport")),
+          entry(
+              "special",
+              new Hint("special rules", "none or canOnlyPlaceInOriginalTerritories")),
+          entry(
+              "destroyedWhenCapturedBy",
+              new Hint(
+                  "nations whose capture destroys it", "Nations, eg Russians, or FROM:Russians")),
+          entry("placementLimit", limit("placing")),
+          entry("movementLimit", limit("moving")),
+          entry("attackingLimit", limit("attacking")));
+
   /** The names of the options shown in the sections. */
   static final Set<String> NAMES =
       SECTIONS.stream()
           .flatMap(s -> s.options().stream())
           .map(UnitOption::name)
           .collect(Collectors.toUnmodifiableSet());
+
+  /** The option of the sections with the name. */
+  static UnitOption named(final String name) {
+    return SECTIONS.stream()
+        .flatMap(s -> s.options().stream())
+        .filter(o -> name.equals(o.name()))
+        .findFirst()
+        .orElseThrow();
+  }
 
   /**
    * Old option names TripleA still reads, with the options each sets (UnitAttachment's setters,
@@ -280,6 +393,12 @@ class UnitOptions {
           Set.of("isLandTransportable"),
           "isParatroop",
           Set.of("isAirTransportable"));
+
+  private static Hint limit(final String when) {
+    return new Hint(
+        "most of it per territory when " + when,
+        "Count and whose, eg 2:owned (owned, allied or total)");
+  }
 
   private static UnitOption flag(final String name, final String label, final String help) {
     return new UnitOption(name, label, Kind.FLAG, "false", 0, help);

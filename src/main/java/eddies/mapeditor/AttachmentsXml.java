@@ -72,6 +72,43 @@ class AttachmentsXml {
           Map.entry("RelationshipTypeAttachment", "relationshipTypeAttachment"),
           Map.entry("TechAbilityAttachment", "techAbilityAttachment"));
 
+  /** A kind in plain words, one and many, eg "Trigger" and "Triggers". */
+  record KindName(String one, String many) {}
+
+  /** Each of {@link #KINDS} in plain words, for the map maker who does not know TripleA's classes. */
+  static final Map<String, KindName> KIND_NAMES =
+      Map.ofEntries(
+          Map.entry("TriggerAttachment", new KindName("Trigger", "Triggers")),
+          Map.entry("RulesAttachment", new KindName("Condition", "Conditions")),
+          Map.entry("PlayerAttachment", new KindName("Nation rules", "Nation rules")),
+          Map.entry(
+              "PoliticalActionAttachment",
+              new KindName("Political action", "Political actions")),
+          Map.entry("UserActionAttachment", new KindName("User action", "User actions")),
+          Map.entry("TechAttachment", new KindName("Technology", "Technology")),
+          Map.entry("TerritoryAttachment", new KindName("Territory", "Territories")),
+          Map.entry("CanalAttachment", new KindName("Canal", "Canals")),
+          Map.entry("UnitAttachment", new KindName("Unit type", "Unit types")),
+          Map.entry("UnitSupportAttachment", new KindName("Unit support", "Unit support")),
+          Map.entry(
+              "TerritoryEffectAttachment", new KindName("Terrain effect", "Terrain effects")),
+          Map.entry(
+              "RelationshipTypeAttachment",
+              new KindName("Relationship type", "Relationship types")),
+          Map.entry(
+              "TechAbilityAttachment",
+              new KindName("Technology ability", "Technology abilities")));
+
+  /** The kind in plain words; one TripleA's classes have but the editor does not know, as it is. */
+  static KindName kindName(final String kind) {
+    return KIND_NAMES.getOrDefault(kind, new KindName(kind, kind));
+  }
+
+  /** Whether the attachment has the name TripleA reads its kind by, eg "unitAttachment". */
+  static boolean hasDefaultName(final Attachment attachment) {
+    return Objects.equals(attachment.getName(), NAMES.get(kind(attachment)));
+  }
+
   private static final Set<String> NUMBERED =
       Set.of(
           "TriggerAttachment",

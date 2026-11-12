@@ -6,9 +6,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.prefs.Preferences;
 import java.util.stream.Stream;
+import javax.swing.JComponent;
 import javax.swing.JFileChooser;
 import javax.swing.JOptionPane;
 
@@ -26,6 +28,9 @@ public final class EddiesMapEditor {
   private EddiesMapEditor() {}
 
   public static void main(final String[] args) throws IOException, InterruptedException {
+    // the editor's texts are English, so its dialogs' buttons and numbers are English too
+    Locale.setDefault(Locale.ENGLISH);
+    JComponent.setDefaultLocale(Locale.ENGLISH);
     if (hasTriplea()) {
       MapMakerWindow.start();
       return;

@@ -75,4 +75,16 @@ final class PlayWithTest {
         .contains(Path.of("D:\\Games\\Triple A", "TripleA.exe"));
     assertThat(none).as("no entry named TripleA").isEmpty();
   }
+
+  @DisplayName("The menu names the TripleA by its folder, or by its app on a Mac")
+  @Test
+  void describesTheTriplea() {
+    final Path ownFolder = Path.of("D:/Games/TripleA 2.7.14/TripleA.exe");
+
+    assertThat(PlayWith.describe(WINDOWS)).as("the install folder's name").isEqualTo("TripleA");
+    assertThat(PlayWith.describe(ownFolder))
+        .as("a folder of the player's own")
+        .isEqualTo("TripleA 2.7.14");
+    assertThat(PlayWith.describe(MAC)).as("the app without .app").isEqualTo("TripleA");
+  }
 }

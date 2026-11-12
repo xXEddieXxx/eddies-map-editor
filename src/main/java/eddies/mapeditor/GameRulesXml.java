@@ -336,13 +336,19 @@ class GameRulesXml {
 
   /**
    * A kind of step TripleA has, eg politics: the delegate's usual name, class and what players see,
-   * and the ending of its steps' names, by which TripleA tells eg combat from non-combat move.
+   * and the ending of its steps' names, by which TripleA tells eg combat from non-combat move; what
+   * happens in it in plain words, and whether maps commonly have it.
    */
   record DelegateKind(
-      String name, String javaClass, String display, String what, String ending) {
+      String name,
+      String javaClass,
+      String display,
+      String what,
+      String ending,
+      boolean common) {
     @Override
     public String toString() {
-      return display + " · " + what;
+      return what;
     }
 
     /** Whether its step is of the whole round, of no nation, eg the round's end. */
@@ -357,34 +363,35 @@ class GameRulesXml {
   /** TripleA's delegates, as maps name them and their steps. */
   static final List<DelegateKind> DELEGATE_KINDS =
       List.of(
-          kind("initDelegate", "InitializationDelegate", "Initializing Delegates", "game start",
-              "InitDelegate"),
-          kind("bid", "BidPurchaseDelegate", "Bid Purchase", "buy with a bid", "Bid"),
-          kind("placeBid", "BidPlaceDelegate", "Bid Placement", "place what a bid bought",
+          kind("initDelegate", "InitializationDelegate", "Initializing Delegates",
+              "Prepare the game", "InitDelegate"),
+          kind("bid", "BidPurchaseDelegate", "Bid Purchase", "Buy with a bid", "Bid"),
+          kind("placeBid", "BidPlaceDelegate", "Bid Placement", "Place what a bid bought",
               "BidPlace"),
-          kind("tech", "TechnologyDelegate", "Research Technology", "roll for techs", "Tech"),
-          kind("tech_activation", "TechActivationDelegate", "Activate Technology", "techs work",
-              "TechActivation"),
-          kind("purchase", "PurchaseDelegate", "Purchase Units", "buy units", "Purchase"),
-          kind("purchaseNoPU", "NoPUPurchaseDelegate", "Purchase Units", "units by territory",
-              "Purchase"),
-          kind("move", "MoveDelegate", "Combat Move", "move to attack", "CombatMove"),
-          kind("move", "MoveDelegate", "Non Combat Move", "move after battles", "NonCombatMove"),
-          kind("specialCombatMove", "SpecialMoveDelegate", "Airborne Attack Move", "airborne",
-              "AirborneCombatMove"),
-          kind("battle", "BattleDelegate", "Combat", "fight battles", "Battle"),
-          kind("place", "PlaceDelegate", "Place Units", "place bought units", "Place"),
-          kind("placeNoAirCheck", "NoAirCheckPlaceDelegate", "Place Units", "air may not land",
-              "Place"),
-          kind("politics", "PoliticsDelegate", "Politics", "war and peace", "Politics"),
-          kind("userActions", "UserActionDelegate", "Actions", "the nation's actions",
-              "UserActions"),
-          kind("endTurn", "EndTurnDelegate", "Turn Complete", "income", "EndTurn"),
-          kind("endTurnNoPU", "NoPUEndTurnDelegate", "Turn Complete", "no income", "EndTurn"),
-          kind("endRound", "EndRoundDelegate", "Round Complete", "victory checks",
+          kind("tech", "TechnologyDelegate", "Research Technology", "Roll for technology",
+              "Tech"),
+          kind("tech_activation", "TechActivationDelegate", "Activate Technology",
+              "Technology takes effect", "TechActivation"),
+          kind("purchase", "PurchaseDelegate", "Purchase Units", "Buy units", "Purchase"),
+          rareKind("purchaseNoPU", "NoPUPurchaseDelegate", "Purchase Units",
+              "Buy units by territory", "Purchase"),
+          kind("move", "MoveDelegate", "Combat Move", "Move to attack", "CombatMove"),
+          kind("move", "MoveDelegate", "Non Combat Move", "Move after battles", "NonCombatMove"),
+          kind("specialCombatMove", "SpecialMoveDelegate", "Airborne Attack Move",
+              "Airborne attack", "AirborneCombatMove"),
+          kind("battle", "BattleDelegate", "Combat", "Fight battles", "Battle"),
+          kind("place", "PlaceDelegate", "Place Units", "Place bought units", "Place"),
+          rareKind("placeNoAirCheck", "NoAirCheckPlaceDelegate", "Place Units",
+              "Place, air may not land", "Place"),
+          kind("politics", "PoliticsDelegate", "Politics", "War and peace", "Politics"),
+          kind("userActions", "UserActionDelegate", "Actions", "Actions", "UserActions"),
+          kind("endTurn", "EndTurnDelegate", "Turn Complete", "Collect income", "EndTurn"),
+          rareKind("endTurnNoPU", "NoPUEndTurnDelegate", "Turn Complete", "No income",
+              "EndTurn"),
+          kind("endRound", "EndRoundDelegate", "Round Complete", "End the round",
               "EndRoundStep"),
-          kind("randomStartDelegate", "RandomStartDelegate", "Pregame Nation Placements",
-              "territories dealt out", "RandomStartDelegate"));
+          rareKind("randomStartDelegate", "RandomStartDelegate", "Pregame Nation Placements",
+              "Pregame nation placements", "RandomStartDelegate"));
 
   private static DelegateKind kind(
       final String name,
@@ -392,7 +399,111 @@ class GameRulesXml {
       final String display,
       final String what,
       final String ending) {
-    return new DelegateKind(name, DELEGATES + javaClass, display, what, ending);
+    return new DelegateKind(name, DELEGATES + javaClass, display, what, ending, true);
+  }
+
+  private static DelegateKind rareKind(
+      final String name,
+      final String javaClass,
+      final String display,
+      final String what,
+      final String ending) {
+    return new DelegateKind(name, DELEGATES + javaClass, display, what, ending, false);
+  }
+
+  /**
+   * The kind of the step: of its delegate's class, and of several (combat and non-combat move) the
+   * one whose ending its name has, as TripleA tells them by the name; empty for a delegate of a
+   * class TripleA's maps do not commonly name, or a step whose delegate is missing.
+   */
+  static Optional<DelegateKind> kindOf(final Game game, final Step step) {
+    final List<DelegateKind> ofClass =
+        delegate(game, step.getDelegate())
+            .map(d -> DELEGATE_KINDS.stream().filter(k -> isClass(d, k)).toList())
+            .orElse(List.of());
+    return ofClass.stream()
+        .filter(k -> Optional.ofNullable(step.getName()).orElse("").endsWith(k.ending()))
+        .max(Comparator.comparingInt(k -> k.ending().length()))
+        .or(() -> ofClass.stream().findFirst());
+  }
+
+  private static Optional<Delegate> delegate(final Game game, @Nullable final String name) {
+    return Optional.ofNullable(game.getGamePlay())
+        .map(GamePlay::getDelegates)
+        .orElse(List.of())
+        .stream()
+        .filter(d -> d.getName() != null && d.getName().equals(name))
+        .findFirst();
+  }
+
+  /** The step's name in the game: its own display, else its delegate's, else its name. */
+  static String shownName(final Game game, final Step step) {
+    return Optional.ofNullable(step.getDisplay())
+        .or(() -> delegate(game, step.getDelegate()).map(Delegate::getDisplay))
+        .orElse(step.getName());
+  }
+
+  /**
+   * The game with the step at the index of the kind: the game's delegate of that class (added if
+   * missing, as by {@link #withDelegateStep}), and a name with the kind's ending, as TripleA tells
+   * by it what a step does, eg "germansPurchase" becomes "germansBattle". A display that was the
+   * old kind's goes, one of the map's own stays. A step of the round made a nation's gets a nation
+   * ({@link #playerFor}). Unchanged when the step is of the kind already.
+   */
+  static Game withStepKind(final Game game, final int index, final DelegateKind kind) {
+    final Step step = RulesXml.steps(game).get(index);
+    final Optional<DelegateKind> old = kindOf(game, step);
+    if (old.filter(kind::equals).isPresent()) {
+      return game;
+    }
+    final DelegateOf delegate = withDelegate(game, kind);
+    final String name = Optional.ofNullable(step.getName()).orElse("");
+    final String oldEnding =
+        DELEGATE_KINDS.stream()
+            .map(DelegateKind::ending)
+            .filter(name::endsWith)
+            .max(Comparator.comparingInt(String::length))
+            .orElse("");
+    final Set<String> taken =
+        RulesXml.steps(game).stream()
+            .map(Step::getName)
+            .filter(n -> !name.equals(n))
+            .collect(Collectors.toSet());
+    final boolean ownDisplay =
+        step.getDisplay() != null
+            && !old.map(DelegateKind::display).filter(step.getDisplay()::equals).isPresent();
+    return RulesXml.withStep(
+        delegate.game(),
+        index,
+        step.toBuilder()
+            .delegate(delegate.name())
+            .player(kind.isOfRound() ? null : playerFor(game, index))
+            .name(
+                oldEnding.equals(kind.ending())
+                    ? name
+                    : freeNameEnding(
+                        taken, name.substring(0, name.length() - oldEnding.length()), kind.ending()))
+            .display(
+                ownDisplay
+                    ? step.getDisplay()
+                    : delegate.shownAsKind() ? null : kind.display())
+            .build());
+  }
+
+  /**
+   * The step's nation; for a step of the round, which has none, the nation of the band it sits in
+   * (the nation step before it), else the first nation, as TripleA cannot play a nation's step
+   * without one.
+   */
+  @Nullable
+  private static String playerFor(final Game game, final int index) {
+    final List<Step> steps = RulesXml.steps(game);
+    for (int i = index; i >= 0; i--) {
+      if (steps.get(i).getPlayer() != null) {
+        return steps.get(i).getPlayer();
+      }
+    }
+    return MapXml.nations(game).stream().findFirst().orElse(null);
   }
 
   /**
@@ -403,6 +514,28 @@ class GameRulesXml {
    */
   static Game withDelegateStep(
       final Game game, final int index, final DelegateKind kind, @Nullable final String nation) {
+    final DelegateOf delegate = withDelegate(game, kind);
+    final String player = kind.isOfRound() ? null : nation;
+    final Game added = RulesXml.withStepAdded(delegate.game(), index, delegate.name(), player);
+    final Set<String> stepNames =
+        RulesXml.steps(delegate.game()).stream().map(Step::getName).collect(Collectors.toSet());
+    final String prefix =
+        player == null ? "game" : lowerFirst(player.replaceAll("[^A-Za-z0-9]", ""));
+    final Step step = RulesXml.steps(added).get(index);
+    return RulesXml.withStep(
+        added,
+        index,
+        step.toBuilder()
+            // a number after the ending would hide it from TripleA: a number before it instead
+            .name(freeNameEnding(stepNames, prefix, kind.ending()))
+            .display(delegate.shownAsKind() ? step.getDisplay() : kind.display())
+            .build());
+  }
+
+  /** The game with a delegate of the kind, its name, and whether it shows the kind's display. */
+  private record DelegateOf(Game game, String name, boolean shownAsKind) {}
+
+  private static DelegateOf withDelegate(final Game game, final DelegateKind kind) {
     final List<Delegate> delegates =
         new ArrayList<>(
             Optional.ofNullable(game.getGamePlay())
@@ -412,45 +545,23 @@ class GameRulesXml {
         delegates.stream()
             .filter(d -> isClass(d, kind))
             .min(Comparator.comparing((Delegate d) -> !kind.name().equals(d.getName())));
-    final Game withDelegate;
-    final String name;
     if (existing.isPresent()) {
-      withDelegate = game;
-      name = existing.get().getName();
-    } else {
-      name =
-          RulesXml.freeName(
-              delegates.stream().map(Delegate::getName).collect(Collectors.toSet()), kind.name());
-      delegates.add(
-          Delegate.builder()
-              .name(name)
-              .javaClass(kind.javaClass())
-              .display(kind.display())
-              .build());
-      final GamePlay gamePlay =
-          Optional.ofNullable(game.getGamePlay()).orElseGet(() -> GamePlay.builder().build());
-      withDelegate =
-          game.toBuilder()
-              .gamePlay(gamePlay.toBuilder().delegates(List.copyOf(delegates)).build())
-              .build();
+      return new DelegateOf(
+          game, existing.get().getName(), kind.display().equals(existing.get().getDisplay()));
     }
-    final String player = kind.isOfRound() ? null : nation;
-    final Game added = RulesXml.withStepAdded(withDelegate, index, name, player);
-    final Set<String> stepNames =
-        RulesXml.steps(withDelegate).stream().map(Step::getName).collect(Collectors.toSet());
-    final String prefix =
-        player == null ? "game" : lowerFirst(player.replaceAll("[^A-Za-z0-9]", ""));
-    final Step step = RulesXml.steps(added).get(index);
-    final boolean shownAsDelegate =
-        existing.map(d -> kind.display().equals(d.getDisplay())).orElse(true);
-    return RulesXml.withStep(
-        added,
-        index,
-        step.toBuilder()
-            // a number after the ending would hide it from TripleA: a number before it instead
-            .name(freeNameEnding(stepNames, prefix, kind.ending()))
-            .display(shownAsDelegate ? step.getDisplay() : kind.display())
-            .build());
+    final String name =
+        RulesXml.freeName(
+            delegates.stream().map(Delegate::getName).collect(Collectors.toSet()), kind.name());
+    delegates.add(
+        Delegate.builder().name(name).javaClass(kind.javaClass()).display(kind.display()).build());
+    final GamePlay gamePlay =
+        Optional.ofNullable(game.getGamePlay()).orElseGet(() -> GamePlay.builder().build());
+    return new DelegateOf(
+        game.toBuilder()
+            .gamePlay(gamePlay.toBuilder().delegates(List.copyOf(delegates)).build())
+            .build(),
+        name,
+        true);
   }
 
   private static boolean isClass(final Delegate delegate, final DelegateKind kind) {

@@ -349,9 +349,125 @@ final class TriggerXmlTest {
     assertThat(sentence)
         .as("who, the condition, what it gives and when")
         .startsWith("Germans: if Germans ")
-        .contains("give PUs, amount 3")
+        .contains("give 3 PUs")
         .contains("at the end of the turn")
         .endsWith("Every round.");
+  }
+
+  @DisplayName("At war with and technologies without a count, or 0, read \"none of\"; territory"
+      + " checks without one read as all")
+  @Test
+  void saysNoneOfForAtWarAndTechs() {
+    final List<String> phrases = Stream.of(
+            List.of("atWarPlayers", "0:Russians"), List.of("atWarPlayers", "Russians"),
+            List.of("atWarPlayers", "1:Russians:Germans"), List.of("techs", "jetPower"),
+            List.of("techs", "2:jetPower:radar"), List.of("directOwnershipTerritories", "France"),
+            List.of("directOwnershipTerritories", "2:France:Italy"))
+        .map(p -> TriggerXml.phrase(spec(p.get(0)), p.get(1)))
+        .toList();
+
+    assertThat(phrases)
+        .as("TripleA needs none of them at war or researched for an empty count or 0"
+            + " (RulesAttachment.checkAtWar, checkTechs)")
+        .containsExactly(
+            "are at war with none of Russians", "are at war with none of Russians",
+            "are at war with at least 1 of Russians, Germans", "have none of jetPower",
+            "have at least 2 of jetPower, radar", "own France", "own 2 of France, Italy");
+    assertThat(TriggerXml.countWord(spec("directOwnershipTerritories"), ""))
+        .as("a territory check without a count needs all").isEqualTo("all");
+  }
+
+  @DisplayName("A relationship change reads \"become ... (if ... now)\" in plain words, without"
+      + " the bracket for any")
+  @Test
+  void saysRelationshipChangesPlainly() {
+    final String neutral = TriggerXml.phrase(spec("relationshipChange"),
+        "Japanese:Americans:anyNeutral:War");
+    final String any = TriggerXml.phrase(spec("relationshipChange"),
+        "Japanese:Americans:any:War");
+
+    assertThat(neutral).as("the was in plain words")
+        .isEqualTo("Japanese and Americans become War (if any neutral now)");
+    assertThat(any).as("any is no condition").isEqualTo("Japanese and Americans become War");
+    assertThat(Stream.of("any", "anyAllied", "anyNeutral", "anyWar", "Allied")
+            .map(TriggerXml::plain).toList())
+        .as("TripleA's words for kinds of relations, a type as it is")
+        .containsExactly("anything", "any allied", "any neutral", "any war", "Allied");
+  }
+
+  @DisplayName("Rounds read as \"in round 1, 3 to 5, 8 and later\"")
+  @Test
+  void saysRounds() {
+    final String rounds = TriggerXml.phrase(spec("rounds"), "1:3-5:8-+");
+
+    assertThat(rounds).as("TripleA's round syntax in words")
+        .isEqualTo("in round 1, 3 to 5, 8 and later");
+  }
+
+  @DisplayName("A resource with an amount reads as one effect; without one it warns that it gives"
+      + " nothing")
+  @Test
+  void pairsResourceAndAmount() throws Exception {
+    final Game game = givenMap(MINIMAP).game();
+    final Trigger fresh = TriggerXml.newTrigger(
+        TriggerXml.newName(game, TriggerXml.TRIGGER, "Pay", Set.of()), "Russians");
+
+    final Trigger paying = givenEffects(fresh, TriggerXml.resourceOptions("10", "PUs"));
+    final Trigger taking = givenEffects(fresh, TriggerXml.resourceOptions("-3", "PUs"));
+    final Trigger lone = givenEffects(fresh, TriggerXml.resourceOptions("", "PUs"));
+
+    assertThat(TriggerXml.clauses(game, paying).effects()).as("one effect")
+        .containsExactly("give 10 PUs");
+    assertThat(TriggerXml.clauses(game, taking).effects()).as("a negative amount takes")
+        .containsExactly("take 3 PUs");
+    assertThat(AttachmentsXml.options(lone.attachment())).as("no amount, no resourceCount")
+        .extracting(Option::getName).containsExactly("resource");
+    assertThat(TriggerXml.problems(game, MapTexts.none(), lone).warnings())
+        .as("TripleA gives nothing without an amount (TriggerAttachment resourceCount 0)")
+        .contains("Give PUs or a resource: no amount yet, so it gives nothing.");
+    assertThat(TriggerXml.problems(game, MapTexts.none(), paying).warnings())
+        .as("with an amount no such warning")
+        .noneMatch(w -> w.contains("no amount yet"));
+  }
+
+  private static Trigger givenEffects(final Trigger trigger, final List<Option> options) {
+    return new Trigger(trigger.index(), TriggerXml.withOptions(trigger.attachment(), options),
+        trigger.conditions());
+  }
+
+  @DisplayName("The clauses of a Global 1940 trigger are filled and make up its sentence")
+  @Test
+  void clausesMakeTheSentence() throws Exception {
+    final Game game = givenMap(G40).game();
+    final Trigger trigger =
+        TriggerXml.trigger(game, indexOf(game, "triggerAttachment_Germans_4_Swedish_Iron_Ore"));
+
+    final TriggerXml.Clauses clauses = TriggerXml.clauses(game, trigger);
+
+    assertThat(List.of(clauses.nation(), clauses.conditions(), clauses.when(), clauses.often()))
+        .as("every part said").allMatch(p -> !p.isEmpty());
+    assertThat(clauses.effects()).as("what it does").isNotEmpty();
+    assertThat(TriggerXml.sentence(game, trigger))
+        .as("the sentence is the clauses joined")
+        .isEqualTo(clauses.nation() + ": " + clauses.conditions() + ", "
+            + String.join(", ", clauses.effects()) + ", " + clauses.when() + ". "
+            + clauses.often());
+  }
+
+  @DisplayName("The war type is a relationship type of the war kind; minimap, without types, has"
+      + " none")
+  @Test
+  void findsWarType() throws Exception {
+    final Game g40 = givenMap(G40).game();
+    final Game minimap = givenMap(MINIMAP).game();
+
+    final String war = TriggerXml.warType(g40);
+    final String none = TriggerXml.warType(minimap);
+
+    assertThat(RulesXml.relationshipTypes(g40)).as("a type of the map").contains(war);
+    assertThat(RulesXml.archetype(g40, war)).as("a declaration of war needs a war type")
+        .isEqualTo("war");
+    assertThat(none).as("no types, no war type").isEmpty();
   }
 
   @DisplayName("One undo takes back the trigger, its new condition and its message")
@@ -380,5 +496,40 @@ final class TriggerXmlTest {
     assertThat(project.texts().value(MapTexts.Kind.NOTIFICATIONS, "RedWins"))
         .as("the message gone too")
         .isEmpty();
+  }
+
+  @DisplayName("A relationship condition reads as the two nations and their relationship, not as"
+      + " what the condition's nation sees")
+  @Test
+  void saysRelationshipConditionsPlainly() throws Exception {
+    final Game game = givenMap(G40).game();
+
+    final List<String> sentences = Stream.of(
+            "conditionAttachmentAxisNotYetAtWarWithTrueNeutrals",
+            "conditionAttachmentAxis_Friendly_With_TrueNeutrals",
+            "conditionAttachmentRussiansNotYetAtWarWithTrueNeutralsButAlliesAre")
+        .map(name -> TriggerXml.conditionSentence(TriggerXml.condition(game, name).orElseThrow()))
+        .toList();
+
+    assertThat(sentences)
+        .as("anyNeutral and anyWar match each type of that kind, a type only itself"
+            + " (RulesAttachment.checkRelationships)")
+        .containsExactly(
+            "Germans and Neutral_True are neutral",
+            "Germans and Neutral_True have the relationship Friendly_Neutral",
+            "Russians and Neutral_True are neutral and British and Neutral_True are at war"
+                + " and Russians and Germans are at war");
+    assertThat(TriggerXml.phrase(spec("relationship"), "Germans:Russians:anyWar:3"))
+        .as("the rounds it must have lasted")
+        .isEqualTo("Germans and Russians are at war for 3 rounds or more");
+  }
+
+  @DisplayName("A check whose places are not chosen yet says what to choose")
+  @Test
+  void saysWhatToChoose() {
+    final String phrase = TriggerXml.phrase(spec("directOwnershipTerritories"), "");
+
+    assertThat(phrase).as("not a sentence that stops after own")
+        .isEqualTo("own … (choose territories)");
   }
 }

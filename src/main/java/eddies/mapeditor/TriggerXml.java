@@ -143,6 +143,10 @@ class TriggerXml {
   private static final String COMBAT_MOVE = "at the start of the combat move";
   private static final String END_TURN = "at the end of the turn";
   private static final String END_ROUND = "at the end of the round";
+  private static final String GIVE_RESOURCE_LABEL = "Give PUs or a resource";
+  private static final String HOW_MANY = "How many";
+  private static final String EACH = "each";
+  private static final Set<String> NONE_IF_EMPTY = Set.of("atWarPlayers", "techs");
 
   static final List<Spec> SPECS =
       List.of(
@@ -165,15 +169,16 @@ class TriggerXml {
               many(Part.UNIT, "Units", "all")),
           effect("purchase", "Give units to place", "give [{0} × ]{1} to place", 1, PURCHASE,
               optional(Part.NUMBER, "How many"), many(Part.UNIT, "Units")),
-          effect("resource", "Give a resource", "give {0}", 0, END_TURN,
+          effect("resource", GIVE_RESOURCE_LABEL, "give {0}", 0, END_TURN,
               one(Part.RESOURCE, "Resource")),
-          effect("resourceCount", "Amount of the resource", "amount {0}", 0, "",
+          effect("resourceCount", "Amount of a resource (alone)", "amount {0}", 0, "",
               one(Part.NUMBER, "Amount")),
           effect("changeOwnership", "Change a territory's owner",
               "give {0} owned by {1} to {2} (captured: {3})", 0, COMBAT_MOVE,
               one(Part.TERRITORY, "Territory", "all"), one(Part.NATION, "Old owner", "any"),
               one(Part.NATION, "New owner"), one(Part.BOOL, "As if captured")),
-          effect("relationshipChange", "Change a relationship", "make {0} and {1} {3} (were {2})",
+          effect("relationshipChange", "Change a relationship",
+              "{0} and {1} become {3}[ (if {2} now)]",
               0, POLITICS, one(Part.NATION, "Nation"), one(Part.NATION, "Other nation"),
               one(Part.RELATION, "Was", "any", "anyAllied", "anyNeutral", "anyWar"),
               one(Part.RELATION, "Becomes")),
@@ -245,15 +250,15 @@ class TriggerXml {
               "see enemy units in"),
           check("unitPresence", "Counting only units", "counting [{0} × ]{1}", 1,
               one(Part.NUMBER, "How many"), many(Part.UNIT, "Units", "any")),
-          check("atWarPlayers", "At war with", "are at war with [{0} of ]{1}", 1,
-              optional(Part.NUMBER, "At least"), many(Part.NATION, "Nations")),
-          check("relationship", "A relationship is", "see {0} and {1} {2}[ for {3} rounds]", 0,
+          check("atWarPlayers", "At war with", "are at war with {0} of {1}", 1,
+              optional(Part.NUMBER, HOW_MANY), many(Part.NATION, "Nations")),
+          check("relationship", "A relationship is", "{0} and {1} {2}[ for {3} rounds or more]", 0,
               one(Part.NATION, "Nation"), one(Part.NATION, "Other nation"),
               one(Part.RELATION, "Relationship", "anyAllied", "anyNeutral", "anyWar"),
               optional(Part.NUMBER, "For rounds")),
-          check("techs", "Has technology", "have [{0} of ]{1}", 1,
-              optional(Part.NUMBER, "At least"), many(Part.TECH, "Technologies")),
-          check("rounds", "In rounds", "in rounds {0}", 0, many(Part.TEXT, "Rounds, eg 1:3-5:8-+")),
+          check("techs", "Has technology", "have {0} of {1}", 1,
+              optional(Part.NUMBER, HOW_MANY), many(Part.TECH, "Technologies")),
+          check("rounds", "In rounds", "in round {0}", 0, many(Part.TEXT, "Rounds")),
           check("switch", "Switched on", "are switched {0}", 0, one(Part.BOOL, "On")),
           check("gameProperty", "A game option is on", "play with {0}", 0,
               one(Part.TEXT, "Game option")),
@@ -268,6 +273,14 @@ class TriggerXml {
 
   private static final Map<String, Spec> BY_OPTION =
       SPECS.stream().collect(Collectors.toMap(Spec::option, s -> s));
+
+  /**
+   * "resource" and "resourceCount" as one effect, as the game gives nothing without an amount; not
+   * in {@link #SPECS}, the file keeps the two options.
+   */
+  static final Spec GIVE_RESOURCE =
+      new Spec("resource", Group.EFFECT, GIVE_RESOURCE_LABEL, "give [{0} ]{1}", 0, END_TURN,
+          List.of(optional(Part.NUMBER, "Amount"), one(Part.RESOURCE, "Resource")));
 
   /** The options the assistant manages on a trigger; others it keeps as they are. */
   private static final Set<String> TRIGGER_CORE =
@@ -303,7 +316,7 @@ class TriggerXml {
   /** A check of territories: a count, or "each", then a list or a word like "controlled". */
   private static Spec territories(final String option, final String label, final String verb) {
     return check(option, label, verb + " [{0} of ]{1}", 1,
-        optional(Part.NUMBER, "At least", "each"),
+        optional(Part.NUMBER, HOW_MANY, EACH),
         many(Part.TERRITORY, "Territories", TERRITORY_WORDS.split(" ")));
   }
 
@@ -336,6 +349,79 @@ class TriggerXml {
   static boolean isManagedOnCondition(final String option) {
     return CONDITION_CORE.contains(option)
         || spec(option).filter(s -> s.group() == Group.CHECK).isPresent();
+  }
+
+  /** The options of {@link #GIVE_RESOURCE}: the amount only when there is one. */
+  static List<Option> resourceOptions(final String amount, final String resource) {
+    return amount.isEmpty()
+        ? List.of(option("resource", resource))
+        : List.of(option("resource", resource), option("resourceCount", amount));
+  }
+
+  /** Whether the spec's count is a how-many in words, eg "none" or "at least 2". */
+  static boolean countsInWords(final Spec spec) {
+    return NONE_IF_EMPTY.contains(spec.option()) || isTerritoryCheck(spec);
+  }
+
+  private static boolean isTerritoryCheck(final Spec spec) {
+    return spec.group() == Group.CHECK && spec.pieces().getFirst().words().contains(EACH);
+  }
+
+  /**
+   * The count in words: atWarPlayers and techs without a number, or 0, need none of them to hold
+   * (RulesAttachment.checkAtWar, checkTechs); territory checks without one need all.
+   */
+  static String countWord(final Spec spec, final String count) {
+    if (NONE_IF_EMPTY.contains(spec.option()) && (count.isEmpty() || count.equals("0"))) {
+      return "none";
+    } else if (isTerritoryCheck(spec) && count.isEmpty()) {
+      return "all";
+    }
+    return INTEGER.matcher(count).matches() && countsInWords(spec) ? "at least " + count : count;
+  }
+
+  /** A relation word of TripleA in plain words, eg anyNeutral as "any neutral"; others as is. */
+  static String plain(final String relation) {
+    return switch (relation) {
+      case "any" -> "anything";
+      case "anyAllied" -> "any allied";
+      case "anyNeutral" -> "any neutral";
+      case "anyWar" -> "any war";
+      default -> relation;
+    };
+  }
+
+  /**
+   * A relationship condition's kind in words, eg "are at war": an any word matches each type of
+   * that kind, a type only itself (RulesAttachment.checkRelationships).
+   */
+  private static String relationPhrase(final String relation) {
+    return switch (relation) {
+      case "anyAllied" -> "are allied";
+      case "anyNeutral" -> "are neutral";
+      case "anyWar" -> "are at war";
+      default -> "have the relationship " + relation;
+    };
+  }
+
+  /** The name without triggerAttachment before it, eg "Germans_4_Iron_Ore". */
+  static String shortName(final String name) {
+    final String shortened =
+        name.replaceFirst("^(?i)trigger(Attachment|Attatchment)_?", "").strip();
+    return shortened.isEmpty() ? name : shortened;
+  }
+
+  /** The first relationship type of the war kind, else the first, eg for a declaration of war. */
+  static String warType(final Game game) {
+    final List<String> types = RulesXml.relationshipTypes(game);
+    return types.stream()
+        .filter(t -> MapXml.option(game, Constants.RELATIONSHIPTYPE_ATTACHMENT_NAME, t,
+                "archeType")
+            .filter(Constants.RELATIONSHIP_ARCHETYPE_WAR::equalsIgnoreCase)
+            .isPresent())
+        .findFirst()
+        .or(() -> types.stream().findFirst())
+        .orElse("");
   }
 
   // ---- count and value
@@ -781,6 +867,11 @@ class TriggerXml {
         .noneMatch(o -> spec(o.getName()).filter(s -> s.group() == Group.EFFECT).isPresent())) {
       warnings.add("The trigger does nothing yet: add what happens.");
     }
+    // the game gives a resource only with an amount other than 0 (TriggerAttachment)
+    if (value(trigger.attachment(), "resource").isPresent()
+        && value(trigger.attachment(), "resourceCount").filter(c -> !c.equals("0")).isEmpty()) {
+      warnings.add(GIVE_RESOURCE_LABEL + ": no amount yet, so it gives nothing.");
+    }
     final List<Attachment> before = AttachmentsXml.attachments(game);
     for (final Attachment condition : trigger.conditions()) {
       final String conditionName = Objects.toString(condition.getName(), "");
@@ -810,7 +901,8 @@ class TriggerXml {
       }
       if (AttachmentsXml.options(condition).stream()
           .noneMatch(o -> spec(o.getName()).filter(s -> s.group() == Group.CHECK).isPresent())) {
-        warnings.add("Condition " + conditionName + " checks nothing the assistant knows.");
+        warnings.add("The condition " + conditionName + " uses checks the assistant does not"
+            + " show. It stays as it is; change it in Attachments.");
       }
     }
     return new Problems(List.copyOf(errors), List.copyOf(warnings));
@@ -868,8 +960,38 @@ class TriggerXml {
 
   // ---- plain words
 
-  /** What the trigger does, in plain words, eg "Germans: if Germans own France, give PUs ...". */
+  /** What the trigger does, in plain words, eg "Germans: if Germans own France, give 5 PUs ...". */
   static String sentence(final Game game, final Trigger trigger) {
+    final Clauses clauses = clauses(game, trigger);
+    final StringBuilder sentence = new StringBuilder(clauses.nation()).append(": ");
+    if (!clauses.conditions().isEmpty()) {
+      sentence.append(clauses.conditions()).append(", ");
+    }
+    sentence.append(clauses.effects().isEmpty() ? "nothing" : String.join(", ", clauses.effects()));
+    value(trigger.attachment(), "players").ifPresent(p -> sentence.append(" for ")
+        .append(p.replace(":", ", ")));
+    if (!clauses.when().isEmpty()) {
+      sentence.append(", ").append(clauses.when());
+    }
+    return sentence.append(". ").append(clauses.often()).toString();
+  }
+
+  /**
+   * The parts of what a trigger does, in plain words.
+   *
+   * @param conditions "if ..." or "unless ...", empty without conditions
+   * @param effects what happens, one phrase each
+   * @param when its steps, else its effects' moments; may be empty
+   * @param often in how many rounds, and its chance
+   */
+  record Clauses(
+      String nation, String conditions, List<String> effects, String when, String often) {
+    Clauses {
+      effects = List.copyOf(effects);
+    }
+  }
+
+  static Clauses clauses(final Game game, final Trigger trigger) {
     final Attachment attachment = trigger.attachment();
     final List<String> names = trigger.conditionNames();
     final List<String> conditions =
@@ -891,19 +1013,12 @@ class TriggerXml {
         };
     final boolean inverted = value(attachment, "invert").filter("true"::equalsIgnoreCase)
         .isPresent();
-    final StringBuilder sentence = new StringBuilder(trigger.nation()).append(": ");
-    if (!conditions.isEmpty()) {
-      sentence.append(inverted ? "unless " : "if ").append(combined).append(", ");
-    }
-    final List<String> effects = phrases(attachment, Group.EFFECT);
-    sentence.append(effects.isEmpty() ? "nothing" : String.join(", ", effects));
-    value(attachment, "players").ifPresent(p -> sentence.append(" for ")
-        .append(p.replace(":", ", ")));
-    final String moments = when(attachment);
-    if (!moments.isEmpty()) {
-      sentence.append(", ").append(moments);
-    }
-    return sentence.append(". ").append(often(attachment)).toString();
+    return new Clauses(
+        trigger.nation(),
+        conditions.isEmpty() ? "" : (inverted ? "unless " : "if ") + combined,
+        phrases(attachment, Group.EFFECT),
+        when(attachment),
+        often(attachment));
   }
 
   /** When the trigger fires: its steps, else the moments of its effects. */
@@ -936,7 +1051,9 @@ class TriggerXml {
 
   /** What the condition checks, eg "Germans own France and have units in Egypt". */
   static String conditionSentence(final Attachment condition) {
-    final List<String> checks = phrases(condition, Group.CHECK);
+    final List<Option> checks = AttachmentsXml.options(condition).stream()
+        .filter(o -> spec(o.getName()).filter(s -> s.group() == Group.CHECK).isPresent())
+        .toList();
     if (checks.isEmpty()) {
       return Objects.toString(condition.getName(), "");
     }
@@ -944,19 +1061,76 @@ class TriggerXml {
         .orElse(Objects.toString(condition.getAttachTo(), ""));
     final boolean inverted = value(condition, "invert").filter("true"::equalsIgnoreCase)
         .isPresent();
-    return (inverted ? "not: " : "") + who + " " + String.join(" and ", checks);
+    final List<String> phrases = new ArrayList<>();
+    boolean whoSaid = false;
+    for (final Option check : checks) {
+      final String phrase = phrase(spec(check.getName()).orElseThrow(), joined(check));
+      // a relationship names its own two nations, whoever the condition is for
+      if (whoSaid || "relationship".equals(check.getName())) {
+        phrases.add(phrase);
+      } else {
+        whoSaid = true;
+        phrases.add(who + " " + phrase);
+      }
+    }
+    return (inverted ? "not: " : "") + String.join(" and ", phrases);
   }
 
+  /** The options in plain words; a resource and its amount as one, at the first of the two. */
   private static List<String> phrases(final Attachment attachment, final Group group) {
-    return AttachmentsXml.options(attachment).stream()
-        .flatMap(o -> spec(o.getName()).filter(s -> s.group() == group)
-            .map(s -> phrase(s, joined(o))).stream())
-        .toList();
+    final Optional<String> resource = value(attachment, "resource");
+    final Optional<String> amount = value(attachment, "resourceCount");
+    final boolean paired = group == Group.EFFECT && resource.isPresent() && amount.isPresent();
+    final List<String> phrases = new ArrayList<>();
+    final Set<String> pair = new HashSet<>(paired ? Set.of("resource", "resourceCount") : Set.of());
+    boolean pairShown = false;
+    for (final Option option : AttachmentsXml.options(attachment)) {
+      final Optional<Spec> spec = spec(option.getName()).filter(s -> s.group() == group);
+      if (spec.isEmpty()) {
+        continue;
+      }
+      if (pair.remove(option.getName())) {
+        if (!pairShown) {
+          pairShown = true;
+          phrases.add(givePhrase(amount.get(), resource.get()));
+        }
+        continue;
+      }
+      phrases.add(phrase(spec.get(), joined(option)));
+    }
+    return phrases;
+  }
+
+  /** Eg "give 10 PUs", or "take 3 PUs" for -3. */
+  private static String givePhrase(final String amount, final String resource) {
+    return amount.startsWith("-") && INTEGER.matcher(amount).matches()
+        ? "take " + amount.substring(1) + " " + resource
+        : "give " + amount + " " + resource;
   }
 
   /** The option in plain words, eg "place 2 × infantry in Germany". */
   static String phrase(final Spec spec, final String joined) {
-    final List<String> pieces = split(spec, joined);
+    final List<String> pieces = new ArrayList<>(split(spec, joined));
+    for (int i = 0; i < pieces.size(); i++) {
+      final Piece piece = spec.pieces().get(i);
+      if (pieces.get(i).isBlank() && piece.shape() != Shape.OPTIONAL) {
+        pieces.set(i, "… (choose " + piece.label().toLowerCase(Locale.ROOT) + ")");
+      }
+    }
+    switch (spec.option()) {
+      case "atWarPlayers", "techs" -> pieces.set(0, countWord(spec, pieces.getFirst()));
+      // "any" was is no condition, so it is left out
+      case "relationshipChange" ->
+          pieces.set(2, pieces.get(2).equalsIgnoreCase("any") ? "" : plain(pieces.get(2)));
+      case "relationship" -> {
+        pieces.set(2, relationPhrase(pieces.get(2)));
+        // -1 is TripleA's "however long" (RulesAttachment.relationshipExistsLongEnough)
+        pieces.set(3, pieces.get(3).equals("-1") ? "" : pieces.get(3));
+      }
+      case "rounds" -> pieces.set(0, pieces.getFirst().replace("-+", " and later")
+          .replace("-", " to ").replace(":", ", "));
+      default -> { }
+    }
     final Function<String, String> fill =
         text -> {
           final Matcher matcher = Pattern.compile("\\{(\\d)}").matcher(text);

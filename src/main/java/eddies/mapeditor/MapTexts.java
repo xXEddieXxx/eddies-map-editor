@@ -9,11 +9,13 @@ import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -40,6 +42,8 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable) {
   private static final String TOOLTIP = "tooltip.unit.";
   private static final String APPEND = ".append";
   private static final String SOUND_FOLDER = "Sound.Default.Folder";
+  private static final List<String> ATTACHMENT_WORDS =
+      List.of("objectiveAttachment", "triggerAttachment", "conditionAttachment");
   // the game's sound keys, SoundPath, by plain name; a key ending in _ is followed by a message
   private static final Map<String, String> SOUND_NAMES =
       Map.ofEntries(
@@ -236,6 +240,48 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable) {
     return text.equals(text(kind)) ? this : withText(kind, text);
   }
 
+  /**
+   * With each key starting with oldPrefix renamed to start with newPrefix, its text and place
+   * kept; a key whose new name the file has already stays as it is.
+   */
+  MapTexts withKeyPrefix(final Kind kind, final String oldPrefix, final String newPrefix) {
+    if (unreadable.contains(kind)) {
+      return this;
+    }
+    final Set<String> present =
+        entries(kind).stream().map(Entry::key).collect(Collectors.toSet());
+    final StringBuilder renamed = new StringBuilder();
+    for (final String chunk : logicalLines(text(kind))) {
+      renamed.append(
+          parse(chunk)
+              .map(Entry::key)
+              .filter(k -> k.startsWith(oldPrefix))
+              .filter(k -> !present.contains(newPrefix + k.substring(oldPrefix.length())))
+              .map(k -> renamedChunk(chunk, k, oldPrefix, newPrefix))
+              .orElse(chunk));
+    }
+    final String text = renamed.toString();
+    return text.equals(text(kind)) ? this : withText(kind, text);
+  }
+
+  /** The line with the key's start replaced; the rest, eg the text's own form, as it was. */
+  private static String renamedChunk(
+      final String chunk, final String key, final String oldPrefix, final String newPrefix) {
+    final String content = chunk.stripLeading();
+    final String indent = chunk.substring(0, chunk.length() - content.length());
+    final String escapedOld = escape(oldPrefix, true);
+    if (content.startsWith(escapedOld)) {
+      return indent + escape(newPrefix, true) + content.substring(escapedOld.length());
+    }
+    // the key written otherwise, eg with \\u escapes: the line anew, read the same
+    final String end = chunk.endsWith("\r\n") ? "\r\n" : chunk.endsWith("\n") ? "\n" : "";
+    final String value = parse(chunk).map(Entry::value).orElse("");
+    return escape(newPrefix + key.substring(oldPrefix.length()), true)
+        + "="
+        + escape(value, false)
+        + end;
+  }
+
   private MapTexts withText(final Kind kind, final String text) {
     final Map<Kind, String> changed = new EnumMap<>(Kind.class);
     changed.putAll(texts);
@@ -348,6 +394,136 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable) {
     return FileNameUtils.replaceIllegalCharacters(name, '_').replace(" ", "_") + ".";
   }
 
+  /** Whether the objective key is for another game, which does not show it. */
+  static boolean isForeign(final String key, final Game game) {
+    return !key.equals(PANEL_NAME) && !key.startsWith(objectivesPrefix(game));
+  }
+
+  /**
+   * The start all objective keys have when none has this game's, eg a map's copy of another
+   * game's file: the game shows none of them.
+   */
+  static Optional<String> foreignPrefix(final MapTexts texts, final Game game) {
+    final List<String> keys = objectiveKeys(texts);
+    final List<String> prefixes = keys.stream().map(MapTexts::prefixOf).distinct().toList();
+    final String own = objectivesPrefix(game);
+    return keys.stream().anyMatch(k -> k.startsWith(own)) || prefixes.size() != 1
+        ? Optional.empty()
+        : Optional.of(prefixes.getFirst()).filter(p -> !p.isEmpty());
+  }
+
+  /** "37 objective texts are for another game" when {@link #foreignPrefix} finds them. */
+  static Optional<String> foreignObjectivesProblem(final MapTexts texts, final Game game) {
+    final int count = objectiveKeys(texts).size();
+    return foreignPrefix(texts, game)
+        .map(
+            p ->
+                count == 1
+                    ? "1 objective text is for another game"
+                    : count + " objective texts are for another game");
+  }
+
+  private static List<String> objectiveKeys(final MapTexts texts) {
+    return texts.entries(Kind.OBJECTIVES).stream()
+        .map(Entry::key)
+        .filter(k -> !k.equals(PANEL_NAME))
+        .toList();
+  }
+
+  /**
+   * The start of an objectives key before nation and condition or TABLEGROUP, the game's name
+   * that the game compares with its own, eg "Big_World."; empty when the key has none.
+   */
+  static String prefixOf(final String key) {
+    final int group = key.indexOf(GROUP);
+    if (group >= 0) {
+      return key.substring(0, group);
+    }
+    final int semicolon = key.indexOf(';');
+    final int dot = semicolon < 0 ? -1 : key.lastIndexOf('.', semicolon);
+    return key.substring(0, dot + 1);
+  }
+
+  /** The key in plain words, as the list's row shows it; the key when nothing is left. */
+  static String title(final Kind kind, final String key, final Game game) {
+    final String title =
+        switch (kind) {
+          case OBJECTIVES -> titleOfObjective(key);
+          case NOTIFICATIONS ->
+              key.endsWith(SOUNDS)
+                  ? "Sound of " + key.substring(0, key.length() - SOUNDS.length())
+                  : key;
+          case TOOLTIPS -> titleOfTooltip(key, game);
+          case POLITICS, ACTIONS -> {
+            final int dot = key.lastIndexOf('.');
+            final String part = key.substring(dot + 1).toLowerCase(Locale.ROOT);
+            yield dot <= 0 || part.isEmpty()
+                ? key
+                : key.substring(0, dot) + " · " + part.substring(0, 1).toUpperCase(Locale.ROOT)
+                    + part.substring(1);
+          }
+          case SOUNDS -> explainSound(key, game);
+        };
+    return title.isBlank() ? key : title;
+  }
+
+  private static String titleOfObjective(final String key) {
+    if (key.equals(PANEL_NAME)) {
+      return "Name of the objectives tab";
+    }
+    final String[] parts = key.substring(prefixOf(key).length()).split(";", -1);
+    if (parts.length != 2) {
+      return key;
+    }
+    if (parts[0].startsWith(GROUP)) {
+      final String number = parts[0].substring(GROUP.length()).replaceFirst("^0+(?=\\d)", "");
+      return "Group " + number + " · " + parts[1];
+    }
+    final String condition = plainCondition(parts[1], parts[0]);
+    return condition.isEmpty() ? key : parts[0] + " · " + condition;
+  }
+
+  /**
+   * The condition's name without the kind of attachment, the nation and a leading number, eg
+   * "Trade with Russia" for objectiveAttachment_Germans_1_Trade_with_Russia.
+   */
+  private static String plainCondition(final String name, final String nation) {
+    final List<String> words = new ArrayList<>();
+    for (final String word : name.split("_")) {
+      final String rest =
+          ATTACHMENT_WORDS.stream()
+              .filter(word::startsWith)
+              .findFirst()
+              .map(w -> word.substring(w.length()))
+              .orElse(word);
+      if (!rest.isEmpty() && !rest.equals(nation) && !(words.isEmpty() && rest.matches("\\d+"))) {
+        words.add(rest);
+      }
+    }
+    return String.join(" ", words);
+  }
+
+  private static String titleOfTooltip(final String key, final Game game) {
+    if (!key.startsWith(TOOLTIP)) {
+      return key;
+    }
+    final boolean appended = key.endsWith(APPEND);
+    final String rest =
+        key.substring(TOOLTIP.length(), key.length() - (appended ? APPEND.length() : 0));
+    final String how = appended ? "Added to the tool tip of " : "Tool tip of ";
+    final List<String> units = MapXml.unitTypes(game);
+    if (units.contains(rest)) {
+      return how + rest;
+    }
+    return MapXml.nations(game).stream()
+        .filter(n -> rest.endsWith("." + n))
+        .map(n -> rest.substring(0, rest.length() - n.length() - 1))
+        .filter(units::contains)
+        .findFirst()
+        .map(unit -> how + unit + " for " + rest.substring(unit.length() + 1))
+        .orElse(key);
+  }
+
   /** What the key means to the game, in plain words. */
   static String explain(final Kind kind, final String key, final Game game) {
     return switch (kind) {
@@ -363,10 +539,10 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable) {
     if (key.equals(PANEL_NAME)) {
       return "The name of the objectives tab";
     }
-    final String prefix = objectivesPrefix(game);
-    if (!key.startsWith(prefix)) {
-      return "For another game, not this one";
+    if (isForeign(key, game)) {
+      return "For another game";
     }
+    final String prefix = objectivesPrefix(game);
     final String[] parts = key.substring(prefix.length()).split(";", -1);
     if (parts.length != 2) {
       return "Not read: a key needs one ; between nation and condition";

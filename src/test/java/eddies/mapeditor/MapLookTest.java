@@ -6,17 +6,25 @@ import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
 import java.awt.Dimension;
+import java.awt.GridLayout;
 import java.awt.image.BufferedImage;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Properties;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
+import javax.swing.AbstractButton;
+import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
+import javax.swing.JList;
+import javax.swing.JRadioButton;
 import javax.swing.JSpinner;
+import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -213,5 +221,219 @@ final class MapLookTest {
     assertThat(written).as("six digits, no #").isEqualTo("12ABEF");
     assertThat(MapLookEditor.colorOf(written)).as("read back").contains(color);
     assertThat(MapLookEditor.colorOf("#12ABEF")).as("a value the game cannot read").isEmpty();
+  }
+
+  @DisplayName("A scrolling choice writes both directions as one step")
+  @Test
+  void scrollingIsOneStep() throws Exception {
+    final MapProject project = givenSavedMapWithRed();
+    final MapLookEditor look = new MapLookEditor(project);
+
+    button(look.page(), JRadioButton.class, "Neither").doClick();
+
+    final Properties properties = project.getFiles().properties();
+    assertThat(List.of("map.scrollWrapX", "map.scrollWrapY"))
+        .as("neither direction scrolls around")
+        .map(properties::getProperty)
+        .containsExactly("false", "false");
+    project.undo();
+    assertThat(project.getFiles().properties().getProperty("map.scrollWrapX"))
+        .as("one undo takes both back")
+        .isNull();
+  }
+
+  @DisplayName("The four scrolling choices sit in one grid, two by two")
+  @Test
+  void scrollingInOneGrid() throws Exception {
+    final MapLookEditor look = new MapLookEditor(givenSavedMapWithRed());
+
+    final Container grid =
+        button(look.page(), JRadioButton.class, "Around left and right").getParent();
+
+    assertThat(grid.getLayout()).as("one layout for all four").isInstanceOf(GridLayout.class);
+    assertThat(Stream.of(grid.getComponents()).map(c -> ((JRadioButton) c).getText()))
+        .as("in reading order")
+        .containsExactly("Around left and right", "Around top and bottom", "Both", "Neither");
+  }
+
+  private static <T extends AbstractButton> T button(
+      final Container in, final Class<T> kind, final String text) {
+    return components(in)
+        .filter(kind::isInstance)
+        .map(kind::cast)
+        .filter(b -> b.getText().equals(text))
+        .findFirst()
+        .orElseThrow(() -> new AssertionError("No button " + text));
+  }
+
+  @DisplayName("The unit size shows as a percent and is written as the game's scale")
+  @Test
+  @SuppressWarnings("unchecked")
+  void unitSizeAsPercent() throws Exception {
+    final MapProject project = givenSavedMapWithRed();
+    final MapLookEditor look = new MapLookEditor(project);
+    final JComboBox<String> size = inner(fieldOf(look.page(), "Size"), JComboBox.class);
+
+    size.setSelectedItem("0.875");
+
+    final JLabel shown =
+        (JLabel)
+            size.getRenderer()
+                .getListCellRendererComponent(new JList<>(), "0.875", 0, false, false);
+    assertThat(shown.getText()).as("a maker reads a percent").isEqualTo("88 %");
+    assertThat(project.getFiles().properties().getProperty("units.scale"))
+        .as("the game reads the scale")
+        .isEqualTo("0.875");
+  }
+
+  @DisplayName("Unticking a nation's tint writes no tint; ticking writes nothing yet")
+  @Test
+  void tintIsTickedOff() throws Exception {
+    final MapProject project = givenSavedMapWithRed();
+    project.setMapProperty("units.transform.color.Red", "FF0000");
+    final MapLookEditor look = new MapLookEditor(project);
+    final JCheckBox tint = checkBox(look.page(), "Tint the pictures");
+
+    tint.doClick();
+    final String unticked = project.getFiles().properties().getProperty("units.transform.color.Red");
+    tint.doClick();
+
+    assertThat(unticked).as("no tint, as the game reads it").isNullOrEmpty();
+    assertThat(project.getFiles().properties().getProperty("units.transform.color.Red"))
+        .as("ticked again, nothing is written until a colour is chosen")
+        .isNullOrEmpty();
+  }
+
+  @DisplayName("A nation without a tint shows None, not a grey colour it does not have; with one,"
+      + " its colour")
+  @Test
+  void noTintSaysNone() throws Exception {
+    final MapProject project = givenSavedMapWithRed();
+    final MapLookEditor look = new MapLookEditor(project);
+    final List<String> without = labelsIn(fieldOf(look.page(), "Tint"));
+
+    project.setMapProperty("units.transform.color.Red", "FF0000");
+    final List<String> with = labelsIn(fieldOf(look.page(), "Tint"));
+
+    assertThat(without).as("no tint is set").contains("None").doesNotContain("#808080");
+    assertThat(with).as("the tint the map sets").contains("#FF0000").doesNotContain("None");
+  }
+
+  private static List<String> labelsIn(final Component field) {
+    return components((Container) field)
+        .filter(JLabel.class::isInstance)
+        .filter(Component::isVisible)
+        .map(c -> ((JLabel) c).getText())
+        .toList();
+  }
+
+  @DisplayName("The page is at most 1040 px wide, the intro left to the window")
+  @Test
+  void pageIsCapped() {
+    final MapLookEditor look = new MapLookEditor(MapProject.newEmpty());
+    final Container page = (Container) look.page();
+
+    page.setSize(1600, 900);
+    page.doLayout();
+    ((Container) page.getComponent(0)).doLayout();
+
+    assertThat(((Container) page.getComponent(0)).getComponent(0).getWidth())
+        .as("the cards do not stretch over a wide window")
+        .isEqualTo(1040);
+    assertThat(components(page).filter(JLabel.class::isInstance)
+            .map(c -> ((JLabel) c).getText()))
+        .as("the window already shows the tool's intro")
+        .noneMatch(t -> t != null && t.startsWith("How the game draws your map"));
+  }
+
+  @DisplayName("Without outlines the relief buttons are off, say why and lead to Territories")
+  @Test
+  void reliefNeedsOutlines() {
+    final MapProject project = MapProject.newEmpty();
+    final AtomicBoolean wentToTerritories = new AtomicBoolean();
+    final MapLookEditor look = new MapLookEditor(project, () -> wentToTerritories.set(true));
+
+    button(look.page(), JButton.class, "Go to Territories").doClick();
+
+    assertThat(button(look.page(), JButton.class, "Create relief…").isEnabled())
+        .as("a relief is made from the outlines")
+        .isFalse();
+    assertThat(button(look.page(), JButton.class, "Load picture…").isEnabled())
+        .as("a loaded relief is cut along them too")
+        .isFalse();
+    assertThat(components(look.page()).filter(JLabel.class::isInstance).map(JLabel.class::cast))
+        .as("the reason is shown, not only a disabled button")
+        .anyMatch(l -> l.getText().contains("Needs the territories' outlines first."));
+    assertThat(wentToTerritories).as("the link leads to Territories").isTrue();
+  }
+
+  @DisplayName("Show the relief is off and unticked while the map has no relief, writing nothing")
+  @Test
+  void showReliefNeedsRelief() throws Exception {
+    final MapProject project = givenSavedMapWithRed();
+
+    final JCheckBox without = checkBox(new MapLookEditor(project).page(), "Show the relief");
+    Files.createDirectories(project.getFolder().orElseThrow().resolve("reliefTiles"));
+    final JCheckBox with = checkBox(new MapLookEditor(project).page(), "Show the relief");
+
+    assertThat(without.isSelected()).as("nothing is shown").isFalse();
+    assertThat(without.isEnabled()).as("nothing to switch on").isFalse();
+    assertThat(project.canUndo()).as("the file's setting stays").isFalse();
+    assertThat(with.isSelected() && with.isEnabled()).as("with relief tiles, as set").isTrue();
+  }
+
+  @DisplayName("Size and Stack up to share one field column")
+  @Test
+  void unitFieldsInOneColumn() throws Exception {
+    final MapLookEditor look = new MapLookEditor(givenSavedMapWithRed());
+    final Container page = (Container) look.page();
+    page.setSize(1200, 900);
+    layOut(page);
+
+    final Component size = inner(fieldOf(page, "Size"), JComboBox.class);
+    final Component stack = fieldOf(page, "Stack up to");
+
+    assertThat(SwingUtilities.convertPoint(stack.getParent(), stack.getLocation(), page).x)
+        .as("the spinner starts where the combo does")
+        .isEqualTo(SwingUtilities.convertPoint(size.getParent(), size.getLocation(), page).x);
+  }
+
+  private static void layOut(final Component component) {
+    component.doLayout();
+    if (component instanceof Container container) {
+      for (final Component inner : container.getComponents()) {
+        layOut(inner);
+      }
+    }
+  }
+
+  @DisplayName("Only Stack up to, Blending and the small map have a \"?\"")
+  @Test
+  void threeHelpButtons() throws Exception {
+    final MapLookEditor look = new MapLookEditor(givenSavedMapWithRed());
+
+    final long helps =
+        components(look.page())
+            .filter(JButton.class::isInstance)
+            .map(JButton.class::cast)
+            .filter(b -> b.getText().equals("?"))
+            .count();
+
+    assertThat(helps).as("the other explanations are tool tips").isEqualTo(3);
+  }
+
+  @DisplayName("The relief's strength shows its value as the slider moves")
+  @Test
+  void reliefStrengthShowsValue() throws Exception {
+    final MapProject project = givenSavedMapWithRed();
+    final MapLookEditor.ReliefOptions options =
+        new MapLookEditor.ReliefOptions(project.getFiles(), Set.of());
+
+    options.strength.setValue(70);
+
+    assertThat(components(options.form).filter(JLabel.class::isInstance).map(JLabel.class::cast))
+        .as("the value right of the slider, between its ends")
+        .extracting(JLabel::getText)
+        .contains("Light", "Strong", "70 %");
   }
 }

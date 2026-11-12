@@ -17,6 +17,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.GamePlay.Sequence.Step;
+import org.triplea.map.data.elements.Initialize;
+import org.triplea.map.data.elements.Initialize.RelationshipInitialize;
+import org.triplea.map.data.elements.Initialize.RelationshipInitialize.Relationship;
 import org.triplea.map.xml.writer.GameXmlWriter;
 
 final class RulesXmlTest {
@@ -300,5 +303,92 @@ final class RulesXmlTest {
         .as("the engine shares with the chosen nation only")
         .extracting(GamePlayer::getName)
         .containsExactly("Japanese");
+  }
+
+  @DisplayName("A unit limit made by Add rule loads in the engine")
+  @Test
+  void unitLimitLoads(@TempDir final Path folder) {
+    final String limit = NationsEditor.unitLimit(2, "owned", List.of("infantry", "armour"));
+
+    final Game changed =
+        RulesXml.withPlayerOptionAdded(minimap, "Russians", "placementLimit", limit);
+    final GamePlayer loaded = givenLoaded(changed, folder).getPlayerList().getPlayerId("Russians");
+
+    assertThat(PlayerAttachment.get(loaded).getPlacementLimit())
+        .as("the engine reads the limit")
+        .hasSize(1);
+  }
+
+  private Game givenTwoLimits() {
+    return RulesXml.withPlayerOptionAdded(
+        RulesXml.withPlayerOptionAdded(
+            RulesXml.withPlayerOption(minimap, "Russians", "retainCapitalNumber", "2"),
+            "Russians",
+            "placementLimit",
+            "1:owned:infantry"),
+        "Russians",
+        "placementLimit",
+        "2:allied:armour");
+  }
+
+  @DisplayName("A nation's rule at a row is changed or removed alone, the others stay in order")
+  @Test
+  void playerOptionAtRowChangesOnlyIt() {
+    final Game two = givenTwoLimits();
+
+    final Game changed = RulesXml.withPlayerOptionAt(two, "Russians", 2, "3:total:all");
+    final Game removed = RulesXml.withoutPlayerOptionAt(two, "Russians", 1);
+
+    assertThat(RulesXml.playerOptions(changed, "Russians"))
+        .as("only the second limit changed")
+        .extracting(o -> o.getName() + "=" + o.getValue())
+        .containsExactly(
+            "retainCapitalNumber=2", "placementLimit=1:owned:infantry", "placementLimit=3:total:all");
+    assertThat(RulesXml.playerOptions(removed, "Russians"))
+        .as("the first limit gone, the rest in order")
+        .extracting(o -> o.getName() + "=" + o.getValue())
+        .containsExactly("retainCapitalNumber=2", "placementLimit=2:allied:armour");
+    assertThat(RulesXml.withoutPlayerOptionAt(two, "Russians", 3))
+        .as("a row beyond its options changes nothing")
+        .isSameAs(two);
+  }
+
+  @DisplayName("Pairs of a type are counted once, also when given both ways round")
+  @Test
+  void countsPairsOfAType() {
+    final Game twice = givenTruceBothWays();
+
+    assertThat(RulesXml.pairsOf(twice, TRUCE)).as("one pair, either way round").isEqualTo(1);
+    assertThat(RulesXml.pairsOf(twice, "War")).as("no pair starts at war").isZero();
+  }
+
+  /** The truce of the Russians and Italians given a second time, the other way round. */
+  private Game givenTruceBothWays() {
+    final Game truce = givenTruce();
+    final Initialize initialize = truce.getInitialize();
+    final Relationship once =
+        initialize.getRelationshipInitialize().getRelationships().getFirst();
+    final Relationship turned =
+        Builders.toBuilder(once).player1(once.getPlayer2()).player2(once.getPlayer1()).build();
+    return Builders.toBuilder(truce)
+        .initialize(
+            Builders.toBuilder(initialize)
+                .relationshipInitialize(
+                    RelationshipInitialize.builder().relationships(List.of(once, turned)).build())
+                .build())
+        .build();
+  }
+
+  @DisplayName("A relationship type's options are listed in their order, its kind first")
+  @Test
+  void listsRelationshipOptions() {
+    final Game set =
+        RulesXml.withRelationshipOption(givenTruce(), TRUCE, "upkeepCost", "flat:1");
+
+    assertThat(RulesXml.relationshipOptions(set, TRUCE))
+        .as("archeType, then the option set")
+        .extracting(o -> o.getName() + "=" + o.getValue())
+        .containsExactly("archeType=neutral", "upkeepCost=flat:1");
+    assertThat(RulesXml.relationshipOptions(set, "War")).as("a type without one").isEmpty();
   }
 }

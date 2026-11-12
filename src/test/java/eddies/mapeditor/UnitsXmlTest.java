@@ -221,4 +221,66 @@ final class UnitsXmlTest {
         .isNotEqualTo(first)
         .startsWith("supportAttachment");
   }
+
+  @DisplayName("A kind sets only isSea and isAir, leaving out what is false")
+  @Test
+  void kindSetsOnlySeaAndAir() throws Exception {
+    final Game game = givenGame("ww2global40.xml").game();
+    final List<String> before = givenRows(game, "infantry");
+
+    final Game sea = UnitsXml.withKind(game, "infantry", UnitOptions.UnitKind.SEA);
+    final Game land = UnitsXml.withKind(sea, "infantry", UnitOptions.UnitKind.LAND);
+
+    assertThat(givenRows(sea, "infantry"))
+        .as("the options in their order, isSea added last, no isAir")
+        .containsExactlyElementsOf(
+            Stream.concat(before.stream(), Stream.of("isSea=true×null")).toList());
+    assertThat(UnitsXml.kind(sea, "infantry"))
+        .as("a sea unit now")
+        .contains(UnitOptions.UnitKind.SEA);
+    assertThat(givenRows(land, "infantry"))
+        .as("land again: both left out, the rest as before")
+        .containsExactlyElementsOf(before);
+  }
+
+  /** The unit's options as name=value, each with its count. */
+  private static List<String> givenRows(final Game game, final String unit) {
+    return UnitsXml.options(game, unit).stream()
+        .map(o -> o.getName() + "=" + o.getValue() + "×" + o.getCount())
+        .toList();
+  }
+
+  @DisplayName("A unit that both sails and flies has no kind")
+  @Test
+  void bothSeaAndAirIsNoKind() throws Exception {
+    final Game game = givenGame("ww2global40.xml").game();
+
+    final Game both = UnitsXml.withValue(game, "fighter", givenOption("isSea"), "true");
+
+    assertThat(UnitsXml.kind(both, "fighter")).as("no kind to choose").isEmpty();
+    assertThat(UnitsXml.kind(game, "fighter"))
+        .as("the fighter as given")
+        .contains(UnitOptions.UnitKind.AIR);
+  }
+
+  @DisplayName("The lists of the Units tool name only options its sections have")
+  @Test
+  void listsNameSectionOptions() {
+    assertThat(UnitOptions.BLANK_WORDS.keySet())
+        .as("blank words only for numbers whose default is -1")
+        .allSatisfy(
+            name ->
+                assertThat(givenOption(name))
+                    .as(name)
+                    .extracting(UnitOptions.UnitOption::kind, UnitOptions.UnitOption::defaultValue)
+                    .containsExactly(UnitOptions.Kind.NUMBER, "-1"));
+    assertThat(UnitOptions.NAMES)
+        .as("the common options, the essentials and the kind flags are section options")
+        .containsAll(UnitOptions.COMMON)
+        .containsAll(UnitOptions.ESSENTIALS)
+        .containsAll(UnitOptions.KIND_FLAGS);
+    assertThat(UnitOptions.EXTRA_HINTS.keySet())
+        .as("hints only for options the sections do not show")
+        .doesNotContainAnyElementsOf(UnitOptions.NAMES);
+  }
 }

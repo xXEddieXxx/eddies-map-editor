@@ -1,30 +1,40 @@
 package eddies.mapeditor;
 
 import java.awt.BorderLayout;
+import java.awt.CardLayout;
+import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
-import java.awt.GridLayout;
+import java.awt.event.ActionEvent;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
+import java.awt.event.KeyEvent;
 import java.io.Serial;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.stream.IntStream;
-import java.util.stream.Stream;
+import java.util.Locale;
 import javax.annotation.Nullable;
+import javax.swing.AbstractAction;
+import javax.swing.BorderFactory;
+import javax.swing.Box;
 import javax.swing.DefaultCellEditor;
+import javax.swing.DefaultListCellRenderer;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
-import javax.swing.JOptionPane;
+import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTable;
 import javax.swing.JTextField;
+import javax.swing.KeyStroke;
 import javax.swing.table.AbstractTableModel;
 import lombok.experimental.ExtensionMethod;
 import org.triplea.map.data.elements.AttachmentList.Attachment;
@@ -34,67 +44,71 @@ import org.triplea.swing.SwingComponents;
 import eddies.mapeditor.MakerIcon.Glyph;
 
 /**
- * Every attachment of the game as it stands in its XML, for what has no tool of its own, eg
- * triggers and conditions: listed by kind, searchable, the chosen one's options in a table. Each
- * change is one step; options the editor does not know are kept as they are.
+ * Every attachment of the game as it stands in its XML, for what has no tool of its own: listed by
+ * kind in plain words, searchable, the chosen one's options in a table. Each change is one step;
+ * options the editor does not know are kept as they are.
  */
 // toBuilder() also with TripleA versions whose model has none
 @ExtensionMethod(Builders.class)
 final class AttachmentsEditor implements Editor {
-  private static final String ALL_KINDS = "All kinds";
+  private static final String ALL_KINDS = "";
   private static final String SEPARATOR = " · ";
+  private static final String EMPTY = "empty";
+  private static final String DETAILS = "details";
 
   private final MapProject project;
-  private final JPanel page = new JPanel(new BorderLayout(8, 8));
+  private final JPanel page = new JPanel(new BorderLayout());
   private final JComboBox<String> kinds = new JComboBox<>();
+  // the raw kind of each item of kinds, ALL_KINDS first
+  private List<String> kindKeys = List.of(ALL_KINDS);
+  private String shownKind = ALL_KINDS;
   private final SearchList list;
+  private final JPanel detailsCard = new JPanel(new CardLayout());
   private final Form inspector = new Form(360);
   private final JTextField name = new JTextField();
   private final JComboBox<String> attachTo = new JComboBox<>();
   private final JPanel attachToRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+  private final JLabel optionsTitle = Theme.newSectionLabel("");
   private final OptionsTable options = new OptionsTable();
   private final JTable table = new JTable(options);
-  private final JScrollPane optionsScroll = SwingComponents.newJScrollPane(table);
   private final JComboBox<String> optionNames = new JComboBox<>();
   private @Nullable String selected;
   private boolean filling;
-  private List<String> labels = List.of();
-  private Map<String, Integer> indexes = Map.of();
-  private @Nullable Game labelsOf;
+  // what each row shows, worked out once per change, as a big map has 35,000 attachments
+  private Map<String, Entry> entries = Map.of();
+  private Map<String, Integer> counts = Map.of();
+  private @Nullable Game indexedOf;
+
+  /** A row of the list: the attachment's place in the game, its kind and its two lines. */
+  private record Entry(int index, String kind, String title, String detail) {}
 
   AttachmentsEditor(final MapProject project) {
     this.project = project;
     list =
         new SearchList(
-            "Search attachment",
-            this::shownLabels,
-            label -> index(label).map(i -> describe(attachment(i))).orElse(""),
-            this::choose);
+                "attachment",
+                "attachments",
+                this::shownKeys,
+                this::titleOf,
+                this::detailOf,
+                this::choose)
+            .withAdd("Add...", "Adds an attachment of a kind you choose", this::addAttachment);
     kinds.setToolTipText("Which kind of attachments are listed");
+    kinds.setRenderer(new KindRenderer());
     kinds.addActionListener(
         e -> {
-          if (!filling) {
+          if (!filling && kinds.getSelectedIndex() >= 0) {
+            shownKind = kindKeys.get(kinds.getSelectedIndex());
             list.refresh();
           }
         });
-    final JButton add = new JButton("Add attachment...");
-    add.setToolTipText("Adds an attachment of a kind you choose, eg a trigger, to the game");
-    add.addActionListener(e -> addAttachment());
-    final JButton remove = new JButton("Remove");
-    remove.setToolTipText("Removes the chosen attachment from the game");
-    remove.addActionListener(
-        e -> chosen().ifPresent(i -> project.edit(g -> AttachmentsXml.withoutAttachment(g, i))));
-    final JButton newTrigger = new JButton("New trigger...");
-    newTrigger.setToolTipText("Makes a trigger step by step with the trigger assistant");
-    newTrigger.addActionListener(e -> TriggerAssistant.openNew(page, project));
-    final JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-    buttons.add(add);
-    buttons.add(remove);
-    buttons.add(newTrigger);
-    final JPanel listColumn = new JPanel(new BorderLayout(0, 8));
-    listColumn.add(kinds, BorderLayout.NORTH);
+    final JPanel listColumn = new JPanel(new BorderLayout(0, Theme.GAP_S));
+    // in line with the search field, which keeps a gap to the divider
+    final JPanel kindsRow = new JPanel(new BorderLayout());
+    kindsRow.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, Theme.GAP_S));
+    kindsRow.add(kinds, BorderLayout.CENTER);
+    listColumn.add(kindsRow, BorderLayout.NORTH);
     listColumn.add(list, BorderLayout.CENTER);
-    listColumn.add(buttons, BorderLayout.SOUTH);
 
     name.addActionListener(e -> rename());
     name.addFocusListener(
@@ -106,25 +120,75 @@ final class AttachmentsEditor implements Editor {
         });
     attachTo.setEditable(true);
     attachTo.addActionListener(e -> reattach());
+    attachTo.setPreferredSize(new Dimension(260, attachTo.getPreferredSize().height));
+    attachToRow.add(attachTo);
+    detailsCard.add(
+        Panels.empty(
+            Glyph.ATTACHMENTS, "Choose an attachment", "Choose an attachment to see its options."),
+        EMPTY);
+    detailsCard.add(newDetails(), DETAILS);
+    page.add(Panels.sideBySide(listColumn, detailsCard), BorderLayout.CENTER);
+    project.onChange(this::refresh);
+    refresh();
+  }
+
+  /** The chosen one's fields above, its options filling the rest, Remove at the bottom. */
+  private JComponent newDetails() {
     table.setRowHeight(table.getRowHeight() + 8);
     table.putClientProperty("terminateEditOnFocusLost", true);
     optionNames.setEditable(true);
     table.getColumnModel().getColumn(0).setCellEditor(new DefaultCellEditor(optionNames));
-    // the value is what is longest, eg a trigger's conditions
-    table.getColumnModel().getColumn(0).setPreferredWidth(160);
-    table.getColumnModel().getColumn(1).setPreferredWidth(400);
-    // the count, short, beside the option's name instead of squeezed at the far right
-    table.getColumnModel().getColumn(2).setMinWidth(70);
-    table.getColumnModel().getColumn(2).setMaxWidth(70);
-    table.moveColumn(2, 1);
-    attachTo.setPreferredSize(new Dimension(260, attachTo.getPreferredSize().height));
-    attachToRow.add(attachTo);
+    table.getColumnModel().getColumn(0).setPreferredWidth(220);
+    table.getColumnModel().getColumn(1).setPreferredWidth(480);
+    table.getColumnModel().getColumn(2).setMinWidth(60);
+    table.getColumnModel().getColumn(2).setMaxWidth(60);
+    table.getInputMap(JComponent.WHEN_FOCUSED)
+        .put(KeyStroke.getKeyStroke(KeyEvent.VK_DELETE, 0), "removeOption");
+    table.getActionMap()
+        .put(
+            "removeOption",
+            new AbstractAction() {
+              @Override
+              public void actionPerformed(final ActionEvent e) {
+                removeOption();
+              }
+            });
+    final JScrollPane optionsScroll = SwingComponents.newJScrollPane(table);
     optionsScroll.setColumnHeaderView(table.getTableHeader());
-    page.add(
-        Panels.sideBySide(listColumn, SwingComponents.newJScrollPane(inspector)),
-        BorderLayout.CENTER);
-    project.onChange(this::refresh);
-    refresh();
+    final JPanel optionsHeader = new JPanel(new BorderLayout());
+    optionsHeader.add(optionsTitle, BorderLayout.WEST);
+    optionsHeader.add(
+        Theme.newAddButton(
+            "Add option...",
+            "Adds an option to the attachment, its name chosen from TripleA's",
+            this::addOption),
+        BorderLayout.EAST);
+    final JPanel optionsPart = new JPanel(new BorderLayout(0, Theme.GAP_S));
+    optionsPart.setBorder(BorderFactory.createEmptyBorder(0, Theme.GAP_L, 0, Theme.GAP_L));
+    optionsPart.add(optionsHeader, BorderLayout.NORTH);
+    optionsPart.add(optionsScroll, BorderLayout.CENTER);
+
+    final JButton remove = new JButton("Remove attachment");
+    Theme.setDestructiveButtonStyle(remove);
+    remove.addActionListener(e -> removeAttachment());
+    final JPanel footer = new JPanel(new BorderLayout());
+    footer.setBorder(
+        BorderFactory.createEmptyBorder(Theme.GAP_S, Theme.GAP_L, Theme.GAP_L, Theme.GAP_L));
+    footer.add(
+        Theme.newSecondaryLabel("Select a row and press Delete to remove it."),
+        BorderLayout.NORTH);
+    // bottom left as in every tool (Form.remove), its text where the text above starts
+    final JPanel removeRow = new JPanel(new FlowLayout(FlowLayout.LEADING, 0, 0));
+    removeRow.setBorder(
+        BorderFactory.createEmptyBorder(Theme.GAP_XL, -remove.getInsets().left, 0, 0));
+    removeRow.add(remove);
+    footer.add(removeRow, BorderLayout.SOUTH);
+
+    final JPanel details = new JPanel(new BorderLayout(0, Theme.GAP_S));
+    details.add(inspector, BorderLayout.NORTH);
+    details.add(optionsPart, BorderLayout.CENTER);
+    details.add(footer, BorderLayout.SOUTH);
+    return details;
   }
 
   @Override
@@ -148,6 +212,24 @@ final class AttachmentsEditor implements Editor {
     return page;
   }
 
+  /** Chooses the attachment of this name, the first if several have it, eg from another tool. */
+  @Override
+  public void show(final String attachmentName) {
+    AttachmentsXml.attachments(project.game()).stream()
+        .filter(a -> attachmentName.equals(a.getName()))
+        .findFirst()
+        .ifPresent(
+            a -> {
+              commit();
+              selected = key(a);
+              if (!shownKind.equals(ALL_KINDS)
+                  && !shownKind.equals(AttachmentsXml.kind(a))) {
+                shownKind = ALL_KINDS;
+              }
+              refresh();
+            });
+  }
+
   @Override
   public void commit() {
     if (table.isEditing()) {
@@ -160,69 +242,100 @@ final class AttachmentsEditor implements Editor {
 
   // ---- the list
 
-  /** How the attachment shows in the list: its name and what it is attached to. */
-  private static String label(final Attachment attachment) {
+  private static String key(final Attachment attachment) {
     return Objects.toString(attachment.getName(), "")
         + SEPARATOR
         + Objects.toString(attachment.getAttachTo(), "");
   }
 
-  private static String describe(final Attachment attachment) {
-    final int count = AttachmentsXml.options(attachment).size();
-    return AttachmentsXml.kind(attachment) + ", " + count + (count == 1 ? " option" : " options");
-  }
-
-  /** The labels in the game's order, worked out once per change, as every row asks for them. */
-  private List<String> labels() {
-    if (labelsOf != project.game()) {
-      labels = AttachmentsXml.attachments(project.game()).stream()
-          .map(AttachmentsEditor::label)
-          .toList();
-      indexes = new HashMap<>();
-      for (int i = labels.size() - 1; i >= 0; i--) {
-        indexes.put(labels.get(i), i);
-      }
-      labelsOf = project.game();
+  /**
+   * The first line of the attachment's row: what it is attached to when it has its kind's usual
+   * name, eg the unit type of a unitAttachment, else its name without what every one of the kind
+   * starts with, eg "Americans War" for triggerAttachment_Americans_War.
+   */
+  static String rowTitle(final Attachment attachment) {
+    final String target = Objects.toString(attachment.getAttachTo(), "");
+    final String fullName = Objects.toString(attachment.getName(), "");
+    if (AttachmentsXml.hasDefaultName(attachment)) {
+      return target;
     }
-    return labels;
+    final String kind = AttachmentsXml.kind(attachment);
+    final String start = AttachmentsXml.NAMES.getOrDefault(kind, "");
+    final String rest =
+        (fullName.startsWith(start) ? fullName.substring(start.length()) : fullName)
+            .replace('_', ' ')
+            .strip();
+    if (rest.isEmpty()) {
+      return fullName;
+    }
+    // eg triggerAttachment3: a number alone says nothing
+    return rest.chars().allMatch(Character::isDigit)
+        ? AttachmentsXml.kindName(kind).one() + " " + rest
+        : rest;
   }
 
-  private List<String> shownLabels() {
-    final Object kind = kinds.getSelectedItem();
-    final List<Attachment> attachments = AttachmentsXml.attachments(project.game());
-    final List<String> all = labels();
-    return IntStream.range(0, all.size())
-        .filter(
-            i ->
-                kind == null
-                    || ALL_KINDS.equals(kind)
-                    || kind.equals(AttachmentsXml.kind(attachments.get(i))))
-        .mapToObj(all::get)
-        .distinct()
+  private static String detail(final Attachment attachment) {
+    final int count = AttachmentsXml.options(attachment).size();
+    return (AttachmentsXml.hasDefaultName(attachment)
+            ? ""
+            : Objects.toString(attachment.getAttachTo(), "") + SEPARATOR)
+        + count
+        + (count == 1 ? " option" : " options");
+  }
+
+  private Map<String, Entry> entries() {
+    if (indexedOf != project.game()) {
+      final Map<String, Entry> made = new LinkedHashMap<>();
+      final Map<String, Integer> perKind = new HashMap<>();
+      final List<Attachment> all = AttachmentsXml.attachments(project.game());
+      for (int i = 0; i < all.size(); i++) {
+        final Attachment attachment = all.get(i);
+        final String kind = AttachmentsXml.kind(attachment);
+        perKind.merge(kind, 1, Integer::sum);
+        // of two with the same name on the same thing the game takes the last, as Triggers does
+        made.put(
+            key(attachment), new Entry(i, kind, rowTitle(attachment), detail(attachment)));
+      }
+      entries = made;
+      counts = perKind;
+      indexedOf = project.game();
+    }
+    return entries;
+  }
+
+  private List<String> shownKeys() {
+    return entries().entrySet().stream()
+        .filter(e -> shownKind.equals(ALL_KINDS) || shownKind.equals(e.getValue().kind()))
+        .map(Map.Entry::getKey)
         .toList();
   }
 
-  /**
-   * The place of the attachment with the label. shortcut: of two with the same name on the same
-   * thing, which the game takes as one, the first; tell them apart if a map needs both.
-   */
-  private Optional<Integer> index(final String label) {
-    labels();
-    return Optional.ofNullable(indexes.get(label));
+  private String titleOf(final String key) {
+    return Optional.ofNullable(entries().get(key)).map(Entry::title).orElse(key);
+  }
+
+  private String detailOf(final String key) {
+    return Optional.ofNullable(entries().get(key))
+        .map(
+            e ->
+                (shownKind.equals(ALL_KINDS)
+                        ? AttachmentsXml.kindName(e.kind()).one() + SEPARATOR
+                        : "")
+                    + e.detail())
+        .orElse("");
+  }
+
+  private Optional<Entry> chosen() {
+    return Optional.ofNullable(selected).map(entries()::get);
   }
 
   private Attachment attachment(final int index) {
     return AttachmentsXml.attachments(project.game()).get(index);
   }
 
-  private Optional<Integer> chosen() {
-    return Optional.ofNullable(selected).flatMap(this::index);
-  }
-
-  private void choose(final String label) {
+  private void choose(final String key) {
     commit();
-    selected = label;
-    // the list stays as it is: only the inspector shows the chosen one
+    selected = key;
     filling = true;
     try {
       showInspector();
@@ -236,16 +349,26 @@ final class AttachmentsEditor implements Editor {
   private void refresh() {
     filling = true;
     try {
-      final Object kind = kinds.getSelectedItem();
+      entries();
+      final List<String> kindsHad = new ArrayList<>(List.of(ALL_KINDS));
+      counts.keySet().stream()
+          .sorted(Comparator.comparing(k -> AttachmentsXml.kindName(k).many()))
+          .forEach(kindsHad::add);
+      if (!kindsHad.contains(shownKind)) {
+        shownKind = ALL_KINDS;
+      }
+      kindKeys = List.copyOf(kindsHad);
       kinds.removeAllItems();
-      kinds.addItem(ALL_KINDS);
-      AttachmentsXml.attachments(project.game()).stream()
-          .map(AttachmentsXml::kind)
-          .distinct()
-          .sorted()
-          .forEach(kinds::addItem);
-      kinds.setSelectedItem(Optional.ofNullable(kind).orElse(ALL_KINDS));
+      kinds.addItem("All kinds (" + entries.size() + ")");
+      kindKeys.stream()
+          .skip(1)
+          .forEach(
+              k -> kinds.addItem(AttachmentsXml.kindName(k).many() + " (" + counts.get(k) + ")"));
+      kinds.setSelectedIndex(kindKeys.indexOf(shownKind));
       list.refresh();
+      chosen()
+          .filter(e -> shownKind.equals(ALL_KINDS) || shownKind.equals(e.kind()))
+          .ifPresent(e -> list.choose(selected));
       showInspector();
     } finally {
       filling = false;
@@ -253,22 +376,38 @@ final class AttachmentsEditor implements Editor {
   }
 
   private void showInspector() {
-    inspector.clear();
-    final Optional<Integer> index = chosen();
-    if (index.isEmpty()) {
+    final Optional<Entry> entry = chosen();
+    final CardLayout cards = (CardLayout) detailsCard.getLayout();
+    if (entry.isEmpty()) {
       selected = null;
-      inspector
-          .title("Attachments")
-          .note(
-              AttachmentsXml.attachments(project.game()).size()
-                  + " attachments. Choose one to see and change its options.")
-          .end();
       options.show(List.of());
+      cards.show(detailsCard, EMPTY);
       return;
     }
-    final Attachment attachment = attachment(index.get());
+    final int index = entry.get().index();
+    final Attachment attachment = attachment(index);
     final Game game = project.game();
-    inspector.title(Objects.toString(attachment.getName(), ""));
+    final String kind = AttachmentsXml.kind(attachment);
+    inspector.clear();
+    inspector
+        .title(entry.get().title())
+        .subtitle(
+            AttachmentsXml.kindName(kind).one()
+                + " attachment"
+                + SEPARATOR
+                + Objects.toString(attachment.getName(), "")
+                + (attachment.getForeach() == null ? "" : ", for each " + attachment.getForeach()));
+    if (TriggerXml.TRIGGER.equals(kind)) {
+      final JButton open = new JButton("Open in assistant");
+      Theme.setTertiaryButtonStyle(open);
+      open.setToolTipText("Opens the trigger in the trigger assistant");
+      open.addActionListener(e -> TriggerAssistant.open(page, project, index));
+      final JPanel info = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+      info.add(new JLabel("This is a trigger. It is easier to change in the trigger assistant."));
+      info.add(Box.createHorizontalStrut(Theme.GAP_S));
+      info.add(open);
+      inspector.row(info);
+    }
     if (!name.hasFocus()) {
       name.setText(Objects.toString(attachment.getName(), ""));
     }
@@ -277,87 +416,49 @@ final class AttachmentsEditor implements Editor {
         .forEach(attachTo::addItem);
     attachTo.setSelectedItem(attachment.getAttachTo());
     optionNames.removeAllItems();
-    AttachmentsXml.knownOptions(game, AttachmentsXml.kind(attachment))
-        .forEach(optionNames::addItem);
-    final JButton addOption = new JButton("Add option");
-    addOption.setToolTipText("Adds an option to the attachment, its name chosen from TripleA's");
-    addOption.addActionListener(e -> addOption());
-    final JButton removeOption = new JButton("Remove option");
-    removeOption.setToolTipText("Removes the option chosen in the table");
-    removeOption.addActionListener(e -> removeOption());
-    final JPanel optionButtons = new JPanel(new GridLayout(1, 2, 4, 0));
-    optionButtons.add(addOption);
-    optionButtons.add(removeOption);
-    if (TriggerXml.TRIGGER.equals(AttachmentsXml.kind(attachment))) {
-      final JButton guided = new JButton("Guided...");
-      guided.setToolTipText("Opens the trigger in the trigger assistant");
-      guided.addActionListener(e -> TriggerAssistant.open(page, project, index.get()));
-      optionButtons.add(guided);
-    }
-    final JPanel optionButtonsLeft = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-    optionButtonsLeft.add(optionButtons);
-    table.setPreferredScrollableViewportSize(
-        new Dimension(0, table.getRowHeight() * Math.max(6, options.getRowCount() + 1)));
-    inspector
-        .note(
-            AttachmentsXml.kind(attachment)
-                + ", attached to a "
-                + Objects.toString(attachment.getType(), "unitType")
-                + (attachment.getForeach() == null ? "" : ", for each " + attachment.getForeach()))
-        .field("Name", name)
-        .field("Attached to", attachToRow)
-        .section(
-            "Options",
-            "What the attachment sets, as the game file has them. Double-click to change a name,"
-                + " value or count; the names TripleA knows for this kind are offered. Check (F6)"
-                + " tells whether the game still loads.")
-        .row(optionsScroll)
-        .row(optionButtonsLeft)
-        .end();
-    options.show(AttachmentsXml.options(attachment));
+    AttachmentsXml.knownOptions(game, kind).forEach(optionNames::addItem);
+    inspector.field("Name", name).field("Attached to", attachToRow).end();
+    final List<Option> shown = AttachmentsXml.options(attachment);
+    optionsTitle.setText("Options (" + shown.size() + ")");
+    options.show(shown);
+    cards.show(detailsCard, DETAILS);
+    detailsCard.revalidate();
+    detailsCard.repaint();
   }
 
   private void change(final Attachment changed) {
     chosen()
         .ifPresent(
-            i -> {
+            e -> {
               // eg an option without a name, which the change refused
-              if (changed == attachment(i)) {
+              if (changed == attachment(e.index())) {
                 return;
               }
-              selected = label(changed);
-              project.edit(g -> AttachmentsXml.withAttachment(g, i, changed));
+              selected = key(changed);
+              project.edit(g -> AttachmentsXml.withAttachment(g, e.index(), changed));
             });
   }
 
   private void rename() {
     final String typed = name.getText().strip();
     chosen()
-        .map(this::attachment)
+        .map(e -> attachment(e.index()))
         .filter(a -> !typed.isEmpty() && !typed.equals(a.getName()))
         .filter(
             a -> {
-              // the old name back, so leaving the field does not warn again
-              final boolean refused = refusedAsTaken(typed, a.getAttachTo());
-              if (refused) {
-                name.setText(a.getName());
+              if (!AttachmentsXml.has(project.game(), typed, a.getAttachTo())) {
+                return true;
               }
-              return !refused;
+              // the old name back, so leaving the field does not warn again
+              name.setText(a.getName());
+              Dialogs.warn(
+                  page,
+                  "Attachment name",
+                  a.getAttachTo() + " has an attachment " + typed + " already. Choose another"
+                      + " name.");
+              return false;
             })
         .ifPresent(a -> change(a.toBuilder().name(typed).build()));
-  }
-
-  /** Whether the thing has an attachment of the name already, telling so. */
-  private boolean refusedAsTaken(final String newName, final String target) {
-    if (!AttachmentsXml.has(project.game(), newName, target)) {
-      return false;
-    }
-    JOptionPane.showMessageDialog(
-        page,
-        target + " has an attachment " + newName + " already. Choose another name.",
-        "Attachment name",
-        JOptionPane.WARNING_MESSAGE);
-    return true;
   }
 
   private void reattach() {
@@ -366,14 +467,43 @@ final class AttachmentsEditor implements Editor {
     }
     final String typed = Objects.toString(attachTo.getSelectedItem(), "").strip();
     chosen()
-        .map(this::attachment)
+        .map(e -> attachment(e.index()))
         .filter(a -> !typed.isEmpty() && !typed.equals(a.getAttachTo()))
         .ifPresent(a -> change(a.toBuilder().attachTo(typed).build()));
   }
 
+  private void removeAttachment() {
+    commit();
+    chosen()
+        .ifPresent(
+            e -> {
+              final Attachment attachment = attachment(e.index());
+              final String one = AttachmentsXml.kindName(e.kind()).one().toLowerCase(Locale.ROOT);
+              final String what =
+                  AttachmentsXml.hasDefaultName(attachment)
+                      ? "the " + one + " attachment of " + e.title()
+                      : one + " “" + e.title() + "”";
+              final List<String> namedBy =
+                  RulesXml.whereNamed(
+                      project.game(), Objects.toString(attachment.getName(), ""));
+              if (Dialogs.confirmRemove(
+                  page,
+                  "Remove attachment",
+                  "Remove " + what + "?"
+                      + (namedBy.isEmpty()
+                          ? ""
+                          : "\nThese still name it; the game may not load until you change them."),
+                  namedBy,
+                  "Remove")) {
+                selected = null;
+                project.edit(g -> AttachmentsXml.withoutAttachment(g, e.index()));
+              }
+            });
+  }
+
   private void addOption() {
     commit();
-    final Optional<Attachment> attachment = chosen().map(this::attachment);
+    final Optional<Attachment> attachment = chosen().map(e -> attachment(e.index()));
     if (attachment.isEmpty()) {
       return;
     }
@@ -382,71 +512,132 @@ final class AttachmentsEditor implements Editor {
             AttachmentsXml.knownOptions(project.game(), AttachmentsXml.kind(attachment.get()))
                 .toArray(String[]::new));
     optionName.setEditable(true);
+    optionName.setSelectedItem("");
     final JTextField value = new JTextField(24);
-    final JPanel form = new JPanel(new GridLayout(0, 1, 0, 4));
-    Stream.of(new JLabel("Option"), optionName, new JLabel("Value"), value).forEach(form::add);
-    final boolean ok = Panels.ask(page, form, "Add option");
-    final String typedName = Objects.toString(optionName.getSelectedItem(), "").strip();
-    if (ok && !typedName.isEmpty()) {
+    final Form form = new Form(320);
+    form.setBorder(BorderFactory.createEmptyBorder());
+    form.field("Option", optionName).field("Value", value).end();
+    if (Dialogs.ask(
+        page, "Add option", form, "Add option", () -> !typed(optionName).isEmpty())) {
       change(
           AttachmentsXml.withNewOption(
               attachment.get(),
-              Option.builder().name(typedName).value(value.getText().strip()).build()));
+              Option.builder().name(typed(optionName)).value(value.getText().strip()).build()));
     }
   }
 
+  // what is typed in an editable combo box, also before Enter
+  private static String typed(final JComboBox<String> combo) {
+    return Objects.toString(combo.getEditor().getItem(), "").strip();
+  }
+
   private void removeOption() {
-    commit();
     final int row = table.getSelectedRow();
-    if (row >= 0) {
+    if (row >= 0 && !table.isEditing()) {
       chosen()
-          .map(this::attachment)
+          .map(e -> attachment(e.index()))
           .ifPresent(a -> change(AttachmentsXml.withoutOption(a, row)));
     }
   }
 
-  /** Offers the kinds TripleA knows and what each may be attached to. */
+  /** Offers the kinds TripleA knows in plain words, and what each may be attached to. */
   private void addAttachment() {
+    commit();
+    final Game game = project.game();
     final JComboBox<String> kind =
-        new JComboBox<>(AttachmentsXml.KINDS.keySet().stream().sorted().toArray(String[]::new));
-    kind.setSelectedItem("TriggerAttachment");
-    final JTextField newName = new JTextField(24);
+        new JComboBox<>(
+            AttachmentsXml.KINDS.keySet().stream()
+                .sorted(Comparator.comparing(k -> AttachmentsXml.kindName(k).one()))
+                .toArray(String[]::new));
+    kind.setRenderer(new KindRenderer());
+    kind.setSelectedItem(TriggerXml.TRIGGER);
+    final JLabel easier =
+        Theme.newSecondaryLabel("Triggers are easier to make in Triggers with New trigger.");
     final JComboBox<String> target = new JComboBox<>();
     target.setEditable(true);
-    final Runnable fillTargets =
+    final JTextField newName = new JTextField(24);
+    final Form form = new Form(320);
+    form.setBorder(BorderFactory.createEmptyBorder());
+    form.field("Kind", kind).row(easier).field("Attached to", target).field("Name", newName);
+    final FieldError taken = form.error(newName);
+    form.end();
+    final Runnable check =
+        () ->
+            taken.setProblem(
+                AttachmentsXml.has(game, newName.getText().strip(), typed(target))
+                    ? Optional.of(typed(target) + " has an attachment of that name already.")
+                    : Optional.empty());
+    final Runnable fill =
         () -> {
           final String chosenKind = (String) kind.getSelectedItem();
+          easier.setVisible(
+              TriggerXml.TRIGGER.equals(chosenKind) || "RulesAttachment".equals(chosenKind));
           target.removeAllItems();
-          AttachmentsXml.targets(project.game(), AttachmentsXml.KINDS.get(chosenKind))
+          AttachmentsXml.targets(game, AttachmentsXml.KINDS.get(chosenKind))
               .forEach(target::addItem);
-          newName.setText(AttachmentsXml.newName(project.game(), chosenKind));
+          newName.setText(AttachmentsXml.newName(game, chosenKind));
+          check.run();
         };
-    kind.addActionListener(e -> fillTargets.run());
-    fillTargets.run();
-    final JPanel form = new JPanel(new GridLayout(0, 1, 0, 4));
-    Stream.of(
-            new JLabel("Kind"),
-            kind,
-            new JLabel("Name"),
-            newName,
-            new JLabel("Attached to"),
-            target)
-        .forEach(form::add);
-    final boolean ok = Panels.ask(page, form, "Add attachment");
+    kind.addActionListener(e -> fill.run());
+    target.addActionListener(e -> check.run());
+    OnTyping.attach(newName, check);
+    OnTyping.attach((JTextField) target.getEditor().getEditorComponent(), check);
+    fill.run();
+    if (!Dialogs.ask(
+        page,
+        "Add attachment",
+        form,
+        "Add attachment",
+        () ->
+            !newName.getText().isBlank() && !typed(target).isEmpty() && !taken.hasProblem())) {
+      return;
+    }
+    final String chosenKind = (String) kind.getSelectedItem();
     final String typedName = newName.getText().strip();
-    final String typedTarget = Objects.toString(target.getSelectedItem(), "").strip();
-    if (!ok || typedName.isEmpty() || typedTarget.isEmpty()) {
-      return;
+    final String typedTarget = typed(target);
+    selected = key(Attachment.builder().name(typedName).attachTo(typedTarget).build());
+    if (!shownKind.equals(ALL_KINDS) && !shownKind.equals(chosenKind)) {
+      shownKind = chosenKind;
     }
-    if (refusedAsTaken(typedName, typedTarget)) {
-      return;
+    project.edit(g -> AttachmentsXml.withNewAttachment(g, chosenKind, typedName, typedTarget));
+  }
+
+  /**
+   * A kind in plain words; its class, as TripleA names it, in the tool tip and, in the open list,
+   * smaller beside it.
+   */
+  private final class KindRenderer extends DefaultListCellRenderer {
+    @Serial private static final long serialVersionUID = 1L;
+
+    @Override
+    public Component getListCellRendererComponent(
+        final JList<?> owner,
+        final Object value,
+        final int index,
+        final boolean isSelected,
+        final boolean cellHasFocus) {
+      super.getListCellRendererComponent(owner, value, index, isSelected, cellHasFocus);
+      final String text = Objects.toString(value, "");
+      if (AttachmentsXml.KINDS.containsKey(text)) {
+        // the add dialog's items are the raw kinds; the closed box shows the plain name only
+        setText(
+            index < 0
+                ? AttachmentsXml.kindName(text).one()
+                : "<html>"
+                    + AttachmentsXml.kindName(text).one()
+                    + " <font size='-2' color='"
+                    + Theme.convertColorToHex(Theme.getSecondaryTextColor())
+                    + "'>"
+                    + text
+                    + "</font></html>");
+        setToolTipText(text);
+      } else {
+        final int at = index >= 0 ? index : kinds.getSelectedIndex();
+        setToolTipText(
+            at > 0 && at < kindKeys.size() ? kindKeys.get(at) : "Attachments of every kind");
+      }
+      return this;
     }
-    selected = label(Attachment.builder().name(typedName).attachTo(typedTarget).build());
-    project.edit(
-        g ->
-            AttachmentsXml.withNewAttachment(
-                g, (String) kind.getSelectedItem(), typedName, typedTarget));
-    list.choose(selected);
   }
 
   /** The chosen attachment's options: name, value and count, each cell a step when changed. */
@@ -461,13 +652,9 @@ final class AttachmentsEditor implements Editor {
       fireTableDataChanged();
     }
 
-    private List<Option> rows() {
-      return rows;
-    }
-
     @Override
     public int getRowCount() {
-      return rows().size();
+      return rows.size();
     }
 
     @Override
@@ -482,7 +669,7 @@ final class AttachmentsEditor implements Editor {
 
     @Override
     public Object getValueAt(final int row, final int column) {
-      final Option option = rows().get(row);
+      final Option option = rows.get(row);
       return Objects.toString(
           switch (column) {
             case 0 -> option.getName();
@@ -503,7 +690,7 @@ final class AttachmentsEditor implements Editor {
       if (row >= getRowCount() || typed.equals(getValueAt(row, column))) {
         return;
       }
-      final Option option = rows().get(row);
+      final Option option = rows.get(row);
       // an empty count is no count, as the game file mostly has it
       final Option changed =
           switch (column) {
@@ -512,7 +699,7 @@ final class AttachmentsEditor implements Editor {
             default -> option.toBuilder().count(typed.isEmpty() ? null : typed).build();
           };
       chosen()
-          .map(AttachmentsEditor.this::attachment)
+          .map(e -> attachment(e.index()))
           .ifPresent(a -> change(AttachmentsXml.withOption(a, row, changed)));
     }
   }

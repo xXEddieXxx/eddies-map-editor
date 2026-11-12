@@ -5,6 +5,7 @@ import games.strategy.triplea.attachments.TerritoryAttachment;
 import games.strategy.triplea.attachments.UnitAttachment;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -128,6 +129,62 @@ class MapXml {
 
   private static Map map(final Game game) {
     return Optional.ofNullable(game.getMap()).orElseGet(() -> Map.builder().build());
+  }
+
+  /**
+   * The game with a new land territory last on the map, connected once to each neighbour; a sea
+   * zone is made with {@link #withWater}, an owner with {@link #withOwner}.
+   */
+  static Game withTerritory(
+      final Game game, final String territory, final Collection<String> neighbours) {
+    final List<Territory> territories = new ArrayList<>(territoryElements(game));
+    territories.add(Territory.builder().name(territory).build());
+    Game changed =
+        game.toBuilder().map(map(game).toBuilder().territories(territories).build()).build();
+    for (final String neighbour : neighbours) {
+      changed = withConnection(changed, territory, neighbour);
+    }
+    return changed;
+  }
+
+  /**
+   * The game without the territory and all that belongs to it: the canals through it (a canal needs
+   * both its sea zones), its owner and units at the start, its connections and its territory
+   * attachments. Other attachments that name it stay: {@link RulesXml#whereNamed} tells them.
+   */
+  static Game withoutTerritory(final Game game, final String territory) {
+    Game changed = game;
+    for (final CanalXml.Canal canal : CanalXml.canals(game)) {
+      if (canal.seaZones().contains(territory) || canal.lands().contains(territory)) {
+        changed = CanalXml.withoutCanal(changed, canal.name());
+      }
+    }
+    if (owner(changed, territory).isPresent()) {
+      changed = withOwner(changed, territory, null);
+    }
+    changed = withTerritoryUnits(changed, territory, List.of());
+    final Map world =
+        map(changed).toBuilder()
+            .territories(without(territoryElements(changed), t -> territory.equals(t.getName())))
+            .connections(
+                without(
+                    connections(changed),
+                    c -> territory.equals(c.getT1()) || territory.equals(c.getT2())))
+            .build();
+    final Game withoutWorld = changed.toBuilder().map(world).build();
+    return changed.getAttachmentList() == null
+        ? withoutWorld
+        : withoutWorld.toBuilder()
+            .attachmentList(
+                changed.getAttachmentList().toBuilder()
+                    .attachments(
+                        without(
+                            attachments(changed),
+                            a ->
+                                "territory".equals(a.getType())
+                                    && territory.equals(a.getAttachTo())))
+                    .build())
+            .build();
   }
 
   /** The nation owning the territory at the start, empty for none (neutral). */

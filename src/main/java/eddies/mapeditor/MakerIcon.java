@@ -56,7 +56,9 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
     CANALS,
     EFFECTS,
     ACTIONS,
-    TRIGGERS
+    TRIGGERS,
+    LOCK,
+    UNLOCK
   }
 
   /** The icon at the size of the text around it. */
@@ -250,6 +252,20 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
         // a lightning bolt
         g.drawPolygon(
             new Polygon(new int[] {9, 3, 8, 6, 13, 8}, new int[] {1, 9, 9, 15, 6, 6}, 6));
+      }
+      case LOCK -> {
+        // a padlock, its shackle closed
+        g.drawArc(5, 2, 6, 8, 0, 180);
+        g.drawLine(5, 6, 5, 8);
+        g.drawLine(11, 6, 11, 8);
+        g.fillRoundRect(3, 8, 10, 7, 2, 2);
+      }
+      case UNLOCK -> {
+        // a padlock, its shackle open to the right
+        g.drawArc(8, 1, 6, 8, 0, 180);
+        g.drawLine(8, 5, 8, 8);
+        g.drawLine(14, 5, 14, 6);
+        g.fillRoundRect(1, 8, 10, 7, 2, 2);
       }
       default -> throw new IllegalStateException("Unknown icon: " + glyph);
     }

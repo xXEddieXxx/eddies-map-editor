@@ -2,7 +2,6 @@ package eddies.mapeditor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.awt.Font;
 import java.awt.event.ActionEvent;
 import javax.swing.text.View;
 import javax.swing.text.WrappedPlainView;
@@ -104,21 +103,5 @@ final class XmlTextAreaTest {
         .as("a view that wraps and colors, not Swing's own")
         .isInstanceOf(WrappedPlainView.class)
         .isNotExactlyInstanceOf(WrappedPlainView.class);
-  }
-
-  @DisplayName("The line numbers are as high as the text's lines, in the font set after them")
-  @Test
-  void lineNumbersMatchTheText() {
-    final XmlTextArea area = new XmlTextArea();
-    final FilesEditor.LineNumbers numbers = new FilesEditor.LineNumbers(area);
-    area.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 31));
-    area.setText("<a/>\n".repeat(3000));
-
-    final int numbersHeight = numbers.getPreferredSize().height;
-
-    assertThat(numbersHeight)
-        .as("one number beside each line, down to the last")
-        .isEqualTo(
-            area.getPreferredSize().height - area.getInsets().top - area.getInsets().bottom);
   }
 }

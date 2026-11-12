@@ -10,6 +10,9 @@ import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import lombok.experimental.UtilityClass;
 import org.triplea.map.data.elements.Game;
+import eddies.mapeditor.MapChecks.Problem;
+import eddies.mapeditor.MapGuide.Next.Kind;
+import eddies.mapeditor.MapGuide.Step.State;
 
 /**
  * How a map is made, at a glance: the parts of its folder, what each is for, whether the map has it
@@ -35,8 +38,41 @@ class MapGuide {
       @Nullable String tool,
       Path file) {}
 
-  /** A step to a playable map, done or not, and the tool to do it in. */
-  record Step(String text, boolean done, String tool) {}
+  /** The title of the last step's "tool": Check, run from Home. */
+  static final String CHECK = "Check";
+
+  /**
+   * A step to a playable map, how far it is, the tool to do it in and why it matters.
+   *
+   * @param tool the title of the tool, or {@link #CHECK}
+   */
+  record Step(String text, State state, String tool, String why) {
+    /** Done; not done yet; or not done although it should be by now, eg land once nations exist. */
+    enum State {
+      DONE,
+      TODO,
+      FAILING
+    }
+
+    boolean done() {
+      return state == State.DONE;
+    }
+  }
+
+  /**
+   * What to do next, the one main action of Home.
+   *
+   * @param tool the tool to go to, {@link #CHECK} to check, or the tool of the first problem
+   */
+  record Next(Kind kind, String title, String why, String tool) {
+    enum Kind {
+      GO_TO_TOOL,
+      FIX_PROBLEMS,
+      CHECK,
+      SAVE,
+      PLAY
+    }
+  }
 
   /** The parts of the open map's folder, top down; for a map not saved yet, none. */
   static List<Part> anatomy(final MapProject project) {
@@ -141,10 +177,11 @@ class MapGuide {
             "map.properties",
             "Nation colors, unit size, the map's size",
             true,
-            "Nations"));
+            "Map look"));
     parts.add(
         part(indent, folder, "baseTiles", "The map's picture in tiles of 256 pixels", true, null));
-    parts.add(part(indent, folder, "reliefTiles", "Relief drawn over the picture", false, null));
+    parts.add(
+        part(indent, folder, "reliefTiles", "Relief drawn over the picture", false, "Map look"));
     final Optional<Path> smallMap = smallMap(folder);
     parts.add(
         new Part(
@@ -205,7 +242,7 @@ class MapGuide {
         .findFirst();
   }
 
-  /** The steps to a playable map in their order, each with whether it is done; not checked yet. */
+  /** The steps to a playable map in their order, how far each is; not checked yet. */
   static List<Step> steps(final MapProject project) {
     return steps(project, false);
   }
@@ -213,6 +250,45 @@ class MapGuide {
   /** The steps after a Check that found no problem, the game engine's included. */
   static List<Step> stepsAfterCleanCheck(final MapProject project) {
     return steps(project, true);
+  }
+
+  /** What to do next with these quick problems, before a Check. */
+  static Next nextStep(final MapProject project, final List<Problem> problems) {
+    return next(project, problems, false);
+  }
+
+  /** What to do next after a Check that found these problems, the engine's included. */
+  static Next nextStepAfterCheck(final MapProject project, final List<Problem> problems) {
+    return next(project, problems, true);
+  }
+
+  private static Next next(
+      final MapProject project, final List<Problem> problems, final boolean checked) {
+    final Optional<Step> todo =
+        steps(project).stream().filter(s -> !s.done() && !s.tool().equals(CHECK)).findFirst();
+    if (todo.isPresent()) {
+      return new Next(Kind.GO_TO_TOOL, todo.get().text(), todo.get().why(), todo.get().tool());
+    }
+    if (!problems.isEmpty()) {
+      final Problem first = problems.getFirst();
+      return new Next(
+          Kind.FIX_PROBLEMS,
+          problems.size() == 1 ? "Fix 1 problem" : "Fix " + problems.size() + " problems",
+          "They keep the map from being played. The first: " + first.text(),
+          first.territory().map(t -> "Territories").or(first::tool).orElse(""));
+    }
+    if (!checked) {
+      return new Next(
+          Kind.CHECK,
+          "Check your map",
+          "Check loads the game as TripleA does and finds what still keeps it from being played.",
+          CHECK);
+    }
+    if (project.hasUnsavedChanges()) {
+      return new Next(Kind.SAVE, "Save your map", "TripleA plays the map as it is saved.", "");
+    }
+    return new Next(
+        Kind.PLAY, "Your map is ready to play", "Try it in TripleA: play a few turns.", "");
   }
 
   private static List<Step> steps(final MapProject project, final boolean checked) {
@@ -229,28 +305,48 @@ class MapGuide {
         territories.stream()
             .flatMap(t -> MapXml.capitalOf(game, t).stream())
             .collect(Collectors.toSet());
-    final boolean capitals =
-        !owners.isEmpty()
-            && owners.stream().filter(nations::contains).allMatch(withCapital::contains);
+    final List<String> landed = owners.stream().filter(nations::contains).toList();
+    final boolean capitals = !landed.isEmpty() && withCapital.containsAll(landed);
+    final boolean nationsAndLand = !nations.isEmpty() && !territories.isEmpty();
     return List.of(
         new Step(
             "Find the territories in a picture of the map",
-            project.getFiles().hasOutlines(),
-            "Territories"),
-        new Step("Add the nations that play", !nations.isEmpty(), "Nations"),
-        new Step("Give every nation its land", allOwnLand, "Territories"),
-        new Step("Mark each nation's capital", capitals, "Territories"),
+            state(project.getFiles().hasOutlines()),
+            "Territories",
+            "The game needs each territory's outline; Territories finds them in a picture."),
+        new Step(
+            "Add the nations that play",
+            state(!nations.isEmpty()),
+            "Nations",
+            "A game needs the nations that take turns."),
+        new Step(
+            "Give every nation its land",
+            allOwnLand ? State.DONE : nationsAndLand ? State.FAILING : State.TODO,
+            "Territories",
+            "Each nation that takes turns needs land to start with."),
+        new Step(
+            "Mark each nation's capital",
+            capitals ? State.DONE : landed.isEmpty() ? State.TODO : State.FAILING,
+            "Territories",
+            "A nation's capital is where it collects its income."),
         new Step(
             "Place the units each territory starts with",
-            territories.stream().anyMatch(t -> !MapXml.units(game, t).isEmpty()),
-            "Territories"),
+            state(territories.stream().anyMatch(t -> !MapXml.units(game, t).isEmpty())),
+            "Territories",
+            "The units in the territories are what the players start with."),
         new Step(
             "Check which territories border each other",
-            !MapXml.connections(game).isEmpty(),
-            "Connections"),
+            state(!MapXml.connections(game).isEmpty()),
+            "Connections",
+            "Units move only between territories that border each other."),
         new Step(
-            "Save and Check (F6): no problems left",
-            checked && !project.hasUnsavedChanges(),
-            "Overview"));
+            "Check the map and play it",
+            state(checked && !project.hasUnsavedChanges()),
+            CHECK,
+            "Check (F6) loads the game as TripleA does; then play it in TripleA."));
+  }
+
+  private static State state(final boolean done) {
+    return done ? State.DONE : State.TODO;
   }
 }
