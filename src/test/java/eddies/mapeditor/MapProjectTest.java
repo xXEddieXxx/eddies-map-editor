@@ -7,6 +7,7 @@ import java.awt.Color;
 import java.awt.Image;
 import java.awt.Point;
 import java.awt.Polygon;
+import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -350,6 +351,174 @@ final class MapProjectTest {
     assertThat(project.getFiles().polygons().get(TOP_RIGHT))
         .as("with its old outline")
         .isEqualTo(from.polygons().get(TOP_RIGHT));
+  }
+
+  @DisplayName("Make territories after two lines in a corner looks only there; far ones stay")
+  @Test
+  void redrawsOnlyWhereBordersWereDrawn() throws Exception {
+    // given
+    final MapProject project = givenCornerDrawnAfterFarArea();
+    final MapFiles from = project.getFiles();
+    final BufferedImage picture = from.picture().orElseThrow();
+
+    // when
+    final Redrawn redrawn = from.withBordersFrom(picture, project.drawnRegion().orElseThrow());
+
+    // then
+    assertThat(redrawn.added())
+        .as("the two new areas in the top right corner, not the far one bottom left")
+        .hasSize(2)
+        .allMatch(a -> a.center().x > 200 && a.center().y < 110);
+    assertThat(redrawn.files().polygons().get("Territory 3"))
+        .as("a far territory keeps its very outlines")
+        .isSameAs(from.polygons().get("Territory 3"));
+    assertThat(redrawn.files().polygons().get("Sea Zone 1"))
+        .as("the sea below too")
+        .isSameAs(from.polygons().get("Sea Zone 1"));
+    assertThat(redrawn.changed()).as("only the split one changed").containsExactly(TOP_RIGHT);
+  }
+
+  @DisplayName("Borders redrawn from a whole picture still look at the whole map")
+  @Test
+  void redrawsWholeMapFromPicture() throws Exception {
+    // given
+    final MapFiles from = givenCornerDrawnAfterFarArea().getFiles();
+    final BufferedImage picture = from.picture().orElseThrow();
+
+    // when
+    final Redrawn redrawn = from.withBordersFrom(picture, MapPicture.detect(picture));
+
+    // then
+    assertThat(redrawn.added())
+        .as("the far area bottom left left out before, and the two in the corner")
+        .hasSize(3)
+        .anyMatch(a -> a.center().x < 200 && a.center().y > 110);
+  }
+
+  @DisplayName("Undo of a drawn line shrinks where Make territories looks; making them resets it")
+  @Test
+  void drawnRegionFollowsUndo() throws Exception {
+    // given
+    final MapProject project = givenSavedMapWithRed();
+    project.drawBorder(givenBorder(300, 0, 300, 110));
+    final Optional<Rectangle> first = project.drawnRegion();
+    project.drawBorder(givenBorder(100, 110, 100, 220));
+    final Optional<Rectangle> both = project.drawnRegion();
+    final MapFiles from = project.getFiles();
+    final BufferedImage picture = from.picture().orElseThrow();
+    project.takeRedrawn(
+        from, from.withBordersFrom(picture, both.orElseThrow()), RedrawChoices.none());
+    final Optional<Rectangle> made = project.drawnRegion();
+
+    // when
+    project.undo();
+    final Optional<Rectangle> unmade = project.drawnRegion();
+    project.undo();
+
+    // then
+    assertThat(first.orElseThrow().contains(300, 50)).as("around the first line").isTrue();
+    assertThat(both.orElseThrow().contains(100, 150)).as("grown by the second").isTrue();
+    assertThat(made).as("territories made: nothing drawn since").isEmpty();
+    assertThat(unmade).as("making them undone: drawn again").isEqualTo(both);
+    assertThat(project.drawnRegion()).as("the second line undone").isEqualTo(first);
+    project.undo();
+    assertThat(project.drawnRegion()).as("no line drawn").isEmpty();
+  }
+
+  @DisplayName("A left-out area beyond the box around the territories drawn at is found whole")
+  @Test
+  void findsLeftOutAreaWhole() throws Exception {
+    // given: bottom left territory 3 removed, its area 0..199 x 110..220 in no territory
+    final MapProject project = givenSavedMapWithRed();
+    project.removeTerritory("Territory 3");
+    project.drawBorder(givenBorder(50, 110, 50, 140));
+    final MapFiles from = project.getFiles();
+
+    // when
+    final Redrawn redrawn =
+        from.withBordersFrom(from.picture().orElseThrow(), project.drawnRegion().orElseThrow());
+
+    // then
+    assertThat(redrawn.added())
+        .as("the left-out area, reaching down to the sea, not cut where the search box ended")
+        .singleElement()
+        .satisfies(
+            area ->
+                assertThat(area.outlines().getFirst().getBounds().getMaxY())
+                    .as("its bottom on the line above the sea")
+                    .isGreaterThan(215));
+  }
+
+  @DisplayName("A new area made where borders were drawn connects to a territory beyond them")
+  @Test
+  void connectsNewAreaBeyondRegion() throws Exception {
+    // given: top right territory 2 split at x 250, its narrow west strip new, beside territory 1
+    final MapProject project = givenSavedMapWithRed();
+    project.drawBorder(givenBorder(250, 0, 250, 110));
+    final MapFiles from = project.getFiles();
+    final Rectangle region = project.drawnRegion().orElseThrow();
+    final Redrawn redrawn = from.withBordersFrom(from.picture().orElseThrow(), region);
+    final DetectedTerritory area = redrawn.added().getFirst();
+
+    // when
+    project.takeRedrawn(
+        from,
+        redrawn,
+        new RedrawChoices(
+            Map.of(area, new DetectedTerritory("West", false, area.outlines(), area.center())),
+            Map.of()));
+
+    // then
+    assertThat(from.polygons().get(TOP_LEFT))
+        .as("territory 1 lies beyond the region")
+        .noneMatch(o -> o.intersects(region));
+    assertThat(MapXml.neighbors(project.game(), "West"))
+        .as("its neighbour across the old border")
+        .contains(TOP_LEFT, TOP_RIGHT);
+  }
+
+  @DisplayName("A split drawn into the held picture counts as drawn for Make territories")
+  @Test
+  void splitLineIsDrawnRegion() throws Exception {
+    // given
+    final MapProject project = givenSavedMapWithRed();
+    final List<Point> line = List.of(new Point(150, 160), new Point(450, 160));
+    final OutlineCut.Cut cut =
+        OutlineCut.cut(project.getFiles().polygons().get("Territory 4"), line).orElseThrow();
+
+    // when
+    project.splitTerritory(
+        "Territory 4", cut, "South", Optional.of(new MapProject.BorderLine(line, 3, Color.BLACK)));
+
+    // then
+    assertThat(project.drawnRegion())
+        .as("around the cut line")
+        .hasValueSatisfying(
+            region -> assertThat(region.contains(300, 160)).as("on the line").isTrue());
+  }
+
+  /**
+   * The saved map with a line drawn across bottom left territory 3, territories made without the new
+   * area, then two lines splitting top right territory 2 in three.
+   */
+  private MapProject givenCornerDrawnAfterFarArea() throws Exception {
+    final MapProject project = givenSavedMapWithRed();
+    project.drawBorder(givenBorder(100, 110, 100, 220));
+    final MapFiles drawn = project.getFiles();
+    project.takeRedrawn(
+        drawn,
+        drawn.withBordersFrom(
+            drawn.picture().orElseThrow(), MapPicture.detect(drawn.picture().orElseThrow())),
+        RedrawChoices.none());
+    project.drawBorder(givenBorder(300, 0, 300, 110));
+    project.drawBorder(givenBorder(300, 55, 400, 55));
+    return project;
+  }
+
+  private static MapProject.BorderLine givenBorder(
+      final int x1, final int y1, final int x2, final int y2) {
+    return new MapProject.BorderLine(
+        List.of(new Point(x1, y1), new Point(x2, y2)), 3, Color.BLACK);
   }
 
   @DisplayName("Undo and redo step through the changes")

@@ -97,10 +97,16 @@ final class MapProject {
   private long changedCount;
 
   /**
-   * One step: the game, the map's files, which change together when a territory is renamed, and
-   * the texts beside them.
+   * One step: the game, the map's files, which change together when a territory is renamed, the
+   * texts beside them, and where borders were drawn into the picture since territories were last
+   * made from it.
    */
-  private record State(Game game, MapFiles files, MapTexts texts) {}
+  private record State(Game game, MapFiles files, MapTexts texts, Optional<Rectangle> drawn) {
+
+    State(final Game game, final MapFiles files, final MapTexts texts) {
+      this(game, files, texts, Optional.empty());
+    }
+  }
 
   MapProject(final Path xmlFile, final Game game, final MapFiles files) {
     this.xmlFile = xmlFile;
@@ -114,9 +120,9 @@ final class MapProject {
     current = saved;
   }
 
-  /** A step with this game and these files, the texts as they are. */
+  /** A step with this game and these files, the texts and the borders drawn as they are. */
   private State state(final Game game, final MapFiles files) {
-    return new State(game, files, current.texts());
+    return new State(game, files, current.texts(), current.drawn());
   }
 
   /** The folder of the map the game XML belongs to: above its "games" folder, else its own. */
@@ -257,7 +263,7 @@ final class MapProject {
     final Game changed = change.apply(current.game());
     final MapTexts changedTexts = textChange.apply(current.texts());
     if (changed != current.game() || changedTexts != current.texts()) {
-      step(new State(changed, current.files(), changedTexts));
+      step(new State(changed, current.files(), changedTexts, current.drawn()));
     }
   }
 
@@ -310,7 +316,7 @@ final class MapProject {
 
   /** Takes the picture as the map's, as one step; the territories stay until they are found. */
   void loadPicture(final BufferedImage picture) {
-    step(state(game(), current.files().withPicture(picture)));
+    step(new State(game(), current.files().withPicture(picture), current.texts()));
   }
 
   /**
@@ -319,8 +325,10 @@ final class MapProject {
    */
   void loadPicture(final BufferedImage picture, final DetectedMap detected) {
     step(
-        state(
-            MapXml.withWorld(game(), detected), current.files().withPicture(picture, detected)));
+        new State(
+            MapXml.withWorld(game(), detected),
+            current.files().withPicture(picture, detected),
+            current.texts()));
   }
 
   /**
@@ -556,7 +564,7 @@ final class MapProject {
                 state,
                 s ->
                     s.files().picture().isEmpty()
-                        ? new State(s.game(), s.files().withPicture(whole), s.texts())
+                        ? new State(s.game(), s.files().withPicture(whole), s.texts(), s.drawn())
                         : s);
     final List<State> undone = undos.stream().map(hold).toList();
     final List<State> redone = redos.stream().map(hold).toList();
@@ -578,14 +586,34 @@ final class MapProject {
       return false;
     }
     step(
-        state(
+        new State(
             game(),
-            files.withPicture(drawn(files.picture().orElseThrow(), border, Optional.empty()))));
+            files.withPicture(drawn(files.picture().orElseThrow(), border, Optional.empty())),
+            current.texts(),
+            drawnWith(border)));
     return true;
   }
 
   /** A border line to draw into the map's picture: where, how wide in pixels, in which color. */
   record BorderLine(List<Point> line, int width, Color color) {}
+
+  /**
+   * Where borders were drawn into the picture since territories were last made, for Make
+   * territories to look only there; empty when none were.
+   */
+  Optional<Rectangle> drawnRegion() {
+    return current.drawn().map(Rectangle::new);
+  }
+
+  /** The region drawn in with the line's, wide enough to reach the territories it touches. */
+  private Optional<Rectangle> drawnWith(final BorderLine border) {
+    final Rectangle region = new Rectangle(border.line().getFirst());
+    border.line().forEach(region::add);
+    final int reach = 3 * border.width() + 2;
+    region.grow(reach, reach);
+    current.drawn().ifPresent(region::add);
+    return Optional.of(region);
+  }
 
   /**
    * As {@link #splitTerritory(String, OutlineCut.Cut, String)}, the line also drawn into the map's
@@ -638,9 +666,11 @@ final class MapProject {
                                                 .getOrDefault(territory, List.of()))))))
             .orElse(files);
     step(
-        state(
+        new State(
             changed,
-            pictured.withOutlines(territory, cut.kept()).withOutlines(newName, cut.split())));
+            pictured.withOutlines(territory, cut.kept()).withOutlines(newName, cut.split()),
+            current.texts(),
+            pictured == files ? current.drawn() : drawnWith(drawn.orElseThrow())));
     return true;
   }
 
@@ -911,7 +941,8 @@ final class MapProject {
       }
       f = f.withOutlines(chosen.name(), chosen.outlines());
     }
-    step(state(g, f));
+    // the territories are made from the borders drawn
+    step(new State(g, f, current.texts()));
     return Optional.of(List.copyOf(named));
   }
 
@@ -954,7 +985,7 @@ final class MapProject {
   // a change that changes nothing is no step to undo
   private void stepTexts(final MapTexts changed) {
     if (changed != current.texts()) {
-      step(new State(game(), current.files(), changed));
+      step(new State(game(), current.files(), changed, current.drawn()));
     }
   }
 

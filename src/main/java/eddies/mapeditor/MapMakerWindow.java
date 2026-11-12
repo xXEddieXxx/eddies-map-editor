@@ -13,6 +13,7 @@ import java.awt.Dimension;
 import java.awt.FileDialog;
 import java.awt.FlowLayout;
 import java.awt.Frame;
+import java.awt.Rectangle;
 import java.awt.event.ActionEvent;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
@@ -508,18 +509,24 @@ public final class MapMakerWindow extends JFrame {
     if (file.isEmpty()) {
       return;
     }
-    redrawFrom(() -> MapPicture.read(file.get()));
+    redrawFrom(() -> MapPicture.read(file.get()), Optional.empty());
   }
 
-  /** The map's borders as the picture shows them: new areas, merged ones and moved borders. */
-  private void redrawFrom(final Callable<BufferedImage> picture) {
+  /**
+   * The map's borders as the picture shows them: new areas, merged ones and moved borders; within
+   * the region only, if one is given.
+   */
+  private void redrawFrom(
+      final Callable<BufferedImage> picture, final Optional<Rectangle> region) {
     final MapProject redrawing = project;
     final MapFiles from = redrawing.getFiles();
     inBackground(
         "Could not redraw the borders",
         () -> {
           final BufferedImage image = picture.call();
-          return from.withBordersFrom(image, MapPicture.detect(image));
+          return region.isPresent()
+              ? from.withBordersFrom(image, region.get())
+              : from.withBordersFrom(image, MapPicture.detect(image));
         },
         redrawn -> {
           if (redrawing != project) {
@@ -672,7 +679,7 @@ public final class MapMakerWindow extends JFrame {
             shared,
             (title, item) ->
                 Optional.ofNullable(editors.get(title)).ifPresent(e -> showEditor(e, item)),
-            picture -> redrawFrom(() -> picture));
+            picture -> redrawFrom(() -> picture, opened.drawnRegion()));
     territories = territoriesEditor;
     final HomeEditor homeEditor =
         new HomeEditor(
@@ -863,8 +870,10 @@ public final class MapMakerWindow extends JFrame {
 
   /** The tool's title with its one "?", its first-visit line, then the content. */
   private static JComponent titled(final Editor editor, final JComponent content) {
-    final JPanel titleRow = new JPanel(new FlowLayout(FlowLayout.LEADING, Theme.GAP_XS, 0));
+    // no gap before the title, so it lines up with the intro line and the content below
+    final JPanel titleRow = new JPanel(new FlowLayout(FlowLayout.LEADING, 0, 0));
     titleRow.add(Theme.newTitle(editor.title()));
+    titleRow.add(Box.createHorizontalStrut(Theme.GAP_XS));
     titleRow.add(Help.button(editor.title(), editor.hint()));
     final JPanel top = new JPanel();
     top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));

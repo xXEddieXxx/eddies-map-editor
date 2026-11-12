@@ -66,10 +66,8 @@ final class ConnectionsEditor implements Editor {
   @Override
   public void showing() {
     map.useFor(MapMode.CONNECTIONS, new JPanel(), this::click);
-    map.select(from);
-    if (from != null) {
-      showInstruction();
-    }
+    // opens on the overview of all connections; show(territory), eg from a problem, comes after
+    choose(null);
   }
 
   @Override

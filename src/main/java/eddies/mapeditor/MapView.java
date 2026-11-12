@@ -1,9 +1,11 @@
 package eddies.mapeditor;
 
+import com.formdev.flatlaf.util.UIScale;
 import eddies.mapeditor.MakerIcon.Glyph;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Container;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
@@ -11,6 +13,7 @@ import java.awt.Graphics;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.awt.LayoutManager;
 import java.awt.Point;
 import java.awt.Polygon;
 import java.awt.event.ActionEvent;
@@ -24,8 +27,10 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
+import java.util.stream.Stream;
 import javax.annotation.Nullable;
 import javax.swing.AbstractAction;
+import javax.swing.AbstractButton;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
@@ -37,18 +42,21 @@ import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
+import javax.swing.JSeparator;
 import javax.swing.KeyStroke;
 import javax.swing.OverlayLayout;
+import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import org.triplea.swing.SwingComponents;
 
 /**
- * The map that Territories and Connections share: one row above it, an editor's own tools left, eg
- * its brush, the map's controls right: zoom, Fit and the picture menu (picture on or off, load
- * another, redraw borders, make the territories again); below the row the banner of a mode a tool
- * has on, {@link #showBanner}, the goal it works towards above it, {@link #showStep}; below the map
- * the legend, {@link MapLegend}, which starts with the views, {@link MapViewsBar}. Without outlines
- * the map shows what to do next instead, without row and legend.
+ * The map that Territories and Connections share: one toolbar above it, on a background of its
+ * own, left the views ({@link MapViewsBar}) and an editor's own tools, fitted by {@link
+ * ToolbarLayout}, eg its brush, right the map's controls: zoom, Fit and the picture menu
+ * (picture on or off, load another, redraw borders, make the territories again); below the row the
+ * banner of a mode a tool has on, {@link #showBanner}, the goal it works towards above it, {@link
+ * #showStep}; below the map the legend, {@link MapLegend}. Without outlines the map shows what to
+ * do next instead, without toolbar and legend.
  */
 final class MapView extends JPanel {
   @Serial private static final long serialVersionUID = 1L;
@@ -73,8 +81,9 @@ final class MapView extends JPanel {
 
   private final MapViewsBar views;
   private final MapLegend legend;
-  private final JPanel top = new JPanel(new BorderLayout(0, Theme.GAP_S));
-  private final JPanel editorTools = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+  private final JPanel top = new JPanel(new BorderLayout());
+  private final JPanel editorTools = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+  private final JSeparator beforeEditorTools = new JSeparator(SwingConstants.VERTICAL);
   private final JPanel banner = new JPanel(new BorderLayout(Theme.GAP_M, 0));
   private final JPanel bannerLine = new JPanel();
   private final JLabel bannerText = new JLabel();
@@ -102,7 +111,8 @@ final class MapView extends JPanel {
       final Runnable choosePicture,
       final Runnable findTerritories,
       final Runnable redrawBorders) {
-    super(new BorderLayout(0, 8));
+    // the map right under the toolbar's line; the legend keeps its own gap above it
+    super(new BorderLayout());
     this.project = project;
     this.choosePicture = choosePicture;
     this.findTerritories = findTerritories;
@@ -111,23 +121,35 @@ final class MapView extends JPanel {
     scroll.getVerticalScrollBar().setUnitIncrement(24);
     scroll.getHorizontalScrollBar().setUnitIncrement(24);
     views = new MapViewsBar(MapMode.GAME, this::showMode);
-    legend = new MapLegend(project, views);
+    legend = new MapLegend(project);
     goal = new GoalStrip(project);
     final JButton zoomShown = new JButton();
     Theme.setBorderlessButtonStyle(zoomShown);
     zoomShown.setMargin(new Insets(0, 0, 0, 0));
     // as wide as the widest it shows, 300 %, so it never cuts to "50..."
     zoomShown.setText("300 %");
-    zoomShown.setPreferredSize(new Dimension(zoomShown.getPreferredSize().width, 28));
+    zoomShown.setPreferredSize(
+        new Dimension(zoomShown.getPreferredSize().width, UIScale.scale(Theme.MAP_TOOL)));
     zoomShown.addActionListener(e -> canvas.zoomBy(1 / canvas.getZoom()));
     showZoom(zoomShown, canvas.getZoom());
     canvas.addPropertyChangeListener("zoom", e -> showZoom(zoomShown, (Double) e.getNewValue()));
     final JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, Theme.GAP_XS, 0));
-    tools.add(
-        Theme.newIconButton("−", "Zoom out (Ctrl+wheel)", () -> canvas.zoomBy(1 / ZOOM_STEP)));
-    tools.add(zoomShown);
-    tools.add(Theme.newIconButton("+", "Zoom in (Ctrl+wheel)", () -> canvas.zoomBy(ZOOM_STEP)));
-    tools.add(Theme.newIconButton("⤢", "Fit the whole map (Ctrl+0)", canvas::zoomToFit));
+    tools.setOpaque(false);
+    final JButton fit = Theme.newIconButton(Glyph.FIT, "Fit the map (Ctrl+0)", canvas::zoomToFit);
+    // the glyph as big as the picture menu's, not the text's size
+    fit.setIcon(new MakerIcon(Glyph.FIT, Theme.MAP_TOOL_ICON));
+    for (final JButton button :
+        List.of(
+            Theme.newIconButton("−", "Zoom out (Ctrl+wheel)", () -> canvas.zoomBy(1 / ZOOM_STEP)),
+            zoomShown,
+            Theme.newIconButton("+", "Zoom in (Ctrl+wheel)", () -> canvas.zoomBy(ZOOM_STEP)),
+            fit)) {
+      if (button != zoomShown) {
+        final int size = UIScale.scale(Theme.MAP_TOOL);
+        button.setPreferredSize(new Dimension(size, size));
+      }
+      tools.add(button);
+    }
     tools.add(newPictureButton(redrawBorders));
     getInputMap(WHEN_IN_FOCUSED_WINDOW)
         .put(KeyStroke.getKeyStroke(KeyEvent.VK_0, InputEvent.CTRL_DOWN_MASK), "fit");
@@ -142,15 +164,172 @@ final class MapView extends JPanel {
                 canvas.zoomToFit();
               }
             });
-    final JPanel row = new JPanel(new BorderLayout(Theme.GAP_S, 0));
-    row.add(editorTools, BorderLayout.WEST);
-    row.add(tools, BorderLayout.EAST);
-    top.add(row, BorderLayout.NORTH);
+    top.add(newToolbar(tools), BorderLayout.NORTH);
     top.add(newBanner(), BorderLayout.SOUTH);
     add(top, BorderLayout.NORTH);
     add(legend, BorderLayout.SOUTH);
     showMapOrEmptyState();
     project.onChange(this::showMapOrEmptyState);
+  }
+
+  /** The row above the map, laid out by {@link ToolbarLayout}. */
+  private JPanel newToolbar(final JComponent mapTools) {
+    editorTools.setOpaque(false);
+    beforeEditorTools.setPreferredSize(
+        new Dimension(beforeEditorTools.getPreferredSize().width, UIScale.scale(24)));
+    final JPanel row = new JPanel();
+    row.setLayout(new ToolbarLayout(row, mapTools));
+    row.setBackground(Theme.getMapToolbarColor());
+    row.setBorder(
+        BorderFactory.createCompoundBorder(
+            BorderFactory.createMatteBorder(0, 0, 1, 0, Theme.getMapToolbarLineColor()),
+            BorderFactory.createEmptyBorder(6, Theme.GAP_S, 6, Theme.GAP_XS)));
+    row.add(views);
+    row.add(beforeEditorTools);
+    row.add(editorTools);
+    row.add(mapTools);
+    return row;
+  }
+
+  /**
+   * The toolbar's layout: the views, a line, the editor's tools, the map's tools at the right, all
+   * in one row as long as it fits; shorter of room first fewer views by name, then the editor's
+   * named tools as their glyphs ({@link Theme#setNamedMapToolStyle}). If even that does not fit,
+   * it wraps: the editor's tools, then the map's, on lines of their own, so nothing is cut or lies
+   * over another.
+   */
+  private final class ToolbarLayout implements LayoutManager {
+    private static final List<Stage> STAGES =
+        List.of(
+            new Stage(MapViewsBar.Names.ALL, true),
+            new Stage(MapViewsBar.Names.CHOSEN, true),
+            new Stage(MapViewsBar.Names.NONE, true),
+            new Stage(MapViewsBar.Names.NONE, false));
+
+    private final JPanel row;
+    private final JComponent mapTools;
+    // the lines laid out last, for the row's height
+    private int lines = 1;
+
+    private record Stage(MapViewsBar.Names views, boolean toolNames) {}
+
+    ToolbarLayout(final JPanel row, final JComponent mapTools) {
+      this.row = row;
+      this.mapTools = mapTools;
+    }
+
+    @Override
+    public void addLayoutComponent(final String name, final Component component) {}
+
+    @Override
+    public void removeLayoutComponent(final Component component) {}
+
+    @Override
+    public Dimension preferredLayoutSize(final Container parent) {
+      final Insets insets = parent.getInsets();
+      final int height = UIScale.scale(Theme.MAP_TOOL) * lines + Theme.GAP_XS * (lines - 1);
+      return new Dimension(
+          insets.left + insets.right + width(STAGES.getFirst()),
+          insets.top + insets.bottom + height);
+    }
+
+    @Override
+    public Dimension minimumLayoutSize(final Container parent) {
+      return new Dimension(0, preferredLayoutSize(parent).height);
+    }
+
+    @Override
+    public void layoutContainer(final Container parent) {
+      final Insets insets = parent.getInsets();
+      final int room = parent.getWidth() - insets.left - insets.right;
+      final Stage stage =
+          STAGES.stream().filter(s -> width(s) <= room).findFirst().orElse(STAGES.getLast());
+      views.show(stage.views());
+      named(editorTools).forEach(tool -> showTool(tool, stage.toolNames()));
+      final int lineHeight = UIScale.scale(Theme.MAP_TOOL);
+      final int right = parent.getWidth() - insets.right;
+      int y = insets.top;
+      int laidLines = 1;
+      int x = place(views, insets.left, y);
+      if (editorTools.isVisible()) {
+        final boolean sameLine = x + editorToolsWidth() <= right;
+        if (beforeEditorTools.isVisible() != sameLine) {
+          beforeEditorTools.setVisible(sameLine);
+        }
+        if (sameLine) {
+          final int separatorY = y + (lineHeight - beforeEditorTools.getPreferredSize().height) / 2;
+          x = place(beforeEditorTools, x + Theme.GAP_S, separatorY);
+          x = place(editorTools, x + Theme.GAP_S, y);
+        } else {
+          y += lineHeight + Theme.GAP_XS;
+          laidLines++;
+          x = place(editorTools, insets.left, y);
+        }
+      }
+      final int toolsWidth = mapTools.getPreferredSize().width;
+      if (x + Theme.GAP_S + toolsWidth > right) {
+        y += lineHeight + Theme.GAP_XS;
+        laidLines++;
+      }
+      mapTools.setBounds(Math.max(insets.left, right - toolsWidth), y, toolsWidth, lineHeight);
+      if (laidLines != lines) {
+        lines = laidLines;
+        // the row's height follows once this layout is done
+        SwingUtilities.invokeLater(row::revalidate);
+      }
+    }
+
+    /** Lays the component out at x, as big as it likes; where the next one may start. */
+    private static int place(final Component component, final int x, final int y) {
+      final Dimension size = component.getPreferredSize();
+      component.setBounds(x, y, size.width, size.height);
+      return x + size.width;
+    }
+
+    /** The line before the editor's tools and they, with their gaps. */
+    private int editorToolsWidth() {
+      return Theme.GAP_S
+          + beforeEditorTools.getPreferredSize().width
+          + Theme.GAP_S
+          + editorTools.getPreferredSize().width;
+    }
+
+    /** The width of all in one line at this stage, measured without changing anything. */
+    private int width(final Stage stage) {
+      int width = views.width(stage.views()) + Theme.GAP_S + mapTools.getPreferredSize().width;
+      if (editorTools.isVisible()) {
+        width += editorToolsWidth();
+        for (final AbstractButton tool : named(editorTools).toList()) {
+          width += toolWidth(tool, stage.toolNames()) - tool.getPreferredSize().width;
+        }
+      }
+      return width;
+    }
+
+    /** The editor's tools shown by name or glyph, eg Territories' Select. */
+    private static Stream<AbstractButton> named(final Component component) {
+      if (component instanceof AbstractButton button && Theme.mapToolName(button).isPresent()) {
+        return Stream.of(button);
+      }
+      return component instanceof Container container
+          ? Stream.of(container.getComponents()).flatMap(ToolbarLayout::named)
+          : Stream.empty();
+    }
+
+    private static int toolWidth(final AbstractButton tool, final boolean byName) {
+      return byName
+          ? Theme.mapToolWidth(tool, Optional.empty(), Theme.mapToolName(tool).orElseThrow())
+          : Theme.mapToolWidth(tool, Theme.mapToolGlyph(tool), "");
+    }
+
+    private static void showTool(final AbstractButton tool, final boolean byName) {
+      final String text = byName ? Theme.mapToolName(tool).orElseThrow() : "";
+      if (!text.equals(tool.getText())) {
+        tool.setText(text);
+        tool.setIcon(byName ? null : Theme.mapToolGlyph(tool).orElseThrow());
+        Theme.fitMapTool(tool);
+      }
+    }
   }
 
   private static void showZoom(final JButton zoomShown, final double zoom) {
@@ -184,8 +363,9 @@ final class MapView extends JPanel {
     pictureMenu.add(findAgain);
     final JButton picture = Theme.newIconButton(Glyph.GAME_VIEW, "Map picture", () -> {});
     picture.setText("▾");
+    picture.setIcon(new MakerIcon(Glyph.GAME_VIEW, Theme.MAP_TOOL_ICON));
     // icon and arrow: wider than an icon button's square
-    picture.setPreferredSize(null);
+    Theme.fitMapTool(picture);
     // also on a right-click and Shift+F10
     picture.setComponentPopupMenu(pictureMenu);
     picture.addActionListener(e -> pictureMenu.show(picture, 0, picture.getHeight()));
@@ -359,12 +539,18 @@ final class MapView extends JPanel {
     views.showChosen(mapMode);
     showMode(mapMode);
     editorTools.removeAll();
+    tools.setOpaque(false);
     editorTools.add(tools);
+    // a tool without controls of its own takes no room in the toolbar
+    editorTools.setVisible(tools.getComponentCount() > 0);
+    beforeEditorTools.setVisible(editorTools.isVisible());
     editorTools.revalidate();
     editorTools.repaint();
+    legend.showNationsLink();
     canvas.onTerritoryClick(onClick);
     canvas.stopEditingPlaces();
     canvas.setMarked(Set.of());
+    canvas.hideEffects();
     hideBanner();
   }
 
@@ -498,6 +684,11 @@ final class MapView extends JPanel {
     repaint();
   }
 
+  /** Leaves out the legend's link to Nations until another tool takes the map, eg in Nations. */
+  void hideNationsLink() {
+    legend.hideNationsLink();
+  }
+
   /** What the legend's problems button does, eg show the problem list. */
   void onShowProblems(final Runnable showProblems) {
     legend.onShowProblems(showProblems);
@@ -515,6 +706,20 @@ final class MapView extends JPanel {
   /** Shows these territories together, eg a canal's, until another editor takes the map. */
   void mark(final Set<String> territories) {
     canvas.setMarked(territories);
+  }
+
+  /** Shows each territory's terrain effects on the map, the painted one standing out. */
+  void showEffects(final Optional<String> painted) {
+    canvas.showEffects(painted);
+  }
+
+  void hideEffects() {
+    canvas.hideEffects();
+  }
+
+  /** A left drag paints the territories it passes, given at its end; until stopEditingPlaces. */
+  void paintStrokes(final Consumer<List<String>> onStroke) {
+    canvas.paintStrokes(onStroke);
   }
 
   /** Shows the selected territory's places to edit, {@link MapCanvas#editPlaces}. */
@@ -540,6 +745,11 @@ final class MapView extends JPanel {
   /** A line set point by point with clicks goes to onLine, {@link MapCanvas#drawLineByPoints}. */
   void drawLineByPoints(final Consumer<List<Point>> onLine) {
     canvas.drawLineByPoints(onLine);
+  }
+
+  /** An ellipse dragged from corner to corner goes to onLine, {@link MapCanvas#drawCircle}. */
+  void drawCircle(final Consumer<List<Point>> onLine) {
+    canvas.drawCircle(onLine);
   }
 
   /**

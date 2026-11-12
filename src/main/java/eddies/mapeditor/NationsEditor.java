@@ -58,6 +58,7 @@ import org.triplea.map.data.elements.Initialize.UnitInitialize.UnitPlacement;
 import org.triplea.map.data.elements.PlayerList.Player;
 import org.triplea.map.data.elements.Production.Rule.Result;
 import org.triplea.swing.SwingComponents;
+import org.triplea.swing.WrapLayout;
 import eddies.mapeditor.MakerIcon.Glyph;
 import eddies.mapeditor.MapFolder.UnitPictures;
 
@@ -209,6 +210,8 @@ final class NationsEditor implements Editor {
   @Override
   public void showing() {
     map.useFor(MapMode.OWNERS, new JPanel(), this::click);
+    // the colors are made here
+    map.hideNationsLink();
     markChosen();
   }
 
@@ -294,6 +297,8 @@ final class NationsEditor implements Editor {
     inspector.more("nations.more", moreCount(game, nation), f -> showMore(f, game, nation));
     inspector.remove("Remove nation", () -> removeNation(nation));
     inspector.end();
+    // the header line wraps by its row's width, which the first layout only gives it
+    SwingUtilities.invokeLater(inspector::revalidate);
   }
 
   /** How many options "More options" holds: all of the nation's playerAttachment. */
@@ -318,7 +323,8 @@ final class NationsEditor implements Editor {
             changeColor(nation);
           }
         });
-    final JPanel line = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+    // its parts wrap in a narrow inspector instead of being cut
+    final JPanel line = new JPanel(new WrapLayout(FlowLayout.LEFT, 0, 0));
     line.setOpaque(false);
     showLine(line, game, nation);
     headerLine = line;
@@ -334,23 +340,20 @@ final class NationsEditor implements Editor {
   /** "Axis · 30 PUs at the start · capital Germany · 9 territories", a missing capital warned. */
   private static void showLine(final JPanel line, final Game game, final String nation) {
     line.removeAll();
-    final String start =
-        allianceLine(game, nation)
-            + " · "
-            + MapXml.startingResource(game, nation, MapXml.PUS)
-            + " PUs at the start · ";
-    final String territories = owned(game, nation).size() + " territories";
+    line.add(Theme.newSecondaryLabel(allianceLine(game, nation) + " · "));
+    line.add(
+        Theme.newSecondaryLabel(
+            MapXml.startingResource(game, nation, MapXml.PUS) + " PUs at the start · "));
     capital(game, nation)
         .ifPresentOrElse(
-            capital ->
-                line.add(Theme.newSecondaryLabel(start + "capital " + capital + " · " + territories)),
+            capital -> line.add(Theme.newSecondaryLabel("capital " + capital + " · ")),
             () -> {
-              line.add(Theme.newSecondaryLabel(start));
               final JLabel missing = new JLabel("! no capital yet");
               missing.setForeground(Theme.getWarningColor());
               line.add(missing);
-              line.add(Theme.newSecondaryLabel(" · " + territories));
+              line.add(Theme.newSecondaryLabel(" · "));
             });
+    line.add(Theme.newSecondaryLabel(owned(game, nation).size() + " territories"));
     line.revalidate();
     line.repaint();
   }

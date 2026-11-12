@@ -4,6 +4,7 @@ import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Point;
 import java.awt.Polygon;
+import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -65,12 +66,19 @@ final class MapPicture {
   private final int[] rgb;
   // -1 for a border pixel, else the label of its area; after dropping small areas 0 for those
   private final int[] labels;
+  // smaller areas are dropped, eg gaps where a line nearly meets another
+  private final int minArea;
 
-  private MapPicture(final BufferedImage image) {
+  private MapPicture(final BufferedImage image, final int minArea) {
     width = image.getWidth();
     height = image.getHeight();
     rgb = image.getRGB(0, 0, width, height, null, 0, width);
     labels = new int[width * height];
+    this.minArea = minArea;
+  }
+
+  private static int minArea(final BufferedImage image) {
+    return Math.max(30, image.getWidth() * image.getHeight() / 20_000);
   }
 
   /** Reads a picture of a map; an IOException also for a file that is no picture. */
@@ -174,16 +182,39 @@ final class MapPicture {
   /**
    * The line with each end brought to the border line nearest it, so the areas it cuts close: an
    * end short of a border line is drawn on to it, one just past it is cut back to it, each within
-   * reach pixels; the picture's edge counts as a border. Empty when an end is farther from any, or
-   * when nothing is left off the border lines.
+   * reach pixels; the picture's edge counts as a border. A line closed already (its last point its
+   * first), or else one whose end comes back within reach of its start, is a loop, closed and kept
+   * as it is: it encloses an area on its own, eg an island. Empty when an end is farther from any,
+   * or when nothing is left off the border lines.
    */
   static Optional<List<Point>> snapToBorders(
       final BufferedImage image, final List<Point> line, final int reach) {
+    final Optional<List<Point>> loop = closed(line, reach);
+    if (line.getFirst().equals(line.getLast()) && loop.isPresent()) {
+      return loop;
+    }
     return snapStart(image, everyPixel(line), reach)
         .flatMap(snapped -> snapStart(image, snapped.reversed(), reach))
         .map(List::reversed)
         .filter(snapped -> snapped.stream().anyMatch(p -> !isBorderAt(image, p)))
-        .map(MapPicture::smoothed);
+        .map(MapPicture::smoothed)
+        .or(() -> loop);
+  }
+
+  /**
+   * The line closed, its end joined to its start, when they are within reach; empty for a line
+   * too short around to enclose more than a dot.
+   */
+  private static Optional<List<Point>> closed(final List<Point> line, final int reach) {
+    if (line.getFirst().distance(line.getLast()) > reach) {
+      return Optional.empty();
+    }
+    final List<Point> loop = new ArrayList<>(line);
+    if (!loop.getLast().equals(loop.getFirst())) {
+      loop.add(loop.getFirst());
+    }
+    final List<Point> path = everyPixel(loop);
+    return path.size() > 4 * reach ? Optional.of(smoothed(path)) : Optional.empty();
   }
 
   /** The line's points one pixel apart, so a step cannot jump over a thin line. */
@@ -342,7 +373,44 @@ final class MapPicture {
   }
 
   static DetectedMap detect(final BufferedImage image) {
-    return new MapPicture(image).detect();
+    return new MapPicture(image, minArea(image)).detect();
+  }
+
+  /**
+   * As {@link #detect(BufferedImage)}, only within the box, eg around borders drawn, which is faster
+   * on a big picture; areas the box cuts end at its edge. Outlines and centers are the picture's,
+   * the areas as small as there are dropped.
+   */
+  static DetectedMap detect(final BufferedImage image, final Rectangle box) {
+    final Rectangle within = box.intersection(new Rectangle(image.getWidth(), image.getHeight()));
+    final Dimension size = new Dimension(image.getWidth(), image.getHeight());
+    if (within.isEmpty()) {
+      return new DetectedMap(size, List.of(), List.of());
+    }
+    final DetectedMap found =
+        new MapPicture(
+                image.getSubimage(within.x, within.y, within.width, within.height),
+                minArea(image))
+            .detect();
+    return new DetectedMap(
+        size,
+        found.territories().stream()
+            .map(
+                t ->
+                    new DetectedTerritory(
+                        t.name(),
+                        t.water(),
+                        t.outlines().stream()
+                            .map(
+                                o -> {
+                                  final Polygon moved = new Polygon(o.xpoints, o.ypoints, o.npoints);
+                                  moved.translate(within.x, within.y);
+                                  return moved;
+                                })
+                            .toList(),
+                        new Point(t.center().x + within.x, t.center().y + within.y)))
+            .toList(),
+        found.connections());
   }
 
   private DetectedMap detect() {
@@ -389,7 +457,6 @@ final class MapPicture {
     for (int i = 0; i < rgb.length; i++) {
       labels[i] = lines[i] ? -1 : 0;
     }
-    final int minArea = Math.max(30, width * height / 20_000);
     final List<Region> kept = new ArrayList<>();
     final int[] stack = new int[labels.length];
     int next = 1;

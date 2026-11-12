@@ -17,6 +17,8 @@ import java.util.stream.Stream;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JTextField;
+import javax.swing.UIManager;
+import javax.swing.plaf.FontUIResource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -107,6 +109,35 @@ final class SearchListTest {
         .as("every row the fixed two-line height, room for the line below")
         .isEqualTo(44)
         .isGreaterThanOrEqualTo(withDetail);
+  }
+
+  @DisplayName("A font with taller lines makes the rows higher, so the line below is not cut")
+  @Test
+  void rowsFitTallFonts() {
+    // given: labels in a font far taller than the usual
+    final Object before = UIManager.get("Label.font");
+    UIManager.put("Label.font", new FontUIResource(Font.SANS_SERIF, Font.PLAIN, 24));
+    try {
+      final SearchList searchList =
+          new SearchList("nation", "nations", () -> List.of("Germans"), n -> n, n -> "Axis", n -> {});
+
+      // when
+      @SuppressWarnings("unchecked")
+      final JList<String> list = (JList<String>) listIn(searchList);
+      final int needed =
+          list.getCellRenderer()
+              .getListCellRendererComponent(list, "Germans", 0, false, false)
+              .getPreferredSize()
+              .height;
+
+      // then
+      assertThat(needed).as("the font asks for more than the usual 44 px").isGreaterThan(44);
+      assertThat(list.getFixedCellHeight())
+          .as("the fixed row height holds both lines")
+          .isGreaterThanOrEqualTo(needed);
+    } finally {
+      UIManager.put("Label.font", before);
+    }
   }
 
   @DisplayName("Rows of one line are 28 px high")

@@ -2,27 +2,35 @@ package eddies.mapeditor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.formdev.flatlaf.FlatLightLaf;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
 import java.awt.Insets;
 import java.awt.Point;
+import java.awt.Rectangle;
 import java.awt.event.KeyEvent;
 import java.awt.image.BufferedImage;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
+import javax.swing.AbstractButton;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
+import javax.swing.JSeparator;
 import javax.swing.JToggleButton;
 import javax.swing.KeyStroke;
+import javax.swing.LookAndFeel;
 import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
+import javax.swing.UnsupportedLookAndFeelException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -229,7 +237,288 @@ final class MapViewTest {
     assertThat(help).as("explanations live in tool tips and the banner").containsExactly(false);
   }
 
-  @DisplayName("A view chosen below the map shows on the map and in the legend")
+  @DisplayName("The views start the toolbar above the map, before the tool's own; not in the legend")
+  @Test
+  void viewsStartTheToolbar() throws Exception {
+    // given
+    final List<String> toolbar = new ArrayList<>();
+    final List<Boolean> inLegend = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenToolbar(1400);
+          toolbar.addAll(toolbarTexts(map));
+          inLegend.add(
+              SwingUtilities.isDescendingFrom(
+                  find(map, MapViewsBar.class), find(map, MapLegend.class)));
+        });
+
+    // then
+    assertThat(toolbar)
+        .as("left to right: the views by name, then the tool's own, then the map's")
+        .startsWith(
+            "Game",
+            "Owners",
+            "Political",
+            "Values",
+            "Units",
+            "Neighbours",
+            "Select",
+            "▾",
+            "Decorations",
+            "Draw borders");
+    assertThat(inLegend).as("the legend has only keys").containsExactly(false);
+  }
+
+  @DisplayName("The map starts right under the toolbar's line, no gap between")
+  @Test
+  void mapRightUnderToolbar() throws Exception {
+    // given
+    final List<Integer> ys = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenToolbar(1400);
+          final Container row = find(map, MapViewsBar.class).getParent();
+          ys.add(SwingUtilities.convertPoint(row, 0, row.getHeight(), map).y);
+          final MapCanvas canvas = find(map, MapCanvas.class);
+          // the scroll pane's top, the map's frame
+          ys.add(
+              SwingUtilities.convertPoint(canvas.getParent().getParent(), 0, 0, map).y);
+        });
+
+    // then
+    assertThat(ys.get(1)).as("the map's top at the toolbar's bottom").isEqualTo(ys.get(0));
+  }
+
+  @DisplayName("Short of room only the chosen view keeps its name, and nothing is cut")
+  @Test
+  void narrowToolbarCutsNothing() throws Exception {
+    // given
+    final List<String> toolbar = new ArrayList<>();
+    final List<Boolean> fits = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () ->
+            inEditorsTheme(
+                () -> {
+                  // the map's width at 1280 x 800 beside Territories' inspector
+                  final MapView map = givenToolbar(734);
+                  toolbar.addAll(toolbarTexts(map));
+                  fits.add(cutNothing(map));
+                }));
+
+    // then
+    assertThat(toolbar)
+        .as("the chosen view by name, the others as icons")
+        .startsWith("Game", "", "", "", "", "");
+    assertThat(fits).as("every control whole, none over another").containsExactly(true);
+  }
+
+  @DisplayName("Shorter of room views and the tool's modes show only their glyphs, nothing is cut")
+  @Test
+  void shortToolbarShowsGlyphs() throws Exception {
+    // given
+    final List<String> toolbar = new ArrayList<>();
+    final List<Object> select = new ArrayList<>();
+    final List<Boolean> fits = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () ->
+            inEditorsTheme(
+                () -> {
+                  // the map's width in a 1024 px window
+                  final MapView map = givenToolbar(615);
+                  toolbar.addAll(toolbarTexts(map));
+                  final AbstractButton button = toolbarButton(map, "Select");
+                  select.add(button.getIcon());
+                  select.add(button.getToolTipText());
+                  fits.add(cutNothing(map));
+                }));
+
+    // then
+    assertThat(toolbar)
+        .as("glyphs only, Paint with its arrow")
+        .startsWith("", "", "", "", "", "", "", "▾", "", "");
+    assertThat(select)
+        .as("Select as its glyph, named in its tool tip")
+        .containsExactly(
+            new MakerIcon(MakerIcon.Glyph.SELECT, Theme.MAP_TOOL_ICON),
+            "Select: a click on the map chooses the territory");
+    assertThat(fits).as("every control whole, none over another").containsExactly(true);
+  }
+
+  @DisplayName("On a very narrow map the toolbar wraps: the map's tools stay whole and reachable")
+  @Test
+  void narrowestToolbarWraps() throws Exception {
+    // given
+    final List<Boolean> fits = new ArrayList<>();
+    final List<Integer> rowHeight = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () ->
+            inEditorsTheme(
+                () -> {
+                  // the narrowest the window's split lets the map be
+                  final MapView map = givenToolbar(300);
+                  fits.add(cutNothing(map));
+                  fits.add(
+                      toolbarButtons(map).stream()
+                          .anyMatch(b -> "Fit the map (Ctrl+0)".equals(b.getToolTipText())));
+                  rowHeight.add(find(map, MapViewsBar.class).getParent().getHeight());
+                }));
+
+    // then
+    assertThat(fits)
+        .as("every control whole, none over another; Fit among them")
+        .containsExactly(true, true);
+    assertThat(rowHeight.getFirst()).as("more than one line").isGreaterThan(48);
+  }
+
+  @DisplayName("A tool without controls of its own leaves no line and no room in the toolbar")
+  @Test
+  void noEditorToolsNoLine() throws Exception {
+    // given
+    final List<Boolean> shown = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenMap();
+          map.useFor(MapMode.CONNECTIONS, new JPanel(), territory -> {});
+          map.setSize(1400, 600);
+          layOut(map);
+          final Container row = find(map, MapViewsBar.class).getParent();
+          Stream.of(row.getComponents())
+              .filter(c -> !(c instanceof MapViewsBar) && c.isVisible())
+              .forEach(c -> shown.add(c instanceof JSeparator));
+        });
+
+    // then
+    assertThat(shown)
+        .as("only the views and the map's tools, no separator")
+        .containsExactly(false);
+  }
+
+  @DisplayName("The toolbar stands out: about 46 px high, its controls 32 px")
+  @Test
+  void toolbarIsTall() throws Exception {
+    // given
+    final List<Integer> heights = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenToolbar(1400);
+          heights.add(find(map, MapViewsBar.class).getParent().getHeight());
+          toolbarButtons(map).forEach(button -> heights.add(button.getHeight()));
+        });
+
+    // then
+    assertThat(heights.getFirst()).as("the row").isBetween(44, 48);
+    assertThat(heights.subList(1, heights.size()))
+        .as("its buttons and toggles")
+        .isNotEmpty()
+        .containsOnly(32);
+  }
+
+  /** Runs in the editor's light theme, as sizes depend on it, then back in the one before. */
+  private static void inEditorsTheme(final Runnable run) {
+    final LookAndFeel before = UIManager.getLookAndFeel();
+    try {
+      Theme.install();
+      UIManager.setLookAndFeel(new FlatLightLaf());
+      run.run();
+    } catch (final UnsupportedLookAndFeelException e) {
+      throw new IllegalStateException(e);
+    } finally {
+      Theme.uninstall();
+      try {
+        UIManager.setLookAndFeel(before);
+      } catch (final UnsupportedLookAndFeelException e) {
+        throw new IllegalStateException(e);
+      }
+    }
+  }
+
+  /** The map at this width, laid out, with Territories' modes above it, Decorations too. */
+  private static MapView givenToolbar(final int width) {
+    final MapProject project = MapProject.newEmpty();
+    final BufferedImage picture = MapPictureTest.givenPicture();
+    project.loadPicture(picture, MapPicture.detect(picture));
+    final MapView map = new MapView(project, () -> {}, () -> {}, () -> {});
+    new TerritoriesEditor(project, map).showing();
+    // shown on a map with pictures in misc
+    toolbarButton(map, "Decorations").setVisible(true);
+    map.setSize(width, 600);
+    // twice, as the toolbar may change texts and lines in its layout
+    layOut(map);
+    layOut(map);
+    return map;
+  }
+
+  /** A button of the toolbar by its accessible name. */
+  private static AbstractButton toolbarButton(final MapView map, final String name) {
+    return all(map)
+        .flatMap(
+            c ->
+                c instanceof AbstractButton b
+                        && name.equals(b.getAccessibleContext().getAccessibleName())
+                    ? Stream.of(b)
+                    : Stream.empty())
+        .findFirst()
+        .orElseThrow();
+  }
+
+  /** The buttons above the map, left to right. */
+  private static List<AbstractButton> toolbarButtons(final MapView map) {
+    final MapCanvas canvas = find(map, MapCanvas.class);
+    final int mapTop = SwingUtilities.convertPoint(canvas.getParent(), 0, 0, map).y;
+    return all(map)
+        .filter(c -> c instanceof AbstractButton && shownComponent(map, c))
+        .map(AbstractButton.class::cast)
+        .filter(b -> SwingUtilities.convertPoint(b, 0, 0, map).y < mapTop)
+        .sorted(Comparator.comparingInt(b -> SwingUtilities.convertPoint(b, 0, 0, map).x))
+        .toList();
+  }
+
+  private static List<String> toolbarTexts(final MapView map) {
+    return toolbarButtons(map).stream().map(AbstractButton::getText).toList();
+  }
+
+  /** Whether each toolbar control is as wide as it needs, inside the map, none over another. */
+  private static boolean cutNothing(final MapView map) {
+    final List<AbstractButton> buttons = toolbarButtons(map);
+    final List<Rectangle> bounds =
+        buttons.stream()
+            .map(b -> SwingUtilities.convertRectangle(b.getParent(), b.getBounds(), map))
+            .toList();
+    for (int i = 0; i < bounds.size(); i++) {
+      final Rectangle one = bounds.get(i);
+      if (one.x < 0
+          || one.x + one.width > map.getWidth()
+          || one.width < buttons.get(i).getPreferredSize().width) {
+        return false;
+      }
+      for (int j = i + 1; j < bounds.size(); j++) {
+        if (one.intersects(bounds.get(j))) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  private static <T> T find(final MapView map, final Class<T> kind) {
+    return all(map).filter(kind::isInstance).map(kind::cast).findFirst().orElseThrow();
+  }
+
+  @DisplayName("A view chosen above the map shows on the map and in the legend")
   @Test
   void viewChosenInLegendShows() throws Exception {
     // given

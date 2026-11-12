@@ -73,6 +73,38 @@ final class ThemeTest {
         .isNotNull();
   }
 
+  @DisplayName("A chosen view or mode's text reads on its background in every theme")
+  @ParameterizedTest
+  @MethodSource("themes")
+  void chosenMapToolReads(final LookAndFeel theme, final String secondaryText)
+      throws UnsupportedLookAndFeelException {
+    Theme.install();
+
+    UIManager.setLookAndFeel(theme);
+
+    assertThat(
+            DialogsTest.contrast(
+                Theme.getMapToolSelectedTextColor(), UIManager.getColor("Editor.mapToolSelected")))
+        .as("at least 4.5:1, as for any text (WCAG AA)")
+        .isGreaterThanOrEqualTo(4.5);
+  }
+
+  @DisplayName("Secondary text reads on the background in every theme")
+  @ParameterizedTest
+  @MethodSource("themes")
+  void secondaryTextReads(final LookAndFeel theme, final String secondaryText)
+      throws UnsupportedLookAndFeelException {
+    Theme.install();
+
+    UIManager.setLookAndFeel(theme);
+
+    assertThat(
+            DialogsTest.contrast(
+                Theme.getSecondaryTextColor(), UIManager.getColor("Panel.background")))
+        .as("at least 4.5:1, as for any text (WCAG AA)")
+        .isGreaterThanOrEqualTo(4.5);
+  }
+
   @DisplayName("The Mac themes have the same colors as the light and dark themes")
   @Test
   void macThemesAreCopies() throws IOException {
@@ -185,7 +217,7 @@ final class ThemeTest {
         .isEqualTo(Theme.getSecondaryTextColor());
   }
 
-  @DisplayName("Small text is 1 px below the text, and an example lighter than secondary text")
+  @DisplayName("Small text keeps the text's size, and an example lighter than secondary text")
   @ParameterizedTest
   @MethodSource("lightAndDark")
   void smallTextReadable(final LookAndFeel theme) throws UnsupportedLookAndFeelException {
@@ -195,7 +227,9 @@ final class ThemeTest {
     final int text = UIManager.getFont("defaultFont").getSize();
     final int small = UIManager.getFont("small.font").getSize();
 
-    assertThat(small).as("not FlatLaf's 2 px less, 10 px on Windows").isEqualTo(text - 1);
+    assertThat(small)
+        .as("secondary lines as big as the text, set apart by color only (accessibility)")
+        .isEqualTo(text);
     assertThat(Theme.getPlaceholderColor())
         .as("an example is not mistaken for typed or secondary text")
         .isNotEqualTo(Theme.getSecondaryTextColor());

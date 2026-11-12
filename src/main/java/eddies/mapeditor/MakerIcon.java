@@ -10,6 +10,7 @@ import java.awt.RenderingHints;
 import java.awt.geom.Path2D;
 import java.util.List;
 import java.util.Optional;
+import javax.swing.AbstractButton;
 import javax.swing.Icon;
 import javax.swing.UIManager;
 
@@ -38,6 +39,7 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
     UNITS,
     GAME_VIEW,
     OWNERS,
+    POLITICAL,
     VALUES,
     NEW_MAP,
     UNDO,
@@ -61,7 +63,13 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
     LOCK,
     UNLOCK,
     FREEHAND,
-    POLYLINE
+    POLYLINE,
+    CIRCLE,
+    BRUSH,
+    SELECT,
+    DECORATIONS,
+    PENCIL,
+    FIT
   }
 
   /** The icon at the size of the text around it. */
@@ -80,6 +88,10 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
     final boolean enabled = c == null || c.isEnabled();
     final Color foreground = text != null || c == null ? text : c.getForeground();
     g2.setColor(enabled ? Optional.ofNullable(foreground).orElse(Color.DARK_GRAY) : Color.GRAY);
+    // a chosen view or mode in the map's toolbar: in its text's color, also when only the icon shows
+    if (enabled && c instanceof AbstractButton button && button.isSelected() && Theme.isMapTool(c)) {
+      g2.setColor(Theme.getMapToolSelectedTextColor());
+    }
     g2.setStroke(new BasicStroke(1.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
     paint(g2);
     g2.dispose();
@@ -149,6 +161,13 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
           g.setColor(OWNER_COLORS.get(i));
           g.fillRoundRect(1 + (i % 2) * 8, 1 + (i / 2) * 8, 6, 6, 2, 2);
         }
+      }
+      case POLITICAL -> {
+        // two sides facing each other
+        g.setColor(OWNER_COLORS.get(1));
+        g.fillPolygon(new Polygon(new int[] {1, 9, 7, 1}, new int[] {1, 1, 15, 15}, 4));
+        g.setColor(OWNER_COLORS.getFirst());
+        g.fillPolygon(new Polygon(new int[] {10, 15, 15, 8}, new int[] {1, 1, 15, 15}, 4));
       }
       case VALUES -> {
         g.setColor(GOLD);
@@ -281,6 +300,43 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
         for (final int[] point : new int[][] {{2, 13}, {6, 4}, {10, 11}, {14, 3}}) {
           g.fillOval(point[0] - 2, point[1] - 2, 4, 4);
         }
+      }
+      case CIRCLE -> g.drawOval(2, 3, 12, 10);
+      case BRUSH -> {
+        // a paint brush, its handle up right, its tip down left
+        g.drawLine(15, 1, 9, 7);
+        g.fillPolygon(new Polygon(new int[] {9, 12, 9, 6}, new int[] {5, 8, 11, 8}, 4));
+        final Path2D tip = new Path2D.Double();
+        tip.moveTo(6, 9);
+        tip.curveTo(3, 9, 2, 12, 1, 15);
+        tip.curveTo(5, 15, 8, 13, 8, 11);
+        tip.closePath();
+        g.fill(tip);
+      }
+      case SELECT ->
+          // a mouse pointer
+          g.drawPolygon(
+              new Polygon(
+                  new int[] {3, 3, 6, 9, 11, 8, 13}, new int[] {1, 14, 11, 15, 14, 10, 10}, 7));
+      case DECORATIONS -> {
+        // a picture with a hill and the sun
+        g.drawRoundRect(1, 2, 14, 12, 2, 2);
+        g.drawPolyline(new int[] {1, 6, 9, 11, 15}, new int[] {13, 7, 10, 8, 12}, 5);
+        g.fillOval(10, 4, 3, 3);
+      }
+      case PENCIL -> {
+        // a pencil drawing down left
+        g.drawPolygon(new Polygon(new int[] {11, 15, 5, 1}, new int[] {1, 5, 15, 11}, 4));
+        g.drawLine(9, 3, 13, 7);
+        g.fillPolygon(new Polygon(new int[] {1, 5, 1}, new int[] {11, 15, 15}, 3));
+      }
+      case FIT -> {
+        // four corners pointing out
+        g.drawPolyline(new int[] {1, 1, 5}, new int[] {5, 1, 1}, 3);
+        g.drawPolyline(new int[] {11, 15, 15}, new int[] {1, 1, 5}, 3);
+        g.drawPolyline(new int[] {15, 15, 11}, new int[] {11, 15, 15}, 3);
+        g.drawPolyline(new int[] {5, 1, 1}, new int[] {15, 15, 11}, 3);
+        g.drawRect(5, 5, 6, 6);
       }
       default -> throw new IllegalStateException("Unknown icon: " + glyph);
     }

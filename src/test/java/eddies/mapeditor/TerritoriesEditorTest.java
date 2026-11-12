@@ -340,6 +340,39 @@ final class TerritoriesEditorTest {
                     + " zones stay as they are."));
   }
 
+  @DisplayName("Paint is a brush icon with ▾, found by its name, also with a brush chosen")
+  @Test
+  void paintIsAnIcon() throws Exception {
+    // given
+    final MapProject project = givenMinimap();
+    final List<AbstractButton> paint = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenMap(project);
+          final TerritoriesEditor editor = new TerritoriesEditor(project, map);
+          editor.showing();
+          menuItem(editor, "Italians").doClick();
+          paint.add(
+              find(
+                  map,
+                  AbstractButton.class,
+                  b -> "Paint".equals(b.getAccessibleContext().getAccessibleName())));
+        });
+
+    // then
+    final AbstractButton button = paint.getFirst();
+    assertThat(button.getText()).as("only the arrow beside the icon").isEqualTo("▾");
+    assertThat(button.getIcon())
+        .as("a brush")
+        .isEqualTo(new MakerIcon(MakerIcon.Glyph.BRUSH, Theme.MAP_TOOL_ICON));
+    assertThat(button.isSelected()).as("on while painting").isTrue();
+    assertThat(button.getToolTipText())
+        .as("says what it does")
+        .isEqualTo("Paint: give many territories an owner, a capital, PUs, units, rules or effects");
+  }
+
   @DisplayName("Copy units names its source and is off until a territory is chosen")
   @Test
   void copyUnitsNeedsAChosenTerritory() throws Exception {
@@ -632,5 +665,72 @@ final class TerritoriesEditorTest {
     // then
     assertThat(seen).as("the effect is the goal").containsExactly("Terrain effect Forest");
     assertThat(opened).as("back to the effect").containsExactly("Terrain effects: Forest");
+  }
+
+  @DisplayName("A stroke of the owner brush paints all the land it passed as one step")
+  @Test
+  void strokePaintsAsOneStep() throws Exception {
+    // given
+    final MapProject project = givenMinimap();
+    final List<String> land = List.of(NORTH, "red north 2", "red middle 1");
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final TerritoriesEditor editor = new TerritoriesEditor(project, givenMap(project));
+          editor.showing();
+          menuItem(editor, "Italians").doClick();
+          editor.paintStroke(List.of(NORTH, "red north 2", SEA, "red middle 1"));
+          land.forEach(t -> seen.add(MapXml.owner(project.game(), t)));
+          seen.add(MapXml.owner(project.game(), SEA));
+          project.undo();
+          seen.add(MapXml.owner(project.game(), NORTH));
+        });
+
+    // then
+    assertThat(seen.subList(0, 3))
+        .as("each land territory passed is Italian")
+        .containsOnly(Optional.of("Italians"));
+    assertThat(seen.get(3)).as("the sea zone stays as it is").isEqualTo(Optional.empty());
+    assertThat(seen.get(4))
+        .as("one undo takes back the whole stroke")
+        .isNotEqualTo(Optional.of("Italians"));
+  }
+
+  @DisplayName("The Circle draws a closed ring into the picture, one step; it makes a new area")
+  @Test
+  void circleDrawsARing() throws Exception {
+    // given: Territory 4 is the grey quarter at the bottom right, (200, 110) to (400, 220)
+    final MapProject project = givenPictureMap();
+    final BufferedImage before = project.getFiles().picture().orElseThrow();
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenMap(project);
+          final TerritoriesEditor editor = new TerritoriesEditor(project, map);
+          editor.showing();
+          find(map, AbstractButton.class, b -> "Draw borders".equals(b.getText())).doClick();
+          brush(map, "Circle:").doClick();
+          seen.add(map.bannerText().orElseThrow());
+          editor.borderDrawn(MapCanvas.ellipse(new Point(240, 130), new Point(360, 200)));
+        });
+    final BufferedImage after = project.getFiles().picture().orElseThrow();
+    final int areasBefore = MapPicture.detect(before).territories().size();
+    final int areasAfter = MapPicture.detect(after).territories().size();
+    project.undo();
+
+    // then
+    assertThat(seen)
+        .as("the circle's banner")
+        .containsExactly("Drag from corner to corner to draw a circle.");
+    assertThat(after.getRGB(240, 165) & 0xFFFFFF).as("the ring in the lines' color").isZero();
+    assertThat(after.getRGB(300, 165) & 0xFFFFFF).as("its inside as it was").isNotZero();
+    assertThat(areasAfter).as("Make territories finds the inside").isEqualTo(areasBefore + 1);
+    assertThat(project.getFiles().picture())
+        .as("one undo, the picture as before")
+        .containsSame(before);
   }
 }

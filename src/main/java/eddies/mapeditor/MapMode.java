@@ -12,6 +12,7 @@ enum MapMode {
       "The map as it plays: its picture, the owners' colors and the units",
       Glyph.GAME_VIEW),
   OWNERS("Owners", "Each territory in its owner's color", Glyph.OWNERS),
+  POLITICAL("Political", "Each territory in its owner's alliance color", Glyph.POLITICAL),
   VALUES("Values", "What each territory gives per turn, capitals and victory cities", Glyph.VALUES),
   UNITS("Units", "The units each territory starts with", Glyph.UNITS),
   CONNECTIONS("Neighbours", "Which territories are neighbours", Glyph.CONNECTIONS);

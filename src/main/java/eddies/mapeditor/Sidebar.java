@@ -44,8 +44,8 @@ final class Sidebar extends JPanel {
   static final int COLLAPSE_BELOW = 1280;
   private static final int WIDTH = 200;
   private static final int COLLAPSED_WIDTH = 48;
-  // every tool shows without scrolling: 1440 x 900 with names, 1100 x 700 with icons only
-  private static final int ROW_HEIGHT = 28;
+  // every tool shows without scrolling: a content area of 1280 x 760 with names, 1100 x 660 icons
+  private static final int ROW_HEIGHT = 24;
   private static final int RAIL_ROW_HEIGHT = 24;
   private static final int ACCENT_BAR = 3;
   // Preferences: "true" pinned open, "false" pinned to icons, absent: by the window's width
@@ -163,10 +163,10 @@ final class Sidebar extends JPanel {
   // the group's name, or between the icons a thin line
   private void addGroupStart(final String name) {
     addGap();
+    // a step above the tools' names and in their color, so the groups are seen at a glance
     final JLabel header = new JLabel(name);
-    header.putClientProperty(FlatClientProperties.STYLE, "font: -1 $semibold.font");
-    header.setForeground(Theme.getSecondaryTextColor());
-    header.setBorder(BorderFactory.createEmptyBorder(0, Theme.GAP_L, 2, 0));
+    header.putClientProperty(FlatClientProperties.STYLE, "font: +1 $semibold.font");
+    header.setBorder(BorderFactory.createEmptyBorder(0, Theme.GAP_L, 0, 0));
     header.setAlignmentX(Component.LEFT_ALIGNMENT);
     rowsPanel.add(header);
     labelsOnly.add(header);

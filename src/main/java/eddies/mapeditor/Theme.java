@@ -5,7 +5,9 @@ import com.formdev.flatlaf.FlatLaf;
 import com.formdev.flatlaf.util.UIScale;
 import eddies.mapeditor.MakerIcon.Glyph;
 import java.awt.Color;
+import java.awt.Component;
 import java.awt.Dimension;
+import java.awt.Insets;
 import java.util.List;
 import java.util.Optional;
 import javax.swing.AbstractButton;
@@ -32,6 +34,12 @@ class Theme {
   static final int GAP_L = 16;
   static final int GAP_XL = 24;
   static final int GAP_XXL = 32;
+  // the map's toolbar: its buttons' height and their icons' size
+  static final int MAP_TOOL = 32;
+  static final int MAP_TOOL_ICON = 18;
+  private static final String MAP_TOOL_KEY = "Editor.mapTool";
+  private static final String MAP_TOOL_NAME_KEY = "Editor.mapToolName";
+  private static final String MAP_TOOL_GLYPH_KEY = "Editor.mapToolGlyph";
 
   // FlatLaf reads <theme class>.properties from here on top of its own, eg FlatDarkLaf.properties
   private static final String THEME_PACKAGE = "eddies.mapeditor.theme";
@@ -106,6 +114,21 @@ class Theme {
 
   static Color getToastBackground() {
     return themeColor("Editor.toastBackground", new Color(0x1F2328));
+  }
+
+  /** The map's toolbar: a step off the panels around it, so its controls read as one bar. */
+  static Color getMapToolbarColor() {
+    return themeColor("Editor.mapToolbar", new Color(0xDFE2E7));
+  }
+
+  /** The line under the map's toolbar. */
+  static Color getMapToolbarLineColor() {
+    return themeColor("Editor.mapToolbarLine", getSeparatorColor());
+  }
+
+  /** A chosen view or mode's text and glyph in the map's toolbar, on Editor.mapToolSelected. */
+  static Color getMapToolSelectedTextColor() {
+    return themeColor("Editor.mapToolSelectedText", new Color(0x174EA6));
   }
 
   static Color getToastTextColor() {
@@ -299,6 +322,68 @@ class Theme {
     button.getAccessibleContext().setAccessibleName(toolTip);
     button.addActionListener(e -> action.run());
     return button;
+  }
+
+  /**
+   * A button or toggle in the map's toolbar, {@value #MAP_TOOL} px high; a chosen toggle's text and
+   * glyph in their own color on a stronger selection, so the mode or view on shows at a glance.
+   */
+  static void setMapToolStyle(final AbstractButton button) {
+    button.putClientProperty(
+        FlatClientProperties.BUTTON_TYPE, FlatClientProperties.BUTTON_TYPE_TOOLBAR_BUTTON);
+    button.putClientProperty(
+        FlatClientProperties.STYLE,
+        "toolbar.selectedBackground: $Editor.mapToolSelected;"
+            + " toolbar.selectedForeground: $Editor.mapToolSelectedText");
+    button.putClientProperty(MAP_TOOL_KEY, Boolean.TRUE);
+    fitMapTool(button);
+  }
+
+  /**
+   * Like {@link #setMapToolStyle} for a tool shown by its name, which short of room the map's
+   * toolbar shows as this glyph; the name stays its accessible name.
+   */
+  static void setNamedMapToolStyle(final AbstractButton button, final Glyph glyph) {
+    button.putClientProperty(MAP_TOOL_GLYPH_KEY, new MakerIcon(glyph, MAP_TOOL_ICON));
+    button.putClientProperty(MAP_TOOL_NAME_KEY, button.getText());
+    button.getAccessibleContext().setAccessibleName(button.getText());
+    setMapToolStyle(button);
+  }
+
+  static boolean isMapTool(final Component component) {
+    return component instanceof JComponent c && c.getClientProperty(MAP_TOOL_KEY) != null;
+  }
+
+  /** The name of a tool made with {@link #setNamedMapToolStyle}. */
+  static Optional<String> mapToolName(final AbstractButton button) {
+    return Optional.ofNullable(button.getClientProperty(MAP_TOOL_NAME_KEY)).map(String.class::cast);
+  }
+
+  /** The glyph of a tool made with {@link #setNamedMapToolStyle}, shown instead of its name. */
+  static Optional<Icon> mapToolGlyph(final AbstractButton button) {
+    return Optional.ofNullable(button.getClientProperty(MAP_TOOL_GLYPH_KEY)).map(Icon.class::cast);
+  }
+
+  /** Sizes a map toolbar's button to its text: {@value #MAP_TOOL} px high, at least square. */
+  static void fitMapTool(final AbstractButton button) {
+    button.setPreferredSize(null);
+    final int size = UIScale.scale(MAP_TOOL);
+    button.setPreferredSize(new Dimension(Math.max(button.getPreferredSize().width, size), size));
+  }
+
+  /**
+   * How wide {@link #fitMapTool} makes the button with this icon and text, measured without
+   * changing it, as the look lays out a button: its insets around icon, gap and text.
+   */
+  static int mapToolWidth(
+      final AbstractButton button, final Optional<Icon> icon, final String text) {
+    final Insets insets = button.getInsets();
+    final int iconWidth = icon.map(Icon::getIconWidth).orElse(0);
+    final int textWidth =
+        text.isEmpty() ? 0 : button.getFontMetrics(button.getFont()).stringWidth(text);
+    final int gap = icon.isPresent() && !text.isEmpty() ? button.getIconTextGap() : 0;
+    return Math.max(
+        insets.left + insets.right + iconWidth + gap + textWidth, UIScale.scale(MAP_TOOL));
   }
 
   /** "+ label", eg at the end of a list's header. */

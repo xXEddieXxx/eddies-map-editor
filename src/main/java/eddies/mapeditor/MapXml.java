@@ -6,6 +6,7 @@ import games.strategy.triplea.attachments.UnitAttachment;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -208,6 +209,25 @@ class MapXml {
       }
     }
     return nations;
+  }
+
+  /** Each owned territory's owner at the start, as {@link #owner} finds it, read once. */
+  static java.util.Map<String, String> ownersByTerritory(final Game game) {
+    final java.util.Map<String, String> owners = new HashMap<>();
+    for (final TerritoryOwner owner : owners(game)) {
+      if (owner.getTerritory() != null && owner.getOwner() != null) {
+        owners.putIfAbsent(owner.getTerritory(), owner.getOwner());
+      }
+    }
+    return owners;
+  }
+
+  /** The sea zones, read once, as {@link #isWater} reads all territories for each. */
+  static Set<String> seaZones(final Game game) {
+    return territoryElements(game).stream()
+        .filter(t -> Boolean.TRUE.equals(t.getWater()))
+        .map(Territory::getName)
+        .collect(Collectors.toSet());
   }
 
   private static List<TerritoryOwner> owners(final Game game) {
@@ -484,12 +504,26 @@ class MapXml {
   static List<String> territoryEffects(final Game game, final String territory) {
     return attachments(game).stream()
         .filter(a -> TERRITORY.equals(a.getName()) && territory.equals(a.getAttachTo()))
-        .flatMap(a -> Optional.ofNullable(a.getOptions()).orElse(List.of()).stream())
+        .flatMap(MapXml::effectsOf)
+        .toList();
+  }
+
+  /** Each territory's effects, as {@link #territoryEffects(Game, String)}, in one pass. */
+  static java.util.Map<String, List<String>> territoryEffects(final Game game) {
+    return attachments(game).stream()
+        .filter(a -> TERRITORY.equals(a.getName()) && a.getAttachTo() != null)
+        .collect(
+            Collectors.groupingBy(
+                Attachment::getAttachTo,
+                Collectors.flatMapping(MapXml::effectsOf, Collectors.toList())));
+  }
+
+  private static Stream<String> effectsOf(final Attachment attachment) {
+    return Optional.ofNullable(attachment.getOptions()).orElse(List.of()).stream()
         .filter(o -> "territoryEffect".equals(o.getName()) && o.getValue() != null)
         .flatMap(o -> Arrays.stream(o.getValue().split(":")))
         .map(String::strip)
-        .filter(effect -> !effect.isEmpty())
-        .toList();
+        .filter(effect -> !effect.isEmpty());
   }
 
   static Game withVictoryCity(final Game game, final String territory) {

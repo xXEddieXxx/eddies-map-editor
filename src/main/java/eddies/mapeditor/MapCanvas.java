@@ -14,6 +14,7 @@ import java.awt.Point;
 import java.awt.Polygon;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
+import java.awt.Shape;
 import java.awt.TexturePaint;
 import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
@@ -25,6 +26,7 @@ import java.awt.geom.AffineTransform;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Line2D;
 import java.awt.geom.Path2D;
+import java.awt.geom.PathIterator;
 import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
@@ -33,7 +35,9 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -73,6 +77,17 @@ final class MapCanvas extends JComponent {
   // shared with the legend below the map
   static final Color SEA = new Color(0x3E6A8A);
   static final Color NEUTRAL = new Color(0xA89F86);
+  // the Political view's hues, one per alliance in its order: Okabe-Ito's, told apart also by the
+  // color-blind, their shades too; no blue, which would read as sea; from the seventh alliance on
+  // the hues repeat
+  private static final List<Color> ALLIANCE_COLORS =
+      List.of(
+          new Color(0xD55E00),
+          new Color(0x009E73),
+          new Color(0xE69F00),
+          new Color(0xCC79A7),
+          new Color(0xF0E442),
+          new Color(0x6A3D9A));
   // the map is content: the same under a light and a dark theme
   static final Color MAP_BACKGROUND = new Color(0xE8E4D8);
   private static final Color OUTLINE = new Color(0, 0, 0, 0x99);
@@ -94,6 +109,12 @@ final class MapCanvas extends JComponent {
   private static final int LINE_CHECK_MS = 100;
   // how far the line's halo and end handle reach beyond it, in pixels of the screen
   private static final int LINE_REACH = 10;
+  // a terrain effect's picture is never smaller than this, in pixels of the screen; a missing one
+  // shows as a round badge this big
+  private static final int MIN_EFFECT_ICON = 14;
+  private static final int EFFECT_BADGE = 18;
+  // screen px between the samples of a paint stroke, so a fast move skips no territory
+  private static final int STROKE_STEP = 4;
 
   private final transient MapProject project;
   // the tiles seen last, enough for a screen at any zoom; a big map has far more than fit memory
@@ -107,6 +128,7 @@ final class MapCanvas extends JComponent {
   // what the territories show, worked out when first shown after a change, not on every repaint
   private final transient Map<String, Look> looks = new HashMap<>();
   private transient @Nullable Set<String> problemTerritories;
+  private transient @Nullable Map<String, Color> allianceColors;
   // nations' colors shown while one is being chosen, before it is taken
   private transient Map<String, Color> previewColors = Map.of();
   // these follow the map's files: the territories' bounds, units' places and pictures
@@ -144,6 +166,8 @@ final class MapCanvas extends JComponent {
   private transient List<Point> line = new ArrayList<>();
   // a line set by clicks, point by point, instead of dragged; the pointer ends its last segment
   private boolean byPoints;
+  // a drag from corner to corner draws an ellipse instead, given as a closed line
+  private boolean byCircle;
   private transient Optional<Point> pointer = Optional.empty();
   // screen px a click may move between press and release and still set a point
   private static final int CLICK_SLOP = 4;
@@ -157,6 +181,16 @@ final class MapCanvas extends JComponent {
   private transient Set<String> neighbours = Set.of();
   // the pictures of decorations, by their file
   private final transient Map<Path, Optional<Image>> decorationPictures = new HashMap<>();
+  // while a terrain effect brush is chosen: every territory's effects as the game draws them,
+  // the painted one standing out; worked out once per change
+  private boolean showingEffects;
+  private Optional<String> standingOut = Optional.empty();
+  private transient @Nullable Map<String, List<String>> effects;
+  private final transient Map<String, List<Point>> effectPlaces = new HashMap<>();
+  private final transient Map<String, Optional<Image>> effectPictures = new HashMap<>();
+  // what a left drag paints, while a brush is chosen, and the territories its stroke passed
+  private transient Optional<Consumer<List<String>>> onStroke = Optional.empty();
+  private transient Set<String> stroke = new LinkedHashSet<>();
 
   /**
    * A place the game draws something at: in the selected territory units, by their place in the
@@ -208,6 +242,10 @@ final class MapCanvas extends JComponent {
         () -> {
           looks.clear();
           problemTerritories = null;
+          allianceColors = null;
+          effects = null;
+          effectPlaces.clear();
+          effectPictures.clear();
           changes++;
           revalidate();
           repaint();
@@ -245,12 +283,12 @@ final class MapCanvas extends JComponent {
 
               @Override
               public boolean isEnabled() {
-                return settingPoints() || onEscape.isPresent();
+                return drawingNow() || onEscape.isPresent();
               }
 
               @Override
               public void actionPerformed(final ActionEvent e) {
-                if (settingPoints()) {
+                if (drawingNow()) {
                   dropLine();
                 } else {
                   onEscape.ifPresent(Runnable::run);
@@ -284,6 +322,11 @@ final class MapCanvas extends JComponent {
 
   private boolean settingPoints() {
     return byPoints && drawingLine.isPresent() && !line.isEmpty();
+  }
+
+  /** A line being set or dragged: Esc drops it rather than end the tool's mode. */
+  private boolean drawingNow() {
+    return drawingLine.isPresent() && !line.isEmpty();
   }
 
   /** A map that forgets the entries used least recently beyond this many. */
@@ -360,6 +403,15 @@ final class MapCanvas extends JComponent {
     byPoints = true;
   }
 
+  /**
+   * Like {@link #drawLine(Consumer)}, but a drag from corner to corner gives the ellipse between
+   * them as a closed line, its last point its first; Shift makes it round.
+   */
+  void drawCircle(final Consumer<List<Point>> onLine) {
+    drawLine(onLine);
+    byCircle = true;
+  }
+
   /** The line set point by point goes to onLine, if it has two points. */
   private void finishLine() {
     final List<Point> drawn = List.copyOf(line);
@@ -413,10 +465,13 @@ final class MapCanvas extends JComponent {
     drawingLine = Optional.empty();
     line = new ArrayList<>();
     byPoints = false;
+    byCircle = false;
     pointer = Optional.empty();
     lineCheck = Optional.empty();
     lineCheckTimer.stop();
     cut = List.of();
+    onStroke = Optional.empty();
+    stroke = new LinkedHashSet<>();
     setCursor(Cursor.getDefaultCursor());
     dragged = null;
     repaint();
@@ -444,6 +499,28 @@ final class MapCanvas extends JComponent {
   void setMarked(final Set<String> territories) {
     marked = Set.copyOf(territories);
     repaint();
+  }
+
+  /** Shows each territory's terrain effects as the game draws them, the one given standing out. */
+  void showEffects(final Optional<String> painted) {
+    showingEffects = true;
+    standingOut = painted;
+    repaint();
+  }
+
+  void hideEffects() {
+    showingEffects = false;
+    standingOut = Optional.empty();
+    repaint();
+  }
+
+  /**
+   * A left drag paints from now on, until {@link #stopEditingPlaces}: the territories it passes,
+   * each once and in their order, go to onStroke at its end; a click stays a click.
+   */
+  void paintStrokes(final Consumer<List<String>> onStroke) {
+    stopEditingPlaces();
+    this.onStroke = Optional.of(onStroke);
   }
 
   /** Scrolls the territory into the middle of the view. */
@@ -538,13 +615,19 @@ final class MapCanvas extends JComponent {
     g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
     g.setRenderingHint(
         RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-    shownIn(
+    final List<String> shown =
+        shownIn(
             new Rectangle(
                 (int) (visible.x / zoom),
                 (int) (visible.y / zoom),
                 (int) Math.ceil(visible.width / zoom),
-                (int) Math.ceil(visible.height / zoom)))
-        .forEach(territory -> paintBadges(g, territory));
+                (int) Math.ceil(visible.height / zoom)));
+    shown.forEach(territory -> paintBadges(g, territory));
+    if (showingEffects) {
+      final Font letters = getFont().deriveFont(Font.BOLD, 11f);
+      shown.forEach(territory -> paintEffects(g, territory, letters));
+    }
+    paintStroke(g);
     places().forEach(place -> paintPlace(g, place));
     paintVeil(g, visible);
     paintCut(g);
@@ -604,8 +687,9 @@ final class MapCanvas extends JComponent {
       return;
     }
     final Path2D path = new Path2D.Double();
-    path.moveTo(line.get(0).x * zoom, line.get(0).y * zoom);
-    line.stream().skip(1).forEach(p -> path.lineTo(p.x * zoom, p.y * zoom));
+    final List<Point> drawnLine = byCircle ? ellipse(line.getFirst(), line.getLast()) : line;
+    path.moveTo(drawnLine.get(0).x * zoom, drawnLine.get(0).y * zoom);
+    drawnLine.stream().skip(1).forEach(p -> path.lineTo(p.x * zoom, p.y * zoom));
     final Color tint =
         lineCheck.isEmpty()
             ? Color.DARK_GRAY
@@ -654,6 +738,35 @@ final class MapCanvas extends JComponent {
           (int) (end.x * zoom),
           (int) (end.y * zoom) - 20);
     }
+  }
+
+  /** The ellipse between two corners as a closed line, in the map's pixels. */
+  static List<Point> ellipse(final Point from, final Point to) {
+    final Rectangle2D box = new Rectangle2D.Double();
+    box.setFrameFromDiagonal(from, to);
+    final List<Point> points = new ArrayList<>();
+    final double[] at = new double[6];
+    final Ellipse2D shape =
+        new Ellipse2D.Double(box.getX(), box.getY(), box.getWidth(), box.getHeight());
+    for (final PathIterator i = shape.getPathIterator(null, 0.5); !i.isDone(); i.next()) {
+      if (i.currentSegment(at) != PathIterator.SEG_CLOSE) {
+        final Point point = new Point((int) Math.round(at[0]), (int) Math.round(at[1]));
+        if (points.isEmpty() || !points.getLast().equals(point)) {
+          points.add(point);
+        }
+      }
+    }
+    if (!points.getLast().equals(points.getFirst())) {
+      points.add(points.getFirst());
+    }
+    return points;
+  }
+
+  /** The corner that makes the box from the first one a square, for a round circle. */
+  private static Point squared(final Point from, final Point to) {
+    final int side = Math.max(Math.abs(to.x - from.x), Math.abs(to.y - from.y));
+    return new Point(
+        from.x + (to.x < from.x ? -side : side), from.y + (to.y < from.y ? -side : side));
   }
 
   /** Where on the screen the last segment, to the pointer, is drawn, with its halo and handle. */
@@ -1146,9 +1259,11 @@ final class MapCanvas extends JComponent {
     final Look look = look(territory);
     // the game view as the game draws it: the owner's color thin over the picture, seas clear
     final boolean asPlayed = mode == MapMode.GAME && overPicture;
+    // the sides in solid colors, as in the legend; the picture only just shows through
+    final boolean political = mode == MapMode.POLITICAL;
     if (!(asPlayed && look.water())) {
       final Color fill = fill(look);
-      g.setColor(overPicture ? withAlpha(fill, asPlayed ? 0x59 : 0x8C) : fill);
+      g.setColor(overPicture ? withAlpha(fill, asPlayed ? 0x59 : political ? 0xE0 : 0x8C) : fill);
       shapes.forEach(g::fill);
     }
     final boolean isMarked = marked.contains(territory);
@@ -1169,7 +1284,7 @@ final class MapCanvas extends JComponent {
     // a territory with a problem stands out in red, as the legend says
     final boolean problem = !isSelected && problemTerritories().contains(territory);
     // over a picture its own lines are the borders: a thin outline beside them only doubles them
-    if (isSelected || problem || !overPicture) {
+    if (isSelected || problem || !overPicture || political) {
       g.setColor(isSelected ? Theme.getAccentColor() : problem ? PROBLEM : OUTLINE);
       g.setStroke(new BasicStroke((float) ((isSelected ? 4 : problem ? 3 : 1) / zoom)));
       shapes.forEach(g::draw);
@@ -1185,8 +1300,64 @@ final class MapCanvas extends JComponent {
             .orElse(NEUTRAL);
     return switch (mode) {
       case GAME, OWNERS -> owner;
+      case POLITICAL -> {
+        if (allianceColors == null) {
+          allianceColors = allianceColors(project.game());
+        }
+        yield Optional.ofNullable(look.owner())
+            .map(n -> allianceColors.getOrDefault(n, NEUTRAL))
+            .orElse(NEUTRAL);
+      }
       case VALUES, UNITS, CONNECTIONS -> blend(owner, NEUTRAL);
     };
+  }
+
+  /** The alliance's hue, by its place in the game's alliances. */
+  static Color allianceColor(final int alliance) {
+    return ALLIANCE_COLORS.get(alliance % ALLIANCE_COLORS.size());
+  }
+
+  /**
+   * Each nation in an alliance in a shade of its hue, from darker to lighter in the nations'
+   * order; a nation in several alliances in its first one's.
+   */
+  static Map<String, Color> allianceColors(final Game game) {
+    final Map<String, Color> colors = new HashMap<>();
+    final List<List<String>> members = List.copyOf(allianceNations(game).values());
+    for (int i = 0; i < members.size(); i++) {
+      final List<String> nations = members.get(i);
+      for (int k = 0; k < nations.size(); k++) {
+        final double shade = nations.size() == 1 ? 0 : -0.3 + 0.6 * k / (nations.size() - 1);
+        colors.put(nations.get(k), shade(allianceColor(i), shade));
+      }
+    }
+    return Map.copyOf(colors);
+  }
+
+  /**
+   * The game's alliances in order, each with the nations whose first alliance it is; without the
+   * alliances no nation has first, as they color nothing.
+   */
+  static Map<String, List<String>> allianceNations(final Game game) {
+    final Map<String, List<String>> nations = new LinkedHashMap<>();
+    MapXml.allAlliances(game).forEach(alliance -> nations.put(alliance, new ArrayList<>()));
+    for (final String nation : MapXml.nations(game)) {
+      MapXml.alliances(game, nation).stream()
+          .findFirst()
+          .ifPresent(alliance -> nations.get(alliance).add(nation));
+    }
+    nations.values().removeIf(List::isEmpty);
+    return nations;
+  }
+
+  /** The color towards black (below 0) or white (above 0) by this much. */
+  private static Color shade(final Color color, final double by) {
+    final int toward = by < 0 ? 0 : 255;
+    final double part = Math.abs(by);
+    return new Color(
+        (int) Math.round(color.getRed() + (toward - color.getRed()) * part),
+        (int) Math.round(color.getGreen() + (toward - color.getGreen()) * part),
+        (int) Math.round(color.getBlue() + (toward - color.getBlue()) * part));
   }
 
   private static Color blend(final Color color, final Color other) {
@@ -1210,10 +1381,11 @@ final class MapCanvas extends JComponent {
       final Point from = center(connection.getT1());
       final Point to = center(connection.getT2());
       if (selected == null) {
-        g.setStroke(new BasicStroke((float) (4 / zoom)));
+        // the overview's lines thick enough not to be missed
+        g.setStroke(new BasicStroke((float) (6 / zoom)));
         g.setColor(Color.WHITE);
         g.drawLine(from.x, from.y, to.x, to.y);
-        g.setStroke(new BasicStroke((float) (2.5 / zoom)));
+        g.setStroke(new BasicStroke((float) (4 / zoom)));
         g.setColor(Color.DARK_GRAY);
         g.drawLine(from.x, from.y, to.x, to.y);
       } else if (connection.getT1().equals(selected) || connection.getT2().equals(selected)) {
@@ -1262,7 +1434,7 @@ final class MapCanvas extends JComponent {
                     .filter(count -> count > 0)
                     .map(count -> count + " units")
                     .orElse("");
-            case GAME, OWNERS, CONNECTIONS -> "";
+            case GAME, OWNERS, POLITICAL, CONNECTIONS -> "";
           };
       paintBadge(g, text, x, y);
     }
@@ -1282,6 +1454,117 @@ final class MapCanvas extends JComponent {
       g.fillRoundRect(x - width / 2, y - height / 2, width, height, height, height);
       g.setColor(BADGE_TEXT);
       g.drawString(text, x - width / 2 + 6, y - height / 2 + metrics.getAscent());
+    }
+  }
+
+  /**
+   * The territory's effects as the game draws them: the n-th picture from its top left corner at
+   * the n-th effect place, scaled like units but at least {@link #MIN_EFFECT_ICON}; without a
+   * picture a badge with the effect's first letter.
+   */
+  private void paintEffects(final Graphics2D g, final String territory, final Font letters) {
+    final List<String> named = effects().getOrDefault(territory, List.of());
+    if (named.isEmpty()) {
+      return;
+    }
+    final List<Point> points =
+        effectPlaces.computeIfAbsent(
+            territory, t -> project.getFiles().effectPlaces(t, named.size()));
+    for (int i = 0; i < named.size(); i++) {
+      final String effect = named.get(i);
+      final Point at = points.get(Math.min(i, points.size() - 1));
+      final int x = (int) (at.x * zoom);
+      final int y = (int) (at.y * zoom);
+      final Optional<Image> picture = effectPicture(effect);
+      final Dimension size =
+          picture
+              .map(p -> effectSize(p.getWidth(null), p.getHeight(null)))
+              .orElse(new Dimension(EFFECT_BADGE, EFFECT_BADGE));
+      if (standingOut.equals(Optional.of(effect))) {
+        g.setColor(withAlpha(Color.WHITE, 0xD0));
+        g.fillRoundRect(x - 3, y - 3, size.width + 6, size.height + 6, 8, 8);
+        g.setColor(Theme.getAccentColor());
+        g.setStroke(new BasicStroke(2));
+        g.drawRoundRect(x - 3, y - 3, size.width + 6, size.height + 6, 8, 8);
+      }
+      if (picture.isPresent()) {
+        g.drawImage(picture.get(), x, y, size.width, size.height, null);
+      } else {
+        g.setColor(BADGE);
+        g.fillOval(x, y, size.width, size.height);
+        final String letter = effect.substring(0, 1).toUpperCase(Locale.ENGLISH);
+        g.setFont(letters);
+        final FontMetrics metrics = g.getFontMetrics();
+        g.setColor(BADGE_TEXT);
+        g.drawString(
+            letter,
+            x + (size.width - metrics.stringWidth(letter)) / 2,
+            y + (size.height + metrics.getAscent() - metrics.getDescent()) / 2);
+      }
+    }
+  }
+
+  private Dimension effectSize(final int width, final int height) {
+    final double scale =
+        Math.max(zoom, MIN_EFFECT_ICON / (double) Math.max(1, Math.max(width, height)));
+    return new Dimension((int) Math.round(width * scale), (int) Math.round(height * scale));
+  }
+
+  private Map<String, List<String>> effects() {
+    if (effects == null) {
+      effects = MapXml.territoryEffects(project.game());
+    }
+    return effects;
+  }
+
+  /** The effect's picture as the game finds it: territoryEffects/name_large.png, else name.png. */
+  private Optional<Image> effectPicture(final String effect) {
+    return effectPictures.computeIfAbsent(
+        effect,
+        e ->
+            project
+                .getFiles()
+                .folder()
+                .map(folder -> folder.resolve("territoryEffects"))
+                .flatMap(
+                    pictures ->
+                        read(pictures.resolve(e + "_large.png"))
+                            .or(() -> read(pictures.resolve(e + ".png")))));
+  }
+
+  /** The territories a paint stroke has passed so far, filled as they will be painted. */
+  private void paintStroke(final Graphics2D g) {
+    final AffineTransform toScreen = AffineTransform.getScaleInstance(zoom, zoom);
+    for (final String territory : stroke) {
+      for (final Polygon shape : project.getFiles().polygons().getOrDefault(territory, List.of())) {
+        final Shape onScreen = toScreen.createTransformedShape(shape);
+        g.setColor(withAlpha(Theme.getAccentColor(), 0x59));
+        g.fill(onScreen);
+        g.setColor(Theme.getAccentColor());
+        g.setStroke(new BasicStroke(2));
+        g.draw(onScreen);
+      }
+    }
+  }
+
+  /** Adds the territories along the segment, in screen px, to the stroke; repaints only them. */
+  private void strokeAlong(final Point from, final Point to) {
+    final int steps = Math.max(1, (int) Math.ceil(from.distance(to) / STROKE_STEP));
+    for (int i = 0; i <= steps; i++) {
+      final Point at =
+          new Point(
+              from.x + (to.x - from.x) * i / steps, from.y + (to.y - from.y) * i / steps);
+      territoryAt(at)
+          .filter(stroke::add)
+          .ifPresent(
+              added -> {
+                final Rectangle bounds = boundsOf(added);
+                repaint(
+                    (int) (bounds.x * zoom) - 2,
+                    (int) (bounds.y * zoom) - 2,
+                    (int) Math.ceil(bounds.width * zoom) + 4,
+                    (int) Math.ceil(bounds.height * zoom) + 4);
+              });
     }
   }
 
@@ -1414,6 +1697,13 @@ final class MapCanvas extends JComponent {
 
   private final class Mouse extends MouseAdapter {
     private @Nullable Point dragFrom;
+    // the last point of a paint stroke, in pixels of the screen, while the left button paints
+    private @Nullable Point strokeAt;
+    // where the stroke began, and whether it went farther than a click's slop from there
+    private Point strokeFrom = new Point();
+    private boolean strokeMoved;
+    // the press began a dragged line: once Esc dropped it, the rest of the drag does nothing
+    private boolean lineDrag;
 
     @Override
     public void mousePressed(final MouseEvent e) {
@@ -1422,7 +1712,13 @@ final class MapCanvas extends JComponent {
       dragFrom = e.getLocationOnScreen();
       dragged = SwingUtilities.isLeftMouseButton(e) ? placeAt(e.getPoint()).orElse(null) : null;
       draggedBy = new Point();
-      if (drawingLine.isPresent() && !byPoints && SwingUtilities.isLeftMouseButton(e)) {
+      stroke = new LinkedHashSet<>();
+      strokeAt =
+          onStroke.isPresent() && SwingUtilities.isLeftMouseButton(e) ? e.getPoint() : null;
+      strokeFrom = e.getPoint();
+      strokeMoved = false;
+      lineDrag = drawingLine.isPresent() && !byPoints && SwingUtilities.isLeftMouseButton(e);
+      if (lineDrag) {
         line = new ArrayList<>(List.of(onMap(e.getPoint())));
         lineCuts = false;
       }
@@ -1442,7 +1738,18 @@ final class MapCanvas extends JComponent {
           dragFrom != null && dragFrom.distance(e.getLocationOnScreen()) <= CLICK_SLOP;
       dragged = null;
       dragFrom = null;
-      if (drawingLine.isPresent() && byPoints) {
+      lineDrag = false;
+      if (strokeAt != null) {
+        strokeAt = null;
+        final List<String> painted = List.copyOf(stroke);
+        stroke = new LinkedHashSet<>();
+        repaint();
+        // a click paints by mouseClicked, as without a brush it chooses; a stroke that came
+        // back to where it began is still a stroke, as AWT sends no click after it
+        if (strokeMoved && !painted.isEmpty()) {
+          onStroke.ifPresent(paint -> paint.accept(painted));
+        }
+      } else if (drawingLine.isPresent() && byPoints) {
         if (shortMove && SwingUtilities.isLeftMouseButton(e)) {
           // a double-click's second release ends the line at the point the first one set
           if (e.getClickCount() >= 2) {
@@ -1459,7 +1766,7 @@ final class MapCanvas extends JComponent {
         repaint();
         setCursor(Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR));
         if (drawn.size() >= 2 && SwingUtilities.isLeftMouseButton(e)) {
-          drawingLine.get().accept(drawn);
+          drawingLine.get().accept(byCircle ? ellipse(drawn.getFirst(), drawn.getLast()) : drawn);
         }
       } else {
         setCursor(Cursor.getDefaultCursor());
@@ -1529,9 +1836,18 @@ final class MapCanvas extends JComponent {
     @Override
     public void mouseDragged(final MouseEvent e) {
       hovered = Optional.empty();
-      if (!line.isEmpty() && !byPoints && SwingUtilities.isLeftMouseButton(e)) {
+      if (strokeAt != null) {
+        strokeAlong(strokeAt, e.getPoint());
+        strokeAt = e.getPoint();
+        strokeMoved |= strokeFrom.distance(e.getPoint()) > CLICK_SLOP;
+      } else if (!line.isEmpty() && !byPoints && SwingUtilities.isLeftMouseButton(e)) {
         final Point at = onMap(e.getPoint());
-        if (!at.equals(line.get(line.size() - 1))) {
+        if (byCircle) {
+          final Point from = line.getFirst();
+          final Point corner = e.isShiftDown() ? squared(from, at) : at;
+          line = new ArrayList<>(List.of(from, corner));
+          repaint();
+        } else if (!at.equals(line.get(line.size() - 1))) {
           line.add(at);
           // the moves of the next LINE_CHECK_MS are checked together, at its end
           if (lineCheck.isPresent() && !lineCheckTimer.isRunning()) {
@@ -1539,6 +1855,9 @@ final class MapCanvas extends JComponent {
           }
           repaint();
         }
+      } else if (lineDrag) {
+        // Esc dropped the line being dragged: the map stays where it is
+        return;
       } else if (dragged != null && dragFrom != null) {
         final Point now = e.getLocationOnScreen();
         draggedBy = new Point(now.x - dragFrom.x, now.y - dragFrom.y);

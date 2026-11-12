@@ -45,7 +45,9 @@ The tools sit in the sidebar in the same groups as below. Every change can be un
 **Check (F6)** tells you at any time whether TripleA can load the map.
 
 **Home** shows the next step to a playable map; *Go to* opens its tool ready for it, with the
-step, its progress and *Next ›* over the map. Where a setting comes from another tool, a small
+step, its progress and *Next ›* over the map. Beside it is an overview: the map small in its
+owners' colors (problems outlined red; a click shows the territory) and a tile per tool with what
+the map has there and its problems; a click on a tile opens the tool. Where a setting comes from another tool, a small
 link leads there, and a remove that triggers still need offers *Show in Attachments*.
 
 ### 🏠 Start a map
@@ -60,8 +62,8 @@ link leads there, and a remove that triggers still need offers *Show in Attachme
 | Tool | What you do there |
 |------|-------------------|
 | **Territories** | Make territories from the picture (areas between dark or thin grey lines, blue = sea). Rename them, set owner, PUs, capital, victory city and starting units. |
-| ↳ *Paint* | Give many territories an owner, a capital, PUs, units, rules or effects at once by clicking or dragging. |
-| ↳ *Draw borders* | Draw border lines into the map picture by hand (like its lines, black or grey; width in px), freehand or as a line of clicked points (double-click or Enter ends it, Backspace takes back a point); a line's ends snap to the borders near them. *Make territories* then turns the areas between them into territories. |
+| ↳ *Paint* | Give many territories an owner, a capital, PUs, units, rules or effects at once: click them, or hold the left button and drag across them (one undo step per stroke). With a terrain effect brush the map shows every territory's effects as small pictures. |
+| ↳ *Draw borders* | Draw border lines into the map picture by hand (like its lines, black or grey; width in px), freehand, as a line of clicked points (double-click or Enter ends it, Backspace takes back a point) or as a circle dragged from corner to corner (Shift: round); a line's ends snap to the borders near them, and a line that ends back at its start is a closed border of its own, eg an island. *Make territories* then turns the areas between them into territories, looking only where lines were drawn since: territories elsewhere stay as they are. |
 | ↳ *Split with a line* | Cut one territory in two; the new border is drawn into the picture in the same line style. |
 | ↳ *Move places* | Drag where the game draws units, names, flags and markers. |
 | ↳ *Decorations* | Place pictures from the map's `misc` folder anywhere on the map. |
@@ -71,7 +73,7 @@ link leads there, and a remove that triggers still need offers *Show in Attachme
 | **Map look** | Unit size and tint, scrolling, small map, relief (loaded or created), mouse pointer. |
 
 - **Redraw borders:** changed the picture in a paint program? *Picture menu ▾ → Redraw borders
-  from a picture…* keeps names, owners and units; new areas become territories you name.
+  from a picture…* keeps names, owners and units; new areas become territories you name. It looks at the whole map.
 - Over a picture the map shows the picture's own lines as borders.
 
 ### ⚔️ Players

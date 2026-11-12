@@ -2,17 +2,25 @@ package eddies.mapeditor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.formdev.flatlaf.FlatDarkLaf;
 import games.strategy.triplea.Constants;
+import java.awt.Component;
+import java.awt.Container;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 import javax.swing.JButton;
 import javax.swing.JComponent;
+import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JPopupMenu;
+import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
 import javax.swing.JTabbedPane;
+import javax.swing.LookAndFeel;
+import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -186,5 +194,74 @@ final class PoliticsEditorTest {
         .as("the war kind has its type: not offered again")
         .containsExactly(
             "By alliance", "Hostile", "Allied (new type Allied)", "Neutral (new type Neutral)");
+  }
+
+  @DisplayName("The matrix of 14 nations fits a big screen at the text's size, the legend apart")
+  @Test
+  void matrixFitsAndLegendApart(@TempDir final Path folder) throws Exception {
+    // given: G40's 14 nations, a pair starting with a long type's name, the editor's font
+    final LookAndFeel before = UIManager.getLookAndFeel();
+    Theme.install();
+    UIManager.setLookAndFeel(new FlatDarkLaf());
+    try {
+      final MapProject project = givenG40(folder);
+      project.edit(
+          g ->
+              RulesXml.withRelationship(
+                  RulesXml.withRelationshipType(
+                      g, "Custodianship", Constants.RELATIONSHIP_ARCHETYPE_NEUTRAL),
+                  "Germans",
+                  "Russians",
+                  "Custodianship"));
+      final PoliticsEditor editor = new PoliticsEditor(project);
+      final JComponent start = (JComponent) ((JTabbedPane) editor.page()).getComponentAt(0);
+
+      // when: the page of a 1920 px window
+      editor.showing();
+      start.setSize(1680, 900);
+      layOut(start);
+
+      // then
+      final JScrollPane matrix =
+          all(start).filter(JScrollPane.class::isInstance).map(JScrollPane.class::cast)
+              .findFirst().orElseThrow();
+      final JButton cell =
+          all(matrix).filter(c -> c instanceof JButton b && "Custodianship".equals(b.getText()))
+              .map(JButton.class::cast).findFirst().orElseThrow();
+      final JLabel legend =
+          all(start).filter(c -> c instanceof JLabel l && l.getText().endsWith(" at heart"))
+              .map(JLabel.class::cast).findFirst().orElseThrow();
+      final int matrixBottom = matrix.getY() + matrix.getHeight();
+      assertThat(matrix.getPreferredSize().width)
+          .as("all 14 columns without scrolling")
+          .isLessThanOrEqualTo(1680);
+      assertThat(cell.getFont().getSize())
+          .as("cells at the text's size")
+          .isEqualTo(UIManager.getFont("Label.font").getSize());
+      assertThat(cell.getPreferredSize().width - cell.getFontMetrics(cell.getFont()).stringWidth("Custodianship"))
+          .as("room around the longest name")
+          .isGreaterThanOrEqualTo(2 * Theme.GAP_S);
+      assertThat(SwingUtilities.convertPoint(legend.getParent(), legend.getLocation(),
+              matrix.getParent()).y - matrixBottom)
+          .as("the legend apart from the last row")
+          .isGreaterThanOrEqualTo(Theme.GAP_M);
+    } finally {
+      Theme.uninstall();
+      UIManager.setLookAndFeel(before);
+    }
+  }
+
+  private static Stream<Component> all(final Component in) {
+    return in instanceof Container container
+        ? Stream.concat(
+            Stream.of(in), Stream.of(container.getComponents()).flatMap(PoliticsEditorTest::all))
+        : Stream.of(in);
+  }
+
+  private static void layOut(final Component component) {
+    component.doLayout();
+    if (component instanceof Container container) {
+      Stream.of(container.getComponents()).forEach(PoliticsEditorTest::layOut);
+    }
   }
 }

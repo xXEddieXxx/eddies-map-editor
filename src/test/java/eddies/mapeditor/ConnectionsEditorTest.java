@@ -46,6 +46,33 @@ final class ConnectionsEditorTest {
         .toList();
   }
 
+  @DisplayName("Connections opens on the overview, no territory chosen, also after one was")
+  @Test
+  void opensOnTheOverview() throws Exception {
+    // given
+    final MapProject project = givenFoundMap();
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenView(project);
+          final ConnectionsEditor editor = new ConnectionsEditor(project, map);
+          editor.showing();
+          editor.click(TOP_LEFT);
+          seen.add(map.bannerText().isPresent());
+          editor.showing();
+          seen.add(map.bannerText().isPresent());
+          editor.show(TOP_LEFT);
+          seen.add(map.bannerText().isPresent());
+        });
+
+    // then
+    assertThat(seen)
+        .as("chosen by a click; none on opening again; one asked for, eg by a problem, chosen")
+        .containsExactly(true, false, true);
+  }
+
   @DisplayName("Two clicks connect two territories in one step and the banner says so")
   @Test
   void connectsWithTwoClicks() throws Exception {

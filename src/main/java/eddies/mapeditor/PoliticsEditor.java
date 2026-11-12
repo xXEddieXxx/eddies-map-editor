@@ -255,8 +255,6 @@ final class PoliticsEditor implements Editor {
     }
     final List<JLabel> columnNames =
         all.stream().map(n -> new JLabel(twoLines(n), SwingConstants.CENTER)).toList();
-    // a size smaller, so a game of 14 nations fits the width of a big screen
-    concat(cells, columnNames).forEach(PoliticsEditor::smaller);
     final List<JButton> rowNames = all.stream().map(n -> rowName(game, n)).toList();
     // one size for every cell and column name, so the headers line up with the cells
     final Dimension size = new Dimension(0, 0);
@@ -357,7 +355,7 @@ final class PoliticsEditor implements Editor {
     // flat squares in the kind's color, as the game's overview has them
     cell.putClientProperty(
         FlatClientProperties.STYLE,
-        "arc: 0; borderWidth: 0; focusWidth: 0; innerFocusWidth: 2; margin: 2,3,2,3");
+        "arc: 0; borderWidth: 0; focusWidth: 0; innerFocusWidth: 2; margin: 5,8,5,8");
     if (type.isEmpty()) {
       cell.setForeground(Theme.getSecondaryTextColor());
     }
@@ -368,10 +366,6 @@ final class PoliticsEditor implements Editor {
     cell.getAccessibleContext().setAccessibleName(nation + " and " + other + ": " + said);
     cell.addActionListener(e -> startMenu(nation, other, type).show(cell, 0, cell.getHeight()));
     return cell;
-  }
-
-  private static void smaller(final JComponent part) {
-    part.setFont(part.getFont().deriveFont(part.getFont().getSize2D() - 1));
   }
 
   /** A type's name in words, eg "Unfriendly Neutral" for Unfriendly_Neutral. */
@@ -453,6 +447,8 @@ final class PoliticsEditor implements Editor {
   /** The kinds' colors, as the cells have them. */
   private static JComponent legend() {
     final JPanel legend = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_M, 0));
+    // apart from the last row
+    legend.setBorder(BorderFactory.createEmptyBorder(Theme.GAP_M, 0, 0, 0));
     for (int kind = 0; kind < KIND_LABELS.size(); kind++) {
       final JLabel label = new JLabel(KIND_LABELS.get(kind) + " at heart");
       label.setIcon(new MapLegend.Swatch(cellColor(kind, SET)));

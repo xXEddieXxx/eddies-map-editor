@@ -110,7 +110,7 @@ final class MapMakerWindowTest {
             "Painting owner Italians: click or drag across land to give it to Italians. Sea zones"
                 + " stay as they are.",
             Optional.of(MapGuide.Step.Id.LAND),
-            "Painting capitals: click land to make it its owner's capital.",
+            "Painting capitals: click or drag across land to make it its owner's capital.",
             Optional.of(MapGuide.Step.Id.CAPITALS),
             Optional.empty());
   }

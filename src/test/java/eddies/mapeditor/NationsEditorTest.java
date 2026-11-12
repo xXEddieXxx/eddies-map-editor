@@ -2,6 +2,7 @@ package eddies.mapeditor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.awt.Component;
 import java.awt.Container;
 import java.io.InputStream;
 import java.lang.reflect.Field;
@@ -14,7 +15,10 @@ import java.util.stream.Stream;
 import javax.swing.JButton;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComboBox;
+import javax.swing.JComponent;
+import javax.swing.JLabel;
 import javax.swing.JTextField;
+import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -213,5 +217,53 @@ final class NationsEditorTest {
 
     // then
     assertThat(followed).as("the capitals step").containsExactly(MapGuide.Step.Id.CAPITALS);
+  }
+
+  @DisplayName("The line under a nation's name wraps in a narrow inspector instead of being cut")
+  @Test
+  void headerLineWraps() throws Exception {
+    // given: the Germans' line, longer than a narrow inspector is wide
+    final NationsEditor editor = new NationsEditor(givenG40());
+    final JComponent page = editor.page();
+    page.setSize(320, 900);
+
+    // when: laid out, and again once the line knows its width, as the editor revalidates it
+    layOut(page);
+    invalidateAll(page);
+    layOut(page);
+
+    // then
+    final JLabel start =
+        find(page, JLabel.class)
+            .filter(l -> l.getText().contains("PUs at the start"))
+            .findFirst()
+            .orElseThrow();
+    final Container line = start.getParent();
+    final Container form = (Container) SwingUtilities.getAncestorOfClass(Form.class, line);
+    assertThat(SwingUtilities.convertRectangle(line.getParent(), line.getBounds(), form).getMaxX())
+        .as("the line within the inspector")
+        .isLessThanOrEqualTo(form.getWidth());
+    assertThat(line.getComponents())
+        .as("each part within the line, wrapped where it does not fit")
+        .allSatisfy(
+            part ->
+                assertThat(line.getBounds().contains(
+                        SwingUtilities.convertRectangle(line, part.getBounds(), line.getParent())))
+                    .as("%s seen whole", ((JLabel) part).getText())
+                    .isTrue());
+  }
+
+  private static void layOut(final Component component) {
+    component.doLayout();
+    if (component instanceof Container container) {
+      Stream.of(container.getComponents()).forEach(NationsEditorTest::layOut);
+    }
+  }
+
+  private static void invalidateAll(final Component component) {
+    component.invalidate();
+    if (component instanceof Container container) {
+      Stream.of(container.getComponents()).forEach(NationsEditorTest::invalidateAll);
+    }
   }
 }

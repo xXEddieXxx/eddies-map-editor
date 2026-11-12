@@ -39,13 +39,14 @@ import org.triplea.swing.SwingComponents;
 
 /**
  * The list column of an editor: a count, a search field and the names, each shown as a title with
- * a smaller line below it, eg the owner of a territory. Choosing one tells the editor its name.
+ * a line below it in the secondary color, eg the owner of a territory. Choosing one tells the editor its name.
  */
 final class SearchList extends JPanel {
   @Serial private static final long serialVersionUID = 1L;
   // narrow lists cut long names: the column asks for room for the longest, up to a limit
   private static final int MIN_WIDTH = 240;
   private static final int MAX_WIDTH = 360;
+  // the least a row is high; a font with taller lines makes it higher
   private static final int TWO_LINE_HEIGHT = 44;
   private static final int ONE_LINE_HEIGHT = 28;
   private static final int MIN_PREFIX = 8;
@@ -56,6 +57,7 @@ final class SearchList extends JPanel {
   private final JTextField search = new JTextField();
   private DefaultListModel<String> shown = new DefaultListModel<>();
   private final JList<String> list;
+  private final Row row = new Row();
   private final transient Supplier<List<String>> names;
   private final transient Function<String, String> title;
   private final transient Optional<Function<String, String>> detail;
@@ -128,7 +130,7 @@ final class SearchList extends JPanel {
     OnTyping.attach(search, this::refill);
     list.setModel(shown);
     list.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-    list.setCellRenderer(new Row());
+    list.setCellRenderer(row);
     list.addListSelectionListener(
         e -> {
           if (!e.getValueIsAdjusting() && !refilling && list.getSelectedValue() != null) {
@@ -248,7 +250,9 @@ final class SearchList extends JPanel {
       list.setPrototypeCellValue(filtered.getFirst());
     }
     list.setFixedCellHeight(
-        UIScale.scale(detail.isPresent() ? TWO_LINE_HEIGHT : ONE_LINE_HEIGHT));
+        Math.max(
+            UIScale.scale(detail.isPresent() ? TWO_LINE_HEIGHT : ONE_LINE_HEIGHT),
+            row.height()));
     shown = refilled;
     list.setModel(refilled);
     list.setSelectedValue(chosen, false);
@@ -444,7 +448,10 @@ final class SearchList extends JPanel {
     }
   }
 
-  /** A row: the title, the line below it smaller; the chosen one with a bar in the accent color. */
+  /**
+   * A row: the title, the line below it in the secondary color; the chosen one with a bar in the
+   * accent color.
+   */
   private final class Row extends JPanel implements ListCellRenderer<String> {
     @Serial private static final long serialVersionUID = 1L;
     private static final int PAD_Y = 6;
@@ -470,6 +477,14 @@ final class SearchList extends JPanel {
       second.putClientProperty(FlatClientProperties.STYLE_CLASS, "small");
       add(first);
       add(second);
+    }
+
+    /** The height of its lines in their fonts, with the padding. */
+    int height() {
+      final int lines =
+          getFontMetrics(first.getFont()).getHeight()
+              + (detail.isPresent() ? getFontMetrics(second.getFont()).getHeight() : 0);
+      return lines + UIScale.scale(2 * PAD_Y);
     }
 
     @Override

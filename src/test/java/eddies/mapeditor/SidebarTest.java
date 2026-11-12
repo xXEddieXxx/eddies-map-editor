@@ -2,6 +2,7 @@ package eddies.mapeditor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.formdev.flatlaf.FlatDarkLaf;
 import eddies.mapeditor.MakerIcon.Glyph;
 import java.awt.Component;
 import java.awt.Container;
@@ -14,10 +15,13 @@ import java.util.prefs.Preferences;
 import java.util.stream.Stream;
 import javax.swing.AbstractButton;
 import javax.swing.JComponent;
+import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JToggleButton;
+import javax.swing.LookAndFeel;
+import javax.swing.UIManager;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -67,6 +71,40 @@ final class SidebarTest {
     assertThat(chosen).as("no tool chosen again: the window shows it already").isEmpty();
   }
 
+  @DisplayName("A group's name is bigger than its tools' names and in the text color, to be seen")
+  @Test
+  void groupNamesStandOut() throws Exception {
+    // given
+    final LookAndFeel before = UIManager.getLookAndFeel();
+    Theme.install();
+    UIManager.setLookAndFeel(new FlatDarkLaf());
+    try {
+      final Sidebar sidebar = givenSidebar();
+
+      // when
+      final JLabel group =
+          all(sidebar)
+              .flatMap(
+                  c ->
+                      c instanceof JLabel l && "Map".equals(l.getText())
+                          ? Stream.of(l)
+                          : Stream.empty())
+              .findFirst()
+              .orElseThrow();
+
+      // then
+      assertThat(group.getFont().getSize())
+          .as("a step above the tools' names")
+          .isGreaterThan(row(sidebar, "Territories").getFont().getSize());
+      assertThat(group.getForeground())
+          .as("in the text color, not the grey of secondary text")
+          .isNotEqualTo(Theme.getSecondaryTextColor());
+    } finally {
+      Theme.uninstall();
+      UIManager.setLookAndFeel(before);
+    }
+  }
+
   @DisplayName("A click on a tool chooses it")
   @Test
   void clickChooses() {
@@ -101,19 +139,29 @@ final class SidebarTest {
         .isFalse();
   }
 
-  @DisplayName("Every tool shows without scrolling: 1440 x 900 with names, 1100 x 700 icons only")
+  @DisplayName("Every tool shows without scrolling: 1280 x 760 with names, 1100 x 660 icons only")
   @Test
-  void everyToolFits() {
-    final Sidebar sidebar = givenFullSidebar();
+  void everyToolFits() throws Exception {
+    // given: the editor's font, as FlatLaf and the theme give it
+    final LookAndFeel before = UIManager.getLookAndFeel();
+    Theme.install();
+    UIManager.setLookAndFeel(new FlatDarkLaf());
+    try {
+      final Sidebar sidebar = givenFullSidebar();
 
-    sidebar.fitTo(1440);
-    final int namesHeight = height(sidebar);
-    sidebar.fitTo(1100);
-    final int iconsHeight = height(sidebar);
+      // when
+      sidebar.fitTo(1280);
+      final int namesHeight = height(sidebar);
+      sidebar.fitTo(1100);
+      final int iconsHeight = height(sidebar);
 
-    // the window's content less the header: 861 - 53 and 661 - 53
-    assertThat(namesHeight).as("all groups and Advanced, with names").isLessThanOrEqualTo(808);
-    assertThat(iconsHeight).as("all groups and Advanced, icons only").isLessThanOrEqualTo(608);
+      // then: the window's content less the header (53 px)
+      assertThat(namesHeight).as("all groups and Advanced, with names").isLessThanOrEqualTo(707);
+      assertThat(iconsHeight).as("all groups and Advanced, icons only").isLessThanOrEqualTo(607);
+    } finally {
+      Theme.uninstall();
+      UIManager.setLookAndFeel(before);
+    }
   }
 
   /** The window's 20 tools in its groups, Advanced open. */

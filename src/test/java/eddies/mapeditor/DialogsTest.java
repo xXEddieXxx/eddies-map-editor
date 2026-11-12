@@ -293,7 +293,7 @@ final class DialogsTest {
     return texts;
   }
 
-  private static double contrast(final Color a, final Color b) {
+  static double contrast(final Color a, final Color b) {
     final double lighter = Math.max(luminance(a), luminance(b));
     final double darker = Math.min(luminance(a), luminance(b));
     return (lighter + 0.05) / (darker + 0.05);

@@ -10,6 +10,7 @@ import java.awt.Insets;
 import java.io.Serial;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import javax.swing.BorderFactory;
 import javax.swing.Icon;
@@ -20,33 +21,32 @@ import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 
 /**
- * The line below the map: left the views ({@link MapViewsBar}, only their icons on a narrow map),
- * then what the shown view's colors and marks mean, as many nations as fit and a button for all;
- * right how many territories changed since the last save and how many problems are outlined red,
- * a click on them shows the problem list.
+ * The line below the map: left what the shown view's colors and marks mean, as many nations as fit
+ * and a button for all; right how many territories changed since the last save and how many
+ * problems are outlined red, a click on them shows the problem list.
  */
 final class MapLegend extends JPanel {
   @Serial private static final long serialVersionUID = 1L;
   private static final int GAP = 12;
-  // narrower, the views show only their icons
-  private static final int NAMES_FROM = 700;
 
   private final transient MapProject project;
-  private final MapViewsBar views;
   private MapMode mode = MapMode.GAME;
   private final JPanel keys = new JPanel(new FlowLayout(FlowLayout.LEFT, GAP, 2));
   private final JPanel status = new JPanel(new FlowLayout(FlowLayout.RIGHT, GAP, 2));
+  // the nations, or in the Political view the alliances, shown as many as fit
   private final List<JLabel> nationChips = new ArrayList<>();
   // "Colors from Nations ›" in the views with nation colors, shown only while every nation fits
   private Optional<JComponent> colorsLink = Optional.empty();
   private final JButton moreNations = new JButton();
   private final JPopupMenu allNations = new JPopupMenu();
   private transient Runnable showProblems = () -> {};
+  private boolean nationsLink = true;
 
-  MapLegend(final MapProject project, final MapViewsBar views) {
+  MapLegend(final MapProject project) {
     super(new BorderLayout(GAP, 0));
+    // the gap between the map and the line below it
+    setBorder(BorderFactory.createEmptyBorder(Theme.GAP_S, 0, 0, 0));
     this.project = project;
-    this.views = views;
     add(keys, BorderLayout.WEST);
     add(status, BorderLayout.EAST);
     Theme.setTertiaryButtonStyle(moreNations);
@@ -61,6 +61,22 @@ final class MapLegend extends JPanel {
     fill();
   }
 
+  /** Shows "Colors from Nations ›" where it fits, as by default. */
+  void showNationsLink() {
+    if (nationsLink != true) {
+      nationsLink = true;
+      fill();
+    }
+  }
+
+  /** Leaves out "Colors from Nations ›", eg in Nations itself. */
+  void hideNationsLink() {
+    if (nationsLink != false) {
+      nationsLink = false;
+      fill();
+    }
+  }
+
   /** What a click on the problems does, eg show the problem list. */
   void onShowProblems(final Runnable showProblems) {
     this.showProblems = showProblems;
@@ -70,7 +86,6 @@ final class MapLegend extends JPanel {
     keys.removeAll();
     nationChips.clear();
     colorsLink = Optional.empty();
-    keys.add(views);
     switch (mode) {
       case GAME, OWNERS -> {
         final List<String> nations = MapXml.nations(project.game());
@@ -93,8 +108,35 @@ final class MapLegend extends JPanel {
           keys.add(chip(MapCanvas.SEA, "Sea zone"));
         }
         // last, as no owner and sea have no nation's color
-        colorsLink = Optional.of(Help.link("Colors from", "Nations"));
-        keys.add(colorsLink.get());
+        if (nationsLink) {
+          colorsLink = Optional.of(Help.link("Colors from", "Nations"));
+          keys.add(colorsLink.get());
+        }
+      }
+      case POLITICAL -> {
+        final JPanel all = new JPanel(new GridLayout(0, 2, GAP, Theme.GAP_XS));
+        all.setBorder(
+            BorderFactory.createEmptyBorder(Theme.GAP_S, Theme.GAP_M, Theme.GAP_S, Theme.GAP_M));
+        int index = 0;
+        for (final Map.Entry<String, List<String>> alliance :
+            MapCanvas.allianceNations(project.game()).entrySet()) {
+          final Color color = MapCanvas.allianceColor(index++);
+          final String nations = String.join(", ", alliance.getValue());
+          final JLabel chip = chip(color, alliance.getKey());
+          chip.setToolTipText(nations);
+          nationChips.add(chip);
+          keys.add(chip);
+          final JLabel inAll = chip(color, alliance.getKey());
+          inAll.setToolTipText(nations);
+          all.add(inAll);
+        }
+        allNations.removeAll();
+        allNations.add(all);
+        keys.add(moreNations);
+        final JLabel none = chip(MapCanvas.NEUTRAL, "No alliance");
+        none.setToolTipText("Nations in no alliance, and land without an owner");
+        keys.add(none);
+        keys.add(chip(MapCanvas.SEA, "Sea zone"));
       }
       case VALUES -> keys.add(note("Badge: PUs per turn · ★ capital · VC victory city"));
       case UNITS -> keys.add(note("Units where the game draws them"));
@@ -131,11 +173,6 @@ final class MapLegend extends JPanel {
   /** Shows as many nations as fit beside the rest of the line, and how many more there are. */
   @Override
   public void doLayout() {
-    if (getWidth() < NAMES_FROM) {
-      views.showIconsOnly();
-    } else {
-      views.showNames();
-    }
     if (!nationChips.isEmpty()) {
       final Insets insets = getInsets();
       final Insets keyInsets = keys.getInsets();
@@ -148,7 +185,7 @@ final class MapLegend extends JPanel {
               - keyInsets.left
               - keyInsets.right
               - GAP;
-      // what always shows: the views and the keys after the nations, not the link to Nations
+      // what always shows: the keys after the nations, not the link to Nations
       for (final Component key : keys.getComponents()) {
         if (!nationChips.contains(key)
             && key != moreNations
@@ -196,8 +233,8 @@ final class MapLegend extends JPanel {
     super.doLayout();
   }
 
-  private static String moreText(final int hidden) {
-    return "+" + hidden + " nations";
+  private String moreText(final int hidden) {
+    return "+" + hidden + (mode == MapMode.POLITICAL ? " alliances" : " nations");
   }
 
   private static JLabel chip(final Color color, final String text) {

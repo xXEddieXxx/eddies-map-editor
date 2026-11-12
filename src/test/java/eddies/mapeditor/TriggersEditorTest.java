@@ -14,6 +14,7 @@ import java.util.Set;
 import java.util.stream.Stream;
 import javax.swing.AbstractButton;
 import javax.swing.JLabel;
+import javax.swing.JSplitPane;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -198,6 +199,57 @@ final class TriggersEditorTest {
     assertThat(shown).as("only while Use Triggers is off").containsExactly(false, true);
   }
 
+  @Test
+  @DisplayName("The list takes a quarter of a wide page for its second lines, from 320 to 420 px")
+  void listGrowsWithThePage() throws Exception {
+    // given
+    final MapProject project =
+        new MapProject(Path.of("g40.xml"), GameRulesXmlTest.givenG40(), MapFiles.none());
+    final TriggersEditor editor = new TriggersEditor(project);
+    final JSplitPane split =
+        all(editor.page())
+            .filter(JSplitPane.class::isInstance)
+            .map(JSplitPane.class::cast)
+            .findFirst()
+            .orElseThrow();
+    final List<Integer> widths = new ArrayList<>();
+
+    // when: the page of a 1280 px window, then of a 1920 px one
+    for (final int width : List.of(1080, 1700)) {
+      split.setSize(width, 800);
+      // the resize is told on the event queue
+      SwingUtilities.invokeAndWait(() -> widths.add(split.getDividerLocation()));
+    }
+
+    // then
+    assertThat(widths).as("the usual width, then room for long lines").containsExactly(320, 420);
+  }
+
+  @DisplayName("A divider the map maker dragged stays where it was put when the page grows")
+  @Test
+  void draggedDividerStays() throws Exception {
+    // given
+    final MapProject project =
+        new MapProject(Path.of("g40.xml"), GameRulesXmlTest.givenG40(), MapFiles.none());
+    final JSplitPane split =
+        all(new TriggersEditor(project).page())
+            .filter(JSplitPane.class::isInstance)
+            .map(JSplitPane.class::cast)
+            .findFirst()
+            .orElseThrow();
+    split.setSize(1080, 800);
+    SwingUtilities.invokeAndWait(() -> {});
+    final List<Integer> widths = new ArrayList<>();
+
+    // when: dragged to 500, then the window grows
+    split.setDividerLocation(500);
+    split.setSize(1700, 800);
+    SwingUtilities.invokeAndWait(() -> widths.add(split.getDividerLocation()));
+
+    // then
+    assertThat(widths).as("the map maker's choice kept").containsExactly(500);
+  }
+
   private static boolean givenGameOptionsLinkShown(final TriggersEditor editor) {
     return all(editor.page())
         .filter(c -> c instanceof AbstractButton b && "Game options ›".equals(b.getText()))
@@ -237,13 +289,13 @@ final class TriggersEditorTest {
         .startsWith("Give 5 PUs · if Germans 4 Control Norway");
     assertThat(listing.details().get("AxisVictory1"))
         .as("conditions named short, not raw")
-        .startsWith("Win with message Axis_Win_Original · if AxisVict");
+        .startsWith("Win with message Axis_Win_Original · if Axis");
     assertThat(TriggersEditor.conditionTitle("objectiveAttachment_Chinese_1_Burma_Road"))
         .as("any attachment prefix goes")
         .isEqualTo("Chinese 1 Burma Road");
     listing.details().forEach((key, line) -> assertThat(line)
         .as("%s fits a row; a longer one is cut at its end", key)
-        .hasSizeLessThanOrEqualTo(52)
+        .hasSizeLessThanOrEqualTo(46)
         .matches(l -> l.indexOf('…') < 0 || l.indexOf('…') == l.length() - 1,
             "cut at the end only"));
   }

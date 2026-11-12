@@ -68,6 +68,33 @@ final class MapPictureTest {
     assertThat(map.size().width).as("the picture's size").isEqualTo(400);
   }
 
+  @DisplayName("Within a box an area wholly in it is found as in the whole picture; none outside")
+  @Test
+  void findsTerritoriesWithinBox() {
+    // given
+    final BufferedImage picture = givenPicture();
+    final DetectedTerritory whole = topRightOf(MapPicture.detect(picture));
+
+    // when
+    final DetectedMap boxed = MapPicture.detect(picture, new Rectangle(190, 0, 210, 125));
+    final DetectedMap outside = MapPicture.detect(picture, new Rectangle(500, 500, 10, 10));
+
+    // then
+    final DetectedTerritory found = topRightOf(boxed);
+    assertThat(found.outlines().getFirst().getBounds())
+        .as("the top right area's outline, in the picture's coordinates")
+        .isEqualTo(whole.outlines().getFirst().getBounds());
+    assertThat(found.center()).as("its center").isEqualTo(whole.center());
+    assertThat(outside.territories()).as("a box beyond the picture finds nothing").isEmpty();
+  }
+
+  private static DetectedTerritory topRightOf(final DetectedMap map) {
+    return map.territories().stream()
+        .filter(t -> t.outlines().getFirst().contains(300, 50))
+        .findFirst()
+        .orElseThrow();
+  }
+
   @DisplayName("Outlines of areas across a line meet on the line, not beside it with a gap")
   @Test
   void outlinesMeetOnTheLine() {
@@ -361,5 +388,33 @@ final class MapPictureTest {
 
   private static Set<String> pair(final Neighbours neighbours) {
     return Set.copyOf(List.of(neighbours.t1(), neighbours.t2()));
+  }
+
+  @DisplayName("A line back at its start, far from borders, is a closed loop; an open one is not")
+  @Test
+  void loopNeedsNoBorder() {
+    // given: the green area is x 202-399, y 0-108; the loop stays 30 px off its lines
+    final BufferedImage picture = givenPicture();
+    final List<Point> loop =
+        List.of(
+            new Point(250, 30),
+            new Point(350, 30),
+            new Point(350, 80),
+            new Point(250, 80),
+            new Point(255, 36));
+
+    // when
+    final Optional<List<Point>> closed = MapPicture.snapToBorders(picture, loop, 12);
+    final Optional<List<Point>> open =
+        MapPicture.snapToBorders(picture, List.of(new Point(250, 30), new Point(350, 80)), 12);
+
+    // then
+    assertThat(closed.orElseThrow().getLast())
+        .as("accepted, its end joined to its start")
+        .isEqualTo(new Point(250, 30));
+    assertThat(MapPicture.detect(givenDrawn(picture, closed.orElseThrow())).territories())
+        .as("the inside becomes an area of its own")
+        .hasSize(MapPicture.detect(picture).territories().size() + 1);
+    assertThat(open).as("an open line far from any border: nothing").isEmpty();
   }
 }

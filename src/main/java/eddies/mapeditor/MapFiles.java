@@ -99,6 +99,8 @@ record MapFiles(
   private static final int CAPITAL_FLAG_SIZE = 100;
   private static final int VICTORY_CITY_SIZE = 36;
   private static final int MAX_PLACES = 30;
+  // pixels around the territories redrawn where borders were drawn, for the lines around them
+  private static final int REDRAW_MARGIN = 10;
   // found effects side by side, about as wide as the game's effect pictures
   private static final int EFFECT_SPACING = 32;
   private static final String MAP_PROPERTIES = "map.properties";
@@ -283,15 +285,109 @@ record MapFiles(
    * border changed noticeably gets its places found again, the others keep theirs.
    */
   Redrawn withBordersFrom(final BufferedImage image, final DetectedMap detected) {
+    return withBordersFrom(image, detected, polygons.keySet(), Map.of());
+  }
+
+  /**
+   * As {@link #withBordersFrom(BufferedImage, DetectedMap)}, only where borders were drawn: the
+   * territories with an outline reaching into the region, from the areas found in the part of the
+   * picture they cover; the others keep their outlines and places, and no area beyond the region
+   * is new.
+   */
+  Redrawn withBordersFrom(final BufferedImage image, final Rectangle region) {
+    final Set<String> near = new HashSet<>();
+    final Rectangle box = new Rectangle(region);
+    polygons.forEach(
+        (territory, outlines) -> {
+          if (outlines.stream().anyMatch(o -> o.intersects(region))) {
+            near.add(territory);
+            outlines.forEach(o -> box.add(o.getBounds()));
+          }
+        });
+    // the border lines around them too
+    box.grow(REDRAW_MARGIN, REDRAW_MARGIN);
+    final Rectangle whole = new Rectangle(image.getWidth(), image.getHeight());
+    Rectangle within = box.intersection(whole);
+    while (true) {
+      final DetectedMap found = MapPicture.detect(image, within);
+      // an area beyond the region is the territory's it lies in, so a new one gets it as neighbour
+      final Map<DetectedTerritory, String> others = new HashMap<>();
+      final List<DetectedTerritory> areas = new ArrayList<>();
+      boolean cut = false;
+      for (final DetectedTerritory area : found.territories()) {
+        final Optional<String> holder = territoryAt(area.center());
+        if (area.outlines().stream().anyMatch(o -> o.intersects(region))
+            || holder.filter(near::contains).isPresent()) {
+          areas.add(area);
+          cut |= endsOnEdge(area, within, whole);
+        } else if (holder.isPresent()) {
+          areas.add(area);
+          others.put(area, holder.get());
+        }
+      }
+      // an area taken or new must be whole, eg one left out before that reaches beyond the box
+      if (!cut || within.equals(whole)) {
+        return withBordersFrom(
+            image, new DetectedMap(found.size(), areas, found.connections()), near, others);
+      }
+      within = new Rectangle(within);
+      within.grow(within.width, within.height);
+      within = within.intersection(whole);
+    }
+  }
+
+  /** Whether the area found within the box ends on its edge inside the picture: it was cut. */
+  private static boolean endsOnEdge(
+      final DetectedTerritory area, final Rectangle box, final Rectangle whole) {
+    return area.outlines().stream()
+        .map(Polygon::getBounds)
+        .anyMatch(
+            b ->
+                (b.x <= box.x && box.x > whole.x)
+                    || (b.y <= box.y && box.y > whole.y)
+                    || (b.x + b.width >= box.x + box.width - 1
+                        && box.x + box.width < whole.x + whole.width)
+                    || (b.y + b.height >= box.y + box.height - 1
+                        && box.y + box.height < whole.y + whole.height));
+  }
+
+  /** The innermost territory with an outline holding the point: the island, not the sea around. */
+  private Optional<String> territoryAt(final Point point) {
+    return polygons.entrySet().stream()
+        .filter(e -> e.getValue().stream().anyMatch(o -> o.contains(point)))
+        .min(
+            Comparator.comparingDouble(
+                e ->
+                    e.getValue().stream()
+                        .map(Polygon::getBounds)
+                        .mapToDouble(b -> (double) b.width * b.height)
+                        .sum()))
+        .map(Map.Entry::getKey);
+  }
+
+  /**
+   * Borders redrawn for these territories, the others kept as they are.
+   *
+   * @param taken areas that are other territories', which none of these may take
+   */
+  private Redrawn withBordersFrom(
+      final BufferedImage image,
+      final DetectedMap detected,
+      final Set<String> redrawing,
+      final Map<DetectedTerritory, String> taken) {
     final Map<String, List<Polygon>> outlines = new LinkedHashMap<>();
     final Map<String, Point> middles = new LinkedHashMap<>(centers);
-    final Map<DetectedTerritory, String> takenBy = new HashMap<>();
+    final Map<DetectedTerritory, String> takenBy = new HashMap<>(taken);
     final Set<String> kept = new LinkedHashSet<>();
     final Set<String> foundOne = new HashSet<>();
     // per territory, the area holding most of each outline that found no free area
     final Map<String, List<Optional<DetectedTerritory>>> heldBy = new LinkedHashMap<>();
     polygons.forEach(
         (territory, before) -> {
+          if (!redrawing.contains(territory)) {
+            outlines.put(territory, before);
+            return;
+          }
           final List<Polygon> after = new ArrayList<>();
           for (final Polygon outline : before) {
             final Optional<DetectedTerritory> area =
@@ -1017,10 +1113,23 @@ record MapFiles(
    * moved.
    */
   private List<Point> foundMarkers(final Game game, final Marker marker, final String territory) {
-    final Point first = foundMarker(game, marker, territory);
-    return IntStream.range(0, marker.count(game, territory))
+    return sideBySide(foundMarker(game, marker, territory), marker.count(game, territory));
+  }
+
+  private static List<Point> sideBySide(final Point first, final int count) {
+    return IntStream.range(0, count)
         .mapToObj(i -> new Point(first.x + i * EFFECT_SPACING, first.y))
         .toList();
+  }
+
+  /**
+   * Like {@link #markerPlaces} for so many effects, without asking the game how many: the map
+   * shows every territory's effects at once.
+   */
+  List<Point> effectPlaces(final String territory, final int effects) {
+    return Optional.ofNullable(places.markers(Marker.EFFECT).get(territory))
+        .filter(points -> !points.isEmpty())
+        .orElseGet(() -> sideBySide(middle(territory), Math.max(1, effects)));
   }
 
   Point markerPlace(final Game game, final Marker marker, final String territory) {

@@ -6,6 +6,8 @@ import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.GridBagLayout;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.io.Serial;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -31,6 +33,7 @@ import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JProgressBar;
+import javax.swing.JSplitPane;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 import lombok.experimental.ExtensionMethod;
@@ -57,9 +60,12 @@ final class TriggersEditor implements Editor {
   private static final String LIST = "list";
   private static final int MAX_SHARING = 5;
   private static final int CARD_WIDTH = 680;
-  // shortcut: about what a list row's second line fits at its usual width; SearchList cuts by
+  // shortcut: about what a list row's second line fits at the list's 320 px; SearchList cuts by
   // width in the middle, a cut here keeps the start readable
-  private static final int SUBTITLE_LENGTH = 52;
+  private static final int SUBTITLE_LENGTH = 46;
+  // the list takes a quarter of a wide page, for the rows' second lines
+  private static final int LIST_WIDTH = 320;
+  private static final int LIST_MAX_WIDTH = 420;
   // the words TriggerXml.clauses starts the conditions with, eg "unless none of"
   private static final Pattern COMBINING =
       Pattern.compile("(if|unless)( none of| exactly \\S+ of| from \\S+ to \\S+ of)?");
@@ -121,7 +127,21 @@ final class TriggersEditor implements Editor {
     details.add(Panels.empty(Glyph.TRIGGERS, "Choose a trigger",
         "Choose a trigger to see what it does."), EMPTY);
     details.add(SwingComponents.newJScrollPane(inspector), LIST);
-    page.add(Panels.sideBySide(listColumn, details), LIST);
+    final JSplitPane split = Panels.sideBySide(listColumn, details);
+    split.addComponentListener(
+        new ComponentAdapter() {
+          // where this listener put the divider; one the map maker dragged elsewhere stays
+          private int set = split.getDividerLocation();
+
+          @Override
+          public void componentResized(final ComponentEvent e) {
+            if (split.getDividerLocation() == set) {
+              set = Math.clamp(split.getWidth() / 4, LIST_WIDTH, LIST_MAX_WIDTH);
+              split.setDividerLocation(set);
+            }
+          }
+        });
+    page.add(split, LIST);
     project.onChange(this::refresh);
     showCard();
     showInspector();

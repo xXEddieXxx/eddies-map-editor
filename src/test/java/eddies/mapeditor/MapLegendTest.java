@@ -11,9 +11,13 @@ import java.util.stream.Stream;
 import javax.swing.AbstractButton;
 import javax.swing.JLabel;
 import javax.swing.SwingUtilities;
+import lombok.experimental.ExtensionMethod;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.triplea.map.data.elements.Game;
+import org.triplea.map.data.elements.PlayerList;
 
+@ExtensionMethod(Builders.class)
 final class MapLegendTest {
 
   private static MapProject givenG40() {
@@ -27,7 +31,7 @@ final class MapLegendTest {
 
   /** The legend laid out at this width, as below a map. */
   private static MapLegend givenLegend(final MapProject project, final int width) {
-    final MapLegend legend = new MapLegend(project, new MapViewsBar(MapMode.GAME, mode -> {}));
+    final MapLegend legend = new MapLegend(project);
     legend.setSize(width, 30);
     legend.doLayout();
     legend.doLayout();
@@ -87,6 +91,35 @@ final class MapLegendTest {
     assertThat(texts)
         .as("the button counts the hidden ones")
         .contains("+" + hidden.getFirst() + " nations", "No owner");
+  }
+
+  @DisplayName("Nations itself leaves out the link to Nations; the next tool shows it again")
+  @Test
+  void noLinkToNationsInNations() throws Exception {
+    // given
+    final List<Boolean> linkShown = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapLegend legend = givenLegend(givenMinimap(), 3000);
+          legend.hideNationsLink();
+          legend.doLayout();
+          linkShown.add(linkShown(legend));
+          legend.showNationsLink();
+          legend.doLayout();
+          linkShown.add(linkShown(legend));
+          // also on a map without nations yet
+          final MapLegend empty = givenLegend(MapProject.newEmpty(), 3000);
+          empty.hideNationsLink();
+          empty.doLayout();
+          linkShown.add(linkShown(empty));
+        });
+
+    // then
+    assertThat(linkShown)
+        .as("hidden in Nations, then back; hidden also without nations")
+        .containsExactly(false, true, false);
   }
 
   @DisplayName("Territories changed since the last save are counted")
@@ -170,30 +203,67 @@ final class MapLegendTest {
                     && b.getParent().isVisible());
   }
 
-  @DisplayName("The views start the line, by name; below 700 px only their icons")
+  @DisplayName("Political: a chip per alliance with its nations as tool tip, then no alliance")
   @Test
-  void viewsShowIconsOnlyWhenNarrow() throws Exception {
+  void politicalListsAlliances() throws Exception {
     // given
-    final List<List<String>> names = new ArrayList<>();
+    final List<String> texts = new ArrayList<>();
+    final List<String> tips = new ArrayList<>();
 
     // when
     SwingUtilities.invokeAndWait(
         () -> {
-          for (final int width : List.of(1200, 600)) {
-            final MapLegend legend = givenLegend(givenMinimap(), width);
-            names.add(
-                all(legend)
-                    .flatMap(c -> c instanceof MapViewsBar bar ? Stream.of(bar) : Stream.empty())
-                    .flatMap(bar -> Stream.of(bar.getComponents()))
-                    .map(c -> ((AbstractButton) c).getText())
-                    .toList());
-          }
+          final MapLegend legend = givenLegend(givenG40(), 3000);
+          legend.explain(MapMode.POLITICAL);
+          legend.doLayout();
+          texts.addAll(shownTexts(legend));
+          all(legend)
+              .filter(c -> c instanceof JLabel label && "Axis".equals(label.getText()))
+              .findFirst()
+              .ifPresent(c -> tips.add(((JLabel) c).getToolTipText()));
         });
 
     // then
-    assertThat(names.get(0))
-        .as("wide: each view by name")
-        .containsExactly("Game", "Owners", "Values", "Units", "Neighbours");
-    assertThat(names.get(1)).as("narrow: icons only, no squeezed names").containsOnly("");
+    assertThat(texts)
+        .as("the alliances in the game's order, then grey and sea")
+        .containsSubsequence("Allies", "Axis", "Dutch", "No alliance", "Sea zone")
+        .doesNotContain("Germans");
+    assertThat(tips)
+        .as("the alliance's nations on hover")
+        .containsExactly("Germans, Japanese, Italians");
+  }
+
+  @DisplayName("Political: an alliance no nation has first gets no chip")
+  @Test
+  void politicalLeavesOutEmptyAlliance() throws Exception {
+    // given
+    final List<String> texts = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapProject project = givenG40();
+          project.edit(MapLegendTest::withGermansAlsoNeutral);
+          final MapLegend legend = givenLegend(project, 3000);
+          legend.explain(MapMode.POLITICAL);
+          legend.doLayout();
+          texts.addAll(shownTexts(legend));
+        });
+
+    // then
+    assertThat(texts)
+        .as("the Germans' second alliance colors nothing")
+        .contains("Axis")
+        .doesNotContain("Neutral");
+  }
+
+  /** The game with the Germans also in "Neutral", after their Axis. */
+  private static Game withGermansAlsoNeutral(final Game game) {
+    final List<PlayerList.Alliance> alliances =
+        new ArrayList<>(game.getPlayerList().getAlliances());
+    alliances.add(PlayerList.Alliance.builder().player("Germans").alliance("Neutral").build());
+    return game.toBuilder()
+        .playerList(game.getPlayerList().toBuilder().alliances(alliances).build())
+        .build();
   }
 }
