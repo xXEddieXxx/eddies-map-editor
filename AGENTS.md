@@ -60,7 +60,7 @@ All code is in `src/main/java/eddies/mapeditor`, the tests in `src/test/java/edd
 | `CanalsEditor`, `CanalXml`, `TerritoryEffectsEditor`, `TerritoryEffectsXml`, `TerritoryXml` | Canals (clicked on the map, shown with `MapView.mark`; a canalAttachment on each sea zone), territory effects (the Terrain effects tool: list, attack, defence and moves to enter per unit type, who may enter, picture in `territoryEffects/`, the territories using it with *Show on map* into Territories' paint brush; rename and remove refused where `RulesXml.whereNamed` still finds them), the territory attachment's other options (impassable, unit production, original owner, effects, sea zone kinds, repeated ones as lists) |
 | `MapFolder`                   | Disk: map.yml (games renamed keeping unknown keys), new map folders, tiles, flags, unit pictures, picture folders and imports, zip, `.bak` handling, Play |
 | `PlayWith`                    | Which TripleA Play starts: another installed one (found or chosen, kept in Java preferences) or the one the editor runs with |
-| `MapPicture`                  | Finds territories (areas between dark lines, blue = sea) and neighbours in a picture; outlines reach into the line (`grow`), so neighbours meet on it; `lineStyle`: the picture's usual line width and color, for the border a split draws into the picture (`MapProject.BorderLine`), only into a picture held in memory (`MapFiles.picture`: chosen in the editor or made by the wizard); a map only in baseTiles gets no line |
+| `MapPicture`                  | Finds territories (areas between dark lines, blue = sea) and neighbours in a picture; outlines reach into the line (`grow`), so neighbours meet on it; `lineStyle`: the picture's usual line width and color, for the border a split draws into the picture (`MapProject.BorderLine`) and for Territories' *Draw borders* (`MapProject.drawBorder`, then *Find territories* as Redraw borders); a picture only in baseTiles is first held (`MapProject.holdPicture`, `MapFiles.tilesPicture`, in every undo state), and a save of a picture with lines drawn into the saved one (same lineage, `drawnOn`) writes only the changed tiles (`MapFolder.writeChangedTiles`, each with .bak); a new picture is written whole |
 | `RedrawDialog`                | Redraw borders: which new areas become territories (name, land or sea) and which territory keeps a merged area (a refused name turns the verb off); `howTo` before the picture is chosen (once a session, "Don't show again" in Java preferences); `MapFiles.withBordersFrom` finds them, `MapProject.takeRedrawn` takes all as one step |
 | `ReliefMaker`                 | A relief made from the outlines: coast lines and shadows, waves, raised land, texture          |
 | `MapCanvas`, `MapView`, `MapLegend`, `MapMode`, `MapViewsButton` | The map on screen: one toolbar row (the tool's controls left, views, zoom, Fit, picture menu right), a tool's mode banner, the next step instead of the map while it has no outlines; the legend: nations as many as fit, changed territories, problems (a click lists them) |
@@ -82,9 +82,10 @@ All code is in `src/main/java/eddies/mapeditor`, the tests in `src/test/java/edd
   (`MapChecks.findError`), to load the game as TripleA does, and by `TechXml.withStandardTechs`, for
   the standard technologies of a game without its own list.
 - **Every change is a step.** `MapProject` keeps a `State(game, files, texts)` per step for undo
-  and redo, and the saved state. Changes go through `MapProject.edit` or one of its methods, never by
-  mutating a model. `onChange` listeners refresh the tools. Not steps: resource icons, picture
-  imports, new picture folders, copied sounds and map.yml changes (new game, rename) are written to
+  and redo, and the saved state; the oldest undo steps are forgotten once their pictures (eg one
+  per line drawn into the picture) take over 600 MB. Changes go through `MapProject.edit` or one
+  of its methods, never by mutating a model. `onChange` listeners refresh the tools. Not steps:
+  resource icons, picture imports, new picture folders, copied sounds and map.yml changes (new game, rename) are written to
   disk at once, outside undo, with `.bak`; a rewritten map.yml loses its YAML comments (kept in the
   `.bak`).
 - **A save writes what changed.** Text files go through `MapFolder.replace`: a failed save loses

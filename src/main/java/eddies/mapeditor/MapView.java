@@ -420,6 +420,11 @@ final class MapView extends JPanel {
     canvas.editDecorations(picture);
   }
 
+  /** A line dragged on the map goes to onLine, eg to draw it into the picture. */
+  void drawLine(final Consumer<List<Point>> onLine) {
+    canvas.drawLine(onLine);
+  }
+
   /**
    * A line dragged on the map, in its own pixels, goes to onLine, tinted while dragged by whether
    * it cuts; until places are edited again.

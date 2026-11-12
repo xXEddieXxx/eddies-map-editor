@@ -5,8 +5,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.util.Optional;
 import java.awt.image.BufferedImage;
 import java.awt.Color;
+import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.Polygon;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.stream.IntStream;
@@ -189,6 +191,91 @@ final class OutlineCutTest {
 
     assertThat(saved & 0xFFFFFF).as("the save wrote the border").isEqualTo(0xFF0000);
     assertThat(undone & 0xFFFFFF).as("undone and saved, the tile is as before").isNotEqualTo(0xFF0000);
+  }
+
+  @DisplayName("A line drawn on a map in tiles is saved into the tiles it touches only, with .bak")
+  @Test
+  void drawsBorderIntoTiles() throws Exception {
+    // given: the map as opened again, its picture only in tiles; tile 1_0 is x 256-511, y 0-255
+    final Path xml = givenMapWithRedTerritory4().getXmlFile().orElseThrow();
+    final MapProject project = MapProject.open(xml);
+    final boolean heldAtFirst = project.getFiles().picture().isPresent();
+    project.holdPicture(project.getFiles().tilesPicture().orElseThrow());
+    final boolean unsaved = project.hasUnsavedChanges();
+    final Path tiles = project.getFolder().orElseThrow().resolve("baseTiles");
+    final int size = MapFiles.tileSize();
+    final int otherBefore = ImageIO.read(tiles.resolve("0_0.png").toFile()).getRGB(100, 50);
+
+    // when
+    final boolean drawn =
+        project.drawBorder(
+            new MapProject.BorderLine(givenLine(300, 20, 300, 100), 3, Color.RED));
+    project.save();
+    final int saved = ImageIO.read(tiles.resolve("1_0.png").toFile()).getRGB(300 - size, 60);
+    project.undo();
+    project.save();
+    final int undone = ImageIO.read(tiles.resolve("1_0.png").toFile()).getRGB(300 - size, 60);
+
+    // then
+    assertThat(heldAtFirst).as("opened, the picture is only in tiles").isFalse();
+    assertThat(unsaved).as("holding the picture is no change").isFalse();
+    assertThat(drawn).as("drawn into the picture put together from its tiles").isTrue();
+    assertThat(saved & 0xFFFFFF).as("the save wrote the line").isEqualTo(0xFF0000);
+    assertThat(Files.exists(tiles.resolve("1_0.png.bak")))
+        .as("the tile's first version kept")
+        .isTrue();
+    assertThat(Files.exists(tiles.resolve("0_0.png.bak")))
+        .as("a tile without the line untouched")
+        .isFalse();
+    assertThat(ImageIO.read(tiles.resolve("0_0.png").toFile()).getRGB(100, 50))
+        .as("a tile the line misses keeps its pixels")
+        .isEqualTo(otherBefore);
+    assertThat(undone & 0xFFFFFF).as("undone and saved, the line is gone").isNotEqualTo(0xFF0000);
+  }
+
+  @DisplayName("Without a picture held a line is not drawn and nothing changes")
+  @Test
+  void drawsNoBorderWithoutPicture() throws Exception {
+    // given: opened again, the picture only in tiles
+    final MapProject project =
+        MapProject.open(givenMapWithRedTerritory4().getXmlFile().orElseThrow());
+
+    // when
+    final boolean drawn =
+        project.drawBorder(new MapProject.BorderLine(givenLine(10, 10, 90, 90), 2, Color.BLACK));
+
+    // then
+    assertThat(drawn).as("only in tiles, not held").isFalse();
+    assertThat(project.hasUnsavedChanges()).as("no step").isFalse();
+  }
+
+  @DisplayName("A new picture of the same size is saved whole, with a new small map")
+  @Test
+  void samesizePictureWrittenWhole() throws Exception {
+    // given: a map whose 400x300 picture is held
+    final MapProject project = givenMapWithRedTerritory4();
+    final Path smallMap = project.getFolder().orElseThrow().resolve("smallMap.png");
+    final int before = ImageIO.read(smallMap.toFile()).getRGB(5, 5);
+
+    // when
+    project.loadPicture(givenGreenPicture());
+    project.save();
+
+    // then
+    assertThat(ImageIO.read(smallMap.toFile()).getRGB(5, 5))
+        .as("the small map shows the new picture")
+        .isNotEqualTo(before)
+        .matches(rgb -> new Color(rgb).getGreen() > 200);
+  }
+
+  /** A green picture as big as MapPictureTest.givenPicture, 400x300. */
+  private static BufferedImage givenGreenPicture() {
+    final BufferedImage green = new BufferedImage(400, 300, BufferedImage.TYPE_INT_RGB);
+    final Graphics2D g = green.createGraphics();
+    g.setColor(Color.GREEN);
+    g.fillRect(0, 0, 400, 300);
+    g.dispose();
+    return green;
   }
 
   @DisplayName("A split's border meets the picture's line at the neighbour and stops there")

@@ -51,6 +51,36 @@ final class TerritoriesEditorTest {
     return new MapView(project, () -> {}, () -> {}, () -> {});
   }
 
+  @DisplayName("Draw borders draws a line into the picture as one step; Find territories hands it on")
+  @Test
+  void drawsBordersAndFindsTerritories() throws Exception {
+    // given: a map whose picture is held, its lines black and 3 px wide
+    final MapProject project = givenPictureMap();
+    final List<BufferedImage> found = new ArrayList<>();
+    final BufferedImage[] before = new BufferedImage[1];
+    final BufferedImage[] after = new BufferedImage[1];
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final TerritoriesEditor editor =
+              new TerritoriesEditor(project, givenMap(project), (tool, item) -> {}, found::add);
+          before[0] = project.getFiles().picture().orElseThrow();
+          editor.borderDrawn(List.of(new Point(300, 20), new Point(300, 100)));
+          after[0] = project.getFiles().picture().orElseThrow();
+          editor.findDrawnTerritories();
+        });
+
+    // then
+    assertThat(after[0]).as("a new picture, one step").isNotSameAs(before[0]);
+    assertThat(after[0].getRGB(300, 60) & 0xFFFFFF)
+        .as("in the color of the picture's lines")
+        .isZero();
+    assertThat(before[0].getRGB(300, 60) & 0xFFFFFF).as("not there before").isNotZero();
+    assertThat(project.canUndo()).as("it can be undone").isTrue();
+    assertThat(found).as("Find territories gets the picture with the line").containsExactly(after[0]);
+  }
+
   /** The editor showing red north 1 with its more options open. */
   private static TerritoriesEditor givenMoreOptions(final MapProject project) {
     final TerritoriesEditor editor = new TerritoriesEditor(project, givenMap(project));

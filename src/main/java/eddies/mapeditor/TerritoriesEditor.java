@@ -3,6 +3,7 @@ package eddies.mapeditor;
 import com.formdev.flatlaf.FlatClientProperties;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
+import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FileDialog;
@@ -10,11 +11,11 @@ import java.awt.FlowLayout;
 import java.awt.Frame;
 import java.awt.GridLayout;
 import java.awt.Point;
-import java.awt.image.BufferedImage;
 import java.awt.Polygon;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
 import java.awt.event.KeyEvent;
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.Serial;
 import java.nio.charset.StandardCharsets;
@@ -27,13 +28,16 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.ExecutionException;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
+import java.util.function.Consumer;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import javax.annotation.Nullable;
 import javax.swing.BorderFactory;
+import javax.swing.Box;
 import javax.swing.ButtonGroup;
 import javax.swing.Icon;
 import javax.swing.JButton;
@@ -52,6 +56,7 @@ import javax.swing.JTextField;
 import javax.swing.JToggleButton;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
+import javax.swing.SwingWorker;
 import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.Initialize.UnitInitialize.UnitPlacement;
 import org.triplea.swing.FileChooser;
@@ -77,13 +82,19 @@ final class TerritoriesEditor implements Editor {
   private static final String NAME_REFUSED = "Already used, empty, or holds : < (.";
   private static final int MAX_NAMED = 6;
 
+  // the colors a line drawn into the picture may have; the first stands for the picture's own
+  private static final List<String> LINE_COLOR_NAMES = List.of("Like its lines", "Black", "Grey");
+  private static final List<Color> LINE_COLORS =
+      List.of(Color.BLACK, Color.BLACK, new Color(0x80, 0x80, 0x80));
+
   /** What a click on the map does besides choosing the territory. */
   private enum Mode {
     SELECT,
     PAINT,
     DECORATE,
     MOVE_PLACES,
-    SPLIT
+    SPLIT,
+    DRAW
   }
 
   private final MapProject project;
@@ -98,6 +109,8 @@ final class TerritoriesEditor implements Editor {
   private final JToggleButton select = new JToggleButton("Select");
   private final JToggleButton paint = new JToggleButton("Paint ▾");
   private final JToggleButton decorations = new JToggleButton("Decorations");
+  private final JToggleButton drawBorders = new JToggleButton("Draw borders");
+  private final Consumer<BufferedImage> findTerritories;
   private final JPanel modes = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_XS, 0));
   // in the inspector, built again with it; one button, so the banner's Done can untoggle it
   private final JToggleButton movePlaces = new JToggleButton("Move places");
@@ -115,6 +128,12 @@ final class TerritoriesEditor implements Editor {
   private Optional<MapPicture.LineStyle> foundStyle = Optional.empty();
   private Optional<BufferedImage> styleOf = Optional.empty();
   private Optional<Integer> chosenWidth = Optional.empty();
+  private Optional<Color> chosenColor = Optional.empty();
+  // a picture only in tiles is put together in the background before lines go into it
+  private boolean preparingPicture;
+  private boolean pictureTooBig;
+  private boolean pictureUnread;
+  private Optional<JTextField> splitName = Optional.empty();
   private String card = LIST;
   private boolean refilling;
   private @Nullable String selected;
@@ -126,17 +145,23 @@ final class TerritoriesEditor implements Editor {
 
   /** Without a way to open another tool: "Edit in Connections" does nothing. */
   TerritoriesEditor(final MapProject project, final MapView map) {
-    this(project, map, (tool, item) -> {});
+    this(project, map, (tool, item) -> {}, picture -> {});
   }
 
   /**
    * @param openTool opens the tool of the title with the item chosen, eg ("Connections", territory)
+   * @param findTerritories finds the territories in the picture with borders drawn into it, as
+   *     Redraw borders does
    */
   TerritoriesEditor(
-      final MapProject project, final MapView map, final BiConsumer<String, String> openTool) {
+      final MapProject project,
+      final MapView map,
+      final BiConsumer<String, String> openTool,
+      final Consumer<BufferedImage> findTerritories) {
     this.project = project;
     this.map = map;
     this.openTool = openTool;
+    this.findTerritories = findTerritories;
     list =
         new SearchList(
             "territory",
@@ -249,10 +274,10 @@ final class TerritoriesEditor implements Editor {
     return territoryCard;
   }
 
-  /** Select, Paint ▾ and Decorations above the map. */
+  /** Select, Paint ▾, Decorations and Draw borders above the map. */
   private void buildModes() {
     final ButtonGroup group = new ButtonGroup();
-    for (final JToggleButton button : List.of(select, paint, decorations)) {
+    for (final JToggleButton button : List.of(select, paint, decorations, drawBorders)) {
       button.putClientProperty(
           FlatClientProperties.BUTTON_TYPE, FlatClientProperties.BUTTON_TYPE_TOOLBAR_BUTTON);
       group.add(button);
@@ -270,6 +295,9 @@ final class TerritoriesEditor implements Editor {
           paintMenu().show(paint, 0, paint.getHeight());
         });
     decorations.addActionListener(e -> startMode(Mode.DECORATE));
+    drawBorders.setToolTipText(
+        "Draw border lines into the map's picture by hand, then find the territories in them");
+    drawBorders.addActionListener(e -> startMode(Mode.DRAW));
   }
 
   @Override
@@ -336,7 +364,7 @@ final class TerritoriesEditor implements Editor {
 
   /** A click on the map: paints the brush, if any, and chooses the territory. */
   void clickOnMap(final String territory) {
-    if (mode == Mode.SPLIT) {
+    if (mode == Mode.SPLIT || mode == Mode.DRAW) {
       // a click while drawing the line must not change the territory being cut
       return;
     }
@@ -456,6 +484,23 @@ final class TerritoriesEditor implements Editor {
                 + " to add a place for units, right-click or Delete removes one.",
             this::endMode);
       }
+      case DRAW -> {
+        borderStyle()
+            .ifPresentOrElse(
+                style -> {
+                  map.drawLine(this::borderDrawn);
+                  map.showBanner(
+                      "Drag on the map to draw a border line.",
+                      Optional.of(drawingTools(style)),
+                      "Done",
+                      this::endMode);
+                },
+                () -> {
+                  // no click places or draws anything while it says why it cannot draw
+                  map.stopEditingPlaces();
+                  map.showBanner(noLineReason(), Optional.empty(), "Close", this::endMode);
+                });
+      }
       case SPLIT -> {
         map.drawLine(this::lineDrawn, line -> cut(line).isPresent());
         // after drawLine, which clears the cut
@@ -473,7 +518,13 @@ final class TerritoriesEditor implements Editor {
   }
 
   private void showModeButtons() {
-    (mode == Mode.PAINT ? paint : mode == Mode.DECORATE ? decorations : select).setSelected(true);
+    (switch (mode) {
+          case PAINT -> paint;
+          case DECORATE -> decorations;
+          case DRAW -> drawBorders;
+          default -> select;
+        })
+        .setSelected(true);
     paint.setText(brush.map(Brush::title).orElse("Paint") + " ▾");
     paint.setIcon(brush.flatMap(Brush::icon).orElse(null));
     movePlaces.setSelected(mode == Mode.MOVE_PLACES);
@@ -676,6 +727,36 @@ final class TerritoriesEditor implements Editor {
     }
   }
 
+  // ---- draw borders
+
+  /** A line released on the map, drawn into the picture as chosen; none for width 0. */
+  void borderDrawn(final List<Point> line) {
+    borderStyle()
+        .filter(style -> style.width() > 0)
+        .ifPresent(
+            style ->
+                project.drawBorder(
+                    new MapProject.BorderLine(line, style.width(), style.color())));
+  }
+
+  /** Ends drawing and finds the territories in the picture with the lines drawn into it. */
+  void findDrawnTerritories() {
+    endMode();
+    project.getFiles().picture().ifPresent(findTerritories);
+  }
+
+  /** The line's color and width, and Find territories, for the banner. */
+  private JPanel drawingTools(final MapPicture.LineStyle style) {
+    final JButton find = new JButton("Find territories");
+    Theme.setPrimaryButtonStyle(find);
+    find.setToolTipText("The areas between the lines become territories, as Redraw borders does");
+    find.addActionListener(e -> findDrawnTerritories());
+    final JPanel tools = lineFields(style);
+    tools.add(Box.createHorizontalStrut(Theme.GAP_M));
+    tools.add(find);
+    return tools;
+  }
+
   // ---- split
 
   /** A line released on the map: a cut shows hatched with the split card, else the banner says why. */
@@ -702,6 +783,7 @@ final class TerritoriesEditor implements Editor {
     applyMode();
     if (first) {
       // a line drawn again keeps the name typed
+      splitName = Optional.empty();
       fillSplitCard(territory);
     }
     showInspector();
@@ -715,20 +797,25 @@ final class TerritoriesEditor implements Editor {
   }
 
   private void fillSplitCard(final String territory) {
+    // filled again once the picture is ready: the name typed stays
+    final JTextField name =
+        new JTextField(
+            splitName
+                .map(JTextField::getText)
+                .orElseGet(() -> project.freeName(territory, Set.of())));
+    splitName = Optional.of(name);
     splitForm.clear();
     splitForm.title("Split " + territory);
     splitForm.note(
         "The hatched part becomes a new territory. "
             + SearchList.escape(territory)
             + " keeps the rest, its owner and its units.");
-    final JTextField name = new JTextField(project.freeName(territory, Set.of()));
     splitForm.field("Name of the new territory", name);
     final FieldError error = splitForm.error(name);
-    final Optional<JSpinner> width = borderStyle().map(this::lineWidthField);
-    width.ifPresent(field -> splitForm.field("Border line in the picture", field));
-    if (width.isEmpty() && project.getFiles().tile(0, 0).isPresent()) {
-      splitForm.note("The map's picture is in tiles: draw the new border into it yourself.");
-    }
+    borderStyle()
+        .ifPresentOrElse(
+            style -> splitForm.field("Border line in the picture", lineFields(style)),
+            () -> splitForm.note(noLineReason()));
     final JButton cancel = new JButton("Cancel");
     Theme.setSecondaryButtonStyle(cancel);
     cancel.addActionListener(e -> endMode());
@@ -738,7 +825,9 @@ final class TerritoriesEditor implements Editor {
         () -> {
           final Optional<String> problem = project.nameProblem(name.getText());
           error.setProblem(problem);
-          split.setEnabled(problem.isEmpty() && !name.getText().isBlank());
+          // while the picture is got ready the border line would be missed
+          split.setEnabled(
+              problem.isEmpty() && !name.getText().isBlank() && !preparingPicture);
         };
     OnTyping.attach(name, check);
     check.run();
@@ -747,15 +836,12 @@ final class TerritoriesEditor implements Editor {
             split(
                 territory,
                 name.getText(),
-                width
-                    .map(field -> (Integer) field.getValue())
-                    .filter(pixels -> pixels > 0)
-                    .flatMap(
-                        pixels ->
-                            foundStyle.map(
-                                style ->
-                                    new MapProject.BorderLine(
-                                        pendingLine, pixels, style.color())))));
+                borderStyle()
+                    .filter(style -> style.width() > 0)
+                    .map(
+                        style ->
+                            new MapProject.BorderLine(
+                                pendingLine, style.width(), style.color()))));
     name.addActionListener(
         e -> {
           if (split.isEnabled()) {
@@ -769,26 +855,101 @@ final class TerritoriesEditor implements Editor {
   }
 
   /**
-   * How the picture's lines look, found once per picture, with the width last chosen; empty for a
-   * map without a picture held, ie one only in tiles.
+   * The line drawn into the picture as chosen this session: at first as wide as most of the
+   * picture's lines and in their color; empty for a map without a picture to draw into.
    */
   private Optional<MapPicture.LineStyle> borderStyle() {
     final Optional<BufferedImage> picture = project.getFiles().picture();
-    if (picture.isEmpty() || styleOf.isEmpty() || picture.get() != styleOf.get()) {
+    if (picture.isEmpty()) {
+      preparePicture();
+      return Optional.empty();
+    }
+    // while drawing each line makes a new picture: its lines must not change the style found
+    if (styleOf.isEmpty() || (picture.get() != styleOf.get() && mode != Mode.DRAW)) {
       foundStyle = picture.map(MapPicture::lineStyle);
       styleOf = picture;
     }
     return foundStyle.map(
-        style -> new MapPicture.LineStyle(chosenWidth.orElse(style.width()), style.color()));
+        style ->
+            new MapPicture.LineStyle(
+                chosenWidth.orElse(style.width()), chosenColor.orElse(style.color())));
   }
 
-  private JSpinner lineWidthField(final MapPicture.LineStyle style) {
+  /** Puts the picture together from its tiles in the background, once, to draw into. */
+  private void preparePicture() {
+    if (preparingPicture
+        || pictureTooBig
+        || pictureUnread
+        || project.getFiles().tile(0, 0).isEmpty()) {
+      return;
+    }
+    preparingPicture = true;
+    final MapFiles files = project.getFiles();
+    new SwingWorker<Optional<BufferedImage>, Void>() {
+      @Override
+      protected Optional<BufferedImage> doInBackground() {
+        return files.tilesPicture();
+      }
+
+      @Override
+      protected void done() {
+        preparingPicture = false;
+        try {
+          get().ifPresentOrElse(project::holdPicture, () -> pictureTooBig = true);
+        } catch (final InterruptedException e) {
+          Thread.currentThread().interrupt();
+          pictureUnread = true;
+        } catch (final ExecutionException e) {
+          pictureUnread = true;
+        }
+        // the banner and the split card get the line's fields now
+        if (mode == Mode.DRAW && page.isShowing()) {
+          applyMode();
+        }
+        if (pendingCut.isPresent() && selected != null) {
+          fillSplitCard(selected);
+        }
+      }
+    }.execute();
+  }
+
+  /** Why there are no line fields: the picture is being got ready, too big, or there is none. */
+  private String noLineReason() {
+    return preparingPicture
+        ? "Getting the map's picture ready to draw into…"
+        : pictureTooBig
+            ? "The map's picture is too big to draw into here, or one of its tiles does not read."
+            : pictureUnread
+                ? "The map's picture tiles could not be read."
+                : "The map has no picture to draw into: choose one in the picture menu at the right.";
+  }
+
+  /** The color and width of the line, kept for the session as changed. */
+  private JPanel lineFields(final MapPicture.LineStyle style) {
+    final JComboBox<String> color = new JComboBox<>(LINE_COLOR_NAMES.toArray(String[]::new));
+    color.setSelectedIndex(chosenColor.map(LINE_COLORS::lastIndexOf).filter(i -> i > 0).orElse(0));
+    color.setToolTipText("At first in the color of most of the picture's lines");
+    color.getAccessibleContext().setAccessibleName("Line color");
+    color.addActionListener(
+        e ->
+            chosenColor =
+                color.getSelectedIndex() == 0
+                    ? Optional.empty()
+                    : Optional.of(LINE_COLORS.get(color.getSelectedIndex())));
     final JSpinner width = new JSpinner(new SpinnerNumberModel(style.width(), 0, 20, 1));
     width.setToolTipText(
-        "Pixels wide, in the color of the picture's lines; at first as wide as most of them."
-            + " With 0 none: the border then shows on the map only while chosen.");
+        "Pixels wide; at first as wide as most of the picture's lines. 0 draws nothing: a"
+            + " split's border then shows on the map only while chosen.");
+    width.getAccessibleContext().setAccessibleName("Line width in pixels");
     width.addChangeListener(e -> chosenWidth = Optional.of((Integer) width.getValue()));
-    return width;
+    final JPanel fields = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+    fields.setOpaque(false);
+    fields.add(color);
+    fields.add(Box.createHorizontalStrut(Theme.GAP_S));
+    fields.add(width);
+    fields.add(Box.createHorizontalStrut(Theme.GAP_XS));
+    fields.add(new JLabel("px"));
+    return fields;
   }
 
   /** The split as one step, its border drawn into the picture if given; the new territory chosen. */

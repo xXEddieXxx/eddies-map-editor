@@ -42,6 +42,7 @@ import java.util.function.Predicate;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
+import javax.imageio.ImageIO;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
@@ -104,6 +105,8 @@ record MapFiles(
   private static final double SAME_BORDER = 0.9;
   // nor one whose bounds moved this few pixels, as found outlines reach into the border line
   private static final int SAME_BORDER_PIXELS = 3;
+  // 50 million pixels, 200 MB: a picture in tiles bigger than this is not held to draw into
+  private static final long MAX_HELD_PICTURE = 50_000_000L;
 
   /** The files of the map that the game XML belongs to, found in the folders above it. */
   static MapFiles of(final Path gameXml) {
@@ -1303,6 +1306,51 @@ record MapFiles(
     } catch (final IllegalArgumentException e) {
       return Optional.empty();
     }
+  }
+
+  /**
+   * The picture put together from its tiles, as big as map.properties says (else as the tiles
+   * reach); empty without tiles, for one that does not read, or one too big to hold in memory.
+   */
+  Optional<BufferedImage> tilesPicture() {
+    if (tile(0, 0).isEmpty()) {
+      return Optional.empty();
+    }
+    final int tileSize = tileSize();
+    int columns = 0;
+    while (tile(columns, 0).isPresent()) {
+      columns++;
+    }
+    int rows = 0;
+    while (tile(0, rows).isPresent()) {
+      rows++;
+    }
+    final int width = intProperty(WIDTH).orElse(columns * tileSize);
+    final int height = intProperty(HEIGHT).orElse(rows * tileSize);
+    if (width <= 0 || height <= 0 || (long) width * height > MAX_HELD_PICTURE) {
+      return Optional.empty();
+    }
+    final BufferedImage whole = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+    final Graphics2D g = whole.createGraphics();
+    try {
+      for (int column = 0; column * tileSize < width; column++) {
+        for (int row = 0; row * tileSize < height; row++) {
+          final Optional<Path> file = tile(column, row);
+          if (file.isPresent()) {
+            final BufferedImage read = ImageIO.read(file.get().toFile());
+            if (read == null) {
+              return Optional.empty();
+            }
+            g.drawImage(read, column * tileSize, row * tileSize, null);
+          }
+        }
+      }
+    } catch (final IOException e) {
+      return Optional.empty();
+    } finally {
+      g.dispose();
+    }
+    return Optional.of(whole);
   }
 
   /** The tile of the map's picture at the column and row, as the game cuts it; empty if missing. */

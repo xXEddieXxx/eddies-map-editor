@@ -13,6 +13,7 @@ import java.awt.Polygon;
 import java.awt.Rectangle;
 import java.awt.Stroke;
 import java.awt.geom.Area;
+import java.awt.geom.Path2D;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
@@ -21,8 +22,10 @@ import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +33,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
@@ -70,7 +74,12 @@ final class MapProject {
           new Color(0x7F8C8D),
           new Color(0xF1C40F));
 
+  // 600 MB: about 60 lines drawn into a 2000x1200 picture, a few into a huge one
+  private static final long UNDO_PICTURE_BYTES = 600_000_000L;
   private final Deque<State> undos = new ArrayDeque<>();
+  // a picture with lines drawn into it: the picture it came from, so a save writes changed tiles;
+  // that first one stays in memory while a later one is used, outside the undo pictures' limit
+  private final Map<BufferedImage, BufferedImage> drawnOn = new WeakHashMap<>();
   private final Deque<State> redos = new ArrayDeque<>();
   private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
   private @Nullable Path xmlFile;
@@ -256,7 +265,47 @@ final class MapProject {
     undos.push(current);
     redos.clear();
     current = next;
+    forgetOldPictures();
     listeners.forEach(Runnable::run);
+  }
+
+  /**
+   * Drops the oldest undo steps once the pictures they hold, eg one per line drawn into it, take
+   * more than {@value #UNDO_PICTURE_BYTES} bytes; they can no longer be undone then.
+   */
+  private void forgetOldPictures() {
+    final int kept =
+        keptSteps(
+            undos.stream().map(state -> state.files().picture()).toList(),
+            current.files().picture(),
+            UNDO_PICTURE_BYTES);
+    while (undos.size() > kept) {
+      undos.removeLast();
+    }
+  }
+
+  /**
+   * How many of the undo steps, newest first, to keep so the distinct pictures they hold, besides
+   * the current one, take at most this many bytes.
+   */
+  static int keptSteps(
+      final List<Optional<BufferedImage>> pictures,
+      final Optional<BufferedImage> current,
+      final long limitBytes) {
+    final Set<BufferedImage> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+    current.ifPresent(seen::add);
+    long bytes = 0;
+    int kept = 0;
+    for (final Optional<BufferedImage> picture : pictures) {
+      if (picture.isPresent() && seen.add(picture.get())) {
+        bytes += 4L * picture.get().getWidth() * picture.get().getHeight();
+        if (bytes > limitBytes) {
+          break;
+        }
+      }
+      kept++;
+    }
+    return kept;
   }
 
   /** Takes the picture as the map's, as one step; the territories stay until they are found. */
@@ -490,16 +539,58 @@ final class MapProject {
     return splitTerritory(territory, cut, newName, Optional.empty());
   }
 
+  /**
+   * Holds the picture, the map's put together from its tiles ({@link MapFiles#tilesPicture}, in
+   * the background), in every state that holds none, so lines can be drawn into it and undo and
+   * save see the same; no step, nobody told, as it is the picture as it is.
+   */
+  void holdPicture(final BufferedImage whole) {
+    if (current.files().picture().isPresent()) {
+      return;
+    }
+    // a state is the same state after it, so current == saved stays
+    final Map<State, State> holding = new IdentityHashMap<>();
+    final UnaryOperator<State> hold =
+        state ->
+            holding.computeIfAbsent(
+                state,
+                s ->
+                    s.files().picture().isEmpty()
+                        ? new State(s.game(), s.files().withPicture(whole), s.texts())
+                        : s);
+    final List<State> undone = undos.stream().map(hold).toList();
+    final List<State> redone = redos.stream().map(hold).toList();
+    undos.clear();
+    undos.addAll(undone);
+    redos.clear();
+    redos.addAll(redone);
+    saved = hold.apply(saved);
+    current = hold.apply(current);
+  }
+
+  /**
+   * The line drawn into the map's picture, as one step; false without a picture held to draw into
+   * ({@link #holdPicture}).
+   */
+  boolean drawBorder(final BorderLine border) {
+    final MapFiles files = current.files();
+    if (files.picture().isEmpty()) {
+      return false;
+    }
+    step(
+        state(
+            game(),
+            files.withPicture(drawn(files.picture().orElseThrow(), border, Optional.empty()))));
+    return true;
+  }
+
   /** A border line to draw into the map's picture: where, how wide in pixels, in which color. */
   record BorderLine(List<Point> line, int width, Color color) {}
 
   /**
    * As {@link #splitTerritory(String, OutlineCut.Cut, String)}, the line also drawn into the map's
-   * picture, within the territory and up to its border, in the same step; without a picture held,
-   * ie one chosen in the editor, only the outlines change.
-   *
-   * <p>shortcut: a map whose picture is only in baseTiles gets no line, as writing it back means
-   * all tiles anew; write just the tiles the line touches, with their .bak, when that is wanted.
+   * picture held ({@link #holdPicture}), within the territory and up to its border, in the same
+   * step; without one only the outlines change.
    */
   boolean splitTerritory(
       final String territory,
@@ -538,10 +629,13 @@ final class MapProject {
                         .map(
                             picture ->
                                 files.withPicture(
-                                    withBorder(
+                                    drawn(
                                         picture,
-                                        files.polygons().getOrDefault(territory, List.of()),
-                                        border))))
+                                        border,
+                                        Optional.of(
+                                            files
+                                                .polygons()
+                                                .getOrDefault(territory, List.of()))))))
             .orElse(files);
     step(
         state(
@@ -550,43 +644,62 @@ final class MapProject {
     return true;
   }
 
+  /** {@link #withLine}, the copy remembered as drawn on the picture it came from. */
+  private BufferedImage drawn(
+      final BufferedImage picture, final BorderLine border, final Optional<List<Polygon>> within) {
+    final BufferedImage copy = withLine(picture, border, within);
+    drawnOn.put(copy, firstOf(picture));
+    return copy;
+  }
+
+  /** The picture lines were drawn into to make this one, else itself. */
+  private BufferedImage firstOf(final BufferedImage picture) {
+    return drawnOn.getOrDefault(picture, picture);
+  }
+
   /**
-   * A copy of the picture with the line drawn inside the outlines and beyond them only over the
-   * picture's dark border line there, so it meets that line and stops; crisp, in one color, like
-   * the picture's lines.
+   * A copy of the picture with the line drawn into it, crisp, in one color, like the picture's
+   * lines; within outlines, inside them and beyond them only over the picture's dark border line
+   * there, so it meets that line and stops.
    */
-  private static BufferedImage withBorder(
-      final BufferedImage picture, final List<Polygon> outlines, final BorderLine border) {
+  private static BufferedImage withLine(
+      final BufferedImage picture, final BorderLine border, final Optional<List<Polygon>> within) {
     final BufferedImage copy =
         new BufferedImage(picture.getWidth(), picture.getHeight(), BufferedImage.TYPE_INT_ARGB);
     final Graphics2D g = copy.createGraphics();
     g.drawImage(picture, 0, 0, null);
-    final Area within = new Area();
     final Area inside = new Area();
+    final Area reached = new Area();
     final Stroke reach = new BasicStroke(border.width() * 2f + 2);
-    for (final Polygon outline : outlines) {
-      within.add(new Area(outline));
-      inside.add(new Area(reach.createStrokedShape(outline)));
-    }
-    inside.add(within);
-    g.setClip(inside);
+    within.ifPresent(
+        outlines ->
+            outlines.forEach(
+                outline -> {
+                  inside.add(new Area(outline));
+                  reached.add(new Area(reach.createStrokedShape(outline)));
+                }));
+    reached.add(inside);
+    within.ifPresent(outlines -> g.setClip(reached));
     g.setColor(border.color());
     g.setStroke(new BasicStroke(border.width(), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
     final List<Point> line = border.line();
-    for (int i = 1; i < line.size(); i++) {
-      g.drawLine(line.get(i - 1).x, line.get(i - 1).y, line.get(i).x, line.get(i).y);
-    }
+    final Path2D path = new Path2D.Double();
+    path.moveTo(line.getFirst().x, line.getFirst().y);
+    line.stream().skip(1).forEach(p -> path.lineTo(p.x, p.y));
+    g.draw(path);
     g.dispose();
-    // past the outline only where the picture already has its line, not into the neighbour
-    final Rectangle drawnIn =
-        inside.getBounds().intersection(new Rectangle(0, 0, copy.getWidth(), copy.getHeight()));
-    for (int y = drawnIn.y; y < drawnIn.y + drawnIn.height; y++) {
-      for (int x = drawnIn.x; x < drawnIn.x + drawnIn.width; x++) {
-        final int was = picture.getRGB(x, y);
-        if (copy.getRGB(x, y) != was
-            && !MapPicture.isBorder(was)
-            && !within.contains(x + 0.5, y + 0.5)) {
-          copy.setRGB(x, y, was);
+    if (within.isPresent()) {
+      // past the outline only where the picture already has its line, not into the neighbour
+      final Rectangle drawnIn =
+          reached.getBounds().intersection(new Rectangle(0, 0, copy.getWidth(), copy.getHeight()));
+      for (int y = drawnIn.y; y < drawnIn.y + drawnIn.height; y++) {
+        for (int x = drawnIn.x; x < drawnIn.x + drawnIn.width; x++) {
+          final int was = picture.getRGB(x, y);
+          if (copy.getRGB(x, y) != was
+              && !MapPicture.isBorder(was)
+              && !inside.contains(x + 0.5, y + 0.5)) {
+            copy.setRGB(x, y, was);
+          }
         }
       }
     }
@@ -1077,7 +1190,18 @@ final class MapProject {
     }
     if (files.picture().isPresent()
         && (firstSave || !files.picture().equals(saved.files().picture()))) {
-      MapFolder.writePicture(mapFolder, files.picture().get());
+      final BufferedImage picture = files.picture().get();
+      final Optional<BufferedImage> before =
+          firstSave
+              ? Optional.empty()
+              : saved.files().picture().filter(b -> firstOf(b) == firstOf(picture));
+      // lines drawn into it, or taken back: only the tiles they touch; a new picture: all, with
+      // the small map and the preview
+      if (before.isPresent()) {
+        MapFolder.writeChangedTiles(mapFolder, picture, before.get());
+      } else {
+        MapFolder.writePicture(mapFolder, picture);
+      }
     }
     if (files.relief().isPresent() && !files.relief().equals(saved.files().relief())) {
       MapFolder.writeRelief(mapFolder, files.relief().get());

@@ -3,6 +3,7 @@ package eddies.mapeditor;
 import games.strategy.engine.framework.CliProperties;
 import games.strategy.triplea.Constants;
 import games.strategy.triplea.ResourceLoader;
+import java.awt.AlphaComposite;
 import java.awt.Color;
 import java.awt.Font;
 import java.awt.FontMetrics;
@@ -19,6 +20,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -200,6 +202,60 @@ class MapFolder {
             .build()
             .toYamlString());
     return gameXml;
+  }
+
+  /**
+   * Writes the tiles of the picture that differ from the same tile of the picture before, each as
+   * {@link #replace} does, so its first version stays as .bak; the rest, the small map and the
+   * preview stay as they are.
+   */
+  static void writeChangedTiles(
+      final Path folder, final BufferedImage image, final BufferedImage before) throws IOException {
+    final int size = MapFiles.tileSize();
+    final Path tiles = Files.createDirectories(folder.resolve("baseTiles"));
+    for (int column = 0; column * size < image.getWidth(); column++) {
+      for (int row = 0; row * size < image.getHeight(); row++) {
+        final BufferedImage tile = tileOf(image, column, row, size);
+        if (!Arrays.equals(pixels(tile), pixels(tileOf(before, column, row, size)))) {
+          final Path file = tiles.resolve(column + "_" + row + ".png");
+          final BufferedImage written = overOldTile(file, image, column, row, size);
+          MapFolder.replace(file, f -> ImageIO.write(written, "png", f.toFile()));
+        }
+      }
+    }
+  }
+
+  private static BufferedImage tileOf(
+      final BufferedImage image, final int column, final int row, final int size) {
+    final BufferedImage tile = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
+    final Graphics2D g = tile.createGraphics();
+    g.drawImage(image, -column * size, -row * size, null);
+    g.dispose();
+    return tile;
+  }
+
+  /** The tile file with the picture's part drawn over it, so what it has beyond the map stays. */
+  private static BufferedImage overOldTile(
+      final Path file, final BufferedImage image, final int column, final int row, final int size)
+      throws IOException {
+    final BufferedImage tile = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
+    final Graphics2D g = tile.createGraphics();
+    final Optional<BufferedImage> old =
+        Files.exists(file) ? Optional.ofNullable(ImageIO.read(file.toFile())) : Optional.empty();
+    old.ifPresent(o -> g.drawImage(o, 0, 0, null));
+    g.setComposite(AlphaComposite.Src);
+    g.setClip(
+        0,
+        0,
+        Math.min(size, image.getWidth() - column * size),
+        Math.min(size, image.getHeight() - row * size));
+    g.drawImage(image, -column * size, -row * size, null);
+    g.dispose();
+    return tile;
+  }
+
+  private static int[] pixels(final BufferedImage image) {
+    return image.getRGB(0, 0, image.getWidth(), image.getHeight(), null, 0, image.getWidth());
   }
 
   /**

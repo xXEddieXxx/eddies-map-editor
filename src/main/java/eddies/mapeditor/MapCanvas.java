@@ -307,6 +307,7 @@ final class MapCanvas extends JComponent {
   void drawLine(final Consumer<List<Point>> onLine) {
     stopEditingPlaces();
     drawingLine = Optional.of(onLine);
+    lineCheck = Optional.empty();
     setCursor(Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR));
     repaint();
   }
@@ -476,9 +477,9 @@ final class MapCanvas extends JComponent {
     g.dispose();
   }
 
-  /** While a line is drawn, a white veil over all but the selected territory, so it stands out. */
+  /** While a line cuts, a white veil over all but the selected territory, so it stands out. */
   private void paintVeil(final Graphics2D g, final Rectangle visible) {
-    if (drawingLine.isEmpty() || selected == null) {
+    if (drawingLine.isEmpty() || lineCheck.isEmpty() || selected == null) {
       return;
     }
     // even-odd: the outlines are holes in the veil

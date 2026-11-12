@@ -167,6 +167,32 @@ final class MapProjectTest {
         .isEqualTo(project.getFiles().properties().getProperty(MapFiles.UNIT_TINT + nation));
   }
 
+  @DisplayName("Undo keeps the newest steps whose pictures fit the limit, a shared one counted once")
+  @Test
+  void undoForgetsOldPictures() {
+    // given: 10x10 pictures of 400 bytes each, newest step first
+    final BufferedImage shared = new BufferedImage(10, 10, BufferedImage.TYPE_INT_ARGB);
+    final BufferedImage older = new BufferedImage(10, 10, BufferedImage.TYPE_INT_ARGB);
+    final BufferedImage oldest = new BufferedImage(10, 10, BufferedImage.TYPE_INT_ARGB);
+    final List<Optional<BufferedImage>> steps =
+        List.of(
+            Optional.of(shared),
+            Optional.of(shared),
+            Optional.empty(),
+            Optional.of(older),
+            Optional.of(oldest));
+
+    // when
+    final int kept = MapProject.keptSteps(steps, Optional.empty(), 800);
+    final int keptBesideCurrent = MapProject.keptSteps(steps, Optional.of(shared), 800);
+
+    // then
+    assertThat(kept).as("shared counted once, then older: 800 bytes; oldest goes").isEqualTo(4);
+    assertThat(keptBesideCurrent)
+        .as("the current picture is not counted, so oldest fits too")
+        .isEqualTo(5);
+  }
+
   @DisplayName("Borders redrawn from files the map no longer has are not taken")
   @Test
   void refusesRedrawnAfterChange() throws Exception {

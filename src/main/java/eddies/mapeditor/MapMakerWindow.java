@@ -507,12 +507,17 @@ public final class MapMakerWindow extends JFrame {
     if (file.isEmpty()) {
       return;
     }
+    redrawFrom(() -> MapPicture.read(file.get()));
+  }
+
+  /** The map's borders as the picture shows them: new areas, merged ones and moved borders. */
+  private void redrawFrom(final Callable<BufferedImage> picture) {
     final MapProject redrawing = project;
     final MapFiles from = redrawing.getFiles();
     inBackground(
         "Could not redraw the borders",
         () -> {
-          final BufferedImage image = MapPicture.read(file.get());
+          final BufferedImage image = picture.call();
           return from.withBordersFrom(image, MapPicture.detect(image));
         },
         redrawn -> {
@@ -665,7 +670,8 @@ public final class MapMakerWindow extends JFrame {
             opened,
             shared,
             (title, item) ->
-                Optional.ofNullable(editors.get(title)).ifPresent(e -> showEditor(e, item)));
+                Optional.ofNullable(editors.get(title)).ifPresent(e -> showEditor(e, item)),
+            picture -> redrawFrom(() -> picture));
     territories = territoriesEditor;
     final HomeEditor homeEditor =
         new HomeEditor(

@@ -85,7 +85,7 @@ final class MapCanvasTest {
     return color.getRed() + color.getGreen() + color.getBlue();
   }
 
-  @DisplayName("While a line is drawn the other territories are veiled")
+  @DisplayName("While a cutting line is drawn the other territories are veiled")
   @Test
   void drawingLineVeilsOthers() throws Exception {
     final List<Integer> brightness = new ArrayList<>();
@@ -96,7 +96,7 @@ final class MapCanvasTest {
           canvas.setSelected("Territory 1");
           // (150, 25) on the screen at zoom 0.5 is in Territory 2, (50, 25) in Territory 1
           final BufferedImage before = shown(canvas);
-          canvas.drawLine(lines -> {});
+          canvas.drawLine(lines -> {}, lines -> true);
           final BufferedImage drawing = shown(canvas);
           brightness.add(brightness(drawing.getRGB(150, 25)) - brightness(before.getRGB(150, 25)));
           brightness.add(brightness(drawing.getRGB(50, 25)) - brightness(before.getRGB(50, 25)));
@@ -104,6 +104,26 @@ final class MapCanvasTest {
 
     assertThat(brightness.get(0)).as("another territory is lighter under the veil").isPositive();
     assertThat(brightness.get(1)).as("the territory to split stays as it is").isZero();
+  }
+  @DisplayName("A free line, drawn into the picture, veils nothing")
+  @Test
+  void freeLineVeilsNothing() throws Exception {
+    // given
+    final List<Integer> brightness = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapCanvas canvas = givenCanvas();
+          canvas.setSelected("Territory 1");
+          final BufferedImage before = shown(canvas);
+          canvas.drawLine(lines -> {});
+          brightness.add(
+              brightness(shown(canvas).getRGB(150, 25)) - brightness(before.getRGB(150, 25)));
+        });
+
+    // then
+    assertThat(brightness.get(0)).as("another territory as it was").isZero();
   }
 
   @DisplayName("A line is checked at most every 100 ms while dragged, and green when it cuts")

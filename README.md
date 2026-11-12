@@ -57,7 +57,8 @@ The tools sit in the sidebar in the same groups as below. Every change can be un
 |------|-------------------|
 | **Territories** | Find territories in the picture (areas between dark lines, blue = sea). Rename them, set owner, PUs, capital, victory city and starting units. |
 | ↳ *Paint* | Give many territories an owner, PUs, units, rules or effects at once by clicking or dragging. |
-| ↳ *Split with a line* | Cut one territory in two; the new border is drawn into a picture chosen in the editor, as wide as you like. |
+| ↳ *Draw borders* | Draw border lines into the map picture by hand (like its lines, black or grey; width in px), then *Find territories* turns the areas between them into territories. |
+| ↳ *Split with a line* | Cut one territory in two; the new border is drawn into the picture in the same line style. |
 | ↳ *Move places* | Drag where the game draws units, names, flags and markers. |
 | ↳ *Decorations* | Place pictures from the map's `misc` folder anywhere on the map. |
 | **Connections** | Which territories are neighbours. |
@@ -113,7 +114,7 @@ The tools sit in the sidebar in the same groups as below. Every change can be un
 | **Play (F7)** | Starts your installed TripleA with the map. |
 | **Export** | Zips the map for sharing. |
 | **Undo / Redo** | For every change. |
-| **Safe saving** | Only what changed is written; the first version of each file stays as `.bak`. |
+| **Safe saving** | Only what changed is written, down to single picture tiles; the first version of each file stays as `.bak`. |
 
 ## Support the project
 
