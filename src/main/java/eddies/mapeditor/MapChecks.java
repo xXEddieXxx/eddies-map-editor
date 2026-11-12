@@ -85,12 +85,16 @@ class MapChecks {
           .forEach(
               nation -> problems.add(Problem.in("Territories", nation + " owns no territory")));
     }
+    final Set<String> namedByRules = namedByRules(game);
     for (final String territory : territories) {
       if (files.hasOutlines() && !files.polygons().containsKey(territory)) {
         problems.add(Problem.at(territory, territory + " has no outline on the map"));
       }
       // an impassable territory, eg marshes, may well stay apart
-      if (MapXml.neighbors(game, territory).isEmpty() && !MapXml.isImpassable(game, territory)) {
+      // so may one the rules name, eg a dial whose owner triggers change
+      if (MapXml.neighbors(game, territory).isEmpty()
+          && !MapXml.isImpassable(game, territory)
+          && !namedByRules.contains(territory)) {
         problems.add(
             new Problem(
                 territory + " is not connected to any territory", territory, "Connections"));
@@ -151,6 +155,31 @@ class MapChecks {
       }
     }
     return problems;
+  }
+
+  /**
+   * The names that attachments' options (other than of the attachments to that name itself) and
+   * variables list, in one pass, as maps have up to 35,000 attachments.
+   */
+  private static Set<String> namedByRules(final Game game) {
+    final Set<String> names = new HashSet<>();
+    for (final var attachment : AttachmentsXml.attachments(game)) {
+      for (final var option : Optional.ofNullable(attachment.getOptions()).orElse(List.of())) {
+        if (option.getValue() == null) {
+          continue;
+        }
+        // values list names joined by colons, "-" before one taken away, as in RulesXml.whereNamed
+        Stream.of(option.getValue().split(":"))
+            .map(part -> part.startsWith("-") ? part.substring(1) : part)
+            .filter(part -> !part.equals(attachment.getAttachTo()))
+            .forEach(names::add);
+      }
+    }
+    Optional.ofNullable(game.getVariableList()).stream()
+        .flatMap(list -> Optional.ofNullable(list.getVariables()).orElse(List.of()).stream())
+        .flatMap(v -> Optional.ofNullable(v.getElements()).orElse(List.of()).stream())
+        .forEach(element -> names.add(element.getName()));
+    return names;
   }
 
   /**
