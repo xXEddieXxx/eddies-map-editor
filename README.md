@@ -55,7 +55,7 @@ The tools sit in the sidebar in the same groups as below. Every change can be un
 
 | Tool | What you do there |
 |------|-------------------|
-| **Territories** | Find territories in the picture (areas between dark lines, blue = sea). Rename them, set owner, PUs, capital, victory city and starting units. |
+| **Territories** | Find territories in the picture (areas between dark or thin grey lines, blue = sea). Rename them, set owner, PUs, capital, victory city and starting units. |
 | ↳ *Paint* | Give many territories an owner, PUs, units, rules or effects at once by clicking or dragging. |
 | ↳ *Draw borders* | Draw border lines into the map picture by hand (like its lines, black or grey; width in px); a line's ends snap to the borders near them. *Find territories* then turns the areas between them into territories. |
 | ↳ *Split with a line* | Cut one territory in two; the new border is drawn into the picture in the same line style. |

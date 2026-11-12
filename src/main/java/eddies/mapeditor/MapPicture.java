@@ -14,15 +14,25 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Stream;
 import javax.imageio.ImageIO;
 
 /**
- * Finds the territories in a picture of a map: areas separated by dark border lines, seas in blue.
+ * Finds the territories in a picture of a map: areas separated by dark or thin grey border lines,
+ * seas in blue.
  * Each area becomes a territory with its outline and center, areas next to each other across a line
  * become neighbours. Small areas, eg the letters of a name, are left out.
  */
 final class MapPicture {
   private static final int DARK = 64;
+  // a pixel this much darker than a pixel on both sides within LINE_REACH is part of a thin line
+  private static final int LINE_CONTRAST = 40;
+  private static final int LINE_REACH = 3;
+  // across, down and both diagonals
+  private static final int[] LINE_DX = {1, 0, 1, 1};
+  private static final int[] LINE_DY = {0, 1, 1, -1};
+  // a line pixel's color channels differ less than this: it is grey
+  private static final int GREY = 30;
   private static final int REACH = 4;
   private static final int MIN_SUPPORT = 3;
   private static final double EPSILON = 1.0;
@@ -76,23 +86,61 @@ final class MapPicture {
   record LineStyle(int width, Color color) {}
 
   /**
-   * The width and color most of the picture's border lines have: the commonest run of dark pixels
-   * between light ones across rows, up to 12 pixels; 2 pixels black for a picture without lines.
+   * The width and color most of the picture's border lines have: the commonest run of line pixels
+   * across rows, up to 12 pixels, of its dark lines or of its thin grey ones (not the smoothed edge
+   * of a dark one), whichever has more pixels; 2 pixels black for a picture without lines.
    */
   static LineStyle lineStyle(final BufferedImage image) {
+    // the dark lines without their smoothed edges, or the thin grey ones, whichever has more
+    final Optional<Measured> dark = styleOf(image, (x, y) -> isOpaqueDark(image.getRGB(x, y)));
+    final Optional<Measured> grey =
+        styleOf(
+            image,
+            (x, y) ->
+                !isOpaqueDark(image.getRGB(x, y))
+                    && isThinLineAt(image, x, y)
+                    && !nearDark(image, x, y));
+    return Stream.of(dark, grey)
+        .flatMap(Optional::stream)
+        .max(Comparator.comparingInt(Measured::pixels))
+        .map(Measured::style)
+        .orElse(new LineStyle(2, Color.BLACK));
+  }
+
+  private static boolean isOpaqueDark(final int argb) {
+    return isBorder(argb) && (argb >>> 24) >= 128;
+  }
+
+  /** A dark line's pixel within LINE_REACH: a grey one there is its smoothed edge, no line. */
+  private static boolean nearDark(final BufferedImage image, final int x, final int y) {
+    final int bottom = Math.min(image.getHeight() - 1, y + LINE_REACH);
+    final int right = Math.min(image.getWidth() - 1, x + LINE_REACH);
+    for (int py = Math.max(0, y - LINE_REACH); py <= bottom; py++) {
+      for (int px = Math.max(0, x - LINE_REACH); px <= right; px++) {
+        if (isOpaqueDark(image.getRGB(px, py))) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /** A line style and how many of the sampled pixels have it. */
+  private record Measured(LineStyle style, int pixels) {}
+
+  /** The commonest run of line pixels across every 4th row, and their commonest color. */
+  private static Optional<Measured> styleOf(final BufferedImage image, final LinePixel line) {
     final int[] widths = new int[13];
     final Map<Integer, Integer> colors = new HashMap<>();
-    final int[] row = new int[image.getWidth()];
     // every 4th row is plenty to find the commonest
     for (int y = 0; y < image.getHeight(); y += 4) {
-      image.getRGB(0, y, row.length, 1, row, 0, row.length);
       int start = -1;
-      for (int x = 0; x < row.length; x++) {
-        if (isBorder(row[x]) && (row[x] >>> 24) >= 128) {
+      for (int x = 0; x < image.getWidth(); x++) {
+        if (line.at(x, y)) {
           if (start < 0) {
             start = x;
           }
-          colors.merge(row[x] | 0xFF000000, 1, Integer::sum);
+          colors.merge(image.getRGB(x, y) | 0xFF000000, 1, Integer::sum);
         } else {
           if (start > 0 && x - start < widths.length) {
             widths[x - start]++;
@@ -101,18 +149,26 @@ final class MapPicture {
         }
       }
     }
-    int width = 2;
+    if (colors.isEmpty()) {
+      return Optional.empty();
+    }
+    int common = 2;
     for (int w = 1; w < widths.length; w++) {
-      if (widths[w] > widths[width]) {
-        width = w;
+      if (widths[w] > widths[common]) {
+        common = w;
       }
     }
-    final Color color =
-        colors.entrySet().stream()
-            .max(Map.Entry.comparingByValue())
-            .map(e -> new Color(e.getKey()))
-            .orElse(Color.BLACK);
-    return new LineStyle(width, color);
+    final int color =
+        colors.entrySet().stream().max(Map.Entry.comparingByValue()).orElseThrow().getKey();
+    return Optional.of(
+        new Measured(
+            new LineStyle(common, new Color(color)),
+            colors.values().stream().mapToInt(Integer::intValue).sum()));
+  }
+
+  @FunctionalInterface
+  private interface LinePixel {
+    boolean at(int x, int y);
   }
 
   /**
@@ -202,13 +258,87 @@ final class MapPicture {
     return nearest;
   }
 
-  /** A dark pixel of the picture's lines, or one outside it: the edge stops areas too. */
+  /** A pixel of the picture's lines ({@link #lines}), or one outside it: the edge stops areas too. */
   private static boolean isBorderAt(final BufferedImage image, final Point at) {
-    return at.x < 0
-        || at.y < 0
-        || at.x >= image.getWidth()
-        || at.y >= image.getHeight()
-        || isBorder(image.getRGB(at.x, at.y));
+    if (at.x < 0 || at.y < 0 || at.x >= image.getWidth() || at.y >= image.getHeight()) {
+      return true;
+    }
+    return isBorder(image.getRGB(at.x, at.y)) || isThinLineAt(image, at.x, at.y);
+  }
+
+  /** {@link #isThinLine} of a pixel of the picture. */
+  private static boolean isThinLineAt(final BufferedImage image, final int x, final int y) {
+    final int argb = image.getRGB(x, y);
+    // a pixel lighter than this is never that much darker than both its sides
+    return luminance(argb) <= 255 - LINE_CONTRAST
+        && isGrey(argb)
+        && isThinLine(
+            (px, py) ->
+                px < 0 || py < 0 || px >= image.getWidth() || py >= image.getHeight()
+                    ? -1
+                    : luminance(image.getRGB(px, py)),
+            x,
+            y);
+  }
+
+  /** A pixel without much color: borders are drawn grey, rivers and names often in color. */
+  private static boolean isGrey(final int argb) {
+    final int r = (argb >> 16) & 0xFF;
+    final int g = (argb >> 8) & 0xFF;
+    final int b = argb & 0xFF;
+    return Math.max(r, Math.max(g, b)) - Math.min(r, Math.min(g, b)) < GREY;
+  }
+
+  /**
+   * The pixels of the picture's border lines: dark or see-through ones ({@link #isBorder}), and
+   * grey ones of a thin line clearly darker than both sides of it, eg between white areas; the
+   * edge between a darker and a lighter area is not one, nor a colored line, eg a river.
+   */
+  private static boolean[] lines(final int[] rgb, final int width, final int height) {
+    final int[] luminance = new int[rgb.length];
+    for (int i = 0; i < rgb.length; i++) {
+      luminance[i] = luminance(rgb[i]);
+    }
+    final Luminance at =
+        (x, y) -> x < 0 || y < 0 || x >= width || y >= height ? -1 : luminance[y * width + x];
+    final boolean[] lines = new boolean[rgb.length];
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        final int p = y * width + x;
+        lines[p] = isBorder(rgb[p]) || isGrey(rgb[p]) && isThinLine(at, x, y);
+      }
+    }
+    return lines;
+  }
+
+  /** The luminance of a pixel, -1 outside the picture. */
+  @FunctionalInterface
+  private interface Luminance {
+    int at(int x, int y);
+  }
+
+  /**
+   * Whether the pixel is at least LINE_CONTRAST darker than a pixel within LINE_REACH on each side
+   * of it, across, down or on a diagonal: a line up to 5 pixels wide has such a pixel.
+   */
+  private static boolean isThinLine(final Luminance luminance, final int x, final int y) {
+    final int own = luminance.at(x, y);
+    for (int d = 0; d < LINE_DX.length; d++) {
+      int before = -1;
+      int after = -1;
+      for (int k = 1; k <= LINE_REACH; k++) {
+        before = Math.max(before, luminance.at(x - LINE_DX[d] * k, y - LINE_DY[d] * k));
+        after = Math.max(after, luminance.at(x + LINE_DX[d] * k, y + LINE_DY[d] * k));
+      }
+      if (Math.min(before, after) >= own + LINE_CONTRAST) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static int luminance(final int argb) {
+    return (((argb >> 16) & 0xFF) * 299 + ((argb >> 8) & 0xFF) * 587 + (argb & 0xFF) * 114) / 1000;
   }
 
   static DetectedMap detect(final BufferedImage image) {
@@ -255,8 +385,9 @@ final class MapPicture {
 
   /** Labels all areas and keeps those big enough; the others become 0 in the labels. */
   private List<Region> keptRegions() {
+    final boolean[] lines = lines(rgb, width, height);
     for (int i = 0; i < rgb.length; i++) {
-      labels[i] = isBorder(rgb[i]) ? -1 : 0;
+      labels[i] = lines[i] ? -1 : 0;
     }
     final int minArea = Math.max(30, width * height / 20_000);
     final List<Region> kept = new ArrayList<>();
@@ -328,7 +459,8 @@ final class MapPicture {
     final long r = region.sumR() / region.area();
     final long g = region.sumG() / region.area();
     final long b = region.sumB() / region.area();
-    return b > r + 25 && b > g;
+    // pale sea blue too, eg 221 240 246, but not a greenish land
+    return b > r + 15 && b > g;
   }
 
   /**

@@ -7,6 +7,7 @@ import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.Rectangle;
+import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.util.List;
 import java.util.Optional;
@@ -195,6 +196,150 @@ final class MapPictureTest {
     }
     g.dispose();
     return drawn;
+  }
+
+  @DisplayName("A thin grey line between white areas is a border; a pale blue area is sea")
+  @Test
+  void findsGreyLinesAndPaleSea() {
+    // given: two white areas split by a 1 px grey line, a pale blue sea below its dark coast, as
+    // in a printed map
+    final BufferedImage image = new BufferedImage(200, 150, BufferedImage.TYPE_INT_RGB);
+    final Graphics2D g = image.createGraphics();
+    g.setColor(Color.WHITE);
+    g.fillRect(0, 0, 200, 100);
+    g.setColor(new Color(221, 240, 246));
+    g.fillRect(0, 100, 200, 50);
+    g.setColor(new Color(160, 160, 160));
+    g.fillRect(100, 0, 1, 100);
+    g.setColor(new Color(60, 60, 60));
+    g.fillRect(0, 100, 200, 1);
+    g.dispose();
+
+    // when
+    final List<DetectedTerritory> found = MapPicture.detect(image).territories();
+
+    // then
+    assertThat(found).as("two lands and the sea").hasSize(3);
+    assertThat(found).filteredOn(DetectedTerritory::water).as("the pale blue is sea").hasSize(1);
+    assertThat(found)
+        .filteredOn(t -> !t.water())
+        .as("the land reaches the coast line")
+        .allMatch(t -> t.outlines().getFirst().getBounds().getMaxY() >= 99);
+  }
+
+  @DisplayName("Where a grey area meets a white one without a line, no border is found")
+  @Test
+  void edgeOfTwoColorsIsNoBorder() {
+    // given: a grey half and a white half, nothing drawn between them
+    final BufferedImage image = new BufferedImage(200, 100, BufferedImage.TYPE_INT_RGB);
+    final Graphics2D g = image.createGraphics();
+    g.setColor(new Color(150, 150, 150));
+    g.fillRect(0, 0, 100, 100);
+    g.setColor(Color.WHITE);
+    g.fillRect(100, 0, 100, 100);
+    g.dispose();
+
+    // when
+    final List<DetectedTerritory> found = MapPicture.detect(image).territories();
+
+    // then
+    assertThat(found).as("one area: an edge is not a line").hasSize(1);
+  }
+
+  @DisplayName("A blue river across a white area is no border")
+  @Test
+  void riverIsNoBorder() {
+    // given: a white area with a 2 px blue river from edge to edge
+    final BufferedImage image = givenWhite(200, 100);
+    final Graphics2D g = image.createGraphics();
+    g.setColor(new Color(70, 130, 200));
+    g.fillRect(100, 0, 2, 100);
+    g.dispose();
+
+    // when
+    final List<DetectedTerritory> found = MapPicture.detect(image).territories();
+
+    // then
+    assertThat(found).as("one area: a colored line is not a border").hasSize(1);
+  }
+
+  @DisplayName("Grey borders give the line style, and a drawn line's end snaps to them")
+  @Test
+  void greyLinesStyleAndSnap() {
+    // given: two white areas split by a 1 px grey line at x 100
+    final BufferedImage image = givenWhite(200, 100);
+    final Graphics2D g = image.createGraphics();
+    g.setColor(new Color(160, 160, 160));
+    g.fillRect(100, 0, 1, 100);
+    g.dispose();
+
+    // when
+    final MapPicture.LineStyle style = MapPicture.lineStyle(image);
+    final Optional<List<Point>> snapped =
+        MapPicture.snapToBorders(image, List.of(new Point(106, 50), new Point(190, 50)), 12);
+
+    // then
+    assertThat(style)
+        .as("1 px, grey")
+        .isEqualTo(new MapPicture.LineStyle(1, new Color(160, 160, 160)));
+    assertThat(snapped.orElseThrow().getFirst())
+        .as("on to the grey line")
+        .isEqualTo(new Point(100, 50));
+  }
+
+  @DisplayName("The style is the lines most of the picture has: grey borders over a dark coast")
+  @Test
+  void styleOfTheMostLines() {
+    // given: one dark coast line and four longer grey borders
+    final BufferedImage image = givenWhite(400, 200);
+    final Graphics2D g = image.createGraphics();
+    g.setColor(new Color(160, 160, 160));
+    for (int x = 80; x <= 320; x += 80) {
+      g.fillRect(x, 0, 1, 200);
+    }
+    g.setColor(new Color(60, 60, 60));
+    g.fillRect(0, 100, 40, 1);
+    g.dispose();
+
+    // when
+    final MapPicture.LineStyle style = MapPicture.lineStyle(image);
+
+    // then
+    assertThat(style.color()).as("the grey of the borders").isEqualTo(new Color(160, 160, 160));
+  }
+
+  @DisplayName("A smoothed black line measures as wide as it is drawn, not with its fringe")
+  @Test
+  void smoothedLineKeepsItsWidth() {
+    // given: a 1 px black line drawn smoothed across white, slanted so its edges blend
+    final BufferedImage image = givenWhite(200, 200);
+    final Graphics2D g = image.createGraphics();
+    g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+    g.setColor(Color.BLACK);
+    for (int x = 20; x < 200; x += 40) {
+      g.drawLine(x, 0, x + 30, 199);
+    }
+    g.dispose();
+
+    // when
+    final MapPicture.LineStyle style = MapPicture.lineStyle(image);
+
+    // then
+    assertThat(style.width())
+        .as("the dark core, 1 or 2 px of a slanted line")
+        .isLessThanOrEqualTo(2);
+    assertThat(style.color())
+        .as("dark as its core, not the grey of its smoothed edge")
+        .matches(c -> c.getRed() + c.getGreen() + c.getBlue() < 3 * 64);
+  }
+
+  private static BufferedImage givenWhite(final int width, final int height) {
+    final BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+    final Graphics2D g = image.createGraphics();
+    g.setColor(Color.WHITE);
+    g.fillRect(0, 0, width, height);
+    g.dispose();
+    return image;
   }
 
   @DisplayName("Areas across a line are neighbours, diagonal ones are not")
