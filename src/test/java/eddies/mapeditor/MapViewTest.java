@@ -2,9 +2,11 @@ package eddies.mapeditor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
 import java.awt.Insets;
+import java.awt.Point;
 import java.awt.event.KeyEvent;
 import java.awt.image.BufferedImage;
 import java.nio.file.Path;
@@ -38,6 +40,54 @@ final class MapViewTest {
     assertThat(zoom.getPreferredSize().width)
         .as("wide enough for the most it zooms in, not \"50...\"")
         .isGreaterThanOrEqualTo(needed);
+  }
+
+  @DisplayName("A line drawn into the picture keeps the view where it is, no fit")
+  @Test
+  void drawnLineKeepsTheView() throws Exception {
+    // given: the map at 100 %, more than fits its small view
+    final MapProject project = MapProject.newEmpty();
+    final BufferedImage picture = MapPictureTest.givenPicture();
+    project.loadPicture(picture, MapPicture.detect(picture));
+    final MapView[] map = new MapView[1];
+    final List<String> zoom = new ArrayList<>();
+    SwingUtilities.invokeAndWait(
+        () -> {
+          map[0] = new MapView(project, () -> {}, () -> {}, () -> {});
+          map[0].setSize(300, 200);
+          layOut(map[0]);
+        });
+    // the first fit, queued when the map showed, has run
+    SwingUtilities.invokeAndWait(
+        () -> {
+          layOut(map[0]);
+          givenZoomButton(map[0]).doClick();
+          zoom.add(givenZoomButton(map[0]).getText());
+        });
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () ->
+            project.drawBorder(
+                new MapProject.BorderLine(
+                    List.of(new Point(10, 10), new Point(90, 90)), 2, Color.BLACK)));
+    // a fit the line queued would run here
+    SwingUtilities.invokeAndWait(() -> layOut(map[0]));
+    SwingUtilities.invokeAndWait(() -> zoom.add(givenZoomButton(map[0]).getText()));
+
+    // then
+    assertThat(zoom.get(0)).as("zoomed to 100 %").isEqualTo("100 %");
+    assertThat(zoom.get(1)).as("still 100 % after the line").isEqualTo("100 %");
+  }
+
+  /** Lays out every container down from the component, as a window on screen would. */
+  private static void layOut(final Component component) {
+    if (component instanceof Container container) {
+      container.doLayout();
+      for (final Component child : container.getComponents()) {
+        layOut(child);
+      }
+    }
   }
 
   private static JButton givenZoomButton(final MapView map) {

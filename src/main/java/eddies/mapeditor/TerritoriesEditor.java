@@ -81,6 +81,8 @@ final class TerritoriesEditor implements Editor {
   private static final String SPLIT = "split";
   private static final String NAME_REFUSED = "Already used, empty, or holds : < (.";
   private static final int MAX_NAMED = 6;
+  // how near a border, in pixels of the screen, a drawn line's end is brought to it
+  private static final int SNAP_PIXELS = 12;
 
   // the colors a line drawn into the picture may have; the first stands for the picture's own
   private static final List<String> LINE_COLOR_NAMES = List.of("Like its lines", "Black", "Grey");
@@ -729,14 +731,30 @@ final class TerritoriesEditor implements Editor {
 
   // ---- draw borders
 
-  /** A line released on the map, drawn into the picture as chosen; none for width 0. */
+  /**
+   * A line released on the map, drawn into the picture as chosen, its ends brought to the border
+   * lines near them so the areas close; none for width 0, nor one ending far from any border.
+   */
   void borderDrawn(final List<Point> line) {
-    borderStyle()
-        .filter(style -> style.width() > 0)
-        .ifPresent(
-            style ->
+    final Optional<BufferedImage> picture = project.getFiles().picture();
+    final Optional<MapPicture.LineStyle> chosen =
+        borderStyle().filter(style -> style.width() > 0);
+    if (picture.isEmpty() || chosen.isEmpty()) {
+      return;
+    }
+    // about as near as a hand misses a line, on the screen at any zoom
+    final int reach = (int) Math.ceil(SNAP_PIXELS / map.zoom());
+    MapPicture.snapToBorders(picture.get(), line, reach)
+        .ifPresentOrElse(
+            snapped ->
                 project.drawBorder(
-                    new MapProject.BorderLine(line, style.width(), style.color())));
+                    new MapProject.BorderLine(
+                        snapped, chosen.get().width(), chosen.get().color())),
+            () ->
+                Dialogs.toast(
+                    page,
+                    "! Not drawn: start and end a border line near another border"
+                        + " or the map's edge."));
   }
 
   /** Ends drawing and finds the territories in the picture with the lines drawn into it. */

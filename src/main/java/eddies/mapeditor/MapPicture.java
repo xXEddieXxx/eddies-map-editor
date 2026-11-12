@@ -13,6 +13,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import javax.imageio.ImageIO;
 
 /**
@@ -25,6 +26,10 @@ final class MapPicture {
   private static final int REACH = 4;
   private static final int MIN_SUPPORT = 3;
   private static final double EPSILON = 1.0;
+  // a drawn line's end is cut back to a border it crosses this much farther than the nearest
+  private static final double OVERSHOOT_SLACK = 3;
+  // every 4th pixel of a drawn line keeps its shape and hides the stairs of rounding
+  private static final int SMOOTH_STEP = 4;
   // how far, in pixels, areas grow into the dark line around them, so outlines lie on the line
   private static final int GROW = 2;
   // the 8 neighbours of a pixel, clockwise on the screen, starting west
@@ -108,6 +113,102 @@ final class MapPicture {
             .map(e -> new Color(e.getKey()))
             .orElse(Color.BLACK);
     return new LineStyle(width, color);
+  }
+
+  /**
+   * The line with each end brought to the border line nearest it, so the areas it cuts close: an
+   * end short of a border line is drawn on to it, one just past it is cut back to it, each within
+   * reach pixels; the picture's edge counts as a border. Empty when an end is farther from any, or
+   * when nothing is left off the border lines.
+   */
+  static Optional<List<Point>> snapToBorders(
+      final BufferedImage image, final List<Point> line, final int reach) {
+    return snapStart(image, everyPixel(line), reach)
+        .flatMap(snapped -> snapStart(image, snapped.reversed(), reach))
+        .map(List::reversed)
+        .filter(snapped -> snapped.stream().anyMatch(p -> !isBorderAt(image, p)))
+        .map(MapPicture::smoothed);
+  }
+
+  /** The line's points one pixel apart, so a step cannot jump over a thin line. */
+  private static List<Point> everyPixel(final List<Point> line) {
+    final List<Point> path = new ArrayList<>(List.of(line.getFirst()));
+    for (int i = 1; i < line.size(); i++) {
+      final Point from = line.get(i - 1);
+      final Point to = line.get(i);
+      final int steps = Math.max(Math.abs(to.x - from.x), Math.abs(to.y - from.y));
+      for (int step = 1; step <= steps; step++) {
+        path.add(
+            new Point(
+                from.x + Math.round((to.x - from.x) * (float) step / steps),
+                from.y + Math.round((to.y - from.y) * (float) step / steps)));
+      }
+    }
+    return path;
+  }
+
+  /** Every few of the pixel steps and both ends, so a wide line is not drawn in stairs. */
+  private static List<Point> smoothed(final List<Point> path) {
+    final List<Point> kept = new ArrayList<>();
+    for (int i = 0; i < path.size(); i += SMOOTH_STEP) {
+      kept.add(path.get(i));
+    }
+    if (!kept.getLast().equals(path.getLast())) {
+      kept.add(path.getLast());
+    }
+    return kept;
+  }
+
+  /**
+   * The path from its start's border line: cut back to a border it crosses about as near as the
+   * nearest one, so only an end drawn past a line is cut; else on from the nearest border.
+   */
+  private static Optional<List<Point>> snapStart(
+      final BufferedImage image, final List<Point> path, final int reach) {
+    final Optional<Point> nearest = nearestBorder(image, path.getFirst(), reach);
+    if (nearest.isEmpty()) {
+      return Optional.empty();
+    }
+    final double cutWithin = path.getFirst().distance(nearest.get()) + OVERSHOOT_SLACK;
+    double walked = 0;
+    for (int i = 0; i < path.size() && walked <= cutWithin; i++) {
+      if (i > 0) {
+        walked += path.get(i - 1).distance(path.get(i));
+      }
+      if (walked <= cutWithin && isBorderAt(image, path.get(i))) {
+        return Optional.of(path.subList(i, path.size()));
+      }
+    }
+    final List<Point> extended = new ArrayList<>(List.of(nearest.get()));
+    extended.addAll(path);
+    return Optional.of(extended);
+  }
+
+  /** The border pixel nearest the point within reach, the picture's edge counting as one. */
+  private static Optional<Point> nearestBorder(
+      final BufferedImage image, final Point at, final int reach) {
+    Optional<Point> nearest = Optional.empty();
+    double best = reach + 0.5;
+    for (int y = at.y - reach; y <= at.y + reach; y++) {
+      for (int x = at.x - reach; x <= at.x + reach; x++) {
+        final Point candidate = new Point(x, y);
+        final double distance = at.distance(candidate);
+        if (distance < best && isBorderAt(image, candidate)) {
+          best = distance;
+          nearest = Optional.of(candidate);
+        }
+      }
+    }
+    return nearest;
+  }
+
+  /** A dark pixel of the picture's lines, or one outside it: the edge stops areas too. */
+  private static boolean isBorderAt(final BufferedImage image, final Point at) {
+    return at.x < 0
+        || at.y < 0
+        || at.x >= image.getWidth()
+        || at.y >= image.getHeight()
+        || isBorder(image.getRGB(at.x, at.y));
   }
 
   static DetectedMap detect(final BufferedImage image) {

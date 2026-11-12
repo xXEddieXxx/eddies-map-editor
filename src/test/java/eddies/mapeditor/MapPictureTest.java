@@ -2,11 +2,14 @@ package eddies.mapeditor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Graphics2D;
+import java.awt.Point;
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -124,6 +127,74 @@ final class MapPictureTest {
 
     assertThat(thick).as("3 px black lines").isEqualTo(new MapPicture.LineStyle(3, Color.BLACK));
     assertThat(thin.width()).as("a 1 px line").isEqualTo(1);
+  }
+
+  @DisplayName("A drawn line's ends go to the borders near them; one far from any is refused")
+  @Test
+  void snapsLineToBorders() {
+    // given: the top right area is x 202-399, y 0-108, the line left of it at x 199-201
+    final BufferedImage picture = givenPicture();
+
+    // when
+    final Optional<List<Point>> shortOfLine =
+        MapPicture.snapToBorders(picture, List.of(new Point(210, 50), new Point(390, 50)), 12);
+    final Optional<List<Point>> past =
+        MapPicture.snapToBorders(picture, List.of(new Point(190, 50), new Point(390, 50)), 12);
+    final Optional<List<Point>> far =
+        MapPicture.snapToBorders(picture, List.of(new Point(300, 50), new Point(390, 50)), 12);
+
+    // then
+    assertThat(shortOfLine.orElseThrow().getFirst())
+        .as("a start short of the line goes on to it")
+        .isEqualTo(new Point(201, 50));
+    assertThat(shortOfLine.orElseThrow().getLast())
+        .as("an end near the picture's edge goes to it")
+        .matches(end -> end.x >= 399);
+    assertThat(past.orElseThrow().getFirst())
+        .as("a start past the line is cut back to it")
+        .isEqualTo(new Point(199, 50));
+    assertThat(far).as("a start far from any border: nothing").isEmpty();
+  }
+
+  @DisplayName("A line short of a near border keeps it across a narrow area; the areas split")
+  @Test
+  void snapKeepsTheNearBorder() {
+    // given: the yellow area is x 0-198, y 112-218, between lines at y 109-111 and y 219-221
+    final BufferedImage picture = givenPicture();
+    final int areasBefore = MapPicture.detect(picture).territories().size();
+
+    // when: from 3 px below the upper line down past the lower one, as at zoom 0.1
+    final List<Point> snapped =
+        MapPicture.snapToBorders(
+                picture, List.of(new Point(100, 115), new Point(100, 290)), 120)
+            .orElseThrow();
+    final Optional<List<Point>> collapsed =
+        MapPicture.snapToBorders(picture, List.of(new Point(150, 111), new Point(150, 101)), 12);
+    final BufferedImage drawn = givenDrawn(picture, snapped);
+
+    // then
+    assertThat(snapped.getFirst())
+        .as("on to the near line, not cut to the far one")
+        .isEqualTo(new Point(100, 111));
+    assertThat(MapPicture.detect(drawn).territories())
+        .as("the yellow area and the sea it goes on through each split in two")
+        .hasSize(areasBefore + 2);
+    assertThat(collapsed).as("a line left only on the border: nothing").isEmpty();
+  }
+
+  /** The picture with the line drawn into it, 3 px black, as Draw borders does. */
+  private static BufferedImage givenDrawn(final BufferedImage picture, final List<Point> line) {
+    final BufferedImage drawn =
+        new BufferedImage(picture.getWidth(), picture.getHeight(), BufferedImage.TYPE_INT_RGB);
+    final Graphics2D g = drawn.createGraphics();
+    g.drawImage(picture, 0, 0, null);
+    g.setColor(Color.BLACK);
+    g.setStroke(new BasicStroke(3, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+    for (int i = 1; i < line.size(); i++) {
+      g.drawLine(line.get(i - 1).x, line.get(i - 1).y, line.get(i).x, line.get(i).y);
+    }
+    g.dispose();
+    return drawn;
   }
 
   @DisplayName("Areas across a line are neighbours, diagonal ones are not")

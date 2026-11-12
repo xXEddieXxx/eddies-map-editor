@@ -80,8 +80,8 @@ final class MapView extends JPanel {
   // what the middle shows: "" the map, PICTURE_ONLY, else the number of territories without map;
   // built anew only when it changes
   private Optional<String> shownState = Optional.empty();
-  // the picture the map was last fitted to, so a new one is fitted again
-  private transient Optional<BufferedImage> fittedTo = Optional.empty();
+  // the map's size when fitted last: lines drawn into the picture keep the view where it is
+  private transient Optional<Dimension> fittedTo = Optional.empty();
 
   /**
    * @param choosePicture asks for a picture of the map and loads it
@@ -209,7 +209,8 @@ final class MapView extends JPanel {
 
   /**
    * The map once it has outlines, else what to do next: load a picture, or find the territories in
-   * the one loaded, over the picture veiled; fitted to the view when it is new.
+   * the one loaded, over the picture veiled; fitted to the view when it is new and of another
+   * size, eg not after a line drawn into it.
    */
   private void showMapOrEmptyState() {
     final Optional<BufferedImage> picture = project.getFiles().picture();
@@ -239,9 +240,12 @@ final class MapView extends JPanel {
       revalidate();
       repaint();
     }
-    final boolean newPicture = !picture.equals(fittedTo);
-    fittedTo = picture;
-    if (SwingUtilities.isDescendingFrom(scroll, this) && (!hadMap || newPicture)) {
+    // fitted again only for a picture of another size than the one before, not after a line drawn
+    // into it, nor once a picture in tiles is held to draw into
+    final Optional<Dimension> size = picture.map(p -> new Dimension(p.getWidth(), p.getHeight()));
+    final boolean newSize = fittedTo.isPresent() && size.isPresent() && !size.equals(fittedTo);
+    size.ifPresent(s -> fittedTo = Optional.of(s));
+    if (SwingUtilities.isDescendingFrom(scroll, this) && (!hadMap || newSize)) {
       // fit once the view has its size
       SwingUtilities.invokeLater(canvas::zoomToFit);
     }
@@ -418,6 +422,11 @@ final class MapView extends JPanel {
   /** Shows the decorations to move and remove; a click places the misc picture given. */
   void editDecorations(final String picture) {
     canvas.editDecorations(picture);
+  }
+
+  /** How much bigger than the map's own pixels it shows on the screen. */
+  double zoom() {
+    return canvas.getZoom();
   }
 
   /** A line dragged on the map goes to onLine, eg to draw it into the picture. */
