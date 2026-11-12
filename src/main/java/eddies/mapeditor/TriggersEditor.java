@@ -69,6 +69,8 @@ final class TriggersEditor implements Editor {
   private final JPanel emptyCard = new JPanel(new BorderLayout());
   private final JLabel reading = new JLabel();
   private final JComboBox<String> nationFilter = new JComboBox<>();
+  private final JComponent triggersOff =
+      Help.link("Use Triggers is off: no trigger fires. Set in", "Game options");
   private final SearchList list;
   private final JPanel details = new JPanel(new CardLayout());
   private final Form inspector = new Form(560);
@@ -108,7 +110,11 @@ final class TriggersEditor implements Editor {
       }
     });
     final JPanel listColumn = new JPanel(new BorderLayout(0, Theme.GAP_S));
-    listColumn.add(nationFilter, BorderLayout.NORTH);
+    // that no trigger fires goes first, where it is seen, not below a long list
+    final JPanel top = new JPanel(new BorderLayout(0, Theme.GAP_S));
+    top.add(triggersOff, BorderLayout.NORTH);
+    top.add(nationFilter, BorderLayout.SOUTH);
+    listColumn.add(top, BorderLayout.NORTH);
     listColumn.add(list, BorderLayout.CENTER);
     page.add(emptyCard, EMPTY);
     page.add(newReadingCard(), READING);
@@ -303,6 +309,7 @@ final class TriggersEditor implements Editor {
   }
 
   private void showCard() {
+    triggersOff.setVisible(!TriggerXml.usesTriggers(project.game()));
     final String card;
     final long count = listed == null ? triggerCount(project.game()) : 0;
     // a game without triggers needs no reading screen
@@ -500,9 +507,9 @@ final class TriggersEditor implements Editor {
     final String title = title(trigger.name());
     final Optional<Game> without = withoutTrigger(project.game(), trigger);
     if (without.isEmpty()) {
-      Dialogs.warn(page, "Remove trigger", title + " stays.\nThese still name it, so the game"
-          + " would not load without it: "
-          + String.join(", ", RulesXml.whereNamed(project.game(), trigger.name())));
+      final List<String> named = RulesXml.whereNamed(project.game(), trigger.name());
+      Dialogs.refuseNamed(page, "Remove trigger", title + " stays.\nThese still name it, so the game"
+          + " would not load without it: " + String.join(", ", named), named);
       return;
     }
     if (Dialogs.confirmRemove(page, "Remove trigger", "Remove trigger “" + title

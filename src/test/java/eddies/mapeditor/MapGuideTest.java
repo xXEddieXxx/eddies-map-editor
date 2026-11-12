@@ -6,10 +6,12 @@ import static org.assertj.core.api.Assertions.tuple;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.triplea.map.data.elements.Game;
 import eddies.mapeditor.MapChecks.Problem;
 import eddies.mapeditor.MapGuide.Next;
 import eddies.mapeditor.MapGuide.Next.Kind;
@@ -167,5 +169,67 @@ final class MapGuideTest {
         .filter(t -> !MapXml.isWater(project.game(), t))
         .findFirst()
         .orElseThrow();
+  }
+
+  @DisplayName("Each step says how far it is in numbers and has an id of its own")
+  @Test
+  void stepsSayHowFarTheyAre() throws Exception {
+    // given
+    final MapProject project = givenSavedMapWithPicture();
+    project.edit(g -> MapXml.withOwner(g, givenLand(project), "Red"));
+
+    // when
+    final List<Step> steps = MapGuide.steps(project);
+
+    // then
+    assertThat(steps)
+        .as("one step per id, in the order of the ids")
+        .extracting(Step::id)
+        .containsExactly(Step.Id.values());
+    assertThat(steps)
+        .extracting(Step::progress)
+        .as("Red owns land without a capital; no units; Check has no numbers")
+        .containsExactly(
+            MapXml.territories(project.game()).size() + " territories",
+            "1 nation",
+            "1 of 1 nation has land",
+            "0 of 1 nation with land has a capital",
+            "0 territories have units",
+            MapXml.connections(project.game()).size() + " connections",
+            "");
+  }
+
+  @DisplayName("The nations without land are those taking turns that own none, in their order")
+  @Test
+  void findsNationsWithoutLand() {
+    // given
+    final Game minimap = MapXmlTest.givenMinimap();
+    final Game russiansWithout =
+        MapXml.territories(minimap).stream()
+            .filter(t -> MapXml.owner(minimap, t).equals(Optional.of("Russians")))
+            .reduce(minimap, (g, t) -> MapXml.withOwner(g, t, null), (a, b) -> b);
+
+    // when
+    final List<String> without = MapGuide.withoutLand(russiansWithout);
+
+    // then
+    assertThat(MapGuide.withoutLand(minimap)).as("every playing nation owns land").isEmpty();
+    assertThat(without).as("Russians gave all their land away").containsExactly("Russians");
+  }
+
+  @DisplayName("Go to carries the step, so the tool can show it as the goal")
+  @Test
+  void nextCarriesTheStep() throws Exception {
+    // given
+    final MapProject project = givenSavedMapWithPicture();
+
+    // when
+    final Next next = MapGuide.nextStep(project, List.of());
+
+    // then
+    assertThat(next.step()).as("Red has no land yet").contains(Step.Id.LAND);
+    assertThat(MapGuide.nextStep(project, List.of(Problem.of("Something is wrong"))).step())
+        .as("land comes before the problems")
+        .contains(Step.Id.LAND);
   }
 }

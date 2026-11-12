@@ -680,12 +680,13 @@ final class TerritoryEffectsEditor implements Editor {
     if (key.isEmpty() || !key.equals(refusedRename)) {
       refusedRename = key;
       final int shown = Math.min(6, named.size());
-      Dialogs.warn(
+      Dialogs.refuseNamed(
           page,
           effect + " can't be " + done + " yet",
           "The game would not load without it.\nThese still name it:\n• "
               + String.join("\n• ", named.subList(0, shown))
-              + (named.size() > shown ? "\n… and " + (named.size() - shown) + " more" : ""));
+              + (named.size() > shown ? "\n… and " + (named.size() - shown) + " more" : ""),
+          named);
     }
     return true;
   }

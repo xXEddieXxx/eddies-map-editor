@@ -305,14 +305,15 @@ final class UnitsEditor implements Editor {
     if (named.isEmpty()) {
       return false;
     }
-    Dialogs.warn(
+    Dialogs.refuseNamed(
         page,
         title,
         name
             + " is still named in:\n"
             + String.join("\n", named.subList(0, Math.min(named.size(), 12)))
             + (named.size() > 12 ? "\n..." : "")
-            + "\nChange those first.");
+            + "\nChange those first.",
+        named);
     return true;
   }
 
@@ -399,6 +400,7 @@ final class UnitsEditor implements Editor {
           }
         });
     inspector.row(leftAligned(tinted));
+    inspector.row(Help.link("The color is set per nation in", "Nations"));
   }
 
   /** At most 48 px, never blown up, so a small picture stays sharp. */

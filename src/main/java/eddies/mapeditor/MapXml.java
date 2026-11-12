@@ -195,6 +195,21 @@ class MapXml {
         .findFirst();
   }
 
+  /**
+   * The nations owning some of these territories at the start, as {@link #owner} finds them; the
+   * owners read once, as a big map has hundreds of territories.
+   */
+  static Set<String> nationsWithLand(final Game game, final Set<String> territories) {
+    final Set<String> seen = new LinkedHashSet<>();
+    final Set<String> nations = new LinkedHashSet<>();
+    for (final TerritoryOwner owner : owners(game)) {
+      if (territories.contains(owner.getTerritory()) && seen.add(owner.getTerritory())) {
+        Optional.ofNullable(owner.getOwner()).ifPresent(nations::add);
+      }
+    }
+    return nations;
+  }
+
   private static List<TerritoryOwner> owners(final Game game) {
     return Optional.ofNullable(game.getInitialize())
         .map(Initialize::getOwnerInitialize)
@@ -268,6 +283,29 @@ class MapXml {
   /** The nation the territory is the capital of, if it is one. */
   static Optional<String> capitalOf(final Game game, final String territory) {
     return option(game, TERRITORY, territory, "capital");
+  }
+
+  /**
+   * The nations that have a capital among these territories, as {@link #capitalOf} finds them; the
+   * attachments read once, as a big map has thousands.
+   */
+  static Set<String> nationsWithCapital(final Game game, final Set<String> territories) {
+    final Set<String> seen = new LinkedHashSet<>();
+    final Set<String> nations = new LinkedHashSet<>();
+    for (final Attachment attachment : attachments(game)) {
+      if (TERRITORY.equals(attachment.getName())
+          && territories.contains(attachment.getAttachTo())) {
+        for (final Option option :
+            Optional.ofNullable(attachment.getOptions()).orElse(List.of())) {
+          if ("capital".equals(option.getName())
+              && option.getValue() != null
+              && seen.add(attachment.getAttachTo())) {
+            nations.add(option.getValue());
+          }
+        }
+      }
+    }
+    return nations;
   }
 
   /** Whether no unit may enter the territory, eg marshes. */
@@ -523,7 +561,8 @@ class MapXml {
     return placements(game).stream().filter(p -> territory.equals(p.getTerritory())).toList();
   }
 
-  private static List<UnitPlacement> placements(final Game game) {
+  /** Every territory's units at the start, in the XML's order. */
+  static List<UnitPlacement> placements(final Game game) {
     return Optional.ofNullable(game.getInitialize())
         .map(Initialize::getUnitInitialize)
         .map(UnitInitialize::getUnitPlacements)

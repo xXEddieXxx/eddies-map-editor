@@ -151,6 +151,56 @@ final class DialogsTest {
     assertThat(clicked).as("Esc never drops the changes").containsExactly("Cancel");
   }
 
+  @DisplayName("A refusal for what attachments name offers Show in Attachments; Esc closes it")
+  @Test
+  void refuseNamedShowsAttachments() {
+    final Dialogs.Pane pane =
+        Dialogs.newRefusePane(
+            "Germany stays.", List.of("variable Axis", "triggerAttachment1 of Germans: players"));
+    final List<String> clicked = givenClicksRecorded(pane);
+
+    press(pane, KeyEvent.VK_ESCAPE);
+
+    assertThat(pane.buttons().stream().map(JButton::getText))
+        .as("Close, then the way to change what names it")
+        .containsExactly("Close", "Show in Attachments");
+    assertThat(pane.verb().getText())
+        .as("Enter opens Attachments")
+        .isEqualTo("Show in Attachments");
+    assertThat(clicked).as("Esc only closes").containsExactly("Close");
+  }
+
+  @DisplayName("A long verb in its semibold font fits its button, not cut to \"Show in Attachme...\"")
+  @Test
+  void longVerbFits() throws UnsupportedLookAndFeelException {
+    // given
+    Theme.install();
+    UIManager.setLookAndFeel(new FlatDarkLaf());
+
+    // when
+    final JButton verb =
+        Dialogs.newRefusePane("Germany stays.", List.of("triggerAttachment1 of Germans: players"))
+            .verb();
+
+    // then
+    assertThat(verb.getPreferredSize().width)
+        .as("wide enough for the text in the font it is drawn in")
+        .isGreaterThanOrEqualTo(
+            verb.getFontMetrics(verb.getFont()).stringWidth(verb.getText())
+                + verb.getInsets().left
+                + verb.getInsets().right);
+  }
+
+  @DisplayName("A refusal named only by variables has no verb, as Attachments does not show them")
+  @Test
+  void refuseNamedOnlyVariables() {
+    final Dialogs.Pane pane = Dialogs.newRefusePane("Germany stays.", List.of("variable Axis"));
+
+    assertThat(pane.buttons().stream().map(JButton::getText))
+        .as("a plain warn")
+        .containsExactly("Close");
+  }
+
   @DisplayName("Enter in an editable combo box, which keeps Enter for itself, chooses the verb")
   @Test
   void enterInEditableComboChoosesVerb() {

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.awt.Component;
 import java.awt.Container;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
@@ -11,9 +12,11 @@ import java.util.function.Predicate;
 import java.util.stream.Stream;
 import javax.swing.AbstractButton;
 import javax.swing.JSplitPane;
+import javax.swing.JRootPane;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /** Game notes: the insert bar, the template for blank notes, the views and the line numbers. */
 final class NotesEditorTest {
@@ -139,6 +142,51 @@ final class NotesEditorTest {
         .isGreaterThan(lineHeight);
   }
 
+  @DisplayName("The preview finds a picture as the game does, in doc/images; the notes keep it")
+  @Test
+  void previewFindsPicturesInDocImages(@TempDir final Path folder) throws Exception {
+    // given: a map folder with its outlines file, so it is the map's content folder
+    Files.writeString(folder.resolve("polygons.txt"), "");
+    final MapProject project =
+        new MapProject(
+            folder.resolve("games/minimap.xml"),
+            MapXml.withNotes(MapXmlTest.givenMinimap(), "<img src=\"preview.png\"/>"),
+            MapFiles.of(folder.resolve("games/minimap.xml")));
+
+    // when
+    final String shown = new NotesEditor(project).asShown(MapXml.notes(project.game()));
+
+    // then
+    assertThat(shown)
+        .as("the link the game opens")
+        .contains(folder.resolve("doc/images/preview.png").toUri().toURL().toString());
+    assertThat(MapXml.notes(project.game()))
+        .as("saved as typed")
+        .isEqualTo("<img src=\"preview.png\"/>");
+  }
+
+  @DisplayName("A picture from elsewhere is copied into doc/images, a taken name not overwritten")
+  @Test
+  void pictureCopiedUnderFreeName(@TempDir final Path folder) throws Exception {
+    // given: doc/images with another preview.png, and a preview.png elsewhere
+    final Path images = Files.createDirectories(folder.resolve("doc/images"));
+    Files.writeString(images.resolve("preview.png"), "the map's own");
+    final Path chosen = Files.writeString(folder.resolve("preview.png"), "a new one");
+
+    // when
+    final String first = NotesEditor.pictureIn(images, chosen);
+    final String again = NotesEditor.pictureIn(images, chosen);
+    final String own = NotesEditor.pictureIn(images, images.resolve("preview.png"));
+
+    // then
+    assertThat(first).as("a free name").isEqualTo("preview-2.png");
+    assertThat(Files.readString(images.resolve("preview.png")))
+        .as("the map's own kept")
+        .isEqualTo("the map's own");
+    assertThat(again).as("the same picture once").isEqualTo("preview-2.png");
+    assertThat(own).as("one there already, as it is").isEqualTo("preview.png");
+  }
+
   private static MapProject givenMinimap(final String notes) {
     return new MapProject(
         Path.of("minimap.xml"),
@@ -178,5 +226,28 @@ final class NotesEditorTest {
                     ? Stream.of(type.cast(c))
                     : c instanceof Container inner ? find(inner, type).stream() : Stream.empty())
         .findFirst();
+  }
+
+  @DisplayName("A picture in a map not saved yet asks to save first and opens no chooser")
+  @Test
+  void pictureNeedsASavedMap() throws Exception {
+    // given: notes of a map without a folder, in a window
+    final NotesEditor notes = new NotesEditor(givenMinimap("<p>Our story</p>"));
+    final JRootPane window = new JRootPane();
+    window.setSize(1100, 700);
+    window.getContentPane().add(notes.page());
+    window.doLayout();
+
+    // when: it returns, as no chooser waits for a choice
+    button(
+            notes,
+            b -> b.getToolTipText() != null && b.getToolTipText().startsWith("Picture…"))
+        .doClick();
+
+    // then
+    assertThat(Toast.shown(window.getLayeredPane()))
+        .as("the toast says why")
+        .map(toast -> toast.getAccessibleContext().getAccessibleDescription())
+        .contains("! Save the map first: its pictures go into its folder");
   }
 }

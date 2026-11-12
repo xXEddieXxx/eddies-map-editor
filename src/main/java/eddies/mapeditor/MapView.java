@@ -6,7 +6,9 @@ import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.Font;
 import java.awt.Graphics;
+import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.awt.Point;
@@ -42,16 +44,18 @@ import org.triplea.swing.SwingComponents;
 
 /**
  * The map that Territories and Connections share: one row above it, an editor's own tools left, eg
- * its brush, the map's controls right: the views (the game view first, the others in a grid, {@link
- * MapViewsButton}), zoom, Fit and the picture menu (picture on or off, load another, redraw
- * borders, find the territories again); below the row the banner of a mode a tool has on, {@link
- * #showBanner}; below the map the legend, {@link MapLegend}. Without outlines the map shows what to
- * do next instead, without row and legend.
+ * its brush, the map's controls right: zoom, Fit and the picture menu (picture on or off, load
+ * another, redraw borders, make the territories again); below the row the banner of a mode a tool
+ * has on, {@link #showBanner}, the goal it works towards above it, {@link #showStep}; below the map
+ * the legend, {@link MapLegend}, which starts with the views, {@link MapViewsBar}. Without outlines
+ * the map shows what to do next instead, without row and legend.
  */
 final class MapView extends JPanel {
   @Serial private static final long serialVersionUID = 1L;
   private static final double ZOOM_STEP = 1.25;
   private static final int BANNER_HEIGHT = 32;
+  // taller in an edit mode, so the map maker notices each click changes the map
+  private static final int EDIT_BANNER_HEIGHT = 40;
   // the veil over a picture without territories yet: the map's background at 70 %
   private static final Color VEIL =
       new Color(
@@ -67,16 +71,20 @@ final class MapView extends JPanel {
   private final transient Runnable findTerritories;
   private final MapCanvas canvas;
 
-  private final MapViewsButton views;
+  private final MapViewsBar views;
   private final MapLegend legend;
   private final JPanel top = new JPanel(new BorderLayout(0, Theme.GAP_S));
   private final JPanel editorTools = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
   private final JPanel banner = new JPanel(new BorderLayout(Theme.GAP_M, 0));
   private final JPanel bannerLine = new JPanel();
   private final JLabel bannerText = new JLabel();
+  private final JLabel editBadge = newEditBadge();
+  private boolean editing;
   private final JButton bannerDone = new JButton("Done");
   private final JScrollPane scroll;
-  private final JMenuItem findAgain = new JMenuItem("Find territories again…");
+  private final GoalStrip goal;
+  private transient Consumer<MapGuide.Step.Id> followStep = step -> {};
+  private final JMenuItem findAgain = new JMenuItem("Make territories again…");
   // what the middle shows: "" the map, PICTURE_ONLY, else the number of territories without map;
   // built anew only when it changes
   private Optional<String> shownState = Optional.empty();
@@ -102,8 +110,9 @@ final class MapView extends JPanel {
     scroll = SwingComponents.newJScrollPane(canvas);
     scroll.getVerticalScrollBar().setUnitIncrement(24);
     scroll.getHorizontalScrollBar().setUnitIncrement(24);
-    legend = new MapLegend(project);
-    views = new MapViewsButton(MapMode.GAME, this::showMode);
+    views = new MapViewsBar(MapMode.GAME, this::showMode);
+    legend = new MapLegend(project, views);
+    goal = new GoalStrip(project);
     final JButton zoomShown = new JButton();
     Theme.setBorderlessButtonStyle(zoomShown);
     zoomShown.setMargin(new Insets(0, 0, 0, 0));
@@ -114,7 +123,6 @@ final class MapView extends JPanel {
     showZoom(zoomShown, canvas.getZoom());
     canvas.addPropertyChangeListener("zoom", e -> showZoom(zoomShown, (Double) e.getNewValue()));
     final JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, Theme.GAP_XS, 0));
-    tools.add(views);
     tools.add(
         Theme.newIconButton("−", "Zoom out (Ctrl+wheel)", () -> canvas.zoomBy(1 / ZOOM_STEP)));
     tools.add(zoomShown);
@@ -184,6 +192,17 @@ final class MapView extends JPanel {
     return picture;
   }
 
+  /** "Edit mode" in white on red, the danger color, as the lines being edited are. */
+  private static JLabel newEditBadge() {
+    final JLabel badge = new JLabel("Edit mode");
+    badge.setOpaque(true);
+    badge.setBackground(Theme.getDangerColor());
+    badge.setForeground(Color.WHITE);
+    badge.setFont(badge.getFont().deriveFont(Font.BOLD));
+    badge.setBorder(BorderFactory.createEmptyBorder(2, Theme.GAP_S, 2, Theme.GAP_S));
+    return badge;
+  }
+
   /** The strip that says what a click does in a tool's mode, with Done to end it; hidden. */
   private JPanel newBanner() {
     banner.setBackground(Theme.getSelectionColor());
@@ -191,10 +210,14 @@ final class MapView extends JPanel {
     banner.setPreferredSize(new Dimension(0, BANNER_HEIGHT));
     bannerLine.setLayout(new BoxLayout(bannerLine, BoxLayout.X_AXIS));
     bannerLine.setOpaque(false);
+    banner.add(goal, BorderLayout.NORTH);
     banner.add(bannerLine, BorderLayout.CENTER);
     Theme.setSecondaryButtonStyle(bannerDone);
     final JPanel done = new JPanel(new GridBagLayout());
     done.setOpaque(false);
+    final GridBagConstraints beforeDone = new GridBagConstraints();
+    beforeDone.insets = new Insets(0, 0, 0, Theme.GAP_XS);
+    done.add(goal.next(), beforeDone);
     done.add(bannerDone);
     banner.add(done, BorderLayout.EAST);
     banner.setVisible(false);
@@ -261,9 +284,9 @@ final class MapView extends JPanel {
           Panels.empty(
               Glyph.TERRITORIES,
               "Picture loaded",
-              "Next, find the territories, sea zones and their neighbours in it. Areas between dark"
-                  + " lines become territories, blue ones sea zones.",
-              "Find territories",
+              "Next, make the territories, sea zones and their neighbours from it."
+                  + " Areas between dark lines become territories, blue ones sea zones.",
+              "Make territories",
               findTerritories));
     }
     final int territories = Integer.parseInt(state);
@@ -272,7 +295,7 @@ final class MapView extends JPanel {
             Glyph.GAME_VIEW,
             "No map picture yet",
             "Load a picture of your map: dark lines between territories, seas in blue. The editor"
-                + " then finds the territories in it.",
+                + " then makes the territories from it.",
             "Load map picture…",
             choosePicture)
         : Panels.empty(
@@ -359,11 +382,37 @@ final class MapView extends JPanel {
    */
   void showBanner(
       final String text, final Optional<JComponent> extra, final String verb, final Runnable done) {
+    showBanner(text, extra, verb, done, false);
+  }
+
+  /**
+   * Like {@link #showBanner(String, Runnable)} for a mode that changes the map with each click, eg
+   * Connections' connecting: a taller banner that starts with an "Edit mode" badge.
+   */
+  void showEditBanner(final String text, final Runnable done) {
+    showBanner(text, Optional.empty(), "Done", done, true);
+  }
+
+  private void showBanner(
+      final String text,
+      final Optional<JComponent> extra,
+      final String verb,
+      final Runnable done,
+      final boolean edit) {
+    editing = edit;
     bannerText.setText(text);
+    bannerText.setToolTipText(text);
+    // short of room the text is cut ("…", whole in its tool tip), never the controls after it
+    bannerText.setMinimumSize(new Dimension(0, bannerText.getPreferredSize().height));
     bannerLine.removeAll();
+    if (edit) {
+      bannerLine.add(editBadge);
+      bannerLine.add(Box.createHorizontalStrut(Theme.GAP_M));
+    }
     bannerLine.add(bannerText);
     extra.ifPresent(
         component -> {
+          component.setMinimumSize(component.getPreferredSize());
           bannerLine.add(Box.createHorizontalStrut(Theme.GAP_M));
           bannerLine.add(component);
         });
@@ -379,11 +428,11 @@ final class MapView extends JPanel {
     bannerDone.addActionListener(e -> end.run());
     canvas.onEscape(Optional.of(end));
     banner.setVisible(true);
-    revalidate();
-    repaint();
+    fitBanner();
   }
 
   void hideBanner() {
+    endGoal();
     canvas.onEscape(Optional.empty());
     banner.setVisible(false);
     revalidate();
@@ -393,6 +442,60 @@ final class MapView extends JPanel {
   /** The banner's text while it shows. */
   Optional<String> bannerText() {
     return banner.isVisible() ? Optional.of(bannerText.getText()) : Optional.empty();
+  }
+
+  /**
+   * Shows above the banner the step to a playable map the map maker works on, with a "Next" once
+   * it is done, until the banner hides; without a banner, one that says what to do for it.
+   */
+  void showStep(final MapGuide.Step.Id step) {
+    if (!banner.isVisible()) {
+      showBanner(MapGuide.howTo(step), () -> {});
+    }
+    goal.showStep(step);
+    fitBanner();
+  }
+
+  /** Like {@link #showStep}, a tool's own goal, eg "Back to Terrain effects", over a banner. */
+  void showGoal(
+      final String title, final String progress, final String action, final Runnable onAction) {
+    goal.showGoal(title, progress, action, onAction);
+    fitBanner();
+  }
+
+  void endGoal() {
+    goal.end();
+    fitBanner();
+  }
+
+  Optional<MapGuide.Step.Id> goalStep() {
+    return goal.step();
+  }
+
+  /** The goal's line while it shows. */
+  Optional<String> goalText() {
+    return goal.isVisible() ? Optional.of(goal.text()) : Optional.empty();
+  }
+
+  /** What following a step does: show its tool and the step there. */
+  void onFollowStep(final Consumer<MapGuide.Step.Id> follow) {
+    followStep = follow;
+    goal.onFollowStep(follow);
+  }
+
+  /** Follows the step into its tool, eg from a tool's "Mark one in Territories". */
+  void followStep(final MapGuide.Step.Id step) {
+    followStep.accept(step);
+  }
+
+  private void fitBanner() {
+    banner.setPreferredSize(
+        new Dimension(
+            0,
+            (editing ? EDIT_BANNER_HEIGHT : BANNER_HEIGHT)
+                + (goal.isVisible() ? GoalStrip.HEIGHT : 0)));
+    revalidate();
+    repaint();
   }
 
   /** What the legend's problems button does, eg show the problem list. */
@@ -432,6 +535,11 @@ final class MapView extends JPanel {
   /** A line dragged on the map goes to onLine, eg to draw it into the picture. */
   void drawLine(final Consumer<List<Point>> onLine) {
     canvas.drawLine(onLine);
+  }
+
+  /** A line set point by point with clicks goes to onLine, {@link MapCanvas#drawLineByPoints}. */
+  void drawLineByPoints(final Consumer<List<Point>> onLine) {
+    canvas.drawLineByPoints(onLine);
   }
 
   /**

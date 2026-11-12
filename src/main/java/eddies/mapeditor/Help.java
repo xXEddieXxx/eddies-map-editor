@@ -9,6 +9,7 @@ import java.awt.FlowLayout;
 import java.awt.Insets;
 import java.util.List;
 import java.util.prefs.Preferences;
+import javax.annotation.Nullable;
 import javax.swing.AbstractButton;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -93,6 +94,29 @@ class Help {
               + "</div></html>");
     }
     return label;
+  }
+
+  /**
+   * A line saying that a setting comes from another tool, with a link there, eg "The color is set
+   * per nation in" [Nations ›]: a setting here depends on it.
+   */
+  static JComponent link(final String text, final String tool) {
+    return link(text, tool, null);
+  }
+
+  /** As link, the tool showing the item, eg a territory. */
+  static JComponent link(final String text, final String tool, @Nullable final String item) {
+    // no gap at the left, so the text lines up with the labels above and below
+    final JPanel row = new JPanel(new FlowLayout(FlowLayout.LEADING, 0, 0));
+    row.setOpaque(false);
+    row.add(Theme.newSecondaryLabel(text));
+    row.add(Box.createHorizontalStrut(Theme.GAP_XS));
+    final JButton open = new JButton(tool + " ›");
+    Theme.setTertiaryButtonStyle(open);
+    open.getAccessibleContext().setAccessibleName("Open " + tool);
+    open.addActionListener(e -> MapMakerWindow.openTool(open, tool, item));
+    row.add(open);
+    return row;
   }
 
   /** The component with its "?" right after it, named after the component's text. */

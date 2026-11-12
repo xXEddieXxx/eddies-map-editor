@@ -17,7 +17,7 @@ import eddies.mapeditor.MapFiles.NationUnit;
 import eddies.mapeditor.MapFiles.Redrawn;
 
 final class MapFilesTest {
-  // the areas of MapPictureTest.givenPicture, as Find territories names them
+  // the areas of MapPictureTest.givenPicture, as Make territories names them
   private static final String TOP_LEFT = "Territory 1";
   private static final String TOP_RIGHT = "Territory 2";
   private static final String UNCHANGED = "Territory 3";

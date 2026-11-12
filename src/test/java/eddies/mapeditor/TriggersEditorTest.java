@@ -174,6 +174,43 @@ final class TriggersEditorTest {
     assertThat(labels).as("no reading screen").noneMatch(text -> text != null && text.startsWith("Reading"));
   }
 
+  @Test
+  @DisplayName("With Use Triggers off the list links to Game options, as no trigger fires")
+  void triggersOffLinksToGameOptions() throws Exception {
+    // given
+    final MapProject on =
+        new MapProject(Path.of("g40.xml"), GameRulesXmlTest.givenG40(), MapFiles.none());
+    final MapProject off =
+        new MapProject(
+            Path.of("g40.xml"),
+            MapXml.withPropertyValue(GameRulesXmlTest.givenG40(), TriggerXml.USE_TRIGGERS, "false"),
+            MapFiles.none());
+    final List<Boolean> shown = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          shown.add(givenGameOptionsLinkShown(new TriggersEditor(on)));
+          shown.add(givenGameOptionsLinkShown(new TriggersEditor(off)));
+        });
+
+    // then
+    assertThat(shown).as("only while Use Triggers is off").containsExactly(false, true);
+  }
+
+  private static boolean givenGameOptionsLinkShown(final TriggersEditor editor) {
+    return all(editor.page())
+        .filter(c -> c instanceof AbstractButton b && "Game options ›".equals(b.getText()))
+        .anyMatch(c -> c.getParent().isVisible());
+  }
+
+  private static Stream<Component> all(final Component in) {
+    return in instanceof Container container
+        ? Stream.concat(
+            Stream.of(in), Stream.of(container.getComponents()).flatMap(TriggersEditorTest::all))
+        : Stream.of(in);
+  }
+
   /** The components the page shows: those in a hidden card left out. */
   private static <T> Stream<T> shown(final Container in, final Class<T> type) {
     return Stream.of(in.getComponents())

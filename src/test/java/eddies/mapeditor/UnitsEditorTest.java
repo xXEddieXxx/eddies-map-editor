@@ -212,6 +212,29 @@ final class UnitsEditorTest {
         .containsExactlyElementsOf(MapXml.unitTypes(project.game()));
   }
 
+  @DisplayName("Under In each nation's color, a link to Nations, where the colors are set")
+  @Test
+  void nationTintLinksToNations() throws Exception {
+    final MapProject project = givenG40();
+    final List<List<String>> texts = new ArrayList<>();
+
+    SwingUtilities.invokeAndWait(
+        () -> {
+          try {
+            texts.add(givenButtonTexts(givenEditor(project, "infantry", "").page()));
+            project.tintUnits(List.of("Germans"));
+            texts.add(givenButtonTexts(givenEditor(project, "infantry", "").page()));
+          } catch (final Exception e) {
+            throw new IllegalStateException(e);
+          }
+        });
+
+    assertThat(texts.get(0)).as("no nation's units tinted yet").doesNotContain("Nations ›");
+    assertThat(texts.get(1))
+        .as("the tint follows the nation's color")
+        .contains("In each nation's color", "Nations ›");
+  }
+
   private static void givenLaidOut(final Component component) {
     if (component instanceof Container container) {
       container.doLayout();

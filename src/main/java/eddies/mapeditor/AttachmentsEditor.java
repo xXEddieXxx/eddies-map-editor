@@ -212,11 +212,22 @@ final class AttachmentsEditor implements Editor {
     return page;
   }
 
-  /** Chooses the attachment of this name, the first if several have it, eg from another tool. */
+  /**
+   * Chooses the attachment of this name, the first if several have it, eg from another tool; or the
+   * one of a {@link RulesXml#whereNamed} line, "name of attachTo: option", as names like
+   * unitAttachment repeat.
+   */
   @Override
   public void show(final String attachmentName) {
+    // matched whole, not parsed: names and targets may hold " of " or ": " themselves
     AttachmentsXml.attachments(project.game()).stream()
-        .filter(a -> attachmentName.equals(a.getName()))
+        .filter(
+            a -> {
+              final String of = a.getName() + " of " + a.getAttachTo();
+              return attachmentName.equals(a.getName())
+                  || attachmentName.equals(of)
+                  || attachmentName.startsWith(of + ": ");
+            })
         .findFirst()
         .ifPresent(
             a -> {

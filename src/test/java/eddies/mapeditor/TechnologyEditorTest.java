@@ -2,7 +2,14 @@ package eddies.mapeditor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.awt.Component;
+import java.awt.Container;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Stream;
+import javax.swing.AbstractButton;
+import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -28,6 +35,41 @@ final class TechnologyEditorTest {
         .isEqualTo(TechXml.techNames(TechXml.withStandardTechs(project.game())));
     assertThat(project.game().getTechnology()).as("looking writes nothing").isNull();
     assertThat(project.canUndo()).as("no step").isFalse();
+  }
+
+  @DisplayName("Standard technologies link to Game options, where WW2V3 Tech Model picks them")
+  @Test
+  void standardLinksToGameOptions(@TempDir final Path folder) throws Exception {
+    // given
+    final MapProject project = givenMinimap(folder);
+    final List<Boolean> shown = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final TechnologyEditor editor = new TechnologyEditor(project);
+          shown.add(givenGameOptionsLinkShown(editor));
+          project.edit(TechXml::withStandardTechs);
+          shown.add(givenGameOptionsLinkShown(editor));
+        });
+
+    // then
+    assertThat(shown.get(0)).as("which standard ones depends on an option").isTrue();
+    assertThat(shown.get(1)).as("an own list needs no option").isFalse();
+  }
+
+  private static boolean givenGameOptionsLinkShown(final TechnologyEditor editor) {
+    return all(editor.page())
+        .filter(c -> c instanceof AbstractButton b && "Game options ›".equals(b.getText()))
+        .anyMatch(c -> c.getParent().isVisible());
+  }
+
+  private static Stream<Component> all(final Component in) {
+    return in instanceof Container container
+        ? Stream.concat(
+            Stream.of(in),
+            Stream.of(container.getComponents()).flatMap(TechnologyEditorTest::all))
+        : Stream.of(in);
   }
 
   @DisplayName("The first chart change writes the standard list and the change as one step")

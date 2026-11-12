@@ -44,6 +44,10 @@ Each release names the TripleA release it was tested with.
 The tools sit in the sidebar in the same groups as below. Every change can be undone, and
 **Check (F6)** tells you at any time whether TripleA can load the map.
 
+**Home** shows the next step to a playable map; *Go to* opens its tool ready for it, with the
+step, its progress and *Next ›* over the map. Where a setting comes from another tool, a small
+link leads there, and a remove that triggers still need offers *Show in Attachments*.
+
 ### 🏠 Start a map
 
 - **Open** a map folder or one of your recent maps.
@@ -55,9 +59,9 @@ The tools sit in the sidebar in the same groups as below. Every change can be un
 
 | Tool | What you do there |
 |------|-------------------|
-| **Territories** | Find territories in the picture (areas between dark or thin grey lines, blue = sea). Rename them, set owner, PUs, capital, victory city and starting units. |
-| ↳ *Paint* | Give many territories an owner, PUs, units, rules or effects at once by clicking or dragging. |
-| ↳ *Draw borders* | Draw border lines into the map picture by hand (like its lines, black or grey; width in px); a line's ends snap to the borders near them. *Find territories* then turns the areas between them into territories. |
+| **Territories** | Make territories from the picture (areas between dark or thin grey lines, blue = sea). Rename them, set owner, PUs, capital, victory city and starting units. |
+| ↳ *Paint* | Give many territories an owner, a capital, PUs, units, rules or effects at once by clicking or dragging. |
+| ↳ *Draw borders* | Draw border lines into the map picture by hand (like its lines, black or grey; width in px), freehand or as a line of clicked points (double-click or Enter ends it, Backspace takes back a point); a line's ends snap to the borders near them. *Make territories* then turns the areas between them into territories. |
 | ↳ *Split with a line* | Cut one territory in two; the new border is drawn into the picture in the same line style. |
 | ↳ *Move places* | Drag where the game draws units, names, flags and markers. |
 | ↳ *Decorations* | Place pictures from the map's `misc` folder anywhere on the map. |
@@ -100,7 +104,7 @@ The tools sit in the sidebar in the same groups as below. Every change can be un
 ### 💬 Texts & sound
 
 - **Texts:** objectives, trigger messages, unit tool tips and action texts, with an HTML preview.
-- **Game notes:** a text editor with formatting buttons and a live preview.
+- **Game notes:** a text editor with formatting buttons and a live preview; saved in the game's `<game>.notes.html`. Pictures (*Picture…*) are copied into the map's `doc/images`, where the game finds `<img src="name.png"/>`, and show in the preview.
 - **Sounds:** the game's sounds, per nation too, with your own mp3 files.
 
 ### 🔧 Advanced

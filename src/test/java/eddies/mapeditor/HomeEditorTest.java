@@ -19,9 +19,11 @@ import eddies.mapeditor.MapProject.NewMap;
 final class HomeEditorTest {
   @TempDir Path maps;
   private final List<String> opened = new ArrayList<>();
+  private final List<MapGuide.Step.Id> followed = new ArrayList<>();
 
   private HomeEditor givenHome(final MapProject project) {
-    return new HomeEditor(project, t -> {}, opened::add, () -> {}, () -> {}, () -> {});
+    return new HomeEditor(
+        project, t -> {}, opened::add, followed::add, () -> {}, () -> {}, () -> {});
   }
 
   /** The minimap without a picture: its problem "No picture yet" is fixed in Territories. */
@@ -69,6 +71,27 @@ final class HomeEditorTest {
         .as("the name of a territory is no nation's")
         .anyMatch(text -> text.contains("Left out: Territory 1."))
         .anyMatch(text -> text.contains("Found "));
+  }
+
+  @DisplayName("Go to follows the next step into its tool, not just opens the tool")
+  @Test
+  void goToFollowsTheStep() throws Exception {
+    // given
+    final MapProject project =
+        MapProject.newMap("Island Wars", MapPictureTest.givenPicture(), List.of("Red"), maps)
+            .project();
+    final HomeEditor home = givenHome(project);
+    final AbstractButton goTo =
+        givenAll(home.page(), AbstractButton.class)
+            .filter(Theme::isPrimary)
+            .findFirst()
+            .orElseThrow();
+
+    // when
+    goTo.doClick();
+
+    // then
+    assertThat(followed).as("Red has no land yet").containsExactly(MapGuide.Step.Id.LAND);
   }
 
   private static <T> Stream<T> givenAll(final Component component, final Class<T> type) {

@@ -32,6 +32,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -128,7 +129,7 @@ public final class MapMakerWindow extends JFrame {
   // a file saved in Files does not read: the map in memory is older than its files
   private boolean filesAhead;
 
-  private MapMakerWindow() {
+  MapMakerWindow() {
     super("Eddie's Map Editor");
     // TripleA's icon in all its sizes, so the title bar and the task bar each take a sharp one
     setIconImages(
@@ -432,7 +433,7 @@ public final class MapMakerWindow extends JFrame {
 
   // ---- the picture
 
-  /** Asks for a picture of the map; the territories stay until Find territories. */
+  /** Asks for a picture of the map; the territories stay until Make territories. */
   private void choosePicture() {
     chooseFileToOpen(
             this,
@@ -459,7 +460,7 @@ public final class MapMakerWindow extends JFrame {
   }
 
   /**
-   * Finds the territories in the map's picture in the background, first asking whether to replace
+   * Makes the territories from the map's picture in the background, first asking whether to replace
    * the ones there are, then takes them as one step.
    */
   private void findTerritories() {
@@ -468,18 +469,18 @@ public final class MapMakerWindow extends JFrame {
         || (project.getFiles().hasOutlines()
             && !Dialogs.confirm(
                 this,
-                "Find territories",
-                "Find the territories again?\nThe territories and connections found replace the"
+                "Make territories",
+                "Make the territories again?\nThe territories and connections found replace the"
                     + " ones the map has now, with their owners and units. Undo takes it back.",
-                "Find again"))) {
+                "Make again"))) {
       return;
     }
     final MapProject findingIn = project;
     inBackground(
-        "Could not find the territories",
+        "Could not make the territories",
         () -> MapPicture.detect(picture.get()),
         detected -> {
-          // a picture loaded meanwhile keeps its territories until Find territories is pressed
+          // a picture loaded meanwhile keeps its territories until Make territories is pressed
           if (findingIn == project && findingIn.getFiles().picture().equals(picture)) {
             findingIn.loadPicture(picture.get(), detected);
             showFound(findingIn.game());
@@ -650,7 +651,7 @@ public final class MapMakerWindow extends JFrame {
 
   // ---- the editor layout
 
-  private void showProject(final MapProject opened) {
+  void showProject(final MapProject opened) {
     mapShown = true;
     filesAhead = false;
     check = Check.NOT_YET;
@@ -678,11 +679,13 @@ public final class MapMakerWindow extends JFrame {
             opened,
             territory -> showEditor(territoriesEditor, territory),
             this::showTool,
+            this::followStep,
             this::validateMap,
             this::save,
             this::playtest);
     home = homeEditor;
     shared.onShowProblems(this::showProblems);
+    shared.onFollowStep(this::followStep);
     final List<Sidebar.Group> groups =
         List.of(
             new Sidebar.Group("Home", List.of(homeEditor)),
@@ -702,7 +705,7 @@ public final class MapMakerWindow extends JFrame {
             new Sidebar.Group(
                 "Players",
                 List.of(
-                    new NationsEditor(opened, shared, this::showTool),
+                    new NationsEditor(opened, shared),
                     new PoliticsEditor(opened, this::showTool),
                     new TechnologyEditor(opened, this::showTool))),
             new Sidebar.Group(
@@ -783,6 +786,46 @@ public final class MapMakerWindow extends JFrame {
 
   private void showTool(final String title) {
     Optional.ofNullable(editors.get(title)).ifPresent(this::showEditor);
+  }
+
+  /**
+   * Shows the step's tool with the step as the map's goal; for land and capitals the matching Paint
+   * brush, the land for the first nation without; Check runs.
+   */
+  void followStep(final MapGuide.Step.Id step) {
+    if (step == MapGuide.Step.Id.CHECK) {
+      validateMap();
+      return;
+    }
+    final Game game = project.game();
+    MapGuide.steps(project).stream()
+        .filter(s -> s.id() == step)
+        .findFirst()
+        .ifPresent(s -> showTool(s.tool()));
+    // Territories' empty state, a picture to load, says what to do
+    if (step != MapGuide.Step.Id.TERRITORIES) {
+      Objects.requireNonNull(map).showStep(step);
+    }
+    final TerritoriesEditor territoriesTool = Objects.requireNonNull(territories);
+    if (step == MapGuide.Step.Id.LAND) {
+      MapGuide.withoutLand(game).stream()
+          .findFirst()
+          .or(() -> MapXml.nations(game).stream().findFirst())
+          .ifPresent(territoriesTool::paintOwner);
+    } else if (step == MapGuide.Step.Id.CAPITALS) {
+      territoriesTool.paintCapitals();
+    }
+  }
+
+  /**
+   * Shows the tool of this title, and the item in it if given, in the window the component is in,
+   * eg from a link to where a setting is made; outside the editor's window nothing happens.
+   */
+  static void openTool(
+      final Component inWindow, final String title, @Nullable final String item) {
+    if (SwingUtilities.getWindowAncestor(inWindow) instanceof MapMakerWindow window) {
+      Optional.ofNullable(window.editors.get(title)).ifPresent(e -> window.showEditor(e, item));
+    }
   }
 
   /** Brings Files to the front, eg when a file is chosen in its tree. */

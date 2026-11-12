@@ -7,9 +7,11 @@ import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import javax.swing.JButton;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComboBox;
 import javax.swing.JTextField;
@@ -188,5 +190,28 @@ final class NationsEditorTest {
         .as("three are named")
         .isEqualTo("Russians, British and Chinese");
     assertThat(NationsEditor.shortList(List.of())).as("none").isEqualTo("None");
+  }
+
+  @DisplayName("Mark one in Territories follows the capitals step")
+  @Test
+  void markCapitalFollowsTheStep() throws Exception {
+    // given: the Russians without their capital
+    final MapProject project = givenMinimap();
+    project.edit(g -> MapXml.withCapital(g, "red capitol", null));
+    final List<MapGuide.Step.Id> followed = new ArrayList<>();
+    final MapView map = new MapView(project, () -> {}, () -> {}, () -> {});
+    map.onFollowStep(followed::add);
+    final NationsEditor editor = new NationsEditor(project, map);
+    editor.click("red north 1");
+
+    // when
+    find(editor.page(), JButton.class)
+        .filter(b -> "Mark one in Territories".equals(b.getText()))
+        .findFirst()
+        .orElseThrow()
+        .doClick();
+
+    // then
+    assertThat(followed).as("the capitals step").containsExactly(MapGuide.Step.Id.CAPITALS);
   }
 }

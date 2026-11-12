@@ -826,13 +826,14 @@ final class ActionsEditor implements Editor {
   private void removeAction(final Action action) {
     final List<String> named = RulesXml.whereNamed(project.game(), action.name());
     if (!named.isEmpty()) {
-      Dialogs.warn(
+      Dialogs.refuseNamed(
           page,
           "Remove action",
           action.name()
               + " stays: the game would not load without it, as these still name it:\n"
               + String.join("\n", named.subList(0, Math.min(10, named.size())))
-              + "\nChange them in Attachments first.");
+              + "\nChange them in Attachments first.",
+          named);
       return;
     }
     if (Dialogs.confirmRemove(

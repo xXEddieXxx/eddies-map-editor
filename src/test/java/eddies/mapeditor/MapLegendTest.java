@@ -27,7 +27,7 @@ final class MapLegendTest {
 
   /** The legend laid out at this width, as below a map. */
   private static MapLegend givenLegend(final MapProject project, final int width) {
-    final MapLegend legend = new MapLegend(project);
+    final MapLegend legend = new MapLegend(project, new MapViewsBar(MapMode.GAME, mode -> {}));
     legend.setSize(width, 30);
     legend.doLayout();
     legend.doLayout();
@@ -126,5 +126,74 @@ final class MapLegendTest {
 
     assertThat(shown).as("a territory without neighbours").contains("■ 1 problem");
     assertThat(clicked).as("the list shows").containsExactly("problems");
+  }
+
+  @DisplayName("The game view links to Nations for the colors while every nation fits beside it")
+  @Test
+  void linksToNationsForColors() throws Exception {
+    // given
+    final List<Boolean> linkShown = new ArrayList<>();
+    final List<Integer> keysWidth = new ArrayList<>();
+    final List<List<String>> narrowTexts = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          linkShown.add(linkShown(givenLegend(givenG40(), 3000)));
+          final MapLegend narrow = givenLegend(givenG40(), 600);
+          linkShown.add(linkShown(narrow));
+          narrowTexts.add(shownTexts(narrow));
+          keysWidth.add(narrow.getComponent(0).getPreferredSize().width);
+          narrow.explain(MapMode.VALUES);
+          narrow.doLayout();
+          linkShown.add(linkShown(narrow));
+        });
+
+    // then
+    assertThat(linkShown)
+        .as("shown with room for all nations; the nations first when narrow; none for values")
+        .containsExactly(true, false, false);
+    assertThat(narrowTexts.getFirst())
+        .as("the nations that do not fit behind a button")
+        .anyMatch(text -> text.startsWith("+"));
+    assertThat(keysWidth.getFirst()).as("the line still fits").isLessThanOrEqualTo(600);
+  }
+
+  /** Whether "Nations ›" shows: it and its row visible. */
+  private static boolean linkShown(final MapLegend legend) {
+    return all(legend)
+        .anyMatch(
+            c ->
+                c instanceof AbstractButton b
+                    && "Nations ›".equals(b.getText())
+                    && b.isVisible()
+                    && b.getParent().isVisible());
+  }
+
+  @DisplayName("The views start the line, by name; below 700 px only their icons")
+  @Test
+  void viewsShowIconsOnlyWhenNarrow() throws Exception {
+    // given
+    final List<List<String>> names = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          for (final int width : List.of(1200, 600)) {
+            final MapLegend legend = givenLegend(givenMinimap(), width);
+            names.add(
+                all(legend)
+                    .flatMap(c -> c instanceof MapViewsBar bar ? Stream.of(bar) : Stream.empty())
+                    .flatMap(bar -> Stream.of(bar.getComponents()))
+                    .map(c -> ((AbstractButton) c).getText())
+                    .toList());
+          }
+        });
+
+    // then
+    assertThat(names.get(0))
+        .as("wide: each view by name")
+        .containsExactly("Game", "Owners", "Values", "Units", "Neighbours");
+    assertThat(names.get(1)).as("narrow: icons only, no squeezed names").containsOnly("");
   }
 }

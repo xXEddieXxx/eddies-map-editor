@@ -23,6 +23,7 @@ import java.awt.event.MouseEvent;
 import java.awt.event.MouseWheelEvent;
 import java.awt.geom.AffineTransform;
 import java.awt.geom.Ellipse2D;
+import java.awt.geom.Line2D;
 import java.awt.geom.Path2D;
 import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
@@ -91,6 +92,8 @@ final class MapCanvas extends JComponent {
   // the size of a decoration whose picture is missing, so it can still be moved or removed
   private static final int MISSING_DECORATION = 16;
   private static final int LINE_CHECK_MS = 100;
+  // how far the line's halo and end handle reach beyond it, in pixels of the screen
+  private static final int LINE_REACH = 10;
 
   private final transient MapProject project;
   // the tiles seen last, enough for a screen at any zoom; a big map has far more than fit memory
@@ -139,6 +142,11 @@ final class MapCanvas extends JComponent {
   // what a line dragged on the map is for, and the line being dragged, in the map's pixels
   private transient Optional<Consumer<List<Point>>> drawingLine = Optional.empty();
   private transient List<Point> line = new ArrayList<>();
+  // a line set by clicks, point by point, instead of dragged; the pointer ends its last segment
+  private boolean byPoints;
+  private transient Optional<Point> pointer = Optional.empty();
+  // screen px a click may move between press and release and still set a point
+  private static final int CLICK_SLOP = 4;
   // whether the line cuts, asked at most every LINE_CHECK_MS: a big outline takes a moment
   private transient Optional<Predicate<List<Point>>> lineCheck = Optional.empty();
   private boolean lineCuts;
@@ -237,14 +245,45 @@ final class MapCanvas extends JComponent {
 
               @Override
               public boolean isEnabled() {
-                return onEscape.isPresent();
+                return settingPoints() || onEscape.isPresent();
               }
 
               @Override
               public void actionPerformed(final ActionEvent e) {
-                onEscape.ifPresent(Runnable::run);
+                if (settingPoints()) {
+                  dropLine();
+                } else {
+                  onEscape.ifPresent(Runnable::run);
+                }
               }
             });
+    bindWhileSettingPoints(KeyEvent.VK_ENTER, "finishLine", this::finishLine);
+    bindWhileSettingPoints(KeyEvent.VK_BACK_SPACE, "dropPoint", this::dropPoint);
+  }
+
+  /** A key for a line being set point by point; else the key stays free for others. */
+  private void bindWhileSettingPoints(final int key, final String name, final Runnable action) {
+    getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(key, 0), name);
+    getActionMap()
+        .put(
+            name,
+            new AbstractAction() {
+              @Serial private static final long serialVersionUID = 1L;
+
+              @Override
+              public boolean isEnabled() {
+                return settingPoints();
+              }
+
+              @Override
+              public void actionPerformed(final ActionEvent e) {
+                action.run();
+              }
+            });
+  }
+
+  private boolean settingPoints() {
+    return byPoints && drawingLine.isPresent() && !line.isEmpty();
   }
 
   /** A map that forgets the entries used least recently beyond this many. */
@@ -313,6 +352,40 @@ final class MapCanvas extends JComponent {
   }
 
   /**
+   * Like {@link #drawLine(Consumer)}, but each click sets a point of the line: a double-click or
+   * Enter finishes it, Backspace drops its last point, Esc the whole line.
+   */
+  void drawLineByPoints(final Consumer<List<Point>> onLine) {
+    drawLine(onLine);
+    byPoints = true;
+  }
+
+  /** The line set point by point goes to onLine, if it has two points. */
+  private void finishLine() {
+    final List<Point> drawn = List.copyOf(line);
+    dropLine();
+    if (drawn.size() >= 2) {
+      drawingLine.ifPresent(onLine -> onLine.accept(drawn));
+    }
+  }
+
+  private void dropPoint() {
+    if (!line.isEmpty()) {
+      line.removeLast();
+    }
+    if (line.isEmpty()) {
+      pointer = Optional.empty();
+    }
+    repaint();
+  }
+
+  private void dropLine() {
+    line = new ArrayList<>();
+    pointer = Optional.empty();
+    repaint();
+  }
+
+  /**
    * Like {@link #drawLine(Consumer)}; while dragged the line is green when cuts says it cuts the
    * selected territory, else red.
    */
@@ -339,6 +412,8 @@ final class MapCanvas extends JComponent {
     decorating = Optional.empty();
     drawingLine = Optional.empty();
     line = new ArrayList<>();
+    byPoints = false;
+    pointer = Optional.empty();
     lineCheck = Optional.empty();
     lineCheckTimer.stop();
     cut = List.of();
@@ -521,7 +596,11 @@ final class MapCanvas extends JComponent {
    * cuts the selected territory, else red, and saying so at its end.
    */
   private void paintLine(final Graphics2D g) {
-    if (line.size() < 2) {
+    // a line set by clicks: its points marked, the segment to the pointer thinner, still to come
+    final Optional<Point> loose = byPoints && !line.isEmpty() ? pointer : Optional.empty();
+    final List<Point> shown = new ArrayList<>(line);
+    loose.ifPresent(shown::add);
+    if (shown.size() < 2) {
       return;
     }
     final Path2D path = new Path2D.Double();
@@ -545,8 +624,22 @@ final class MapCanvas extends JComponent {
         new BasicStroke(
             4, BasicStroke.CAP_BUTT, BasicStroke.JOIN_ROUND, 10, new float[] {10, 6}, 0));
     g.draw(path);
+    loose.ifPresent(
+        to -> {
+          final Line2D segment =
+              new Line2D.Double(
+                  line.getLast().x * zoom, line.getLast().y * zoom, to.x * zoom, to.y * zoom);
+          g.setColor(halo);
+          g.setStroke(new BasicStroke(4, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+          g.draw(segment);
+          g.setColor(Color.WHITE);
+          g.setStroke(
+              new BasicStroke(
+                  2, BasicStroke.CAP_BUTT, BasicStroke.JOIN_ROUND, 10, new float[] {6, 4}, 0));
+          g.draw(segment);
+        });
     g.setStroke(new BasicStroke(2));
-    for (final Point end : List.of(line.get(0), line.get(line.size() - 1))) {
+    for (final Point end : byPoints ? line : List.of(line.getFirst(), line.getLast())) {
       final Ellipse2D handle = new Ellipse2D.Double(end.x * zoom - 6, end.y * zoom - 6, 12, 12);
       g.setColor(tint);
       g.fill(handle);
@@ -554,13 +647,25 @@ final class MapCanvas extends JComponent {
       g.draw(handle);
     }
     if (lineCheck.isPresent()) {
-      final Point end = line.get(line.size() - 1);
+      final Point end = shown.get(shown.size() - 1);
       paintBadge(
           g,
           lineCuts ? "Cuts in two" : "Start and end outside " + Objects.toString(selected, "it"),
           (int) (end.x * zoom),
           (int) (end.y * zoom) - 20);
     }
+  }
+
+  /** Where on the screen the last segment, to the pointer, is drawn, with its halo and handle. */
+  private Rectangle lastSegment() {
+    final Rectangle segment = new Rectangle(onScreen(line.getLast()));
+    pointer.ifPresent(p -> segment.add(onScreen(p)));
+    segment.grow(LINE_REACH, LINE_REACH);
+    return segment;
+  }
+
+  private Point onScreen(final Point onMap) {
+    return new Point((int) Math.round(onMap.x * zoom), (int) Math.round(onMap.y * zoom));
   }
 
   /**
@@ -1105,30 +1210,31 @@ final class MapCanvas extends JComponent {
       final Point from = center(connection.getT1());
       final Point to = center(connection.getT2());
       if (selected == null) {
-        g.setStroke(new BasicStroke((float) (3 / zoom)));
+        g.setStroke(new BasicStroke((float) (4 / zoom)));
         g.setColor(Color.WHITE);
         g.drawLine(from.x, from.y, to.x, to.y);
-        g.setStroke(new BasicStroke((float) (1.5 / zoom)));
+        g.setStroke(new BasicStroke((float) (2.5 / zoom)));
         g.setColor(Color.DARK_GRAY);
         g.drawLine(from.x, from.y, to.x, to.y);
       } else if (connection.getT1().equals(selected) || connection.getT2().equals(selected)) {
         ofSelected.add(connection);
       } else {
-        g.setStroke(new BasicStroke((float) (1 / zoom)));
+        g.setStroke(new BasicStroke((float) (1.5 / zoom)));
         g.setColor(withAlpha(Color.DARK_GRAY, 0x66));
         g.drawLine(from.x, from.y, to.x, to.y);
       }
     }
+    // the lines being edited in red, the color that draws the eye
     for (final Connection connection : ofSelected) {
       final Point from = center(connection.getT1());
       final Point to = center(connection.getT2());
       g.setStroke(
-          new BasicStroke((float) (8 / zoom), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+          new BasicStroke((float) (10 / zoom), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
       g.setColor(new Color(0, 0, 0, 0xC0));
       g.drawLine(from.x, from.y, to.x, to.y);
       g.setStroke(
-          new BasicStroke((float) (4 / zoom), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-      g.setColor(Theme.getAccentColor());
+          new BasicStroke((float) (5 / zoom), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+      g.setColor(Theme.getDangerColor());
       g.drawLine(from.x, from.y, to.x, to.y);
     }
   }
@@ -1316,7 +1422,7 @@ final class MapCanvas extends JComponent {
       dragFrom = e.getLocationOnScreen();
       dragged = SwingUtilities.isLeftMouseButton(e) ? placeAt(e.getPoint()).orElse(null) : null;
       draggedBy = new Point();
-      if (drawingLine.isPresent() && SwingUtilities.isLeftMouseButton(e)) {
+      if (drawingLine.isPresent() && !byPoints && SwingUtilities.isLeftMouseButton(e)) {
         line = new ArrayList<>(List.of(onMap(e.getPoint())));
         lineCuts = false;
       }
@@ -1331,9 +1437,22 @@ final class MapCanvas extends JComponent {
       if (dragged != null && !draggedBy.equals(new Point())) {
         move(dragged, draggedBy);
       }
+      // a point on release, not on click: AWT sends no click when the hand shook a pixel
+      final boolean shortMove =
+          dragFrom != null && dragFrom.distance(e.getLocationOnScreen()) <= CLICK_SLOP;
       dragged = null;
       dragFrom = null;
-      if (drawingLine.isPresent()) {
+      if (drawingLine.isPresent() && byPoints) {
+        if (shortMove && SwingUtilities.isLeftMouseButton(e)) {
+          // a double-click's second release ends the line at the point the first one set
+          if (e.getClickCount() >= 2) {
+            finishLine();
+          } else {
+            setPoint(onMap(e.getPoint()));
+          }
+        }
+        setCursor(Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR));
+      } else if (drawingLine.isPresent()) {
         final List<Point> drawn = List.copyOf(line);
         line = new ArrayList<>();
         lineCheckTimer.stop();
@@ -1349,6 +1468,9 @@ final class MapCanvas extends JComponent {
 
     @Override
     public void mouseClicked(final MouseEvent e) {
+      if (drawingLine.isPresent() && byPoints) {
+        return;
+      }
       final Optional<Place> place = placeAt(e.getPoint());
       final Optional<String> territory = territoryAt(e.getPoint());
       if (place.isPresent()) {
@@ -1366,6 +1488,15 @@ final class MapCanvas extends JComponent {
       }
     }
 
+    /** A click's point of the line; the second click of a double-click is at the first's. */
+    private void setPoint(final Point at) {
+      if (line.isEmpty() || !line.getLast().equals(at)) {
+        line.add(at);
+      }
+      pointer = Optional.of(at);
+      repaint();
+    }
+
     @Override
     public void mouseExited(final MouseEvent e) {
       hovered = Optional.empty();
@@ -1374,6 +1505,13 @@ final class MapCanvas extends JComponent {
     @Override
     public void mouseMoved(final MouseEvent e) {
       hovered = Optional.of(e.getPoint());
+      if (settingPoints()) {
+        // only the last segment moves: big maps repaint just its part
+        final Rectangle changed = lastSegment();
+        pointer = Optional.of(onMap(e.getPoint()));
+        changed.add(lastSegment());
+        repaint(changed);
+      }
       if (editingPlaces || decorating.isPresent()) {
         final Optional<Place> over = placeAt(e.getPoint());
         setCursor(
@@ -1391,7 +1529,7 @@ final class MapCanvas extends JComponent {
     @Override
     public void mouseDragged(final MouseEvent e) {
       hovered = Optional.empty();
-      if (!line.isEmpty() && SwingUtilities.isLeftMouseButton(e)) {
+      if (!line.isEmpty() && !byPoints && SwingUtilities.isLeftMouseButton(e)) {
         final Point at = onMap(e.getPoint());
         if (!at.equals(line.get(line.size() - 1))) {
           line.add(at);

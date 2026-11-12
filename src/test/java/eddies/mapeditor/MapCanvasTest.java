@@ -8,11 +8,17 @@ import java.awt.Font;
 import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.Polygon;
+import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import javax.swing.Action;
+import javax.swing.JComponent;
+import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -126,6 +132,139 @@ final class MapCanvasTest {
     assertThat(brightness.get(0)).as("another territory as it was").isZero();
   }
 
+  /** A click whose hand shakes a pixel or two, so AWT would send no MOUSE_CLICKED. */
+  private static void click(final MapCanvas canvas, final Point at, final int count) {
+    for (final int id : new int[] {MouseEvent.MOUSE_PRESSED, MouseEvent.MOUSE_RELEASED}) {
+      final int shake = id == MouseEvent.MOUSE_RELEASED ? 2 : 0;
+      canvas.dispatchEvent(
+          new MouseEvent(
+              canvas,
+              id,
+              System.currentTimeMillis(),
+              0,
+              at.x,
+              at.y,
+              at.x + shake,
+              at.y + shake,
+              count,
+              false,
+              MouseEvent.BUTTON1));
+    }
+  }
+
+  /** Presses the key as the window would: only while its action is enabled. */
+  private static void press(final MapCanvas canvas, final int key) {
+    final Object name =
+        canvas
+            .getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
+            .get(KeyStroke.getKeyStroke(key, 0));
+    final Action action = canvas.getActionMap().get(name);
+    if (action.isEnabled()) {
+      action.actionPerformed(new ActionEvent(canvas, ActionEvent.ACTION_PERFORMED, ""));
+    }
+  }
+
+  @DisplayName("A line of clicked points ends with a double-click, through every point")
+  @Test
+  void lineByPointsEndsWithDoubleClick() throws Exception {
+    // given
+    final List<List<Point>> lines = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapCanvas canvas = givenCanvas();
+          canvas.drawLineByPoints(lines::add);
+          click(canvas, new Point(10, 10), 1);
+          drag(canvas, new Point(50, 50), new Point(60, 60));
+          click(canvas, new Point(100, 10), 1);
+          click(canvas, new Point(100, 80), 1);
+          click(canvas, new Point(102, 81), 2); // the hand shook between the two clicks
+        });
+
+    // then
+    assertThat(lines)
+        .as("one line, a drag and a shaky second click adding nothing, at zoom 0.5 in map px")
+        .containsExactly(List.of(new Point(20, 20), new Point(200, 20), new Point(200, 160)));
+  }
+
+  @DisplayName("Backspace takes back a point, Esc the unfinished line, Enter ends the line")
+  @Test
+  void lineByPointsKeys() throws Exception {
+    // given
+    final List<List<Point>> lines = new ArrayList<>();
+    final List<String> escaped = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapCanvas canvas = givenCanvas();
+          canvas.onEscape(Optional.of(() -> escaped.add("mode ended")));
+          canvas.drawLineByPoints(lines::add);
+          click(canvas, new Point(10, 10), 1);
+          click(canvas, new Point(100, 10), 1);
+          click(canvas, new Point(100, 80), 1);
+          press(canvas, KeyEvent.VK_BACK_SPACE);
+          press(canvas, KeyEvent.VK_ENTER);
+          click(canvas, new Point(30, 30), 1);
+          click(canvas, new Point(60, 30), 1);
+          press(canvas, KeyEvent.VK_ESCAPE);
+          press(canvas, KeyEvent.VK_ENTER);
+          escaped.add("line dropped");
+          press(canvas, KeyEvent.VK_ESCAPE);
+        });
+
+    // then
+    assertThat(lines)
+        .as("the line without its last point; the dropped one never ends")
+        .containsExactly(List.of(new Point(20, 20), new Point(200, 20)));
+    assertThat(escaped)
+        .as("Esc drops the unfinished line first, then ends the mode")
+        .containsExactly("line dropped", "mode ended");
+  }
+
+  @DisplayName("A single clicked point, ended, draws nothing")
+  @Test
+  void singlePointDrawsNothing() throws Exception {
+    // given
+    final List<List<Point>> lines = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapCanvas canvas = givenCanvas();
+          canvas.drawLineByPoints(lines::add);
+          click(canvas, new Point(10, 10), 1);
+          press(canvas, KeyEvent.VK_ENTER);
+          click(canvas, new Point(40, 40), 1);
+          click(canvas, new Point(40, 40), 2);
+        });
+
+    // then
+    assertThat(lines).as("no line of one point").isEmpty();
+  }
+
+  @DisplayName("Drawing freehand after point by point drags a line again")
+  @Test
+  void freehandAfterPoints() throws Exception {
+    // given
+    final List<List<Point>> lines = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapCanvas canvas = givenCanvas();
+          canvas.drawLineByPoints(lines::add);
+          canvas.drawLine(lines::add);
+          drag(canvas, new Point(10, 10), new Point(100, 10));
+        });
+
+    // then
+    assertThat(lines)
+        .as("the freehand line dragged")
+        .containsExactly(List.of(new Point(20, 20), new Point(200, 20)));
+  }
+
   @DisplayName("A line is checked at most every 100 ms while dragged, and green when it cuts")
   @Test
   void lineCheckIsThrottledAndTinted() throws Exception {
@@ -215,8 +354,8 @@ final class MapCanvasTest {
         });
 
     assertThat(pixels.get(0))
-        .as("the middle of its line to a neighbour is in the accent color")
-        .isEqualTo(Theme.getAccentColor().getRGB() & 0xFFFFFF);
+        .as("the middle of its line to a neighbour is red, as it is being edited")
+        .isEqualTo(Theme.getDangerColor().getRGB() & 0xFFFFFF);
     assertThat(pixels.subList(1, 3))
         .as("its neighbour is tinted, a territory that is none is not")
         .containsExactly(1, 0);

@@ -16,6 +16,7 @@ import java.util.Optional;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
 import javax.swing.AbstractButton;
+import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JMenuItem;
@@ -51,7 +52,7 @@ final class TerritoriesEditorTest {
     return new MapView(project, () -> {}, () -> {}, () -> {});
   }
 
-  @DisplayName("Draw borders draws a line into the picture as one step; Find territories hands it on")
+  @DisplayName("Draw borders draws a line into the picture, one step; Make territories hands it on")
   @Test
   void drawsBordersAndFindsTerritories() throws Exception {
     // given: a map whose picture is held, its lines black and 3 px wide
@@ -78,7 +79,77 @@ final class TerritoriesEditorTest {
         .isZero();
     assertThat(before[0].getRGB(300, 60) & 0xFFFFFF).as("not there before").isNotZero();
     assertThat(project.canUndo()).as("it can be undone").isTrue();
-    assertThat(found).as("Find territories gets the picture with the line").containsExactly(after[0]);
+    assertThat(found)
+        .as("Make territories gets the picture with the line")
+        .containsExactly(after[0]);
+  }
+
+  @DisplayName("Draw borders' Line brush, chosen in the banner, stays chosen when drawing again")
+  @Test
+  void lineBrushIsKept() throws Exception {
+    // given
+    final MapProject project = givenPictureMap();
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenMap(project);
+          final TerritoriesEditor editor = new TerritoriesEditor(project, map);
+          editor.showing();
+          final AbstractButton draw =
+              find(map, AbstractButton.class, b -> "Draw borders".equals(b.getText()));
+          draw.doClick();
+          brush(map, "Line:").doClick();
+          find(map, AbstractButton.class, b -> "Done".equals(b.getText())).doClick();
+          draw.doClick();
+          seen.add(map.bannerText().orElseThrow());
+          seen.add(brush(map, "Line:").isSelected());
+          brush(map, "Freehand:").doClick();
+          seen.add(map.bannerText().orElseThrow());
+        });
+
+    // then
+    assertThat(seen.get(0).toString()).as("the line brush's banner").startsWith("Click points");
+    assertThat(seen.get(1)).as("its toggle on").isEqualTo(true);
+    assertThat(seen.get(2))
+        .as("freehand again")
+        .isEqualTo("Drag on the map to draw a border line.");
+  }
+
+  @DisplayName("A click on the chosen brush keeps it, and the banner with a half-set line")
+  @Test
+  void chosenBrushAgainChangesNothing() throws Exception {
+    // given
+    final MapProject project = givenPictureMap();
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenMap(project);
+          new TerritoriesEditor(project, map).showing();
+          find(map, AbstractButton.class, b -> "Draw borders".equals(b.getText())).doClick();
+          brush(map, "Line:").doClick();
+          final AbstractButton line = brush(map, "Line:");
+          line.doClick();
+          seen.add(line.isSelected());
+          seen.add(brush(map, "Line:"));
+          seen.add(line);
+        });
+
+    // then
+    assertThat(seen.get(0)).as("still chosen").isEqualTo(true);
+    assertThat(seen.get(1))
+        .as("the banner not built again, which would drop the points set")
+        .isSameAs(seen.get(2));
+  }
+
+  private static AbstractButton brush(final Container in, final String tip) {
+    return find(
+        in,
+        AbstractButton.class,
+        b -> b.getToolTipText() != null && b.getToolTipText().startsWith(tip) && shows(b));
   }
 
   /** The editor showing red north 1 with its more options open. */
@@ -476,5 +547,90 @@ final class TerritoriesEditorTest {
         .filter(t -> !MapXml.isWater(project.game(), t))
         .findFirst()
         .orElseThrow();
+  }
+
+  @DisplayName("The Capital brush makes owned land its owner's capital; sea and unowned land stay")
+  @Test
+  void capitalBrushMarksOwnedLand() throws Exception {
+    // given
+    final MapProject project = givenMinimap();
+    project.edit(g -> MapXml.withOwner(g, "red north 2", null));
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final TerritoriesEditor editor = new TerritoriesEditor(project, givenMap(project));
+          menuItem(editor, "Capital").doClick();
+          editor.clickOnMap(NORTH);
+          seen.add(MapXml.capitalOf(project.game(), NORTH));
+          for (final String unchanged : List.of(SEA, "red north 2")) {
+            final Object before = project.game();
+            editor.clickOnMap(unchanged);
+            seen.add(project.game() == before);
+          }
+        });
+
+    // then
+    assertThat(seen)
+        .as("Russians' capital; the sea zone and the land without owner unchanged")
+        .containsExactly(Optional.of("Russians"), true, true);
+  }
+
+  @DisplayName("Painting another owner keeps the land step as the goal, with a box of nations")
+  @Test
+  void paintOwnerKeepsTheLandGoal() throws Exception {
+    // given
+    final MapProject project = givenMinimap();
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenMap(project);
+          final TerritoriesEditor editor = new TerritoriesEditor(project, map);
+          editor.showing();
+          map.showStep(MapGuide.Step.Id.LAND);
+          editor.paintOwner("Italians");
+          seen.add(map.goalStep());
+          seen.add(map.bannerText().orElseThrow());
+          seen.add(find(map, JComboBox.class, box -> true).getSelectedItem());
+        });
+
+    // then
+    assertThat(seen)
+        .as("still the land step, painting the Italians, chosen in the box")
+        .containsExactly(
+            Optional.of(MapGuide.Step.Id.LAND),
+            "Painting owner Italians: click or drag across land to give it to Italians. Sea zones"
+                + " stay as they are.",
+            "Italians");
+  }
+
+  @DisplayName("A terrain effect painted shows Back to Terrain effects, which opens it there")
+  @Test
+  void paintEffectLeadsBack() throws Exception {
+    // given
+    final MapProject project = givenMinimap();
+    final List<String> opened = new ArrayList<>();
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenMap(project);
+          final TerritoriesEditor editor =
+              new TerritoriesEditor(
+                  project, map, (tool, item) -> opened.add(tool + ": " + item), picture -> {});
+          editor.showing();
+          editor.paintEffect("Forest");
+          seen.add(map.goalText().orElseThrow());
+          find(map, AbstractButton.class, b -> "Back to Terrain effects".equals(b.getText()))
+              .doClick();
+        });
+
+    // then
+    assertThat(seen).as("the effect is the goal").containsExactly("Terrain effect Forest");
+    assertThat(opened).as("back to the effect").containsExactly("Terrain effects: Forest");
   }
 }

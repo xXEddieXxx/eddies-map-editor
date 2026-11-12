@@ -1,6 +1,7 @@
 package eddies.mapeditor;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 
 import java.awt.BorderLayout;
 import java.awt.Component;
@@ -13,6 +14,7 @@ import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JComponent;
+import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
@@ -27,6 +29,32 @@ final class HelpTest {
   @AfterEach
   void removePreferences() throws BackingStoreException {
     hidden.removeNode();
+  }
+
+  @DisplayName("A link says where a setting is made and names its button for screen readers")
+  @Test
+  void linkNamesTheTool() {
+    // given
+    final JComponent link = Help.link("The color is set per nation in", "Nations");
+
+    // when
+    final JButton open = givenButton(link, "Nations ›");
+
+    // then
+    assertThat(
+            descendants(link)
+                .filter(
+                    c ->
+                        c instanceof JLabel l
+                            && "The color is set per nation in".equals(l.getText())))
+        .as("the context before the link")
+        .hasSize(1);
+    assertThat(open.getAccessibleContext().getAccessibleName())
+        .as("read as what it does")
+        .isEqualTo("Open Nations");
+    assertThatCode(open::doClick)
+        .as("outside the editor's window a click does nothing")
+        .doesNotThrowAnyException();
   }
 
   @DisplayName("A tool's intro line stays hidden once hidden, other tools still show theirs")

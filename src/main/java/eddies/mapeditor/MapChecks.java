@@ -68,7 +68,7 @@ class MapChecks {
           Problem.in(
               "Territories",
               files.picture().isPresent()
-                  ? "No territories yet: press Find territories in Territories"
+                  ? "No territories yet: press Make territories in Territories"
                   : "No picture yet: load one in Territories"));
     }
     if (nations.isEmpty()) {

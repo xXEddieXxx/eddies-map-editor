@@ -679,10 +679,11 @@ final class PoliticsEditor implements Editor {
     final List<String> named =
         RulesXml.whereNamed(RulesXml.withoutRelationshipType(game, type), type);
     if (!named.isEmpty()) {
-      Dialogs.warn(
+      Dialogs.refuseNamed(
           page,
           "Remove type",
-          type + " is still used by:\n" + String.join("\n", named) + "\nChange those first.");
+          type + " is still used by:\n" + String.join("\n", named) + "\nChange those first.",
+          named);
       return;
     }
     final int pairs = RulesXml.pairsOf(game, type);

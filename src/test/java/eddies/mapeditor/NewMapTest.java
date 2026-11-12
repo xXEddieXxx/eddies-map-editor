@@ -127,7 +127,7 @@ final class NewMapTest {
     assertThat(project.getFiles().size().width).as("undo brings the old picture").isEqualTo(400);
   }
 
-  @DisplayName("A picture without territories asks to press Find territories")
+  @DisplayName("A picture without territories asks to press Make territories")
   @Test
   void asksToFindTerritories() {
     final MapProject empty = MapProject.newEmpty();
@@ -138,7 +138,7 @@ final class NewMapTest {
     assertThat(MapChecks.quick(empty.game(), empty.getFiles()))
         .as("what to do next")
         .extracting(Problem::text)
-        .contains("No territories yet: press Find territories in Territories");
+        .contains("No territories yet: press Make territories in Territories");
   }
 
   @DisplayName("Land of the engine's Neutral owner is no problem and needs no capital")

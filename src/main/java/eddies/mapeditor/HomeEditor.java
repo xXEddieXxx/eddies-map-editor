@@ -45,6 +45,7 @@ final class HomeEditor implements Editor {
   private final MapProject project;
   private final Consumer<String> showTerritory;
   private final Consumer<String> openTool;
+  private final Consumer<Step.Id> followStep;
   private final Runnable check;
   private final Runnable save;
   private final Runnable play;
@@ -63,18 +64,21 @@ final class HomeEditor implements Editor {
   /**
    * @param showTerritory opens a territory in Territories
    * @param openTool shows the tool of this title
+   * @param followStep shows the step's tool with the step as its goal, {@link MapView#showStep}
    * @param check runs Check, the engine's too, which then calls {@link #setValidated}
    */
   HomeEditor(
       final MapProject project,
       final Consumer<String> showTerritory,
       final Consumer<String> openTool,
+      final Consumer<Step.Id> followStep,
       final Runnable check,
       final Runnable save,
       final Runnable play) {
     this.project = project;
     this.showTerritory = showTerritory;
     this.openTool = openTool;
+    this.followStep = followStep;
     this.check = check;
     this.save = save;
     this.play = play;
@@ -240,7 +244,8 @@ final class HomeEditor implements Editor {
     welcome.forEach(line -> card.row(note(line, textWidth)));
     final JButton go =
         switch (next.kind()) {
-          case GO_TO_TOOL -> button("Go to " + next.tool(), () -> openTool.accept(next.tool()));
+          case GO_TO_TOOL ->
+              button("Go to " + next.tool(), () -> next.step().ifPresent(followStep));
           case FIX_PROBLEMS -> button("Show the first problem", () -> show(problems.getFirst()));
           case CHECK -> button("Check (F6)", check);
           case SAVE -> button("Save (Ctrl+S)", save);
@@ -284,7 +289,7 @@ final class HomeEditor implements Editor {
     final JButton tool =
         step.tool().equals(MapGuide.CHECK)
             ? tertiary(MapGuide.CHECK, check)
-            : tertiary(step.tool(), () -> openTool.accept(step.tool()));
+            : tertiary(step.tool(), () -> followStep.accept(step.id()));
     tool.getAccessibleContext().setAccessibleName(step.tool() + ": " + step.text());
     return row(mark(status), text, tool);
   }

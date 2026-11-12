@@ -6,12 +6,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import lombok.experimental.UtilityClass;
 import org.triplea.map.data.elements.Game;
+import org.triplea.map.data.elements.Initialize.UnitInitialize.UnitPlacement;
 import eddies.mapeditor.MapChecks.Problem;
 import eddies.mapeditor.MapGuide.Next.Kind;
+import eddies.mapeditor.MapGuide.Step.Id;
 import eddies.mapeditor.MapGuide.Step.State;
 
 /**
@@ -45,8 +46,19 @@ class MapGuide {
    * A step to a playable map, how far it is, the tool to do it in and why it matters.
    *
    * @param tool the title of the tool, or {@link #CHECK}
+   * @param progress how far it is in numbers, eg "3 of 5 nations have land"; empty for Check
    */
-  record Step(String text, State state, String tool, String why) {
+  record Step(Id id, String text, State state, String tool, String why, String progress) {
+    enum Id {
+      TERRITORIES,
+      NATIONS,
+      LAND,
+      CAPITALS,
+      UNITS,
+      CONNECTIONS,
+      CHECK
+    }
+
     /** Done; not done yet; or not done although it should be by now, eg land once nations exist. */
     enum State {
       DONE,
@@ -63,8 +75,9 @@ class MapGuide {
    * What to do next, the one main action of Home.
    *
    * @param tool the tool to go to, {@link #CHECK} to check, or the tool of the first problem
+   * @param step the step to follow into its tool, for {@link Kind#GO_TO_TOOL}
    */
-  record Next(Kind kind, String title, String why, String tool) {
+  record Next(Kind kind, String title, String why, String tool, Optional<Step.Id> step) {
     enum Kind {
       GO_TO_TOOL,
       FIX_PROBLEMS,
@@ -267,7 +280,12 @@ class MapGuide {
     final Optional<Step> todo =
         steps(project).stream().filter(s -> !s.done() && !s.tool().equals(CHECK)).findFirst();
     if (todo.isPresent()) {
-      return new Next(Kind.GO_TO_TOOL, todo.get().text(), todo.get().why(), todo.get().tool());
+      return new Next(
+          Kind.GO_TO_TOOL,
+          todo.get().text(),
+          todo.get().why(),
+          todo.get().tool(),
+          Optional.of(todo.get().id()));
     }
     if (!problems.isEmpty()) {
       final Problem first = problems.getFirst();
@@ -275,75 +293,139 @@ class MapGuide {
           Kind.FIX_PROBLEMS,
           problems.size() == 1 ? "Fix 1 problem" : "Fix " + problems.size() + " problems",
           "They keep the map from being played. The first: " + first.text(),
-          first.territory().map(t -> "Territories").or(first::tool).orElse(""));
+          first.territory().map(t -> "Territories").or(first::tool).orElse(""),
+          Optional.empty());
     }
     if (!checked) {
       return new Next(
           Kind.CHECK,
           "Check your map",
           "Check loads the game as TripleA does and finds what still keeps it from being played.",
-          CHECK);
+          CHECK,
+          Optional.empty());
     }
     if (project.hasUnsavedChanges()) {
-      return new Next(Kind.SAVE, "Save your map", "TripleA plays the map as it is saved.", "");
+      return new Next(
+          Kind.SAVE,
+          "Save your map",
+          "TripleA plays the map as it is saved.",
+          "",
+          Optional.empty());
     }
     return new Next(
-        Kind.PLAY, "Your map is ready to play", "Try it in TripleA: play a few turns.", "");
+        Kind.PLAY,
+        "Your map is ready to play",
+        "Try it in TripleA: play a few turns.",
+        "",
+        Optional.empty());
   }
 
   private static List<Step> steps(final MapProject project, final boolean checked) {
     final Game game = project.game();
     final List<String> territories = MapXml.territories(game);
     final List<String> nations = MapXml.nations(game);
-    final List<String> owners =
-        territories.stream().flatMap(t -> MapXml.owner(game, t).stream()).distinct().toList();
-    final boolean allOwnLand =
-        !nations.isEmpty()
-            && nations.stream().filter(n -> MapXml.takesTurns(game, n)).allMatch(owners::contains);
-    // each territory's capital read once: a big map has thousands of attachments to look through
-    final Set<String> withCapital =
-        territories.stream()
-            .flatMap(t -> MapXml.capitalOf(game, t).stream())
-            .collect(Collectors.toSet());
-    final List<String> landed = owners.stream().filter(nations::contains).toList();
-    final boolean capitals = !landed.isEmpty() && withCapital.containsAll(landed);
+    final Set<String> known = Set.copyOf(territories);
+    final Set<String> owners = MapXml.nationsWithLand(game, known);
+    final List<String> playing = nations.stream().filter(n -> MapXml.takesTurns(game, n)).toList();
+    final List<String> withoutLand = withoutLand(playing, owners);
+    final Set<String> withCapital = MapXml.nationsWithCapital(game, known);
+    final List<String> landed = nations.stream().filter(owners::contains).toList();
+    final long capitals = landed.stream().filter(withCapital::contains).count();
     final boolean nationsAndLand = !nations.isEmpty() && !territories.isEmpty();
+    // the placements read once, not per territory: a big map has hundreds of territories
+    final long withUnits =
+        MapXml.placements(game).stream()
+            .map(UnitPlacement::getTerritory)
+            .filter(known::contains)
+            .distinct()
+            .count();
+    final int connections = MapXml.connections(game).size();
     return List.of(
         new Step(
-            "Find the territories in a picture of the map",
+            Id.TERRITORIES,
+            "Make the territories from a picture of the map",
             state(project.getFiles().hasOutlines()),
             "Territories",
-            "The game needs each territory's outline; Territories finds them in a picture."),
+            "The game needs each territory's outline; Territories makes them from a picture.",
+            SearchList.count(territories.size(), territories.size(), "territory", "territories")),
         new Step(
+            Id.NATIONS,
             "Add the nations that play",
             state(!nations.isEmpty()),
             "Nations",
-            "A game needs the nations that take turns."),
+            "A game needs the nations that take turns.",
+            SearchList.count(nations.size(), nations.size(), "nation", "nations")),
         new Step(
+            Id.LAND,
             "Give every nation its land",
-            allOwnLand ? State.DONE : nationsAndLand ? State.FAILING : State.TODO,
+            !nations.isEmpty() && withoutLand.isEmpty()
+                ? State.DONE
+                : nationsAndLand ? State.FAILING : State.TODO,
             "Territories",
-            "Each nation that takes turns needs land to start with."),
+            "Each nation that takes turns needs land to start with.",
+            (playing.size() - withoutLand.size())
+                + " of "
+                + playing.size()
+                + (playing.size() == 1 ? " nation has land" : " nations have land")),
         new Step(
+            Id.CAPITALS,
             "Mark each nation's capital",
-            capitals ? State.DONE : landed.isEmpty() ? State.TODO : State.FAILING,
+            !landed.isEmpty() && capitals == landed.size()
+                ? State.DONE
+                : landed.isEmpty() ? State.TODO : State.FAILING,
             "Territories",
-            "A nation's capital is where it collects its income."),
+            "A nation's capital is where it collects its income.",
+            capitals
+                + " of "
+                + landed.size()
+                + (landed.size() == 1 ? " nation with land has" : " nations with land have")
+                + " a capital"),
         new Step(
+            Id.UNITS,
             "Place the units each territory starts with",
-            state(territories.stream().anyMatch(t -> !MapXml.units(game, t).isEmpty())),
+            state(withUnits > 0),
             "Territories",
-            "The units in the territories are what the players start with."),
+            "The units in the territories are what the players start with.",
+            withUnits + (withUnits == 1 ? " territory has units" : " territories have units")),
         new Step(
+            Id.CONNECTIONS,
             "Check which territories border each other",
-            state(!MapXml.connections(game).isEmpty()),
+            state(connections > 0),
             "Connections",
-            "Units move only between territories that border each other."),
+            "Units move only between territories that border each other.",
+            SearchList.count(connections, connections, "connection", "connections")),
         new Step(
+            Id.CHECK,
             "Check the map and play it",
             state(checked && !project.hasUnsavedChanges()),
             CHECK,
-            "Check (F6) loads the game as TripleA does; then play it in TripleA."));
+            "Check (F6) loads the game as TripleA does; then play it in TripleA.",
+            ""));
+  }
+
+  /** The nations taking turns that own no land at the start, in their order. */
+  static List<String> withoutLand(final Game game) {
+    final List<String> playing =
+        MapXml.nations(game).stream().filter(n -> MapXml.takesTurns(game, n)).toList();
+    return withoutLand(
+        playing, MapXml.nationsWithLand(game, Set.copyOf(MapXml.territories(game))));
+  }
+
+  private static List<String> withoutLand(final List<String> playing, final Set<String> owners) {
+    return playing.stream().filter(n -> !owners.contains(n)).toList();
+  }
+
+  /** What to do for a step on the map, shown while its tool has no mode of its own for it. */
+  static String howTo(final Step.Id step) {
+    return switch (step) {
+      case TERRITORIES -> "Load a picture of the map, then make the territories from it.";
+      case NATIONS -> "Add a nation with + below the list.";
+      case LAND -> "Painting an owner: drag across land to give it to the nation.";
+      case CAPITALS -> "Painting capitals: click land to make it its owner's capital.";
+      case UNITS -> "Click a territory, then add its units in the panel.";
+      case CONNECTIONS -> "Click a territory, then its neighbours.";
+      case CHECK -> "Check (F6) loads the game as TripleA does.";
+    };
   }
 
   private static State state(final boolean done) {

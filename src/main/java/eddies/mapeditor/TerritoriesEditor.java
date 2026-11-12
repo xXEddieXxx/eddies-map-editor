@@ -63,6 +63,7 @@ import org.triplea.swing.FileChooser;
 import org.triplea.swing.SwingComponents;
 import org.triplea.swing.WrapLayout;
 import eddies.mapeditor.MakerIcon.Glyph;
+import eddies.mapeditor.MapGuide.Step;
 import eddies.mapeditor.MapProject.Renamed;
 
 /**
@@ -88,6 +89,16 @@ final class TerritoriesEditor implements Editor {
   private static final List<String> LINE_COLOR_NAMES = List.of("Like its lines", "Black", "Grey");
   private static final List<Color> LINE_COLORS =
       List.of(Color.BLACK, Color.BLACK, new Color(0x80, 0x80, 0x80));
+
+  private static final Brush CAPITAL =
+      new Brush(
+          "Capital",
+          "Painting capitals: click land to make it its owner's capital.",
+          Optional.empty(),
+          (g, t) ->
+              MapXml.isWater(g, t)
+                  ? g
+                  : MapXml.owner(g, t).map(owner -> MapXml.withCapital(g, t, owner)).orElse(g));
 
   /** What a click on the map does besides choosing the territory. */
   private enum Mode {
@@ -131,6 +142,8 @@ final class TerritoriesEditor implements Editor {
   private Optional<BufferedImage> styleOf = Optional.empty();
   private Optional<Integer> chosenWidth = Optional.empty();
   private Optional<Color> chosenColor = Optional.empty();
+  // Draw borders' brush, kept for the session: clicked points instead of a dragged line
+  private boolean drawingByPoints;
   // a picture only in tiles is put together in the background before lines go into it
   private boolean preparingPicture;
   private boolean pictureTooBig;
@@ -298,7 +311,7 @@ final class TerritoriesEditor implements Editor {
         });
     decorations.addActionListener(e -> startMode(Mode.DECORATE));
     drawBorders.setToolTipText(
-        "Draw border lines into the map's picture by hand, then find the territories in them");
+        "Draw border lines into the map's picture by hand, then make territories of them");
     drawBorders.addActionListener(e -> startMode(Mode.DRAW));
   }
 
@@ -437,6 +450,7 @@ final class TerritoriesEditor implements Editor {
     copySource = Optional.empty();
     paintedEffect = Optional.empty();
     pendingCut = Optional.empty();
+    map.endGoal();
   }
 
   /** The map as the mode needs it, only while this tool has the map. */
@@ -452,6 +466,7 @@ final class TerritoriesEditor implements Editor {
   private void applyMode() {
     showModeButtons();
     final String territory = Objects.requireNonNullElse(selected, "");
+    final Set<String> withEffect = paintedEffect.map(this::territoriesWith).orElse(Set.of());
     switch (mode) {
       case SELECT -> {
         map.stopEditingPlaces();
@@ -459,7 +474,20 @@ final class TerritoriesEditor implements Editor {
       }
       case PAINT -> {
         map.stopEditingPlaces();
-        map.showBanner(brush.orElseThrow().banner(), this::endMode);
+        map.showBanner(
+            brush.orElseThrow().banner(),
+            map.goalStep().filter(Step.Id.LAND::equals).map(step -> nationBox()),
+            "Done",
+            this::endMode);
+        paintedEffect.ifPresent(
+            effect -> {
+              map.showGoal(
+                  "Terrain effect " + effect,
+                  SearchList.count(
+                      withEffect.size(), withEffect.size(), "territory", "territories"),
+                  "Back to Terrain effects",
+                  () -> openTool.accept("Terrain effects", effect));
+            });
       }
       case DECORATE -> {
         if (decorationPicture.getSelectedItem() instanceof String picture) {
@@ -490,9 +518,16 @@ final class TerritoriesEditor implements Editor {
         borderStyle()
             .ifPresentOrElse(
                 style -> {
-                  map.drawLine(this::borderDrawn);
+                  if (drawingByPoints) {
+                    map.drawLineByPoints(this::borderDrawn);
+                  } else {
+                    map.drawLine(this::borderDrawn);
+                  }
                   map.showBanner(
-                      "Drag on the map to draw a border line.",
+                      drawingByPoints
+                          // short, or the line's tools no longer fit at 1280 px
+                          ? "Click points of the line; double-click ends it."
+                          : "Drag on the map to draw a border line.",
                       Optional.of(drawingTools(style)),
                       "Done",
                       this::endMode);
@@ -516,7 +551,23 @@ final class TerritoriesEditor implements Editor {
             this::endMode);
       }
     }
-    map.mark(paintedEffect.map(this::territoriesWith).orElse(Set.of()));
+    map.mark(withEffect);
+  }
+
+  /** The nation the owner brush paints, to change it without the Paint menu. */
+  private JComboBox<String> nationBox() {
+    final JComboBox<String> nations =
+        new JComboBox<>(MapXml.nations(project.game()).toArray(String[]::new));
+    nations.setSelectedItem(brush.map(Brush::title).orElse(null));
+    nations.setToolTipText("The nation that gets the land");
+    nations.addActionListener(
+        e -> {
+          if (nations.getSelectedItem() instanceof String nation
+              && !brush.map(Brush::title).equals(Optional.of(nation))) {
+            paintOwner(nation);
+          }
+        });
+    return nations;
   }
 
   private void showModeButtons() {
@@ -546,19 +597,8 @@ final class TerritoriesEditor implements Editor {
     final JPopupMenu menu = new JPopupMenu();
     final Game game = project.game();
     menu.add(header("Owner"));
-    // owners paint land only: a sweep across the map leaves the sea zones as they are
     for (final String nation : MapXml.nations(game)) {
-      add(
-          menu,
-          new Brush(
-              nation,
-              "Painting owner "
-                  + nation
-                  + ": click or drag across land to give it to "
-                  + nation
-                  + ". Sea zones stay as they are.",
-              Optional.of(new MapLegend.Swatch(project.nationColor(nation))),
-              (g, t) -> MapXml.isWater(g, t) ? g : MapXml.withOwner(g, t, nation)));
+      add(menu, ownerBrush(nation));
     }
     add(
         menu,
@@ -567,6 +607,7 @@ final class TerritoriesEditor implements Editor {
             "Painting no owner: click land to take its owner away.",
             Optional.empty(),
             (g, t) -> MapXml.isWater(g, t) ? g : MapXml.withOwner(g, t, null)));
+    add(menu, CAPITAL);
     menu.add(header("PUs per turn"));
     final JPanel values = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 2));
     values.setOpaque(false);
@@ -656,6 +697,19 @@ final class TerritoriesEditor implements Editor {
     return menu;
   }
 
+  // owners paint land only: a sweep across the map leaves the sea zones as they are
+  private Brush ownerBrush(final String nation) {
+    return new Brush(
+        nation,
+        "Painting owner "
+            + nation
+            + ": click or drag across land to give it to "
+            + nation
+            + ". Sea zones stay as they are.",
+        Optional.of(new MapLegend.Swatch(project.nationColor(nation))),
+        (g, t) -> MapXml.isWater(g, t) ? g : MapXml.withOwner(g, t, nation));
+  }
+
   private static JLabel header(final String text) {
     final JLabel header = Theme.newSectionLabel(text);
     header.setBorder(
@@ -681,6 +735,27 @@ final class TerritoriesEditor implements Editor {
 
   private void paintWith(final Brush chosen) {
     paintWith(chosen, Optional.empty());
+  }
+
+  /** Paints the nation's land, keeping the goal shown, eg the step "Give every nation its land". */
+  void paintOwner(final String nation) {
+    paintKeepingGoal(ownerBrush(nation));
+  }
+
+  /** Paints capitals, keeping the goal shown, eg the step "Mark each nation's capital". */
+  void paintCapitals() {
+    paintKeepingGoal(CAPITAL);
+  }
+
+  private void paintKeepingGoal(final Brush chosen) {
+    final Optional<Step.Id> step = map.goalStep();
+    paintWith(chosen);
+    step.ifPresent(
+        shown -> {
+          map.showStep(shown);
+          // again: the banner's tools depend on the goal
+          applyMode();
+        });
   }
 
   /** Paints the effect, its territories marked on the map, eg from the Terrain effects tool. */
@@ -763,16 +838,42 @@ final class TerritoriesEditor implements Editor {
     project.getFiles().picture().ifPresent(findTerritories);
   }
 
-  /** The line's color and width, and Find territories, for the banner. */
+  /** The brush, the line's color and width, and Make territories, for the banner. */
   private JPanel drawingTools(final MapPicture.LineStyle style) {
-    final JButton find = new JButton("Find territories");
-    Theme.setPrimaryButtonStyle(find);
-    find.setToolTipText("The areas between the lines become territories, as Redraw borders does");
-    find.addActionListener(e -> findDrawnTerritories());
+    final JButton make = new JButton("Make territories");
+    Theme.setPrimaryButtonStyle(make);
+    make.setToolTipText("The areas between the lines become territories, as Redraw borders does");
+    make.addActionListener(e -> findDrawnTerritories());
     final JPanel tools = lineFields(style);
+    tools.add(brushButton(Glyph.FREEHAND, "Freehand: drag to draw", false), 0);
+    final String lineTip =
+        "Line: click points, double-click or Enter ends it; Backspace takes back a point,"
+            + " Esc the line";
+    tools.add(brushButton(Glyph.POLYLINE, lineTip, true), 1);
+    tools.add(Box.createHorizontalStrut(Theme.GAP_M), 2);
     tools.add(Box.createHorizontalStrut(Theme.GAP_M));
-    tools.add(find);
+    tools.add(make);
     return tools;
+  }
+
+  /** One half of the brush toggle; byPoints tells which brush it chooses. */
+  private JToggleButton brushButton(final Glyph glyph, final String tip, final boolean byPoints) {
+    final JToggleButton button =
+        new JToggleButton(MakerIcon.small(glyph), drawingByPoints == byPoints);
+    button.putClientProperty(
+        FlatClientProperties.BUTTON_TYPE, FlatClientProperties.BUTTON_TYPE_TOOLBAR_BUTTON);
+    button.setToolTipText(tip);
+    button.getAccessibleContext().setAccessibleName(tip);
+    button.addActionListener(
+        e -> {
+          // the chosen brush again would drop a line half set
+          button.setSelected(true);
+          if (drawingByPoints != byPoints) {
+            drawingByPoints = byPoints;
+            applyMode();
+          }
+        });
+    return button;
   }
 
   // ---- split
@@ -1364,7 +1465,7 @@ final class TerritoriesEditor implements Editor {
   }
 
   private void tellStillNamed(final String territory, final List<String> named) {
-    Dialogs.warn(page, territory + " can't be removed yet", stillNamedText(named));
+    Dialogs.refuseNamed(page, territory + " can't be removed yet", stillNamedText(named), named);
   }
 
   /** Why a territory stays: what still names it, at most six of them. */

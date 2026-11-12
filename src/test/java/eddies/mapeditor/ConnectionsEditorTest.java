@@ -67,14 +67,43 @@ final class ConnectionsEditorTest {
 
     assertThat(seen.get(0))
         .as("the first click chooses")
-        .isEqualTo(
-            "Connecting Territory 1: click a territory to connect it, click a connected one to"
-                + " part them.");
+        .isEqualTo("Connecting Territory 1: click a territory to connect it or part it.");
     assertThat(seen.get(1)).as("the second connects").isEqualTo(true);
     assertThat(seen.get(2))
         .as("the news in the banner")
         .isEqualTo("Connected Territory 1 and Territory 4.");
     assertThat(seen.get(3)).as("one undo takes it back").isEqualTo(false);
+  }
+
+  @DisplayName("An impassable territory says it may stay alone, with a link to Territories")
+  @Test
+  void impassableLinksToTerritories() throws Exception {
+    // given
+    final MapProject project = givenFoundMap();
+    final List<List<String>> buttons = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          buttons.add(givenButtonsOfChosen(project, TOP_LEFT));
+          project.edit(g -> TerritoryXml.withFlag(g, TOP_LEFT, TerritoryXml.IMPASSABLE));
+          buttons.add(givenButtonsOfChosen(project, TOP_LEFT));
+        });
+
+    // then
+    assertThat(buttons.get(0))
+        .as("a passable territory needs neighbours")
+        .doesNotContain("Territories ›");
+    assertThat(buttons.get(1)).as("where impassable is set").contains("Territories ›");
+  }
+
+  private static List<String> givenButtonsOfChosen(
+      final MapProject project, final String territory) {
+    final ConnectionsEditor editor = new ConnectionsEditor(project, givenView(project));
+    editor.click(territory);
+    return all((Container) editor.page())
+        .flatMap(c -> c instanceof AbstractButton b ? Stream.of(b.getText()) : Stream.empty())
+        .toList();
   }
 
   @DisplayName("The × of a neighbour parts the two")

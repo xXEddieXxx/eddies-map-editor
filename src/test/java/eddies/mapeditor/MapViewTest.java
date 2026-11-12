@@ -20,6 +20,7 @@ import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
+import javax.swing.JToggleButton;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.DisplayName;
@@ -196,7 +197,7 @@ final class MapViewTest {
           for (final MapView map :
               List.of(givenNewMap(), givenMinimap(), givenPictureOnly(new ArrayList<>()))) {
             titles.add(titles(map));
-            toolbarOrLegend.add(shown(map, MapViewsButton.class) || shown(map, MapLegend.class));
+            toolbarOrLegend.add(shown(map, MapViewsBar.class) || shown(map, MapLegend.class));
           }
         });
 
@@ -204,8 +205,10 @@ final class MapViewTest {
     assertThat(titles.get(1))
         .as("the minimap has 20 territories")
         .contains("20 territories, but no map picture");
-    assertThat(titles.get(2)).as("a picture to find territories in").contains("Picture loaded");
-    assertThat(toolbarOrLegend).as("hidden in every empty state").containsExactly(false, false, false);
+    assertThat(titles.get(2)).as("a picture to make territories from").contains("Picture loaded");
+    assertThat(toolbarOrLegend)
+        .as("hidden in every empty state")
+        .containsExactly(false, false, false);
   }
 
   @DisplayName("With outlines the map shows its toolbar and legend, and no \"?\"")
@@ -217,7 +220,7 @@ final class MapViewTest {
     SwingUtilities.invokeAndWait(
         () -> {
           final MapView map = givenMap();
-          shown.add(shown(map, MapViewsButton.class));
+          shown.add(shown(map, MapViewsBar.class));
           shown.add(shown(map, MapLegend.class));
           help.add(button(map, "?").isPresent());
         });
@@ -226,18 +229,44 @@ final class MapViewTest {
     assertThat(help).as("explanations live in tool tips and the banner").containsExactly(false);
   }
 
-  @DisplayName("Find territories on a loaded picture finds them")
+  @DisplayName("A view chosen below the map shows on the map and in the legend")
+  @Test
+  void viewChosenInLegendShows() throws Exception {
+    // given
+    final List<Boolean> shown = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenMap();
+          all(map)
+              .flatMap(
+                  c ->
+                      c instanceof JToggleButton t && "Values".equals(t.getText())
+                          ? Stream.of(t)
+                          : Stream.empty())
+              .findFirst()
+              .orElseThrow()
+              .doClick();
+          shown.add(titles(map).stream().anyMatch(text -> text.startsWith("Badge: PUs")));
+        });
+
+    // then
+    assertThat(shown).as("the legend explains the values view").containsExactly(true);
+  }
+
+  @DisplayName("Make territories on a loaded picture finds them")
   @Test
   void findTerritoriesOverThePicture() throws Exception {
     final List<String> found = new ArrayList<>();
 
     SwingUtilities.invokeAndWait(
-        () -> button(givenPictureOnly(found), "Find territories").orElseThrow().doClick());
+        () -> button(givenPictureOnly(found), "Make territories").orElseThrow().doClick());
 
     assertThat(found).as("the empty state's one action").containsExactly("found");
   }
 
-  @DisplayName("Find territories again needs a picture loaded here")
+  @DisplayName("Make territories again needs a picture loaded here")
   @Test
   void findAgainNeedsAPicture() throws Exception {
     final List<Boolean> enabled = new ArrayList<>();
@@ -265,7 +294,7 @@ final class MapViewTest {
     return all(picture.getComponentPopupMenu())
         .flatMap(
             c ->
-                c instanceof JMenuItem item && "Find territories again…".equals(item.getText())
+                c instanceof JMenuItem item && "Make territories again…".equals(item.getText())
                     ? Stream.of(item)
                     : Stream.empty())
         .findFirst()
@@ -345,5 +374,103 @@ final class MapViewTest {
         .as("Esc runs done once; a second Esc without banner does nothing")
         .containsExactly("done");
     assertThat(shown).as("the banner is gone after Esc").containsExactly(false);
+  }
+
+  @DisplayName("A step shows above the banner, 56 px high, kept by a new banner, ended by hiding")
+  @Test
+  void stepShowsAboveTheBanner() throws Exception {
+    // given
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenMap();
+          map.showStep(MapGuide.Step.Id.NATIONS);
+          seen.add(bannerHeight(map));
+          seen.add(map.bannerText().orElseThrow());
+          map.showBanner(TEXT, () -> {});
+          seen.add(map.goalStep().orElseThrow());
+          map.hideBanner();
+          seen.add(map.goalText().isPresent());
+          seen.add(bannerHeight(map));
+          map.showStep(MapGuide.Step.Id.NATIONS);
+          map.useFor(MapMode.GAME, new JPanel(), territory -> {});
+          seen.add(map.goalStep().isPresent());
+        });
+
+    // then
+    assertThat(seen)
+        .as("56 px with how to add a nation; a mode's banner keeps it; hiding and useFor end it")
+        .containsExactly(
+            56,
+            MapGuide.howTo(MapGuide.Step.Id.NATIONS),
+            MapGuide.Step.Id.NATIONS,
+            false,
+            32,
+            false);
+  }
+
+  @DisplayName("An edit mode's banner is taller and says Edit mode; a plain banner after it is not")
+  @Test
+  void editBannerSaysSo() throws Exception {
+    // given
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenMap();
+          map.showEditBanner(TEXT, () -> {});
+          seen.add(bannerHeight(map));
+          seen.add(editBadgeShown(map));
+          map.showBanner(TEXT, () -> {});
+          seen.add(bannerHeight(map));
+          seen.add(editBadgeShown(map));
+        });
+
+    // then
+    assertThat(seen)
+        .as("40 px with the badge, then 32 px without")
+        .containsExactly(40, true, 32, false);
+  }
+
+  private static boolean editBadgeShown(final MapView map) {
+    return labels(button(map, "Done").orElseThrow().getParent().getParent())
+        .anyMatch(l -> "Edit mode".equals(l.getText()));
+  }
+
+  private static Stream<JLabel> labels(final Component in) {
+    final Stream<JLabel> self = in instanceof JLabel l ? Stream.of(l) : Stream.empty();
+    return in instanceof Container c
+        ? Stream.concat(self, Stream.of(c.getComponents()).flatMap(MapViewTest::labels))
+        : self;
+  }
+
+  private static int bannerHeight(final MapView map) {
+    return button(map, "Done").orElseThrow().getParent().getParent().getPreferredSize().height;
+  }
+
+  @DisplayName("Short of room the banner cuts its text, never the control after it")
+  @Test
+  void narrowBannerKeepsItsControls() throws Exception {
+    // given
+    final List<Integer> widths = new ArrayList<>();
+    final JComboBox<String> pictures = new JComboBox<>(new String[] {"a_long_picture_name.png"});
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenMap();
+          map.showBanner(TEXT.repeat(5), Optional.of(pictures), "Done", () -> {});
+          map.setSize(500, 400);
+          layOut(map);
+          widths.add(pictures.getWidth());
+        });
+
+    // then
+    assertThat(widths)
+        .as("the picture box keeps its width")
+        .containsExactly(pictures.getPreferredSize().width);
   }
 }

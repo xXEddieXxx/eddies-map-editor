@@ -56,6 +56,7 @@ class Dialogs {
   private static final int MAX_DETAILS = 6;
   private static final int SEARCH_FROM = 12;
   private static final String CANCEL = "Cancel";
+  private static final String CLOSE = "Close";
   // on a pane's root: whether it is only text, which is kept to a readable width
   private static final String TEXT_ONLY_KEY = "Dialogs.textOnly";
 
@@ -255,7 +256,37 @@ class Dialogs {
 
   /** A problem the map maker must read before going on: one "Close" button. */
   static void warn(final Component parent, final String title, final String text) {
-    show(parent, title, newPane(text, List.of(), null, List.of(), List.of("Close"), () -> true));
+    show(parent, title, newPane(text, List.of(), null, List.of(), List.of(CLOSE), () -> true));
+  }
+
+  /**
+   * A refusal because attachments still name something, eg a removal: [Close] [Show in
+   * Attachments], which opens the first attachment named; with only variables naming it, a warn.
+   */
+  static void refuseNamed(
+      final Component parent, final String title, final String text, final List<String> named) {
+    final Optional<String> first = firstAttachment(named);
+    final Pane pane = newRefusePane(text, named);
+    show(parent, title, pane)
+        .filter(chosen -> first.isPresent() && chosen == pane.verb())
+        .ifPresent(chosen -> MapMakerWindow.openTool(parent, "Attachments", first.get()));
+  }
+
+  static Pane newRefusePane(final String text, final List<String> named) {
+    return newPane(
+        text,
+        List.of(),
+        null,
+        List.of(),
+        firstAttachment(named).isPresent()
+            ? List.of(CLOSE, "Show in Attachments")
+            : List.of(CLOSE),
+        () -> true);
+  }
+
+  // whereNamed lists variables as "variable name"; Attachments does not show those
+  private static Optional<String> firstAttachment(final List<String> named) {
+    return named.stream().filter(place -> !place.startsWith("variable ")).findFirst();
   }
 
   /** Save, don't save or cancel, eg before closing a map with unsaved changes. */
@@ -361,7 +392,10 @@ class Dialogs {
     bind(
         root,
         KeyEvent.VK_ESCAPE,
-        buttons.stream().filter(b -> b.getText().equals(CANCEL)).findFirst().orElse(verb));
+        buttons.stream()
+            .filter(b -> b.getText().equals(CANCEL) || b.getText().equals(CLOSE))
+            .findFirst()
+            .orElse(verb));
     root.putClientProperty(TEXT_ONLY_KEY, content == null);
     return new Pane(root, List.copyOf(buttons), verb, recheck);
   }
@@ -395,12 +429,16 @@ class Dialogs {
   }
 
   private static JButton newButton(final String label, final List<JButton> buttons) {
-    final JButton button = new JButton(label);
+    // asked each time: a verb styled primary later gets a wider (semibold) font
+    final JButton button =
+        new JButton(label) {
+          @Override
+          public Dimension getPreferredSize() {
+            final Dimension size = super.getPreferredSize();
+            return new Dimension(Math.max(BUTTON_MIN_WIDTH, size.width), size.height);
+          }
+        };
     Theme.setSecondaryButtonStyle(button);
-    button.setPreferredSize(
-        new Dimension(
-            Math.max(BUTTON_MIN_WIDTH, button.getPreferredSize().width),
-            button.getPreferredSize().height));
     buttons.add(button);
     return button;
   }

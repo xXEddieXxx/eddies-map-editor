@@ -7,6 +7,7 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Polygon;
 import java.awt.RenderingHints;
+import java.awt.geom.Path2D;
 import java.util.List;
 import java.util.Optional;
 import javax.swing.Icon;
@@ -58,7 +59,9 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
     ACTIONS,
     TRIGGERS,
     LOCK,
-    UNLOCK
+    UNLOCK,
+    FREEHAND,
+    POLYLINE
   }
 
   /** The icon at the size of the text around it. */
@@ -266,6 +269,18 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
         g.drawLine(8, 5, 8, 8);
         g.drawLine(14, 5, 14, 6);
         g.fillRoundRect(1, 8, 10, 7, 2, 2);
+      }
+      case FREEHAND -> {
+        final Path2D curve = new Path2D.Double();
+        curve.moveTo(2, 12);
+        curve.curveTo(5, 2, 9, 15, 14, 4);
+        g.draw(curve);
+      }
+      case POLYLINE -> {
+        g.drawPolyline(new int[] {2, 6, 10, 14}, new int[] {13, 4, 11, 3}, 4);
+        for (final int[] point : new int[][] {{2, 13}, {6, 4}, {10, 11}, {14, 3}}) {
+          g.fillOval(point[0] - 2, point[1] - 2, 4, 4);
+        }
       }
       default -> throw new IllegalStateException("Unknown icon: " + glyph);
     }

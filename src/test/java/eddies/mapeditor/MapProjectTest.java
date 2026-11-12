@@ -31,7 +31,7 @@ import eddies.mapeditor.MapProject.Renamed;
 
 final class MapProjectTest {
   private static final String NORTH = "red north 1";
-  // the areas of MapPictureTest.givenPicture, as Find territories names them
+  // the areas of MapPictureTest.givenPicture, as Make territories names them
   private static final String TOP_LEFT = "Territory 1";
   private static final String TOP_RIGHT = "Territory 2";
 

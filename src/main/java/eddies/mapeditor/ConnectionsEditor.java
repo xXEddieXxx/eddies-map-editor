@@ -110,16 +110,16 @@ final class ConnectionsEditor implements Editor {
 
   private void showInstruction() {
     backToInstruction.stop();
-    map.showBanner(
+    map.showEditBanner(
         "Connecting "
             + from
-            + ": click a territory to connect it, click a connected one to part them.",
+            + ": click a territory to connect it or part it.",
         () -> choose(null));
   }
 
   private void showNews(final String text) {
     news = text;
-    map.showBanner(text, () -> choose(null));
+    map.showEditBanner(text, () -> choose(null));
     backToInstruction.restart();
   }
 
@@ -214,6 +214,11 @@ final class ConnectionsEditor implements Editor {
               () -> part(territory, neighbour)),
           BorderLayout.EAST);
       inspector.row(row);
+    }
+    if (MapXml.isImpassable(project.game(), territory)) {
+      // two lines: one is too wide for the inspector at 1280 px, and a row clips what wraps
+      inspector.note("Impassable: it may stay without neighbours.");
+      inspector.row(Help.link("Set in", "Territories", territory));
     }
     inspector.note("Click a territory on the map to add it.").end();
   }

@@ -12,7 +12,10 @@ import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
+import java.io.IOException;
 import java.io.Serial;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Optional;
 import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
@@ -29,6 +32,7 @@ import javax.swing.KeyStroke;
 import javax.swing.Timer;
 import org.triplea.map.data.elements.Info;
 import org.triplea.swing.SwingComponents;
+import org.triplea.util.LocalizeHtml;
 
 /**
  * The game's notes, the HTML players read about the game before and during it: the text on the
@@ -42,6 +46,8 @@ final class NotesEditor implements Editor {
   private static final int CAPTION_HEIGHT = 24;
   private static final int SWITCH_HEIGHT = 28;
   private static final String NOTES_CARD = "notes";
+  // where the game finds the pictures notes name, eg <img src="preview.png">
+  private static final String DOC_IMAGES = "doc/images";
   private static final String EMPTY_CARD = "empty";
 
   /** Which panes show. */
@@ -74,7 +80,7 @@ final class NotesEditor implements Editor {
     text.setText(MapXml.notes(project.game()));
     // on Swing's thread the caret follows the text to its end, and the view with it
     text.setCaretPosition(0);
-    preview.setText(text.getText());
+    preview.setText(asShown(text.getText()));
     pause.setRepeats(false);
     OnTyping.attach(
         text,
@@ -118,7 +124,7 @@ final class NotesEditor implements Editor {
           // undo, redo or another map: the text follows; typing here keeps the caret
           if (!editingHere && !notes.equals(text.getText())) {
             text.setText(notes);
-            preview.setText(notes);
+            preview.setText(asShown(notes));
           }
         });
   }
@@ -169,6 +175,53 @@ final class NotesEditor implements Editor {
             });
   }
 
+  /**
+   * A picture chosen goes into the map's doc/images, where the game finds the pictures of notes,
+   * and its tag at the caret; written at once, outside undo, as other imports.
+   */
+  private void addPicture() {
+    final Optional<Path> folder = project.getFiles().folder();
+    if (folder.isEmpty()) {
+      Dialogs.toast(page, "! Save the map first: its pictures go into its folder");
+      return;
+    }
+    final Path images = folder.get().resolve(DOC_IMAGES);
+    MapMakerWindow.chooseFileToOpen(page, "Choose a picture", images, "png", "jpg", "gif")
+        .ifPresent(
+            file -> {
+              try {
+                wrap("<img src=\"" + pictureIn(images, file) + "\"/>", "");
+              } catch (final IOException e) {
+                Dialogs.warn(page, "Picture not added", file + " could not be copied: " + e);
+              }
+            });
+  }
+
+  /**
+   * The picture's path in the folder, as an img tag names it; a file from elsewhere copied in
+   * first, under a name no other picture there has, unless the same picture is there.
+   */
+  static String pictureIn(final Path images, final Path file) throws IOException {
+    if (file.toAbsolutePath().startsWith(images.toAbsolutePath())) {
+      // an img link's path is a URL's, with "/" also on Windows
+      return images.toAbsolutePath().relativize(file.toAbsolutePath()).toString().replace('\\', '/');
+    }
+    final String name = file.getFileName().toString();
+    final int dot = name.lastIndexOf('.');
+    final String stem = dot < 0 ? name : name.substring(0, dot);
+    final String ending = dot < 0 ? "" : name.substring(dot);
+    String free = name;
+    for (int i = 2; Files.exists(images.resolve(free)); i++) {
+      // the same picture there already: no copy of it
+      if (Files.mismatch(images.resolve(free), file) == -1) {
+        return free;
+      }
+      free = stem + "-" + i + ending;
+    }
+    MapFolder.copyInto(file, images.resolve(free));
+    return free;
+  }
+
   private JComponent newToolbar() {
     final JPanel tags = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_XS, 0));
     tags.setOpaque(false);
@@ -177,12 +230,8 @@ final class NotesEditor implements Editor {
     tags.add(Theme.newIconButton("H", "Heading", () -> wrap("<h3>", "</h3>")));
     tags.add(Theme.newIconButton("•", "List", () -> wrap("<ul>\n  <li>", "</li>\n</ul>")));
     tags.add(Theme.newIconButton("¶", "Line break (Shift+Enter)", this::lineBreak));
-    final JButton link = Theme.newIconButton("<a>", "Link…", this::addLink);
-    // as wide as its three letters, which 28 px cut off
-    final int height = link.getPreferredSize().height;
-    link.setPreferredSize(null);
-    link.setPreferredSize(new Dimension(link.getPreferredSize().width, height));
-    tags.add(link);
+    tags.add(tagButton("<a>", "Link…", this::addLink));
+    tags.add(tagButton("<img>", "Picture…, copied into doc/images", this::addPicture));
 
     final JPanel views = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
     views.setOpaque(false);
@@ -216,6 +265,15 @@ final class NotesEditor implements Editor {
     toolbar.add(tags, BorderLayout.WEST);
     toolbar.add(right, BorderLayout.EAST);
     return toolbar;
+  }
+
+  /** An icon button showing its tag, as wide as the tag's letters, which 28 px cut off. */
+  private static JButton tagButton(final String tag, final String tip, final Runnable action) {
+    final JButton button = Theme.newIconButton(tag, tip, action);
+    final int height = button.getPreferredSize().height;
+    button.setPreferredSize(null);
+    button.setPreferredSize(new Dimension(button.getPreferredSize().width, height));
+    return button;
   }
 
   private static JComponent captioned(final String caption, final JComponent pane) {
@@ -300,12 +358,22 @@ final class NotesEditor implements Editor {
     if (typed.equals(MapXml.notes(project.game()))) {
       return;
     }
-    Panels.showKeepingPlace(preview, typed);
+    Panels.showKeepingPlace(preview, asShown(typed));
     editingHere = true;
     try {
       project.edit(game -> MapXml.withNotes(game, typed));
     } finally {
       editingHere = false;
     }
+  }
+
+  /**
+   * The notes with their pictures found as the game finds them, eg {@code <img src="preview.png">}
+   * in the map's doc/images folder; the notes saved keep the links as typed.
+   */
+  String asShown(final String notes) {
+    return project.getFiles().folder()
+        .map(folder -> LocalizeHtml.localizeImgLinksInHtml(notes, folder))
+        .orElse(notes);
   }
 }

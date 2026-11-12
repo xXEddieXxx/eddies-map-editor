@@ -418,14 +418,15 @@ final class TurnOrderEditor implements Editor {
     final Game changed = GameRulesXml.withStepKind(game, index, kind);
     final List<String> naming = RulesXml.whereNamed(game, name);
     if (!naming.isEmpty() && !name.equals(RulesXml.steps(changed).get(index).getName())) {
-      Dialogs.warn(
+      Dialogs.refuseNamed(
           page,
           "Change what happens",
           "TripleA tells by a step's name what happens in it, so the name "
               + name
               + " would change. These still name it: "
               + String.join(", ", naming)
-              + ". Change them first.");
+              + ". Change them first.",
+          naming);
       showInspector();
       return;
     }

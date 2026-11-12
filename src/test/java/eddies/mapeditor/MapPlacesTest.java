@@ -16,7 +16,7 @@ import org.triplea.util.PointFileReaderWriter;
 import eddies.mapeditor.MapFiles.Marker;
 
 final class MapPlacesTest {
-  // a territory of MapPictureTest.givenPicture, as Find territories names it
+  // a territory of MapPictureTest.givenPicture, as Make territories names it
   private static final String TERRITORY = "Territory 1";
   private static final String SEA = "Sea Zone 1";
   private static final String UNKNOWN_LINE = "Atlantis (5,6) | overflowToLeft=true";

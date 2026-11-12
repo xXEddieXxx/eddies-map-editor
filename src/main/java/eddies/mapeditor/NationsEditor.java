@@ -26,7 +26,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiFunction;
-import java.util.function.Consumer;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
 import javax.swing.BorderFactory;
@@ -123,7 +122,6 @@ final class NationsEditor implements Editor {
 
   private final MapProject project;
   private final MapView map;
-  private final Consumer<String> openTool;
   private final JPanel page = new JPanel(new BorderLayout(8, 0));
   private final SearchList list;
   private final Form inspector = new Form(280);
@@ -136,16 +134,12 @@ final class NationsEditor implements Editor {
   private @Nullable Runnable typing;
 
   NationsEditor(final MapProject project) {
-    this(project, new MapView(project, () -> {}, () -> {}, () -> {}), tool -> {});
+    this(project, new MapView(project, () -> {}, () -> {}, () -> {}));
   }
 
-  /**
-   * @param openTool switches to the tool of this title, eg "Territories"
-   */
-  NationsEditor(final MapProject project, final MapView map, final Consumer<String> openTool) {
+  NationsEditor(final MapProject project, final MapView map) {
     this.project = project;
     this.map = map;
-    this.openTool = openTool;
     list =
         new SearchList(
                 "nation",
@@ -331,7 +325,8 @@ final class NationsEditor implements Editor {
     final List<JComponent> links = new ArrayList<>();
     links.add(newLink("Change color", () -> changeColor(nation)));
     if (capital(game, nation).isEmpty()) {
-      links.add(newLink("Mark one in Territories", () -> openTool.accept("Territories")));
+      links.add(newLink(
+              "Mark one in Territories", () -> map.followStep(MapGuide.Step.Id.CAPITALS)));
     }
     inspector.row(Details.header(Optional.of(swatch), nation, line, links));
   }

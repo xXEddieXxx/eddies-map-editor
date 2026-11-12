@@ -10,34 +10,43 @@ import java.awt.Insets;
 import java.io.Serial;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import javax.swing.BorderFactory;
 import javax.swing.Icon;
 import javax.swing.JButton;
+import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 
 /**
- * The line below the map: left what its colors and marks mean in the shown view, as many nations
- * as fit and a button for all; right how many territories changed since the last save and how many
- * problems are outlined red, a click on them shows the problem list.
+ * The line below the map: left the views ({@link MapViewsBar}, only their icons on a narrow map),
+ * then what the shown view's colors and marks mean, as many nations as fit and a button for all;
+ * right how many territories changed since the last save and how many problems are outlined red,
+ * a click on them shows the problem list.
  */
 final class MapLegend extends JPanel {
   @Serial private static final long serialVersionUID = 1L;
   private static final int GAP = 12;
+  // narrower, the views show only their icons
+  private static final int NAMES_FROM = 700;
 
   private final transient MapProject project;
+  private final MapViewsBar views;
   private MapMode mode = MapMode.GAME;
   private final JPanel keys = new JPanel(new FlowLayout(FlowLayout.LEFT, GAP, 2));
   private final JPanel status = new JPanel(new FlowLayout(FlowLayout.RIGHT, GAP, 2));
   private final List<JLabel> nationChips = new ArrayList<>();
+  // "Colors from Nations ›" in the views with nation colors, shown only while every nation fits
+  private Optional<JComponent> colorsLink = Optional.empty();
   private final JButton moreNations = new JButton();
   private final JPopupMenu allNations = new JPopupMenu();
   private transient Runnable showProblems = () -> {};
 
-  MapLegend(final MapProject project) {
+  MapLegend(final MapProject project, final MapViewsBar views) {
     super(new BorderLayout(GAP, 0));
     this.project = project;
+    this.views = views;
     add(keys, BorderLayout.WEST);
     add(status, BorderLayout.EAST);
     Theme.setTertiaryButtonStyle(moreNations);
@@ -60,6 +69,8 @@ final class MapLegend extends JPanel {
   private void fill() {
     keys.removeAll();
     nationChips.clear();
+    colorsLink = Optional.empty();
+    keys.add(views);
     switch (mode) {
       case GAME, OWNERS -> {
         final List<String> nations = MapXml.nations(project.game());
@@ -75,16 +86,20 @@ final class MapLegend extends JPanel {
         allNations.removeAll();
         allNations.add(all);
         keys.add(moreNations);
+        // counted as always shown by doLayout, so fewer nations fit beside it
         keys.add(chip(MapCanvas.NEUTRAL, "No owner"));
         // the game view leaves seas clear over the map's picture
         if (mode == MapMode.OWNERS) {
           keys.add(chip(MapCanvas.SEA, "Sea zone"));
         }
+        // last, as no owner and sea have no nation's color
+        colorsLink = Optional.of(Help.link("Colors from", "Nations"));
+        keys.add(colorsLink.get());
       }
       case VALUES -> keys.add(note("Badge: PUs per turn · ★ capital · VC victory city"));
       case UNITS -> keys.add(note("Units where the game draws them"));
       case CONNECTIONS ->
-          keys.add(note("Line = neighbours. The chosen territory's lines are thicker."));
+          keys.add(note("Line = neighbours. The chosen territory's lines are red."));
       default -> throw new IllegalStateException("Unknown view: " + mode);
     }
     fillStatus();
@@ -116,6 +131,11 @@ final class MapLegend extends JPanel {
   /** Shows as many nations as fit beside the rest of the line, and how many more there are. */
   @Override
   public void doLayout() {
+    if (getWidth() < NAMES_FROM) {
+      views.showIconsOnly();
+    } else {
+      views.showNames();
+    }
     if (!nationChips.isEmpty()) {
       final Insets insets = getInsets();
       final Insets keyInsets = keys.getInsets();
@@ -128,11 +148,22 @@ final class MapLegend extends JPanel {
               - keyInsets.left
               - keyInsets.right
               - GAP;
-      // what always shows: the keys after the nations
+      // what always shows: the views and the keys after the nations, not the link to Nations
       for (final Component key : keys.getComponents()) {
-        if (!nationChips.contains(key) && key != moreNations) {
+        if (!nationChips.contains(key)
+            && key != moreNations
+            && colorsLink.filter(key::equals).isEmpty()) {
           room -= key.getPreferredSize().width + GAP;
         }
+      }
+      // the link only when every nation fits beside it: the nations come first
+      final int linkWidth = colorsLink.map(l -> l.getPreferredSize().width + GAP).orElse(0);
+      final int allNations =
+          nationChips.stream().mapToInt(chip -> chip.getPreferredSize().width + GAP).sum();
+      final boolean linkFits = allNations + linkWidth <= room;
+      colorsLink.ifPresent(l -> l.setVisible(linkFits));
+      if (linkFits) {
+        room -= linkWidth;
       }
       // measured, not set, as each new text would lay out the line again; with the most digits
       final Insets buttonInsets = moreNations.getInsets();

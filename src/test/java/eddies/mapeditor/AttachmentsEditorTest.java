@@ -172,6 +172,68 @@ final class AttachmentsEditorTest {
         .startsWith(trigger + " · ");
   }
 
+  @DisplayName("show of a whereNamed line chooses the attachment of that name on that target")
+  @Test
+  void showsWhereNamedLine() throws Exception {
+    final MapProject project = givenG40();
+    final Attachment last = givenLastOfRepeatedName(project);
+    final List<Object> chosenTargets = new ArrayList<>();
+
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final AttachmentsEditor editor = new AttachmentsEditor(project);
+          editor.show(last.getName() + " of " + last.getAttachTo() + ": movement");
+          all(editor, JComboBox.class)
+              .map(JComboBox::getSelectedItem)
+              .filter(last.getAttachTo()::equals)
+              .forEach(chosenTargets::add);
+        });
+
+    assertThat(chosenTargets)
+        .as("the one attached to " + last.getAttachTo() + ", not the first of its name")
+        .containsExactly(last.getAttachTo());
+  }
+
+  @DisplayName("A where-named line finds an attachment whose name has \" of \" in it")
+  @Test
+  void showsWhereNamedLineOfNameWithOf() throws Exception {
+    // given
+    final MapProject project = givenG40();
+    project.edit(
+        g ->
+            AttachmentsXml.withNewAttachment(
+                g, "RulesAttachment", "conditionAttachment_Capture of Paris", "Germans"));
+    final List<Object> chosenTargets = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final AttachmentsEditor editor = new AttachmentsEditor(project);
+          editor.show("conditionAttachment_Capture of Paris of Germans: conditions");
+          all(editor, JComboBox.class)
+              .map(JComboBox::getSelectedItem)
+              .filter("Germans"::equals)
+              .forEach(chosenTargets::add);
+        });
+
+    // then
+    assertThat(chosenTargets).as("chosen, attached to Germans").containsExactly("Germans");
+  }
+
+  /** The last attachment whose name, eg unitAttachment, others have too. */
+  private static Attachment givenLastOfRepeatedName(final MapProject project) {
+    final List<Attachment> attachments = AttachmentsXml.attachments(project.game());
+    return attachments.reversed().stream()
+        .filter(
+            a ->
+                attachments.stream()
+                        .filter(other -> a.getName().equals(other.getName()))
+                        .count()
+                    > 1)
+        .findFirst()
+        .orElseThrow();
+  }
+
   @DisplayName("Of two attachments with the same name on the same thing the last is shown")
   @Test
   void showsTheLastOfTheSameName() throws Exception {
