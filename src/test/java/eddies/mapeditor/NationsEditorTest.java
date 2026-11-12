@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComboBox;
 import javax.swing.JTextField;
 import org.junit.jupiter.api.DisplayName;
@@ -117,6 +118,29 @@ final class NationsEditorTest {
     assertThat(RulesXml.playerOptions(project.game(), "Japanese").getFirst().getValue())
         .as("the typed value was taken before the form was built anew")
         .isEqualTo("Germans:PUs");
+  }
+
+  @DisplayName("A unit picture's menu keeps the unit out of the nation colors, and back")
+  @Test
+  void unitMenuKeepsItsColors() throws Exception {
+    // given
+    final MapProject project = givenMinimap();
+    final NationsEditor editor = new NationsEditor(project);
+
+    // when
+    final JCheckBoxMenuItem first =
+        (JCheckBoxMenuItem) editor.tintMenu("infantry").getComponent(0);
+    first.doClick();
+    final List<String> kept = project.getFiles().untintedUnits();
+    final JCheckBoxMenuItem again =
+        (JCheckBoxMenuItem) editor.tintMenu("infantry").getComponent(0);
+    again.doClick();
+
+    // then
+    assertThat(first.getText()).as("the choice").isEqualTo("In each nation's color");
+    assertThat(kept).as("unticked: in its own colors").containsExactly("infantry");
+    assertThat(again.isSelected()).as("ticked again").isTrue();
+    assertThat(project.getFiles().untintedUnits()).as("in the nation colors again").isEmpty();
   }
 
   @DisplayName("A unit limit is written as TripleA reads it: count, how it counts, the units")

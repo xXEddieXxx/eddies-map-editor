@@ -1,18 +1,25 @@
 package eddies.mapeditor;
 
+import com.formdev.flatlaf.FlatClientProperties;
 import games.strategy.triplea.Constants;
 import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.GridLayout;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
-import java.io.Serial;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 import javax.annotation.Nullable;
 import javax.swing.BorderFactory;
@@ -23,14 +30,16 @@ import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
+import javax.swing.JMenuItem;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JRadioButton;
+import javax.swing.JRadioButtonMenuItem;
+import javax.swing.JScrollPane;
 import javax.swing.JTabbedPane;
-import javax.swing.JTable;
 import javax.swing.JTextField;
-import javax.swing.table.AbstractTableModel;
-import javax.swing.table.TableCellRenderer;
-import javax.swing.table.TableColumn;
+import javax.swing.SwingConstants;
+import javax.swing.UIManager;
 import org.triplea.map.data.elements.AttachmentList.Attachment.Option;
 import org.triplea.map.data.elements.Game;
 import org.triplea.swing.SwingComponents;
@@ -50,6 +59,9 @@ final class PoliticsEditor implements Editor {
           Constants.RELATIONSHIP_ARCHETYPE_NEUTRAL);
   private static final List<String> HEART_LABELS = List.of("War", "Allied", "Neutral");
   private static final List<String> KIND_LABELS = List.of("At war", "Allied", "Neutral");
+  // the cells' colors by kind, as the game's diplomacy overview has them: war red, allied green
+  private static final List<Supplier<Color>> KIND_COLORS =
+      List.of(Theme::getDangerColor, Theme::getSuccessColor, Theme::getSecondaryTextColor);
   private static final List<String> SETTINGS =
       List.of(
           Constants.RELATIONSHIP_PROPERTY_DEFAULT,
@@ -67,22 +79,23 @@ final class PoliticsEditor implements Editor {
           Map.entry("canTakeOverOwnedTerritory", "Take land by moving in"),
           Map.entry("givesBackOriginalTerritories", "Give back freed land"),
           Map.entry("rocketsCanFlyOver", "Rockets fly over"));
-  private static final int TABLE_WIDTH = 560;
-  private static final int NAME_COLUMN_WIDTH = 200;
   private static final int RULE_LABEL_WIDTH = 240;
   private static final int RULE_BOX_WIDTH = 160;
   private static final int OPTION_FIELD_WIDTH = 240;
+  // a cell's color: strong for a type chosen, light where the pair goes by alliance
+  private static final double SET = 0.4;
+  private static final double BY_KIND = 0.15;
+  // a name longer than this goes on two lines in the matrix
+  private static final int SHORT_NAME = 10;
 
   private final MapProject project;
   private final Consumer<String> openTool;
   private final JTabbedPane page = new JTabbedPane();
-  private final SearchList nations;
   private final SearchList types;
-  private final Form startForm = new Form(420);
+  private final JPanel startPage = new JPanel(new BorderLayout(0, Theme.GAP_S));
   private final Form typeForm = new Form(420);
-  private @Nullable String chosenNation;
   private @Nullable String chosenType;
-  private Optional<JTable> startTable = Optional.empty();
+  private boolean startStale;
   // a change made in the type's details: they stay, so the field keeps its focus
   private boolean editingHere;
   // the option's text typed and not yet taken, for commit()
@@ -98,17 +111,6 @@ final class PoliticsEditor implements Editor {
   PoliticsEditor(final MapProject project, final Consumer<String> openTool) {
     this.project = project;
     this.openTool = openTool;
-    nations =
-        new SearchList(
-            "nation",
-            "nations",
-            () -> MapXml.nations(project.game()),
-            n -> n,
-            n -> NationsEditor.allianceLine(project.game(), n),
-            n -> {
-              chosenNation = n;
-              showStart();
-            });
     types =
         new SearchList(
                 "relationship type",
@@ -122,24 +124,23 @@ final class PoliticsEditor implements Editor {
                 })
             .withAdd("Add", "Add a relationship type", this::addType);
     // room below the tabs, as Production's lists have
-    for (final SearchList list : List.of(nations, types)) {
-      list.setBorder(BorderFactory.createEmptyBorder(Theme.GAP_M, 0, 0, Theme.GAP_S));
-    }
-    page.addTab(
-        "How nations start",
-        Panels.sideBySide(nations, SwingComponents.newJScrollPane(startForm)));
+    types.setBorder(BorderFactory.createEmptyBorder(Theme.GAP_M, 0, 0, Theme.GAP_S));
+    startPage.setBorder(BorderFactory.createEmptyBorder(Theme.GAP_M, 0, 0, 0));
+    page.addTab("How nations start", startPage);
+    // back on this tab, the matrix as the game is now
+    page.addChangeListener(e -> showing());
     page.addTab("", Panels.sideBySide(types, SwingComponents.newJScrollPane(typeForm)));
     project.onChange(
         () -> {
-          nations.refresh();
           types.refresh();
-          showStart();
+          refreshStart();
           if (!editingHere) {
             showType();
           }
           showTypeCount();
         });
-    showStart();
+    // built once the tool shows: 900 cells on a big map
+    startStale = true;
     showType();
     showTypeCount();
   }
@@ -167,7 +168,6 @@ final class PoliticsEditor implements Editor {
 
   @Override
   public void commit() {
-    startTable.filter(JTable::isEditing).ifPresent(t -> t.getCellEditor().stopCellEditing());
     if (typing != null) {
       typing.run();
     }
@@ -180,76 +180,296 @@ final class PoliticsEditor implements Editor {
 
   // ---- how nations start
 
+  @Override
+  public void showing() {
+    if (startStale) {
+      showStart();
+    }
+  }
+
+  /** The matrix again now while it shows, else once the tool shows: it is big on a big map. */
+  private void refreshStart() {
+    if (startPage.isShowing()) {
+      showStart();
+    } else {
+      startStale = true;
+    }
+  }
+
+  /**
+   * The diplomacy matrix, as the game shows it: a row and a column per nation, each cell how the
+   * two start, in the color of its kind; a cell chooses it, a row's nation resets the row.
+   */
   private void showStart() {
-    startForm.clear();
-    startTable = Optional.empty();
+    startStale = false;
+    startPage.removeAll();
     final Game game = project.game();
     final List<String> all = MapXml.nations(game);
     if (all.isEmpty()) {
-      startForm.row(
+      startPage.add(
           Panels.empty(
               Glyph.POLITICS,
               "No nations yet",
               "Add nations first: politics is about how they start with each other.",
               "Go to Nations",
-              () -> openTool.accept("Nations")));
-      startForm.end();
-      return;
+              () -> openTool.accept("Nations")),
+          BorderLayout.CENTER);
+    } else {
+      startPage.add(
+          Theme.newSecondaryLabel(
+              "Click a cell to choose how two nations start; each choice is mutual. Lighter cells"
+                  + " go by alliance."),
+          BorderLayout.NORTH);
+      // the scroll bar and the legend right below the matrix, not at the page's foot
+      final JScrollPane matrix = matrix(game, all);
+      // room for the scroll bar, which shows below the cells when the matrix is wider
+      matrix.setMaximumSize(
+          new Dimension(
+              Integer.MAX_VALUE,
+              matrix.getPreferredSize().height
+                  + matrix.getHorizontalScrollBar().getPreferredSize().height
+                  + Theme.GAP_S));
+      final JPanel below = new JPanel();
+      below.setLayout(new BoxLayout(below, BoxLayout.Y_AXIS));
+      final JComponent legend = legend();
+      for (final JComponent part : List.of(matrix, legend)) {
+        part.setAlignmentX(Component.LEFT_ALIGNMENT);
+        below.add(part);
+      }
+      below.add(Box.createVerticalGlue());
+      startPage.add(below, BorderLayout.CENTER);
     }
-    if (chosenNation == null || !all.contains(chosenNation)) {
-      chosenNation = all.getFirst();
-      nations.choose(chosenNation);
+    startPage.revalidate();
+    startPage.repaint();
+  }
+
+  /** The cells in a grid of one size, the nations' names as headers that stay while it scrolls. */
+  private JScrollPane matrix(final Game game, final List<String> all) {
+    final Map<String, List<String>> alliances = new HashMap<>();
+    all.forEach(n -> alliances.put(n, MapXml.alliances(game, n)));
+    final List<JButton> cells = new ArrayList<>();
+    for (final String nation : all) {
+      for (final String other : all) {
+        cells.add(cell(game, nation, other, alliances));
+      }
     }
-    final String nation = chosenNation;
-    final List<String> others = others(game, nation);
-    startForm.title(nation);
-    startForm.subtitle(startLine(game, nation, others));
-    startForm.note(
-        "Each choice is mutual: it also sets how the other nation starts with " + nation + ".");
-    startForm.row(startTable(nation));
-    final JButton reset = new JButton("Set all to By alliance");
-    Theme.setTertiaryButtonStyle(reset);
-    reset.setEnabled(
-        others.stream().anyMatch(o -> RulesXml.relationship(game, nation, o).isPresent()));
-    reset.addActionListener(e -> setAllByAlliance(nation));
-    final JPanel resetRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-    resetRow.setOpaque(false);
-    resetRow.add(reset);
-    startForm.row(resetRow);
-    startForm.end();
+    final List<JLabel> columnNames =
+        all.stream().map(n -> new JLabel(twoLines(n), SwingConstants.CENTER)).toList();
+    // a size smaller, so a game of 14 nations fits the width of a big screen
+    concat(cells, columnNames).forEach(PoliticsEditor::smaller);
+    final List<JButton> rowNames = all.stream().map(n -> rowName(game, n)).toList();
+    // one size for every cell and column name, so the headers line up with the cells
+    final Dimension size = new Dimension(0, 0);
+    for (final JComponent part : concat(cells, columnNames)) {
+      size.width = Math.max(size.width, part.getPreferredSize().width);
+      size.height = Math.max(size.height, part.getPreferredSize().height);
+    }
+    concat(cells, columnNames).forEach(part -> part.setPreferredSize(size));
+    final JPanel grid = new JPanel(new GridLayout(all.size(), all.size(), 1, 1));
+    cells.forEach(grid::add);
+    final JPanel columns = new JPanel(new GridLayout(1, all.size(), 1, 0));
+    columnNames.forEach(columns::add);
+    final JPanel rows = new JPanel(new GridLayout(all.size(), 1, 0, 1));
+    rowNames.forEach(
+        name -> {
+          name.setPreferredSize(new Dimension(name.getPreferredSize().width, size.height));
+          rows.add(name);
+        });
+    final JScrollPane scroll = new JScrollPane(topLeft(grid));
+    // the corner above the row names as the page, not a lighter box
+    scroll.setCorner(JScrollPane.UPPER_LEFT_CORNER, new JPanel());
+    scroll.setColumnHeaderView(topLeft(columns));
+    scroll.setRowHeaderView(topLeft(rows));
+    scroll.setBorder(null);
+    return scroll;
+  }
+
+  private static List<JComponent> concat(
+      final List<? extends JComponent> first, final List<? extends JComponent> second) {
+    final List<JComponent> both = new ArrayList<>(first);
+    both.addAll(second);
+    return both;
+  }
+
+  /** The component at its size in the top left, the rest of the room empty. */
+  private static JComponent topLeft(final JComponent component) {
+    final JPanel left = new JPanel(new BorderLayout());
+    left.add(component, BorderLayout.WEST);
+    final JPanel top = new JPanel(new BorderLayout());
+    top.add(left, BorderLayout.NORTH);
+    return top;
+  }
+
+  /** The row's nation: it offers to set all its pairs back to By alliance. */
+  private JButton rowName(final Game game, final String nation) {
+    final JButton name = new JButton(plain(nation));
+    name.setHorizontalAlignment(SwingConstants.LEFT);
+    name.putClientProperty(
+        FlatClientProperties.BUTTON_TYPE, FlatClientProperties.BUTTON_TYPE_BORDERLESS);
+    final boolean anySet =
+        others(game, nation).stream()
+            .anyMatch(o -> RulesXml.relationship(game, nation, o).isPresent());
+    name.setToolTipText(anySet ? "Set all pairs of " + nation + " to By alliance" : null);
+    name.addActionListener(
+        e -> {
+          final JPopupMenu menu = new JPopupMenu();
+          final JMenuItem reset = new JMenuItem("Set all of " + nation + " to By alliance");
+          // nothing to reset: the name stays, the choice is off
+          reset.setEnabled(anySet);
+          reset.addActionListener(a -> setAllByAlliance(nation));
+          menu.add(reset);
+          menu.show(name, 0, name.getHeight());
+        });
+    return name;
+  }
+
+  /** How the two start, in its kind's color, lighter when by alliance; it opens the choice. */
+  JButton cell(final Game game, final String nation, final String other) {
+    final Map<String, List<String>> alliances = new HashMap<>();
+    List.of(nation, other).forEach(n -> alliances.put(n, MapXml.alliances(game, n)));
+    return cell(game, nation, other, alliances);
+  }
+
+  private JButton cell(
+      final Game game,
+      final String nation,
+      final String other,
+      final Map<String, List<String>> alliances) {
+    final JButton cell = new JButton();
+    if (nation.equals(other)) {
+      cell.setText("–");
+      cell.putClientProperty(
+          FlatClientProperties.BUTTON_TYPE, FlatClientProperties.BUTTON_TYPE_BORDERLESS);
+      cell.setEnabled(false);
+      return cell;
+    }
+    final Optional<String> type = RulesXml.relationship(game, nation, other);
+    final int kind =
+        type.map(t -> kindOf(game, t))
+            .orElseGet(
+                () ->
+                    alliances.get(nation).stream().anyMatch(alliances.get(other)::contains)
+                        ? 1
+                        : 0);
+    final String said = type.map(PoliticsEditor::plain).orElse(KIND_LABELS.get(kind));
+    cell.setText(twoLines(said));
+    cell.setBackground(cellColor(kind, type.isPresent() ? SET : BY_KIND));
+    // flat squares in the kind's color, as the game's overview has them
+    cell.putClientProperty(
+        FlatClientProperties.STYLE,
+        "arc: 0; borderWidth: 0; focusWidth: 0; innerFocusWidth: 2; margin: 2,3,2,3");
+    if (type.isEmpty()) {
+      cell.setForeground(Theme.getSecondaryTextColor());
+    }
+    final String how =
+        type.map(t -> "start as " + t)
+            .orElse("go by alliance: " + KIND_LABELS.get(kind).toLowerCase(Locale.ROOT));
+    cell.setToolTipText(nation + " and " + other + " " + how);
+    cell.getAccessibleContext().setAccessibleName(nation + " and " + other + ": " + said);
+    cell.addActionListener(e -> startMenu(nation, other, type).show(cell, 0, cell.getHeight()));
+    return cell;
+  }
+
+  private static void smaller(final JComponent part) {
+    part.setFont(part.getFont().deriveFont(part.getFont().getSize2D() - 1));
+  }
+
+  /** A type's name in words, eg "Unfriendly Neutral" for Unfriendly_Neutral. */
+  private static String plain(final String name) {
+    return name.replace('_', ' ');
+  }
+
+  /** The words of a long name in two lines, so the columns stay narrow. */
+  private static String twoLines(final String text) {
+    final String words = plain(text);
+    final int middle = words.indexOf(' ', words.length() / 2 - 2);
+    return words.length() <= SHORT_NAME || middle < 0
+        ? words
+        : "<html><center>"
+            + SearchList.escape(words.substring(0, middle))
+            + "<br>"
+            + SearchList.escape(words.substring(middle + 1))
+            + "</center></html>";
+  }
+
+  /** The kind's color laid on the panel's background: solid, so a repaint does not darken it. */
+  private static Color cellColor(final int kind, final double share) {
+    final Color color = KIND_COLORS.get(kind).get();
+    final Color under =
+        Optional.ofNullable(UIManager.getColor("Panel.background")).orElse(Color.WHITE);
+    return new Color(
+        (int) Math.round(color.getRed() * share + under.getRed() * (1 - share)),
+        (int) Math.round(color.getGreen() * share + under.getGreen() * (1 - share)),
+        (int) Math.round(color.getBlue() * share + under.getBlue() * (1 - share)));
+  }
+
+  /** By alliance and every relationship type, the one now ticked; a choice is one step. */
+  JPopupMenu startMenu(final String nation, final String other, final Optional<String> current) {
+    final JPopupMenu menu = new JPopupMenu();
+    final ButtonGroup choice = new ButtonGroup();
+    final JRadioButtonMenuItem byAlliance =
+        new JRadioButtonMenuItem(BY_ALLIANCE, current.isEmpty());
+    byAlliance.addActionListener(
+        e -> project.edit(g -> RulesXml.withoutRelationship(g, nation, other)));
+    choice.add(byAlliance);
+    menu.add(byAlliance);
+    menu.addSeparator();
+    final Game game = project.game();
+    final List<String> types = RulesXml.relationshipTypes(game);
+    for (final String type : types) {
+      final JRadioButtonMenuItem item =
+          new JRadioButtonMenuItem(plain(type), current.filter(type::equals).isPresent());
+      item.addActionListener(
+          e -> project.edit(g -> RulesXml.withRelationship(g, nation, other, type)));
+      choice.add(item);
+      menu.add(item);
+    }
+    // a kind the game has no type of yet, eg in a new map: chosen, its type is made too
+    boolean apart = types.isEmpty();
+    for (int kind = 0; kind < ARCHETYPES.size(); kind++) {
+      final int wanted = kind;
+      if (types.stream().noneMatch(t -> kindOf(game, t) == wanted)) {
+        if (!apart) {
+          menu.addSeparator();
+          apart = true;
+        }
+        final String type = RulesXml.freeName(Set.copyOf(types), HEART_LABELS.get(kind));
+        final JMenuItem item = new JMenuItem(KIND_LABELS.get(kind) + " (new type " + type + ")");
+        item.addActionListener(
+            e ->
+                project.edit(
+                    g ->
+                        RulesXml.withRelationship(
+                            RulesXml.withRelationshipType(g, type, ARCHETYPES.get(wanted)),
+                            nation,
+                            other,
+                            type)));
+        menu.add(item);
+      }
+    }
+    return menu;
+  }
+
+  /** The kinds' colors, as the cells have them. */
+  private static JComponent legend() {
+    final JPanel legend = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_M, 0));
+    for (int kind = 0; kind < KIND_LABELS.size(); kind++) {
+      final JLabel label = new JLabel(KIND_LABELS.get(kind) + " at heart");
+      label.setIcon(new MapLegend.Swatch(cellColor(kind, SET)));
+      legend.add(label);
+    }
+    final JLabel light = new JLabel("Lighter: no type set, by alliance");
+    light.setIcon(new MapLegend.Swatch(cellColor(1, BY_KIND)));
+    legend.add(light);
+    return legend;
   }
 
   private static List<String> others(final Game game, final String nation) {
     return MapXml.nations(game).stream().filter(n -> !n.equals(nation)).toList();
   }
 
-  /** "Axis · at war with 5 · allied with 2 · neutral with 6". */
-  private static String startLine(final Game game, final String nation, final List<String> others) {
-    final int[] counts = new int[ARCHETYPES.size()];
-    others.forEach(o -> counts[startKind(game, nation, o)]++);
-    return NationsEditor.allianceLine(game, nation)
-        + " · at war with "
-        + counts[0]
-        + " · allied with "
-        + counts[1]
-        + " · neutral with "
-        + counts[2];
-  }
-
-  /** The index in {@link #ARCHETYPES} of how the two start: their type's, else by alliance. */
-  private static int startKind(final Game game, final String nation, final String other) {
-    return RulesXml.relationship(game, nation, other)
-        .map(type -> kindOf(game, type))
-        .orElseGet(() -> isAllied(game, nation, other) ? 1 : 0);
-  }
-
   private static int kindOf(final Game game, final String type) {
     return Math.max(0, ARCHETYPES.indexOf(RulesXml.archetype(game, type)));
-  }
-
-  private static boolean isAllied(final Game game, final String nation, final String other) {
-    return MapXml.alliances(game, nation).stream()
-        .anyMatch(MapXml.alliances(game, other)::contains);
   }
 
   /** Every pair of the nation goes by alliance, as one step. */
@@ -264,118 +484,6 @@ final class PoliticsEditor implements Editor {
           }
           return changed;
         });
-  }
-
-  private JComponent startTable(final String nation) {
-    final StartTable model = new StartTable(project, nation);
-    final JTable table = new JTable(model);
-    table.setRowHeight(table.getRowHeight() + Theme.GAP_S);
-    table.putClientProperty("terminateEditOnFocusLost", true);
-    final JComboBox<String> choices = new JComboBox<>();
-    choices.addItem(BY_ALLIANCE);
-    RulesXml.relationshipTypes(project.game()).forEach(choices::addItem);
-    Details.comboColumn(table, 1, choices);
-    final TableColumn startsAs = table.getColumnModel().getColumn(1);
-    final TableCellRenderer combo = startsAs.getCellRenderer();
-    // what By alliance comes to, in the secondary color, so a chosen type stands out
-    startsAs.setCellRenderer(
-        (t, value, selected, focused, row, column) -> {
-          final Object shown =
-              BY_ALLIANCE.equals(value)
-                  ? byAllianceText(
-                      BY_ALLIANCE
-                          + (isAllied(project.game(), nation, model.others.get(row))
-                              ? ": allied"
-                              : ": at war"),
-                      selected)
-                  : value;
-          return combo.getTableCellRendererComponent(t, shown, selected, focused, row, column);
-        });
-    table.getColumnModel().getColumn(0).setPreferredWidth(NAME_COLUMN_WIDTH);
-    table.getColumnModel().getColumn(1).setPreferredWidth(TABLE_WIDTH - NAME_COLUMN_WIDTH);
-    startTable = Optional.of(table);
-    final JPanel withHeader = new JPanel(new BorderLayout());
-    withHeader.add(table.getTableHeader(), BorderLayout.NORTH);
-    withHeader.add(table, BorderLayout.CENTER);
-    return capped(withHeader, TABLE_WIDTH);
-  }
-
-  private static String byAllianceText(final String text, final boolean selected) {
-    return selected
-        ? text
-        : "<html><span style='color:"
-            + Theme.convertColorToHex(Theme.getSecondaryTextColor())
-            + "'>"
-            + text
-            + "</span></html>";
-  }
-
-  /** At most this wide, at the left, narrower in a narrow column. */
-  private static JComponent capped(final JComponent component, final int width) {
-    final Dimension size = new Dimension(width, component.getPreferredSize().height);
-    component.setPreferredSize(size);
-    component.setMaximumSize(size);
-    final JPanel holder = new JPanel();
-    holder.setOpaque(false);
-    holder.setLayout(new BoxLayout(holder, BoxLayout.X_AXIS));
-    holder.add(component);
-    holder.add(Box.createHorizontalGlue());
-    return holder;
-  }
-
-  /** A row per other nation: how the nation starts with it. */
-  private static final class StartTable extends AbstractTableModel {
-    @Serial private static final long serialVersionUID = 1L;
-    private final transient MapProject project;
-    private final String nation;
-    private final List<String> others;
-
-    StartTable(final MapProject project, final String nation) {
-      this.project = project;
-      this.nation = nation;
-      this.others = PoliticsEditor.others(project.game(), nation);
-    }
-
-    @Override
-    public int getRowCount() {
-      return others.size();
-    }
-
-    @Override
-    public int getColumnCount() {
-      return 2;
-    }
-
-    @Override
-    public String getColumnName(final int column) {
-      return column == 0 ? "With" : "Starts as";
-    }
-
-    @Override
-    public boolean isCellEditable(final int row, final int column) {
-      return column == 1;
-    }
-
-    @Override
-    public Object getValueAt(final int row, final int column) {
-      final String other = others.get(row);
-      return column == 0
-          ? other
-          : RulesXml.relationship(project.game(), nation, other).orElse(BY_ALLIANCE);
-    }
-
-    @Override
-    public void setValueAt(final Object value, final int row, final int column) {
-      final String other = others.get(row);
-      if (value == null || value.equals(getValueAt(row, column))) {
-        return;
-      }
-      project.edit(
-          g ->
-              BY_ALLIANCE.equals(value)
-                  ? RulesXml.withoutRelationship(g, nation, other)
-                  : RulesXml.withRelationship(g, nation, other, (String) value));
-    }
   }
 
   // ---- relationship types

@@ -73,8 +73,10 @@ The tools sit in the sidebar in the same groups as below. Every change can be un
 ### ⚔️ Players
 
 - **Nations:** color (shown live on the map), alliance, starting PUs, who plays it, and its own
-  rules such as capitals to hold or unit limits. *In the nation's color* tints its unit pictures.
-- **Politics:** relationship types (war, allied, neutral, what each allows) and how nations start.
+  rules such as capitals to hold or unit limits. *In the nation's color* tints its unit pictures;
+  click a unit's picture to keep it in its own colors for every nation.
+- **Politics:** how nations start, in a diplomacy matrix like the game's (a cell per pair, colored
+  war, allied or neutral; click to change, a kind the map has no type of yet makes that type), and the relationship types with what each allows.
 - **Technology:** the technologies, who researches what, and what each nation starts with.
 
 ### 🛡️ Units & economy

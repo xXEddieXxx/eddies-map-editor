@@ -37,12 +37,14 @@ import javax.swing.Icon;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
+import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JColorChooser;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JSpinner;
 import javax.swing.JSplitPane;
 import javax.swing.JTextField;
@@ -520,16 +522,29 @@ final class NationsEditor implements Editor {
     final JPanel pictures = new JPanel(new GridLayout(0, 3, 4, 8));
     pictures.setOpaque(false);
     final Color color = project.nationColor(nation);
+    final boolean anyTinted =
+        MapXml.nations(project.game()).stream()
+            .anyMatch(n -> project.getFiles().unitTint(n).isPresent());
     for (final String unit : units) {
-      final JLabel picture = new JLabel(unit);
       // a blank of the same size where a picture is missing, so the names stay in line
-      picture.setIcon(
-          project.unitPicture(nation, color, unit).map(NationsEditor::icon).orElse(BLANK));
-      picture.setHorizontalTextPosition(SwingConstants.CENTER);
-      picture.setVerticalTextPosition(SwingConstants.BOTTOM);
-      picture.setHorizontalAlignment(SwingConstants.CENTER);
-      picture.setToolTipText(unit);
-      pictures.add(picture);
+      final Icon icon =
+          project.unitPicture(nation, color, unit).map(NationsEditor::icon).orElse(BLANK);
+      if (anyTinted) {
+        // a button, as it offers the nation colors, so the keyboard reaches it too
+        final JButton picture = new JButton(unit, icon);
+        picture.putClientProperty(
+            FlatClientProperties.BUTTON_TYPE, FlatClientProperties.BUTTON_TYPE_BORDERLESS);
+        picture.setHorizontalTextPosition(SwingConstants.CENTER);
+        picture.setVerticalTextPosition(SwingConstants.BOTTOM);
+        tintMenuOn(picture, unit);
+        pictures.add(picture);
+      } else {
+        final JLabel picture = new JLabel(unit, icon, SwingConstants.CENTER);
+        picture.setHorizontalTextPosition(SwingConstants.CENTER);
+        picture.setVerticalTextPosition(SwingConstants.BOTTOM);
+        picture.setToolTipText(unit);
+        pictures.add(picture);
+      }
     }
     inspector.row(pictures);
     final JCheckBox inColor =
@@ -572,6 +587,37 @@ final class NationsEditor implements Editor {
       buttons.add(reset);
     }
     inspector.row(buttons);
+  }
+
+  /**
+   * A click on the unit's picture offers whether the game tints it in each nation's color; off
+   * for a unit in the same colors for everyone (map.properties units.transform.ignore).
+   */
+  private void tintMenuOn(final JButton picture, final String unit) {
+    final boolean tinted = !project.getFiles().untintedUnits().contains(unit);
+    picture.setToolTipText(
+        unit + (tinted ? "" : " · in its own colors for every nation") + " · click to change");
+    picture.addActionListener(e -> tintMenu(unit).show(picture, 0, picture.getHeight()));
+  }
+
+  /** Whether the game tints the unit in each nation's color, ticked when it does. */
+  JPopupMenu tintMenu(final String unit) {
+    final JPopupMenu menu = new JPopupMenu();
+    final JCheckBoxMenuItem inColor =
+        new JCheckBoxMenuItem(
+            "In each nation's color", !project.getFiles().untintedUnits().contains(unit));
+    inColor.setToolTipText(
+        "Off: drawn in its own colors for every nation, eg a unit all nations share");
+    inColor.addActionListener(
+        a -> {
+          if (inColor.isSelected()) {
+            project.tintUnitType(unit);
+          } else {
+            project.keepUnitTypeColors(unit);
+          }
+        });
+    menu.add(inColor);
+    return menu;
   }
 
   /**
