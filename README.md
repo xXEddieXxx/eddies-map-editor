@@ -80,7 +80,8 @@ The tools sit in the sidebar in the same groups as below. Every change can be un
 ### 🛡️ Units & economy
 
 - **Units:** cost, attack, defense, movement and hit points in one row; every ability in groups;
-  the support a unit gives others, written as a sentence.
+  the support a unit gives others, written as a sentence. *In each nation's color* off keeps a
+  unit in its own colors for everyone, eg one all nations share.
 - **Unit pictures:** upload one picture, or import a whole folder for a nation.
 - **Production:** what each nation can buy and repair, at which cost, and the resources with
   their icons and starting amounts.

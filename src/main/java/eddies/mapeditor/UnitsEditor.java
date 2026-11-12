@@ -369,7 +369,36 @@ final class UnitsEditor implements Editor {
             unit,
             lineAndLinks,
             List.of()));
-    uploaded.ifPresent(u -> showColoring(unit, u));
+    // an uploaded picture's coloring says it too: one choice, not two
+    uploaded.ifPresentOrElse(u -> showColoring(unit, u), () -> showNationTint(unit));
+  }
+
+  /**
+   * Whether the game tints the unit in each nation's color, once a nation's units are tinted
+   * (Nations); off for a unit in the same colors for everyone.
+   */
+  private void showNationTint(final String unit) {
+    final boolean anyTinted =
+        MapXml.nations(project.game()).stream()
+            .anyMatch(nation -> project.getFiles().unitTint(nation).isPresent());
+    if (!anyTinted) {
+      return;
+    }
+    final JCheckBox tinted =
+        new JCheckBox(
+            "In each nation's color", !project.getFiles().untintedUnits().contains(unit));
+    tinted.setToolTipText(
+        "Off: the game draws it in its own colors for every nation, eg a unit all nations share,"
+            + " and does not turn it to face the other way either.");
+    tinted.addActionListener(
+        e -> {
+          if (tinted.isSelected()) {
+            project.tintUnitType(unit);
+          } else {
+            project.keepUnitTypeColors(unit);
+          }
+        });
+    inspector.row(leftAligned(tinted));
   }
 
   /** At most 48 px, never blown up, so a small picture stays sharp. */

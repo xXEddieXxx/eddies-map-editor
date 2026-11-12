@@ -21,6 +21,7 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
@@ -85,6 +86,8 @@ record MapFiles(
 
   // map.properties: the color the game tints a nation's unit pictures in, eg ...color.Germans
   static final String UNIT_TINT = "units.transform.color.";
+  // the unit types never tinted, eg ones in the same colors for every nation
+  static final String UNTINTED_UNITS = "units.transform.ignore";
   private static final String POLYGONS = "polygons.txt";
   private static final String CENTERS = "centers.txt";
   private static final String PLACEMENTS = "place.txt";
@@ -1295,6 +1298,16 @@ record MapFiles(
    */
   Optional<Color> unitTint(final String nation) {
     return MapLookEditor.colorOf(properties.getProperty(UNIT_TINT + nation, ""));
+  }
+
+  /**
+   * The unit types the game draws as they are, never tinted in a nation's color (map.properties
+   * units.transform.ignore, names split at commas as the game reads them).
+   */
+  List<String> untintedUnits() {
+    return Arrays.stream(properties.getProperty(UNTINTED_UNITS, "").split(","))
+        .filter(name -> !name.isEmpty())
+        .toList();
   }
 
   /** The nation's color from map.properties, empty when the map gives it none. */

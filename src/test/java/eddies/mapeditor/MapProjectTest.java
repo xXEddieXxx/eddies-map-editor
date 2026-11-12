@@ -23,6 +23,8 @@ import org.triplea.map.data.elements.Game;
 import org.triplea.util.PointFileReaderWriter;
 import eddies.mapeditor.MapChecks.Problem;
 import eddies.mapeditor.MapFiles.Redrawn;
+import eddies.mapeditor.MapFiles.UnitPicture;
+import eddies.mapeditor.MapFiles.UnitPicture.Coloring;
 import eddies.mapeditor.MapPicture.DetectedTerritory;
 import eddies.mapeditor.MapProject.RedrawChoices;
 import eddies.mapeditor.MapProject.Renamed;
@@ -191,6 +193,65 @@ final class MapProjectTest {
     assertThat(keptBesideCurrent)
         .as("the current picture is not counted, so oldest fits too")
         .isEqualTo(5);
+  }
+
+  @DisplayName("A unit type kept in its own colors is not tinted; tinted again, the entry goes")
+  @Test
+  void unitTypeKeepsItsColors() throws Exception {
+    // given: a nation's units tinted, another unit type already kept as it is
+    final MapProject project = givenMinimapProject();
+    final String nation = MapXml.nations(project.game()).getFirst();
+    final BufferedImage white = new BufferedImage(2, 2, BufferedImage.TYPE_INT_ARGB);
+    white.setRGB(0, 0, 0xFFFFFFFF);
+    project.setNationUnitPictures(nation, Map.of("infantry", white));
+    project.tintUnits(List.of(nation));
+    project.setMapProperty(MapFiles.UNTINTED_UNITS, "factory");
+
+    // when
+    project.keepUnitTypeColors("infantry");
+    final MapFiles kept = project.getFiles();
+    final Image shown =
+        project.unitPicture(nation, project.nationColor(nation), "infantry").orElseThrow();
+    project.undo();
+    final MapFiles undone = project.getFiles();
+    project.keepUnitTypeColors("infantry");
+    project.tintUnitType("infantry");
+    project.tintUnitType("factory");
+
+    // then
+    assertThat(kept.properties().getProperty(MapFiles.UNTINTED_UNITS))
+        .as("added after the others, as the game reads it")
+        .isEqualTo("factory,infantry");
+    assertThat(((BufferedImage) shown).getRGB(0, 0)).as("drawn as it is").isEqualTo(0xFFFFFFFF);
+    assertThat(undone.properties().getProperty(MapFiles.UNTINTED_UNITS))
+        .as("one undo step")
+        .isEqualTo("factory");
+    assertThat(project.getFiles().properties())
+        .as("none kept: the entry goes")
+        .doesNotContainKey(MapFiles.UNTINTED_UNITS);
+  }
+
+  @DisplayName("An uploaded picture the same for all nations is kept from the game's tint")
+  @Test
+  void samePictureForAllIsUntinted() throws Exception {
+    // given: the map keeps a factory as it is already
+    final MapProject project = givenMinimapProject();
+    project.setMapProperty(MapFiles.UNTINTED_UNITS, "factory");
+    final BufferedImage picture = new BufferedImage(4, 4, BufferedImage.TYPE_INT_ARGB);
+
+    // when
+    project.setUnitPicture("factory", new UnitPicture(picture, Coloring.PER_NATION));
+    final List<String> uploaded = project.getFiles().untintedUnits();
+    project.setUnitPicture("infantry", new UnitPicture(picture, Coloring.AS_IS));
+    final List<String> asIs = project.getFiles().untintedUnits();
+    project.setUnitPicture("infantry", new UnitPicture(picture, Coloring.PER_NATION));
+
+    // then
+    assertThat(uploaded).as("an upload keeps the map's entry").containsExactly("factory");
+    assertThat(asIs).as("the same for all: never tinted").containsExactly("factory", "infantry");
+    assertThat(project.getFiles().untintedUnits())
+        .as("switched to colored per nation: tinted again")
+        .containsExactly("factory");
   }
 
   @DisplayName("Borders redrawn from files the map no longer has are not taken")

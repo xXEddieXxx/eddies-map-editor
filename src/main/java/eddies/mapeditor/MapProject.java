@@ -754,6 +754,23 @@ final class MapProject {
                 : colored));
   }
 
+  /** The unit type in each nation's tint again, as the others, as one step. */
+  void tintUnitType(final String unit) {
+    setMapProperty(
+        MapFiles.UNTINTED_UNITS,
+        String.join(
+            ",", getFiles().untintedUnits().stream().filter(u -> !u.equals(unit)).toList()));
+  }
+
+  /** The unit type drawn in its own colors for every nation, never tinted, as one step. */
+  void keepUnitTypeColors(final String unit) {
+    final List<String> untinted = new ArrayList<>(getFiles().untintedUnits());
+    if (!untinted.contains(unit)) {
+      untinted.add(unit);
+      setMapProperty(MapFiles.UNTINTED_UNITS, String.join(",", untinted));
+    }
+  }
+
   /**
    * Has the game tint these nations' unit pictures in their colors, as one step; a nation's color
    * the map does not set yet is written too, so land and units agree in the game.
@@ -768,9 +785,30 @@ final class MapProject {
     setMapProperties(values);
   }
 
-  /** The picture as the unit type's for every nation from the next save on, as one step. */
+  /**
+   * The picture as the unit type's for every nation from the next save on, as one step; one the
+   * same for all nations is also kept from the game's tint ({@link #keepUnitTypeColors}); one
+   * switched from that to colored per nation is tinted again, others stay as the map has them.
+   */
   void setUnitPicture(final String unitType, final UnitPicture picture) {
-    step(state(game(), current.files().withUnitPicture(unitType, picture)));
+    final MapFiles files = current.files();
+    final boolean wasSame =
+        Optional.ofNullable(files.unitPictures().get(unitType))
+            .filter(before -> before.coloring() == UnitPicture.Coloring.AS_IS)
+            .isPresent();
+    final List<String> untinted = new ArrayList<>(files.untintedUnits());
+    if (picture.coloring() == UnitPicture.Coloring.AS_IS && !untinted.contains(unitType)) {
+      untinted.add(unitType);
+    } else if (picture.coloring() == UnitPicture.Coloring.PER_NATION && wasSame) {
+      untinted.removeIf(unitType::equals);
+    }
+    final MapFiles pictured = files.withUnitPicture(unitType, picture);
+    step(
+        state(
+            game(),
+            untinted.equals(files.untintedUnits())
+                ? pictured
+                : pictured.withProperty(MapFiles.UNTINTED_UNITS, String.join(",", untinted))));
   }
 
   /**
@@ -1064,8 +1102,7 @@ final class MapProject {
   private Image tinted(final String nation, final String unit, final Image picture) {
     final Properties properties = getFiles().properties();
     final Optional<Color> tint = getFiles().unitTint(nation);
-    if (tint.isEmpty()
-        || List.of(properties.getProperty("units.transform.ignore", "").split(",")).contains(unit)) {
+    if (tint.isEmpty() || getFiles().untintedUnits().contains(unit)) {
       return picture;
     }
     int brightness = 0;
