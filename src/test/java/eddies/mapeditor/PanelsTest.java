@@ -1,6 +1,7 @@
 package eddies.mapeditor;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 
 import eddies.mapeditor.MakerIcon.Glyph;
 import java.awt.Component;
@@ -45,9 +46,10 @@ final class PanelsTest {
         List.of(
             new ProductionEditor(project), new TechnologyEditor(project))) {
       final JSplitPane split = givenSplit(editor.page());
+      // a few pixels apart where the system's font is wider, eg on Linux
       assertThat(split.getDividerLocation())
           .as("%s: the list as wide as in Units", editor.title())
-          .isEqualTo(units.getDividerLocation());
+          .isCloseTo(units.getDividerLocation(), within(12));
       assertThat(((JComponent) split.getLeftComponent()).getInsets().left)
           .as("%s: the list starts at the page's edge", editor.title())
           .isZero();

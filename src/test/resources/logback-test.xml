@@ -1,0 +1,12 @@
+<!-- Tests log to the console only: TripleA's own logback.xml would open its error window for a
+     warning, which fails where there is no screen, eg on the build server. -->
+<configuration>
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%-5level %logger{20} - %msg%n</pattern>
+    </encoder>
+  </appender>
+  <root level="WARN">
+    <appender-ref ref="CONSOLE"/>
+  </root>
+</configuration>
