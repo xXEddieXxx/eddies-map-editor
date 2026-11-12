@@ -5,5 +5,10 @@ out/
 *.iml
 .vscode/
 triplea/
+
+# AI assistant setup: kept locally, not in the repo
+.claude/
+CLAUDE.md
 CLAUDE.local.md
-.claude/state/
+AGENTS.md
+.mcp.json
