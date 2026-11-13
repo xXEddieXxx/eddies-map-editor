@@ -286,7 +286,8 @@ final class MapXmlTest {
     final Game game = givenTemplateWithTwoNations();
     final Path xml = folder.resolve("new.xml");
 
-    GameXmlWriter.exportXml(game, xml);
+    // as a map's steps do: every land territory with its attachment
+    GameXmlWriter.exportXml(MapXml.withTerritoryAttachments(game), xml);
 
     assertThat(MapChecks.findError(xml)).as("the engine loads the game").isEmpty();
     assertThat(steps(game))

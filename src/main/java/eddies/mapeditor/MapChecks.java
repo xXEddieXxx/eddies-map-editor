@@ -1,8 +1,11 @@
 package eddies.mapeditor;
 
+import games.strategy.engine.data.GameData;
+import games.strategy.engine.data.Territory;
 import games.strategy.engine.data.gameparser.GameParser;
 import games.strategy.engine.data.gameparser.XmlGameElementMapper;
 import games.strategy.triplea.Constants;
+import games.strategy.triplea.attachments.TerritoryAttachment;
 import games.strategy.triplea.ui.mapdata.MapData;
 import java.io.IOException;
 import java.io.InputStream;
@@ -364,13 +367,40 @@ class MapChecks {
           : Optional.of("TripleA cannot read it, its log says why");
     }
     try (InputStream in = Files.newInputStream(xml)) {
-      parse.invoke(parser, in);
-      return Optional.empty();
+      return whyNotStarted(parse.invoke(parser, in));
     } catch (final InvocationTargetException e) {
       return Optional.of(message(e.getCause()));
     } catch (final IOException | IllegalAccessException e) {
       return Optional.of(message(e));
     }
+  }
+
+  /**
+   * What stops the loaded game when TripleA starts it, though its parser took it: a land territory,
+   * or a sea zone with an owner, without a territory attachment.
+   */
+  private static Optional<String> whyNotStarted(final Object parsed) {
+    final Optional<?> loaded =
+        parsed instanceof Optional<?> optional ? optional : Optional.of(parsed);
+    return loaded
+        .filter(GameData.class::isInstance)
+        .map(GameData.class::cast)
+        .flatMap(MapChecks::landWithoutAttachment);
+  }
+
+  private static Optional<String> landWithoutAttachment(final GameData data) {
+    for (final Territory territory : data.getMap().getTerritories()) {
+      try {
+        TerritoryAttachment.get(territory);
+        // as the game's start does for every owned territory, water too
+        if (!territory.getOwner().isNull()) {
+          TerritoryAttachment.getOrThrow(territory);
+        }
+      } catch (final IllegalStateException e) {
+        return Optional.of(message(e));
+      }
+    }
+    return Optional.empty();
   }
 
   private static String message(final Throwable e) {

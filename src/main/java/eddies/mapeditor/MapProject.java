@@ -121,12 +121,23 @@ final class MapProject {
     this.xmlFile = xmlFile;
     folder = files.folder().orElseGet(() -> mapFolderOf(xmlFile));
     saved = new State(game, files, MapTexts.read(folder));
-    current = saved;
+    current = whole(saved);
   }
 
   private MapProject(final Game game) {
     saved = new State(game, MapFiles.none(), MapTexts.none());
-    current = saved;
+    current = whole(saved);
+  }
+
+  /**
+   * The state with what TripleA needs to start the game, eg a territory attachment for every land
+   * territory; a map opened without it has it as a change to save.
+   */
+  private static State whole(final State state) {
+    final Game whole = MapXml.withTerritoryAttachments(state.game());
+    return whole == state.game()
+        ? state
+        : new State(whole, state.files(), state.texts(), state.drawn());
   }
 
   /** A step with this game and these files, the texts and the borders drawn as they are. */
@@ -300,7 +311,7 @@ final class MapProject {
   private void step(final State next) {
     undos.push(current);
     redos.clear();
-    current = next;
+    current = whole(next);
     forgetOldPictures();
     listeners.forEach(Runnable::run);
   }

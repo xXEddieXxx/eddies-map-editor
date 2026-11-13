@@ -107,6 +107,51 @@ class MapXml {
         .orElse(List.of());
   }
 
+  /**
+   * The game with a territory attachment for every land territory and every sea zone with an
+   * owner: TripleA does not start a game where one lacks it ("No territory attachment for: ..."),
+   * though its parser loads it. A missing one is added with a production of 0; the same game when
+   * none is missing. A game that makes territory attachments in a loop (foreach) is left alone:
+   * which territories those reach shows only when TripleA loads it.
+   */
+  static Game withTerritoryAttachments(final Game game) {
+    if (AttachmentsXml.attachments(game).stream()
+        .anyMatch(
+            a ->
+                AttachmentsXml.isNamed(a, TERRITORY)
+                    && (a.getForeach() != null
+                        || (a.getAttachTo() != null && a.getAttachTo().contains("@"))))) {
+      return game;
+    }
+    final Set<String> attached =
+        AttachmentsXml.attachments(game).stream()
+            .filter(a -> AttachmentsXml.isNamed(a, TERRITORY))
+            .map(Attachment::getAttachTo)
+            .collect(Collectors.toSet());
+    final Set<String> owned =
+        owners(game).stream().map(TerritoryOwner::getTerritory).collect(Collectors.toSet());
+    final List<Attachment> missing =
+        territoryElements(game).stream()
+            .filter(t -> !Boolean.TRUE.equals(t.getWater()) || owned.contains(t.getName()))
+            .filter(t -> !attached.contains(t.getName()))
+            .map(
+                t ->
+                    Attachment.builder()
+                        .name(TERRITORY)
+                        .attachTo(t.getName())
+                        .javaClass(TerritoryAttachment.class.getName())
+                        .type("territory")
+                        .options(List.of(Option.builder().name(PRODUCTION).value("0").build()))
+                        .build())
+            .toList();
+    if (missing.isEmpty()) {
+      return game;
+    }
+    final List<Attachment> all = new ArrayList<>(AttachmentsXml.attachments(game));
+    all.addAll(missing);
+    return AttachmentsXml.withAttachments(game, all);
+  }
+
   static boolean isWater(final Game game, final String territory) {
     return territoryElements(game).stream()
         .anyMatch(t -> t.getName().equals(territory) && Boolean.TRUE.equals(t.getWater()));
