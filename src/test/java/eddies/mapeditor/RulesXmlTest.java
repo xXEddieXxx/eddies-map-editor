@@ -9,12 +9,16 @@ import games.strategy.engine.data.gameparser.GameParser;
 import games.strategy.engine.data.GamePlayer;
 import games.strategy.triplea.Constants;
 import games.strategy.triplea.attachments.PlayerAttachment;
+import games.strategy.triplea.attachments.RulesAttachment;
 import games.strategy.triplea.attachments.TerritoryAttachment;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.triplea.map.data.elements.AttachmentList.Attachment.Option;
+import org.triplea.map.data.elements.AttachmentList.Attachment;
 import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.GamePlay.Sequence.Step;
 import org.triplea.map.data.elements.Initialize;
@@ -390,5 +394,85 @@ final class RulesXmlTest {
         .extracting(o -> o.getName() + "=" + o.getValue())
         .containsExactly("archeType=neutral", "upkeepCost=flat:1");
     assertThat(RulesXml.relationshipOptions(set, "War")).as("a type without one").isEmpty();
+  }
+
+  @DisplayName("A nation's rules are read from its rulesAttachment, count and value joined")
+  @Test
+  void readsNationRules() {
+    final Game g40 = GameRulesXmlTest.givenG40();
+
+    assertThat(RulesXml.nationRule(g40, "Chinese", "movementRestrictionType"))
+        .as("China may move only into the territories listed")
+        .contains("allowed");
+    assertThat(RulesXml.nationRule(g40, "Chinese", "PlacementAnyTerritory"))
+        .as("found also when a map writes the option with a capital")
+        .contains("true");
+    assertThat(RulesXml.nationRules(g40, "Chinese")).as("all six of China").hasSize(6);
+    assertThat(RulesXml.nationRules(g40, "Germans")).as("Germany has no such rules").isEmpty();
+  }
+
+  @DisplayName("The first rule of a nation makes its rulesAttachment, which the game loads")
+  @Test
+  void firstNationRuleMakesTheAttachment(@TempDir final Path folder) {
+    final Game g40 = GameRulesXmlTest.givenG40();
+
+    final Game placing = RulesXml.withNationRule(g40, "Germans", "placementAnyTerritory", "true");
+    final Game free =
+        RulesXml.withNationRule(placing, "Germans", "productionPerXTerritories", "3", "infantry");
+
+    final Attachment made = AttachmentsXml.attachments(placing).getLast();
+    assertThat(AttachmentsXml.attachments(placing))
+        .as("one attachment more")
+        .hasSize(AttachmentsXml.attachments(g40).size() + 1);
+    assertThat(List.of(made.getName(), made.getAttachTo(), made.getJavaClass(), made.getType()))
+        .as("named as TripleA looks it up on the player")
+        .containsExactly(
+            "rulesAttachment",
+            "Germans",
+            "games.strategy.triplea.attachments.RulesAttachment",
+            "player");
+    assertThat(AttachmentsXml.attachments(free)).as("the second rule joins it").hasSize(
+        AttachmentsXml.attachments(placing).size());
+    assertThat(RulesXml.nationRule(free, "Germans", "productionPerXTerritories"))
+        .as("the count beside the value, read joined")
+        .contains("3:infantry");
+    final GameData loaded = givenLoaded(free, folder);
+    final RulesAttachment rules =
+        loaded.getPlayerList().getPlayerId("Germans").getRulesAttachment();
+    assertThat(rules.getPlacementAnyTerritory()).as("TripleA reads the rule").isTrue();
+    assertThat(rules.getProductionPerXTerritories().totalValues())
+        .as("and a unit per 3 territories")
+        .isEqualTo(3);
+  }
+
+  @DisplayName("A changed nation rule keeps its place, the other rules and the map's spelling")
+  @Test
+  void changedNationRuleKeepsTheRest() {
+    final Game g40 = GameRulesXmlTest.givenG40();
+    final List<Option> before = RulesXml.nationRules(g40, "Chinese");
+
+    final Game changed =
+        RulesXml.withNationRule(g40, "Chinese", "MovementRestrictionType", "disallowed");
+    final Game without = RulesXml.withoutNationRule(changed, "Chinese", "unlimitedProduction");
+
+    final List<Option> after = RulesXml.nationRules(changed, "Chinese");
+    assertThat(after.get(1).getName())
+        .as("the name as the map spells it")
+        .isEqualTo("movementRestrictionType");
+    assertThat(after.get(1).getValue()).as("the new value in its place").isEqualTo("disallowed");
+    assertThat(IntStream.range(0, before.size()).filter(i -> i != 1).mapToObj(after::get))
+        .as("every other rule is the same object")
+        .containsExactlyElementsOf(
+            IntStream.range(0, before.size()).filter(i -> i != 1).mapToObj(before::get).toList());
+    assertThat(RulesXml.nationRules(without, "Chinese"))
+        .as("a rule taken out leaves the others")
+        .hasSize(5)
+        .noneMatch(o -> o.getName().equals("unlimitedProduction"));
+    assertThat(RulesXml.withNationRule(g40, "Chinese", "movementRestrictionType", "allowed"))
+        .as("set already: the same game, no step")
+        .isSameAs(g40);
+    assertThat(RulesXml.withoutNationRule(g40, "Germans", "unlimitedProduction"))
+        .as("nothing to take out: the same game")
+        .isSameAs(g40);
   }
 }

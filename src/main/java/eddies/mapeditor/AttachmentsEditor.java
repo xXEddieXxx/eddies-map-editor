@@ -409,15 +409,20 @@ final class AttachmentsEditor implements Editor {
                 + Objects.toString(attachment.getName(), "")
                 + (attachment.getForeach() == null ? "" : ", for each " + attachment.getForeach()));
     if (TriggerXml.TRIGGER.equals(kind)) {
-      final JButton open = new JButton("Open in assistant");
-      Theme.setTertiaryButtonStyle(open);
-      open.setToolTipText("Opens the trigger in the trigger assistant");
-      open.addActionListener(e -> TriggerAssistant.open(page, project, index));
-      final JPanel info = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-      info.add(new JLabel("This is a trigger. It is easier to change in the trigger assistant."));
-      info.add(Box.createHorizontalStrut(Theme.GAP_S));
-      info.add(open);
-      inspector.row(info);
+      inspector.row(
+          easierIn(
+              "This is a trigger. It is easier to change in the trigger assistant.",
+              "Open in assistant",
+              "Opens the trigger in the trigger assistant",
+              () -> TriggerAssistant.open(page, project, index)));
+    } else if (ObjectiveXml.isObjective(attachment)) {
+      final String objective = Objects.toString(attachment.getName(), "");
+      inspector.row(
+          easierIn(
+              "This is a national objective. It is easier to change in Objectives.",
+              "Open in Objectives",
+              "Shows the objective in Objectives, with its text and checks in plain words",
+              () -> MapMakerWindow.openTool(page, ObjectivesEditor.TITLE, objective)));
     }
     if (!name.hasFocus()) {
       name.setText(Objects.toString(attachment.getName(), ""));
@@ -435,6 +440,20 @@ final class AttachmentsEditor implements Editor {
     cards.show(detailsCard, DETAILS);
     detailsCard.revalidate();
     detailsCard.repaint();
+  }
+
+  /** A line saying which tool changes the attachment more easily, and the button that opens it. */
+  private static JComponent easierIn(
+      final String text, final String verb, final String toolTip, final Runnable open) {
+    final JButton button = new JButton(verb);
+    Theme.setTertiaryButtonStyle(button);
+    button.setToolTipText(toolTip);
+    button.addActionListener(e -> open.run());
+    final JPanel info = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+    info.add(new JLabel(text));
+    info.add(Box.createHorizontalStrut(Theme.GAP_S));
+    info.add(button);
+    return info;
   }
 
   private void change(final Attachment changed) {

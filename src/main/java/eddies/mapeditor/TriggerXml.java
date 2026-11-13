@@ -332,8 +332,9 @@ class TriggerXml {
     return new Piece(part, label, Shape.OPTIONAL, List.of(words));
   }
 
+  /** The spec of the option, by its name as TripleA reads it, eg "RemoveUnits" or "turns". */
   static Optional<Spec> spec(final String option) {
-    return Optional.ofNullable(BY_OPTION.get(option));
+    return Optional.ofNullable(option).map(o -> BY_OPTION.get(AttachmentsXml.optionName(o)));
   }
 
   static List<Spec> specs(final Group group) {
@@ -342,12 +343,12 @@ class TriggerXml {
 
   /** Whether the assistant shows the option of a trigger with fields; else it keeps it as is. */
   static boolean isManagedOnTrigger(final String option) {
-    return TRIGGER_CORE.contains(option)
+    return TRIGGER_CORE.contains(AttachmentsXml.optionName(option))
         || spec(option).filter(s -> s.group() == Group.EFFECT).isPresent();
   }
 
   static boolean isManagedOnCondition(final String option) {
-    return CONDITION_CORE.contains(option)
+    return CONDITION_CORE.contains(AttachmentsXml.optionName(option))
         || spec(option).filter(s -> s.group() == Group.CHECK).isPresent();
   }
 
@@ -540,7 +541,7 @@ class TriggerXml {
       final Option original = before.get(b);
       for (int w = 0; w < wanted.size(); w++) {
         if (!used[w]
-            && Objects.equals(original.getName(), wanted.get(w).getName())
+            && AttachmentsXml.isOption(original, wanted.get(w).getName())
             && joined(original).equals(joined(wanted.get(w)))) {
           used[w] = true;
           kept[b] = original;
@@ -556,7 +557,7 @@ class TriggerXml {
       }
       final String name = before.get(b).getName();
       for (int w = 0; w < wanted.size(); w++) {
-        if (!used[w] && Objects.equals(name, wanted.get(w).getName())) {
+        if (!used[w] && AttachmentsXml.isOption(before.get(b), wanted.get(w).getName())) {
           used[w] = true;
           options.add(communityForm(name, joined(wanted.get(w))));
           break;
@@ -577,7 +578,7 @@ class TriggerXml {
   /** The values of the option in the attachment, in the joined form, eg each of its "when". */
   static List<String> values(final Attachment attachment, final String name) {
     return AttachmentsXml.options(attachment).stream()
-        .filter(o -> name.equals(o.getName()))
+        .filter(o -> AttachmentsXml.isOption(o, name))
         .map(TriggerXml::joined)
         .toList();
   }
@@ -653,7 +654,8 @@ class TriggerXml {
             .toList());
   }
 
-  private static Map<String, Attachment> conditionsByName(final Game game) {
+  /** The game's conditions by name, the first of a name, as the game finds it. */
+  static Map<String, Attachment> conditionsByName(final Game game) {
     final Map<String, Attachment> byName = new HashMap<>();
     conditions(game).forEach(c -> byName.putIfAbsent(c.getName(), c));
     return byName;
@@ -799,7 +801,8 @@ class TriggerXml {
       places.put(attachments.get(i).getName(), i);
     }
     for (final Option option : AttachmentsXml.options(trigger.attachment())) {
-      final String optionName = Objects.toString(option.getName(), "");
+      final String optionName =
+          AttachmentsXml.optionName(Objects.toString(option.getName(), ""));
       final String joined = joined(option);
       if (joined.contains("@")) {
         // a foreach variable, which the game fills in
@@ -908,9 +911,28 @@ class TriggerXml {
     return new Problems(List.copyOf(errors), List.copyOf(warnings));
   }
 
+  /**
+   * Why the game would not read a check of the condition, eg a territory the map does not have;
+   * the first found. A foreach variable, which the game fills in, is none.
+   */
+  static Optional<String> checkProblem(final Game game, final Attachment condition) {
+    return AttachmentsXml.options(condition).stream()
+        .flatMap(o -> checkProblem(game, o).stream())
+        .findFirst();
+  }
+
+  /** Why the game would not read the option if it is a check; a foreach variable is no problem. */
+  static Optional<String> checkProblem(final Game game, final Option check) {
+    return joined(check).contains("@")
+        ? Optional.empty()
+        : spec(check.getName())
+            .filter(s -> s.group() == Group.CHECK)
+            .flatMap(s -> pieceProblem(game, s, joined(check)));
+  }
+
   /** Whether the name starts so, also with the common misspelling "Attatchment". */
   private static boolean hasStart(final String name, final String start) {
-    return name.replace("Attatchment", "Attachment").startsWith(start);
+    return AttachmentsXml.readName(name).startsWith(start);
   }
 
   private static int indexOfSame(final List<Attachment> attachments, final Attachment wanted) {
@@ -1066,7 +1088,7 @@ class TriggerXml {
     for (final Option check : checks) {
       final String phrase = phrase(spec(check.getName()).orElseThrow(), joined(check));
       // a relationship names its own two nations, whoever the condition is for
-      if (whoSaid || "relationship".equals(check.getName())) {
+      if (whoSaid || AttachmentsXml.isOption(check, "relationship")) {
         phrases.add(phrase);
       } else {
         whoSaid = true;
@@ -1089,7 +1111,7 @@ class TriggerXml {
       if (spec.isEmpty()) {
         continue;
       }
-      if (pair.remove(option.getName())) {
+      if (pair.remove(AttachmentsXml.optionName(option.getName()))) {
         if (!pairShown) {
           pairShown = true;
           phrases.add(givePhrase(amount.get(), resource.get()));

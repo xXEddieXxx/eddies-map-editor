@@ -1,24 +1,25 @@
 package eddies.mapeditor;
 
 import com.formdev.flatlaf.FlatClientProperties;
-import com.formdev.flatlaf.ui.FlatUIUtils;
 import games.strategy.engine.ClientFileSystemHelper;
+import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
+import java.awt.Color;
 import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
-import java.awt.FontMetrics;
 import java.awt.Frame;
-import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.awt.Polygon;
 import java.awt.RenderingHints;
 import java.awt.Window;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.UnsupportedFlavorException;
+import java.awt.geom.AffineTransform;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
@@ -49,7 +50,8 @@ import javax.swing.SwingWorker;
 import javax.swing.TransferHandler;
 import javax.swing.WindowConstants;
 import lombok.extern.slf4j.Slf4j;
-import eddies.mapeditor.MakerIcon.Glyph;
+import eddies.mapeditor.MapPicture.DetectedMap;
+import eddies.mapeditor.MapPicture.DetectedTerritory;
 import eddies.mapeditor.MapProject.NewMap;
 
 /**
@@ -65,7 +67,8 @@ final class NewMapWizard extends JPanel {
   private static final Dimension DROP_ZONE = new Dimension(560, 260);
   private static final int NAME_WIDTH = 360;
   private static final List<String> PICTURE_ENDINGS = List.of("png", "jpg", "jpeg", "gif");
-  private static final String PLACEHOLDER = "Germans\nRussians\nBritish";
+  // real nations to start with, which the count below them counts: grey example text looked typed
+  private static final String FIRST_NATIONS = "Germans\nRussians\nBritish";
 
   private final transient Consumer<NewMap> created;
   private final transient Path mapsFolder;
@@ -84,7 +87,7 @@ final class NewMapWizard extends JPanel {
   private final JPanel pictureRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
   private final JLabel skipNote =
       Theme.newSecondaryLabel("No picture? Skip this step and add one later in Territories.");
-  final JTextArea nations = newNationsArea();
+  final JTextArea nations = new JTextArea(FIRST_NATIONS, 8, 0);
   private final JLabel nationCount = Theme.newSecondaryLabel(" ");
   private final JLabel status = new JLabel(" ");
   private final JProgressBar progress = new JProgressBar();
@@ -93,7 +96,11 @@ final class NewMapWizard extends JPanel {
   final JButton skip = new JButton("Skip");
   final JButton next = new JButton("Next");
   private transient @Nullable BufferedImage picture;
+  // what was found in the picture, shown before Create and taken by it
+  private transient @Nullable DetectedMap found;
   private boolean busy;
+  // counts the pictures asked for: only the read of the latest is taken, none after Remove
+  private int reads;
   private int step;
 
   /** The wizard's content; a new map goes into the location, which Change… can change. */
@@ -223,7 +230,10 @@ final class NewMapWizard extends JPanel {
     ask.setOpaque(false);
     ask.add(new JLabel("Drop a PNG, JPG or GIF here, or"));
     ask.add(choose);
-    final JLabel glyph = new JLabel(new MakerIcon(Glyph.GAME_VIEW, 32));
+    final JLabel glyph = new JLabel("For example:", new ImageIcon(example()), SwingConstants.LEFT);
+    glyph.setHorizontalTextPosition(SwingConstants.LEFT);
+    glyph.setIconTextGap(Theme.GAP_M);
+    glyph.setForeground(Theme.getSecondaryTextColor());
     final JPanel empty = new JPanel(new GridBagLayout());
     empty.setOpaque(false);
     final GridBagConstraints c = new GridBagConstraints();
@@ -244,14 +254,14 @@ final class NewMapWizard extends JPanel {
     another.addActionListener(e -> choosePicture());
     final JButton remove = new JButton("Remove");
     Theme.setTertiaryButtonStyle(remove);
-    remove.addActionListener(e -> showPicture(null, null, ""));
+    remove.addActionListener(e -> removePicture());
     spaced(pictureRow, pictureLine, another, remove);
     pictureRow.setVisible(false);
     return newPage(
         "Add a picture of your map",
         newNote(
-            "Dark lines between territories, seas in blue. The editor finds the territories, sea"
-                + " zones and their neighbours."),
+            "A suitable picture: every territory closed in by dark lines, land in any color, seas"
+                + " in blue. The editor finds the territories, sea zones and their neighbours."),
         zone,
         pictureRow,
         skipNote);
@@ -300,7 +310,9 @@ final class NewMapWizard extends JPanel {
     countNations();
     return newPage(
         "Who plays on it?",
-        newNote("One nation per line. You can add more later in Nations."),
+        newNote(
+            "One nation per line. These three are a start: change them here or later in"
+                + " Nations."),
         new JScrollPane(nations),
         nationCount);
   }
@@ -308,30 +320,6 @@ final class NewMapWizard extends JPanel {
   private void countNations() {
     final int count = (int) nations.getText().lines().filter(line -> !line.isBlank()).count();
     nationCount.setText(SearchList.count(count, count, "nation", "nations"));
-  }
-
-  /** Eight lines with an example in grey until something is typed; FlatLaf has none for areas. */
-  private static JTextArea newNationsArea() {
-    return new JTextArea(8, 0) {
-      @Serial private static final long serialVersionUID = 1L;
-
-      @Override
-      protected void paintComponent(final Graphics g) {
-        super.paintComponent(g);
-        if (!getText().isEmpty()) {
-          return;
-        }
-        final Insets insets = getInsets();
-        final FontMetrics metrics = g.getFontMetrics(getFont());
-        g.setColor(Theme.getPlaceholderColor());
-        g.setFont(getFont());
-        int y = insets.top + metrics.getAscent();
-        for (final String line : PLACEHOLDER.split("\n")) {
-          FlatUIUtils.drawString(this, g, line, insets.left, y);
-          y += metrics.getHeight();
-        }
-      }
-    };
   }
 
   /**
@@ -428,6 +416,40 @@ final class NewMapWizard extends JPanel {
     }
   }
 
+  /** A tiny map as the editor reads it best: land closed in by dark lines, the sea blue. */
+  private static BufferedImage example() {
+    final BufferedImage image = new BufferedImage(96, 60, BufferedImage.TYPE_INT_RGB);
+    final Graphics2D g = image.createGraphics();
+    g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+    g.setColor(new Color(0x6FA8DC));
+    g.fillRect(0, 0, 96, 60);
+    final Polygon land =
+        new Polygon(new int[] {10, 40, 84, 78, 46, 14}, new int[] {12, 6, 16, 46, 54, 40}, 6);
+    g.setColor(new Color(0xE9DDB5));
+    g.fill(land);
+    g.setColor(new Color(0x202020));
+    g.setStroke(new BasicStroke(2));
+    g.draw(land);
+    g.drawLine(40, 6, 46, 54);
+    g.drawLine(43, 30, 81, 31);
+    g.drawRect(0, 0, 95, 59);
+    g.dispose();
+    return image;
+  }
+
+  /** What was found in a picture, eg "Found 4 territories and 1 sea zone", or why nothing. */
+  static String foundLine(final DetectedMap found) {
+    final int seas = (int) found.territories().stream().filter(DetectedTerritory::water).count();
+    final int land = found.territories().size() - seas;
+    // a picture without lines is one area
+    return found.territories().size() < 2
+        ? "No borders found: draw dark lines between the territories"
+        : "Found "
+            + SearchList.count(land, land, "territory", "territories")
+            + " and "
+            + SearchList.count(seas, seas, "sea zone", "sea zones");
+  }
+
   private void showStatus(final Theme.Status kind, final String text) {
     status.setText(text);
     status.setForeground(kind.color());
@@ -442,47 +464,83 @@ final class NewMapWizard extends JPanel {
         .ifPresent(this::readPicture);
   }
 
-  // a big map's picture takes a moment to read; Next waits for it
+  // a big map's picture takes a moment to read and to search for territories; Next waits for it
   private void readPicture(final Path file) {
-    working(true);
-    showStatus(Theme.Status.TODO, "Reading " + file.getFileName() + "…");
+    final int request = startRead(file.getFileName().toString());
     new SwingWorker<ReadPicture, Void>() {
       @Override
       protected ReadPicture doInBackground() throws IOException {
         final BufferedImage read = MapPicture.read(file);
-        return new ReadPicture(read, smaller(read));
+        final DetectedMap detected = MapPicture.detect(read);
+        return new ReadPicture(read, detected, smaller(read, detected));
       }
 
       @Override
       protected void done() {
-        working(false);
         try {
-          final ReadPicture read = get();
-          showPicture(
-              read.picture(),
-              read.preview(),
-              file.getFileName()
-                  + " · "
-                  + read.picture().getWidth()
-                  + " × "
-                  + read.picture().getHeight());
-          showStatus(Theme.Status.TODO, " ");
+          finishRead(request, file.getFileName().toString(), get());
         } catch (final InterruptedException e) {
           Thread.currentThread().interrupt();
         } catch (final ExecutionException e) {
-          showStatus(
-              Theme.Status.PROBLEM, "Could not read the picture: " + e.getCause().getMessage());
+          if (request == reads) {
+            working(false);
+            showStatus(
+                Theme.Status.PROBLEM, "Could not read the picture: " + e.getCause().getMessage());
+          }
         }
       }
     }.execute();
   }
 
-  /** The picture in the zone with its name and size below it, or the empty zone again. */
+  /** A picture is being read: the wizard waits for it; the number its result comes back with. */
+  int startRead(final String fileName) {
+    working(true);
+    showStatus(Theme.Status.TODO, "Reading " + fileName + " and finding its territories…");
+    return ++reads;
+  }
+
+  /**
+   * Takes what was read, unless another picture was chosen or Remove pressed meanwhile: the read
+   * of a big picture may end after that of a small one chosen later.
+   */
+  void finishRead(final int request, final String fileName, final ReadPicture read) {
+    if (request != reads) {
+      return;
+    }
+    working(false);
+    showPicture(
+        read.picture(),
+        read.found(),
+        read.preview(),
+        fileName
+            + " · "
+            + read.picture().getWidth()
+            + " × "
+            + read.picture().getHeight()
+            + " · "
+            + foundLine(read.found()));
+    showStatus(Theme.Status.TODO, " ");
+  }
+
+  /** No picture, also not the one still being read. */
+  void removePicture() {
+    reads++;
+    working(false);
+    showStatus(Theme.Status.TODO, " ");
+    showPicture(null, null, null, "");
+  }
+
+  /**
+   * The picture in the zone, the outlines found drawn over it, with its name, size and what was
+   * found below it, or the empty zone again.
+   */
   private void showPicture(
       @Nullable final BufferedImage shown,
+      @Nullable final DetectedMap detected,
       @Nullable final BufferedImage small,
       final String description) {
     picture = shown;
+    found = detected;
     preview.setIcon(small == null ? null : new ImageIcon(small));
     zoneCards.show(zone, shown == null ? "empty" : "picture");
     pictureLine.setText(description);
@@ -491,11 +549,11 @@ final class NewMapWizard extends JPanel {
     updateButtons();
   }
 
-  /** A picture as read and as the preview shows it. */
-  private record ReadPicture(BufferedImage picture, BufferedImage preview) {}
+  /** A picture as read, what was found in it, and as the preview shows it. */
+  record ReadPicture(BufferedImage picture, DetectedMap found, BufferedImage preview) {}
 
-  // the whole picture inside the zone, never larger than it is
-  private static BufferedImage smaller(final BufferedImage picture) {
+  // the whole picture inside the zone, never larger than it is, the outlines found over it
+  static BufferedImage smaller(final BufferedImage picture, final DetectedMap detected) {
     final double scale =
         Math.min(
             1,
@@ -509,6 +567,13 @@ final class NewMapWizard extends JPanel {
     g.setRenderingHint(
         RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
     g.drawImage(picture, 0, 0, width, height, null);
+    g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+    g.setColor(MapCanvas.MARKED);
+    g.setStroke(new BasicStroke(1.5f));
+    final AffineTransform toPreview = AffineTransform.getScaleInstance(scale, scale);
+    detected.territories().stream()
+        .flatMap(territory -> territory.outlines().stream())
+        .forEach(outline -> g.draw(toPreview.createTransformedShape(outline)));
     g.dispose();
     return small;
   }
@@ -523,9 +588,10 @@ final class NewMapWizard extends JPanel {
   Callable<NewMap> making() {
     final String mapName = name.getText().strip();
     final BufferedImage chosen = picture;
+    final DetectedMap detected = found;
     final List<String> playing = nations.getText().lines().toList();
     final Path folder = location;
-    return () -> MapProject.newMap(mapName, chosen, playing, folder);
+    return () -> MapProject.newMap(mapName, chosen, detected, playing, folder);
   }
 
   /** Makes and saves the map in the background, as finding territories and tiles takes a while. */
@@ -536,7 +602,7 @@ final class NewMapWizard extends JPanel {
     window()
         .ifPresent(dialog -> dialog.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE));
     progress.setVisible(true);
-    showStatus(Theme.Status.TODO, "Creating the map: finding territories and writing files…");
+    showStatus(Theme.Status.TODO, "Creating the map: writing its files…");
     new SwingWorker<NewMap, Void>() {
       @Override
       protected NewMap doInBackground() throws Exception {

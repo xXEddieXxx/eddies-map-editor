@@ -49,13 +49,18 @@ The tools sit in the sidebar in the same groups as below. Every change can be un
 **Home** shows the next step to a playable map; *Go to* opens its tool ready for it, with the
 step, its progress and *Next ›* over the map. Beside it is an overview: the map small in its
 owners' colors (problems outlined red; a click shows the territory) and a tile per tool with what
-the map has there and its problems; a click on a tile opens the tool. Where a setting comes from another tool, a small
+the map has there and its problems; a click on a tile opens the tool. What the steps already say
+(a nation without land or capital) is no problem beside them, and a territory without neighbours
+is listed apart under *Worth a look*, as many finished maps have one on purpose. A new map shows
+only the tiles of its steps. An opened map is fitted to the view once (at most at 100 %). Where a setting comes from another tool, a small
 link leads there, and a remove that triggers still need offers *Show in Attachments*.
 
 ### 🏠 Start a map
 
 - **Open** a map folder or one of your recent maps.
-- **New map wizard:** name and folder, a picture (or *Skip* to add one later), and who plays.
+- **New map wizard:** name and folder, a picture (or *Skip* to add one later; once chosen, the
+  wizard shows the territories and sea zones it found, outlined), and who plays (three nations to
+  start with).
 - The editor writes every file a map needs: `map.yml`, the game XML, `polygons.txt`,
   `centers.txt`, `place.txt`, `map.properties`, tiles, flags and unit pictures.
 
@@ -82,10 +87,16 @@ link leads there, and a remove that triggers still need offers *Show in Attachme
 ### ⚔️ Players
 
 - **Nations:** color (shown live on the map), alliance, starting PUs, who plays it, and its own
-  rules such as capitals to hold or unit limits. *In the nation's color* tints its unit pictures;
+  rules such as capitals to hold or unit limits, where it may place units (any land it owns,
+  captured land, how many per territory) and where it may move (only into, or not into, chosen
+  territories). *In the nation's color* tints its unit pictures;
   click a unit's picture to keep it in its own colors for every nation.
 - **Politics:** how nations start, in a diplomacy matrix like the game's (a cell per pair, colored
   war, allied or neutral; click to change, a kind the map has no type of yet makes that type), and the relationship types with what each allows.
+- **Objectives:** the national objectives, nation by nation: the PUs each pays, the text the
+  players read, what it checks (territories owned, units there, war, technology, rounds; the
+  same fields as the trigger assistant) and how often it pays. It tells when the game option
+  *National Objectives* is off, and turns it on.
 - **Technology:** the technologies, who researches what, and what each nation starts with.
 
 ### 🛡️ Units & economy
@@ -177,7 +188,7 @@ All code is in `src/main/java/eddies/mapeditor`:
 | `MapProject`                                                                | The open map: its game and files, undo and redo, saving                                       |
 | `MapXml`                                                                    | Reads and changes the game XML model; each change makes a new model                           |
 | `RulesXml`, `ProductionXml`, `TechXml`, `GameRulesXml`                      | The same for turn order and politics, production, technology, options, dice and variables     |
-| `ActionsXml`                                                                | The same for political and user actions                                                       |
+| `ActionsXml`, `ObjectiveXml`                                                | The same for political and user actions, and for national objectives                          |
 | `UnitsXml`, `UnitOptions`                                                   | The same for a unit type's options and the support it gives                                   |
 | `CanalXml`, `TerritoryEffectsXml`, `TerritoryXml`                          | The same for canals, territory effects and a territory's other options                        |
 | `MapFiles`, `MapFolder`                                                     | The files beside the game XML: outlines, centers, pictures, `map.properties`                  |

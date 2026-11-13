@@ -394,6 +394,65 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable) {
     return FileNameUtils.replaceIllegalCharacters(name, '_').replace(" ", "_") + ".";
   }
 
+  /** The key of the text the game shows for a nation's objective or condition. */
+  static String objectiveKey(final Game game, final String nation, final String name) {
+    return objectivesPrefix(game) + nation + ";" + name;
+  }
+
+  /**
+   * With the text of a nation's objective, and the objective in a group, as the game shows only
+   * those a group lists: the group named after the nation, else a new one after the others.
+   */
+  MapTexts withObjectiveText(
+      final Game game, final String nation, final String name, final String text) {
+    final MapTexts written = with(Kind.OBJECTIVES, objectiveKey(game, nation, name), text);
+    final String groups = objectivesPrefix(game) + GROUP;
+    final List<Entry> listing =
+        written.entries(Kind.OBJECTIVES).stream()
+            .filter(e -> e.key().startsWith(groups))
+            .toList();
+    if (listing.stream().anyMatch(e -> List.of(e.value().split(";")).contains(name))) {
+      return written;
+    }
+    final Optional<Entry> own =
+        listing.stream().filter(e -> e.key().endsWith(";" + nation)).findFirst();
+    if (own.isPresent()) {
+      final String listed = own.get().value().strip();
+      return written.with(
+          Kind.OBJECTIVES, own.get().key(), listed.isEmpty() ? name : listed + ";" + name);
+    }
+    // two digits, as the game sorts the groups by this text
+    final int number =
+        listing.stream()
+            .map(e -> e.key().substring(groups.length()).split(";")[0])
+            .filter(n -> n.matches("\\d{1,8}"))
+            .mapToInt(Integer::parseInt)
+            .max()
+            .orElse(0)
+            + 1;
+    return written.with(
+        Kind.OBJECTIVES, groups + String.format("%02d", number) + ";" + nation, name);
+  }
+
+  /** Without the objective's text, and without it in the groups that list it. */
+  MapTexts withoutObjectiveText(final Game game, final String nation, final String name) {
+    MapTexts changed = without(Kind.OBJECTIVES, objectiveKey(game, nation, name));
+    final String groups = objectivesPrefix(game) + GROUP;
+    for (final Entry group : changed.entries(Kind.OBJECTIVES)) {
+      final List<String> listed = List.of(group.value().split(";"));
+      if (group.key().startsWith(groups) && listed.contains(name)) {
+        final String rest =
+            listed.stream().filter(n -> !n.equals(name)).collect(Collectors.joining(";"));
+        // a group that lists nothing shows as an empty heading in the game: it goes too
+        changed =
+            rest.isEmpty()
+                ? changed.without(Kind.OBJECTIVES, group.key())
+                : changed.with(Kind.OBJECTIVES, group.key(), rest);
+      }
+    }
+    return changed;
+  }
+
   /** Whether the objective key is for another game, which does not show it. */
   static boolean isForeign(final String key, final Game game) {
     return !key.equals(PANEL_NAME) && !key.startsWith(objectivesPrefix(game));
@@ -682,7 +741,7 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable) {
 
   private static boolean isLikeObjective(final Attachment attachment) {
     return "RulesAttachment".equals(AttachmentsXml.kind(attachment))
-        ? attachment.getName().startsWith("objectiveAttachment")
+        ? AttachmentsXml.readName(attachment.getName()).startsWith("objectiveAttachment")
         : Stream.of("resource", "victory", "notification")
             .anyMatch(o -> option(attachment, o).isPresent());
   }
@@ -772,7 +831,7 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable) {
 
   private static Optional<String> option(final Attachment attachment, final String name) {
     return AttachmentsXml.options(attachment).stream()
-        .filter(o -> name.equals(o.getName()))
+        .filter(o -> AttachmentsXml.isOption(o, name))
         .map(o -> o.getValue() == null ? "" : o.getValue().strip())
         .filter(v -> !v.isEmpty())
         .findFirst();

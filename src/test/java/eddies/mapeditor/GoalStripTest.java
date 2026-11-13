@@ -143,4 +143,54 @@ final class GoalStripTest {
         .as("no toast before, one when Red has land, no new one on the next edit")
         .containsExactly(false, "✓ Give every nation its land", false);
   }
+
+  @DisplayName("A step done ahead of open ones leads to the first open one, not called Next")
+  @Test
+  void doneStepLeadsToTheFirstOpenOne() throws Exception {
+    // given: the picture gave the connections, so that step is done while Red has no land
+    final MapProject project = givenNewMapWithRed();
+    final List<Object> seen = new ArrayList<>();
+    final List<Step.Id> followed = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final GoalStrip strip = new GoalStrip(project);
+          strip.onFollowStep(followed::add);
+          strip.showStep(Step.Id.CONNECTIONS);
+          seen.add(strip.next().isVisible());
+          seen.add(strip.next().getText());
+          strip.next().doClick();
+        });
+
+    // then
+    assertThat(seen)
+        .as("the land step comes before the connections: still open, not next")
+        .containsExactly(true, "Still open: Give every nation its land ›");
+    assertThat(followed).as("the same next step as Home's").containsExactly(Step.Id.LAND);
+  }
+
+  @DisplayName("A step that waits for one before it leads there: capitals while no nation has land")
+  @Test
+  void openStepLeadsToAnEarlierOpenOne() throws Exception {
+    // given
+    final MapProject project = givenNewMapWithRed();
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final GoalStrip strip = new GoalStrip(project);
+          strip.showStep(Step.Id.CAPITALS);
+          seen.add(strip.next().isVisible());
+          seen.add(strip.next().getText());
+          strip.showStep(Step.Id.LAND);
+          seen.add(strip.next().isVisible());
+        });
+
+    // then
+    assertThat(seen)
+        .as("no capital can be marked before land is given; the first open step offers nothing")
+        .containsExactly(true, "Still open: Give every nation its land ›", false);
+  }
 }

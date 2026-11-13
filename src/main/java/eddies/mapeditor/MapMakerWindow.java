@@ -718,6 +718,7 @@ public final class MapMakerWindow extends JFrame {
                 List.of(
                     new NationsEditor(opened, shared),
                     new PoliticsEditor(opened, this::showTool),
+                    new ObjectivesEditor(opened),
                     new TechnologyEditor(opened, this::showTool))),
             new Sidebar.Group(
                 "Units & economy", List.of(new UnitsEditor(opened), new ProductionEditor(opened))),
@@ -800,8 +801,9 @@ public final class MapMakerWindow extends JFrame {
   }
 
   /**
-   * Shows the step's tool with the step as the map's goal; for land and capitals the matching Paint
-   * brush, the land for the first nation without; Check runs.
+   * Shows the step's tool with the step as the map's goal, ready to act: for land and capitals the
+   * matching Paint brush, the land for the first nation without; for units a territory chosen, its
+   * panel with Add units; Check runs.
    */
   void followStep(final MapGuide.Step.Id step) {
     if (step == MapGuide.Step.Id.CHECK) {
@@ -813,11 +815,15 @@ public final class MapMakerWindow extends JFrame {
         .filter(s -> s.id() == step)
         .findFirst()
         .ifPresent(s -> showTool(s.tool()));
+    final TerritoriesEditor territoriesTool = Objects.requireNonNull(territories);
+    if (step == MapGuide.Step.Id.TERRITORIES || step == MapGuide.Step.Id.UNITS) {
+      // the brush of a step before would keep its banner, eg "Painting capitals"
+      territoriesTool.select();
+    }
     // Territories' empty state, a picture to load, says what to do
     if (step != MapGuide.Step.Id.TERRITORIES) {
       Objects.requireNonNull(map).showStep(step);
     }
-    final TerritoriesEditor territoriesTool = Objects.requireNonNull(territories);
     if (step == MapGuide.Step.Id.LAND) {
       MapGuide.withoutLand(game).stream()
           .findFirst()
@@ -825,6 +831,8 @@ public final class MapMakerWindow extends JFrame {
           .ifPresent(territoriesTool::paintOwner);
     } else if (step == MapGuide.Step.Id.CAPITALS) {
       territoriesTool.paintCapitals();
+    } else if (step == MapGuide.Step.Id.UNITS) {
+      territoriesTool.chooseForUnits();
     }
   }
 

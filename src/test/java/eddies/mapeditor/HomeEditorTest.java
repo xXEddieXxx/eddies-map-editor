@@ -30,7 +30,7 @@ final class HomeEditorTest {
         project, t -> {}, opened::add, followed::add, () -> {}, () -> {}, () -> {});
   }
 
-  /** The minimap without a picture: its problem "No picture yet" is fixed in Territories. */
+  /** The minimap without a picture: making its territories is the guide's first step. */
   private static MapProject givenMinimapWithoutPicture() {
     return new MapProject(Path.of("minimap.xml"), MapXmlTest.givenMinimap(), MapFiles.none());
   }
@@ -50,6 +50,7 @@ final class HomeEditorTest {
   @Test
   void problemOpensItsTool() {
     final HomeEditor home = givenHome(givenMinimapWithoutPicture());
+    home.setValidated(List.of(MapChecks.Problem.in("Territories", "A picture does not read")));
     final JButton open =
         givenAll(home.page(), JButton.class)
             .filter(b -> b.getText().equals("Open Territories"))
@@ -58,7 +59,7 @@ final class HomeEditorTest {
 
     open.doClick();
 
-    assertThat(opened).as("the picture is loaded in Territories").containsExactly("Territories");
+    assertThat(opened).as("the problem names Territories").containsExactly("Territories");
   }
 
   @DisplayName("After the wizard, Home tells which nations it left out")
@@ -112,6 +113,7 @@ final class HomeEditorTest {
     // given
     final MapProject project = givenMinimapWithoutPicture();
     final HomeEditor home = givenHome(project);
+    home.setValidated(List.of(MapChecks.Problem.in("Territories", "A picture does not read")));
     final long territoryProblems =
         home.problems().stream()
             .filter(p -> p.territory().isPresent() || p.tool().equals(Optional.of("Territories")))
@@ -127,7 +129,7 @@ final class HomeEditorTest {
         .as("the count of territories and of their problems")
         .startsWith("Territories: " + MapXml.territories(project.game()).size() + " ")
         .contains(", " + territoryProblems + " problem");
-    assertThat(territoryProblems).as("no picture yet, at least").isPositive();
+    assertThat(territoryProblems).as("the one of the picture").isPositive();
     assertThat(territories.getText()).as("the red badge").contains("! " + territoryProblems);
     assertThat(opened).as("Turn order has no step to follow").containsExactly("Turn order");
   }
@@ -348,5 +350,58 @@ final class HomeEditorTest {
           self, Stream.of(container.getComponents()).flatMap(child -> givenAll(child, type)));
     }
     return self;
+  }
+
+  @DisplayName("A new map greets calmly: its steps, no problems, only the tiles of its steps")
+  @Test
+  void newMapShowsStepsNotProblems() throws Exception {
+    // given
+    final MapProject project =
+        MapProject.newMap("Island Wars", MapPictureTest.givenPicture(), List.of("Red"), maps)
+            .project();
+
+    // when
+    final HomeEditor home = givenHome(project);
+
+    // then
+    assertThat(home.problems())
+        .as("Red without land is the next step, not also a problem")
+        .isEmpty();
+    assertThat(MapMakerWindow.pill(home.problems().size(), MapMakerWindow.Check.NOT_YET).status())
+        .as("the header's pill is calm")
+        .isEqualTo(Theme.Status.TODO);
+    assertThat(
+            Stream.of("Territories", "Nations", "Connections", "Turn order", "Production")
+                .filter(tool -> givenTile(home, tool).isPresent()))
+        .as("no numbers the map maker never made, eg the template's 32 turn order steps")
+        .containsExactly("Territories", "Nations", "Connections");
+  }
+
+  @DisplayName("A territory without neighbours is worth a look: listed apart, not counted")
+  @Test
+  void notesAreListedApart() {
+    // given: a finished map with a territory off the board
+    final MapProject project =
+        new MapProject(
+            Path.of("minimap.xml"),
+            MapXml.withTerritory(MapXmlTest.givenMinimap(), "Atlantis", List.of()),
+            MapFiles.none());
+
+    // when
+    final HomeEditor home = givenHome(project);
+
+    // then
+    assertThat(home.problems()).as("no problem, so not in the pill").isEmpty();
+    assertThat(home.notes())
+        .as("the note")
+        .extracting(MapChecks.Problem::text)
+        .containsExactly("Atlantis is not connected to any territory");
+    assertThat(givenAll(home.page(), JLabel.class).map(JLabel::getText))
+        .as("under a heading of its own")
+        .contains("Worth a look")
+        .anyMatch(text -> text.contains("Atlantis is not connected to any territory"));
+    assertThat(givenTile(home, "Territories").orElseThrow().getText())
+        .as("no red count on the tile")
+        .doesNotContain("! ");
   }
 }

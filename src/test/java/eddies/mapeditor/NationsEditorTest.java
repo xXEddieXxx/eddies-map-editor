@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
@@ -265,5 +266,42 @@ final class NationsEditorTest {
     if (component instanceof Container container) {
       Stream.of(container.getComponents()).forEach(NationsEditorTest::invalidateAll);
     }
+  }
+
+  @DisplayName("A nation's placing and moving rules show in plain words and are written by a tick")
+  @Test
+  void showsAndWritesNationRules() throws Exception {
+    // given China, which may move only into its own territories
+    final MapProject project = givenG40();
+    final NationsEditor editor = new NationsEditor(project);
+    editor.click("Szechwan");
+    final Field selected = NationsEditor.class.getDeclaredField("selected");
+    selected.setAccessible(true);
+    assertThat(selected.get(editor)).as("a click on its land chooses China").isEqualTo("Chinese");
+    final JCheckBox captured =
+        find(editor.page(), JCheckBox.class)
+            .filter(box -> "May place in land it took this turn".equals(box.getText()))
+            .findFirst()
+            .orElseThrow();
+    final JCheckBox capital =
+        find(editor.page(), JCheckBox.class)
+            .filter(box -> "May place only in its capital".equals(box.getText()))
+            .findFirst()
+            .orElseThrow();
+
+    // when
+    capital.doClick();
+
+    // then
+    assertThat(captured.isSelected()).as("placementCapturedTerritory of the map shows").isTrue();
+    assertThat(find(editor.page(), JComboBox.class).map(JComboBox::getSelectedItem))
+        .as("movementRestrictionType allowed in plain words")
+        .contains("May move only into");
+    assertThat(RulesXml.nationRule(project.game(), "Chinese", "placementInCapitalRestricted"))
+        .as("the tick is written to its rulesAttachment")
+        .contains("true");
+    assertThat(NationsEditor.moreCount(project.game(), "Chinese"))
+        .as("More options counts the rules of the rulesAttachment too")
+        .isEqualTo(7);
   }
 }

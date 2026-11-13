@@ -443,7 +443,7 @@ final class TriggersEditor implements Editor {
   }
 
   /** The card as wide as the room up to 680 px, at the left. */
-  private static JComponent capped(final JComponent card) {
+  static JComponent capped(final JComponent card) {
     // the card's text wraps, so it asks for no width of its own
     final JPanel width = new JPanel(new BorderLayout()) {
       @Serial private static final long serialVersionUID = 1L;

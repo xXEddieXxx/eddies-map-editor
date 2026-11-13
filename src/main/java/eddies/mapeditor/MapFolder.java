@@ -14,6 +14,8 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.net.URL;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -535,6 +537,26 @@ class MapFolder {
   /** A text file as the game reads it: a .properties file as ISO-8859-1, the others as UTF-8. */
   static String readText(final Path file) throws IOException {
     return Files.readString(file, charsetOf(file));
+  }
+
+  /**
+   * A game's notes as TripleA shows them (FileUtils.readContents): UTF-8, else ISO-8859-1, so old
+   * notes open. Only notes: another file is written back as read, eg an XML under its declaration.
+   */
+  static String readNotes(final Path file) throws IOException {
+    final byte[] bytes = Files.readAllBytes(file);
+    return new String(
+        bytes, isUtf8(bytes) ? StandardCharsets.UTF_8 : StandardCharsets.ISO_8859_1);
+  }
+
+  /** Whether the bytes read as UTF-8. */
+  static boolean isUtf8(final byte[] bytes) {
+    try {
+      StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes));
+      return true;
+    } catch (final CharacterCodingException e) {
+      return false;
+    }
   }
 
   /**

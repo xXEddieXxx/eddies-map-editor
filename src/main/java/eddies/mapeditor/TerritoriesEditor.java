@@ -27,6 +27,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -1113,6 +1114,24 @@ final class TerritoriesEditor implements Editor {
   /** Paints capitals, keeping the goal shown, eg the step "Mark each nation's capital". */
   void paintCapitals() {
     paintKeepingGoal(CAPITAL);
+  }
+
+  /** Back to Select, eg for a step followed while the brush of another one was still chosen. */
+  void select() {
+    commit();
+    endMode();
+  }
+
+  /**
+   * Chooses a territory to place units in, so its panel shows "Add units" at once: the first land
+   * without units, one with an owner before the others.
+   */
+  void chooseForUnits() {
+    final Game game = project.game();
+    MapXml.territories(game).stream()
+        .filter(t -> !MapXml.isWater(game, t) && MapXml.units(game, t).isEmpty())
+        .min(Comparator.comparing(t -> MapXml.owner(game, t).isEmpty()))
+        .ifPresent(this::show);
   }
 
   private void paintKeepingGoal(final Brush chosen) {

@@ -6,8 +6,11 @@ import games.strategy.triplea.attachments.TerritoryAttachment;
 import java.awt.Point;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -20,6 +23,7 @@ final class MapPlacesTest {
   private static final String TERRITORY = "Territory 1";
   private static final String SEA = "Sea Zone 1";
   private static final String UNKNOWN_LINE = "Atlantis (5,6) | overflowToLeft=true";
+  private static final String CAPITALS_BY_HAND = "Territory 1 (10, 20)\nTerritory 2   (30,40)\n";
 
   @TempDir Path folder;
 
@@ -206,6 +210,208 @@ final class MapPlacesTest {
     final MapProject opened = MapProject.open(made.getXmlFile().orElseThrow());
     opened.edit(game -> MapXml.withProduction(game, TERRITORY, 3));
     return opened;
+  }
+
+  /**
+   * A map as published ones are, opened: marker files written by hand, with places the game does
+   * not draw (Territory 2 is no capital and gives no PUs, the game has no victory city), an empty
+   * convoy.txt and no name_place.txt. Territory 1 gives 3 PUs.
+   */
+  private MapProject givenPublishedMap() throws Exception {
+    final MapProject made = givenSavedMapWithUnknownPlace();
+    final Path mapFolder = made.getFolder().orElseThrow();
+    made.edit(game -> MapXml.withProduction(game, TERRITORY, 3));
+    made.save();
+    Files.delete(mapFolder.resolve("name_place.txt"));
+    Files.writeString(mapFolder.resolve("capitols.txt"), CAPITALS_BY_HAND);
+    Files.writeString(mapFolder.resolve("pu_place.txt"), "Territory 2 (1,2)\r\nAtlantis (3,4)");
+    Files.writeString(mapFolder.resolve("vc.txt"), "Territory 1 (5,6)\n");
+    Files.writeString(mapFolder.resolve("convoy.txt"), "");
+    return MapProject.open(made.getXmlFile().orElseThrow());
+  }
+
+  /** The files right in the map's folder with their bytes, eg every file of places. */
+  private static Map<String, List<Byte>> filesOf(final MapProject project) throws Exception {
+    final Map<String, List<Byte>> files = new LinkedHashMap<>();
+    try (Stream<Path> found = Files.list(project.getFolder().orElseThrow())) {
+      for (final Path file : found.filter(Files::isRegularFile).sorted().toList()) {
+        final List<Byte> bytes = new ArrayList<>();
+        for (final byte b : Files.readAllBytes(file)) {
+          bytes.add(b);
+        }
+        files.put(file.getFileName().toString(), bytes);
+      }
+    }
+    return files;
+  }
+
+  @DisplayName("A save that changes no place leaves every file of places as it is, byte for byte")
+  @Test
+  void savesOnlyTheGameWhenNoPlaceChanged() throws Exception {
+    final MapProject project = givenPublishedMap();
+    final Map<String, List<Byte>> before = filesOf(project);
+
+    project.edit(game -> MapXml.withProduction(game, TERRITORY, 7));
+    project.save();
+
+    assertThat(filesOf(project))
+        .as(
+            "no place file written, made or removed, and no .bak: places the game does not"
+                + " draw and the empty file stay, the changed value has no line and gets none")
+        .isEqualTo(before);
+  }
+
+  @DisplayName("A marker drawn only since a change made here gets one new line, the rest stays")
+  @Test
+  void markerThatBecomesDrawnGetsALine() throws Exception {
+    final MapProject project = givenPublishedMap();
+    final Path mapFolder = project.getFolder().orElseThrow();
+    final String values = Files.readString(mapFolder.resolve("pu_place.txt"));
+
+    project.edit(
+        game ->
+            MapXml.withVictoryCity(
+                MapXml.withCapital(
+                    MapXml.withProduction(game, "Territory 3", 1), "Territory 3", "Red"),
+                "Territory 3"));
+    project.save();
+
+    final List<String> valueLines = Files.readAllLines(mapFolder.resolve("pu_place.txt"));
+    assertThat(String.join("\r\n", valueLines.subList(0, 2)))
+        .as("the lines of pu_place.txt as they were")
+        .isEqualTo(values);
+    assertThat(valueLines)
+        .as("and exactly one new line, for the territory that gives PUs now")
+        .hasSize(3)
+        .last()
+        .asString()
+        .startsWith("Territory 3 ");
+    assertThat(Files.readString(mapFolder.resolve("capitols.txt")))
+        .as("the new capital's flag after the lines written by hand")
+        .startsWith(CAPITALS_BY_HAND + "Territory 3 ");
+    assertThat(Files.readAllLines(mapFolder.resolve("vc.txt")))
+        .as("the new victory city after the line of one this game does not have")
+        .hasSize(2)
+        .first()
+        .isEqualTo("Territory 1 (5,6)");
+    assertThat(mapFolder.resolve("name_place.txt"))
+        .as("no names: no territory is new")
+        .doesNotExist();
+  }
+
+  @DisplayName("A moved marker changes only its line of its file; the other lines stay as written")
+  @Test
+  void movedMarkerChangesOnlyItsLine() throws Exception {
+    final MapProject project = givenPublishedMap();
+    final Path mapFolder = project.getFolder().orElseThrow();
+    final Map<String, List<Byte>> before = filesOf(project);
+    project.edit(game -> MapXml.withCapital(game, TERRITORY, "Red"));
+
+    project.setMarkerPlace(Marker.CAPITAL, TERRITORY, 0, new Point(11, 12));
+    project.save();
+
+    assertThat(mapFolder.resolve("capitols.txt"))
+        .as("the moved flag in its line, the line of Territory 2 as written by hand")
+        .hasContent("Territory 1  (11,12) \nTerritory 2   (30,40)\n");
+    assertThat(mapFolder.resolve("capitols.txt.bak"))
+        .as("the file as it was before")
+        .hasContent(CAPITALS_BY_HAND);
+    final Map<String, List<Byte>> after = filesOf(project);
+    after.keySet().removeAll(List.of("capitols.txt", "capitols.txt.bak"));
+    before.remove("capitols.txt");
+    assertThat(after).as("no other file touched").isEqualTo(before);
+  }
+
+  @DisplayName("A renamed territory keeps its lines under its new name and is not a new one")
+  @Test
+  void renamedTerritoryIsNotNew() throws Exception {
+    final MapProject project = givenPublishedMap();
+    final Path mapFolder = project.getFolder().orElseThrow();
+    final String lineOfFirst = "Territory 1 (10, 20)";
+
+    project.rename("Territory 2", "Avalon");
+    project.save();
+
+    assertThat(mapFolder.resolve("name_place.txt"))
+        .as("no name placed: the map leaves that to the game, and the territory is not new")
+        .doesNotExist();
+    assertThat(Files.readAllLines(mapFolder.resolve("capitols.txt")))
+        .as("the other line as written by hand")
+        .contains(lineOfFirst);
+    assertThat(PointFileReaderWriter.readOneToOne(mapFolder.resolve("capitols.txt")))
+        .as("its flag's place under the new name only")
+        .containsOnly(
+            Map.entry(TERRITORY, new Point(10, 20)), Map.entry("Avalon", new Point(30, 40)));
+    assertThat(PointFileReaderWriter.readOneToOne(mapFolder.resolve("pu_place.txt")))
+        .as("its value's place too, beside the line of an unknown territory")
+        .containsOnly(Map.entry("Avalon", new Point(1, 2)), Map.entry("Atlantis", new Point(3, 4)));
+    assertThat(Files.readAllLines(mapFolder.resolve("vc.txt")))
+        .as("a file without it is not touched")
+        .containsExactly("Territory 1 (5,6)");
+  }
+
+  @DisplayName("A territory removed here loses its lines in the files of places; others stay")
+  @Test
+  void removedTerritoryLosesItsLines() throws Exception {
+    final MapProject project = givenPublishedMap();
+    final Path mapFolder = project.getFolder().orElseThrow();
+
+    assertThat(project.removeTerritory("Territory 2")).as("nothing names it").isEmpty();
+    project.save();
+
+    assertThat(mapFolder.resolve("capitols.txt"))
+        .as("its flag's line gone, the other as written")
+        .hasContent("Territory 1 (10, 20)\n");
+    assertThat(mapFolder.resolve("pu_place.txt"))
+        .as("its value's line gone, the line of a territory the map does not have stays")
+        .hasContent("Atlantis (3,4)");
+    assertThat(mapFolder.resolve("vc.txt.bak"))
+        .as("vc.txt, without it, not written")
+        .doesNotExist();
+  }
+
+  @DisplayName("Saving one game keeps the places another game of the same map needs")
+  @Test
+  void savingOneGameKeepsTheOthersPlaces() throws Exception {
+    final MapProject first = givenSavedMapWithUnknownPlace();
+    final Path capitals = first.getFolder().orElseThrow().resolve("capitols.txt");
+    final MapProject second =
+        MapProject.open(MapFolder.newGame(first.getXmlFile().orElseThrow(), "Second"));
+    second.edit(game -> MapXml.withCapital(game, "Territory 2", "Red"));
+    second.setMarkerPlace(Marker.CAPITAL, "Territory 2", 0, new Point(40, 41));
+    second.save();
+
+    final MapProject opened = MapProject.open(first.getXmlFile().orElseThrow());
+    opened.edit(game -> MapXml.withCapital(game, TERRITORY, "Red"));
+    opened.save();
+
+    assertThat(MapXml.isCapital(opened.game(), "Territory 2"))
+        .as("the first game has no capital there")
+        .isFalse();
+    assertThat(PointFileReaderWriter.readOneToOne(capitals))
+        .as("the second game's flag stays where it was put, beside the first game's new one")
+        .containsEntry("Territory 2", new Point(40, 41))
+        .containsKey(TERRITORY);
+  }
+
+  @DisplayName("A new map, opened again as the wizard does, gets a place for a later capital")
+  @Test
+  void newMapGetsPlacesForLaterMarkers() throws Exception {
+    final MapProject project = givenSavedMapWithUnknownPlace();
+    final Path capitals = project.getFolder().orElseThrow().resolve("capitols.txt");
+    assertThat(capitals).as("no capital yet, no file").doesNotExist();
+
+    project.edit(game -> MapXml.withCapital(game, TERRITORY, "Red"));
+    project.save();
+
+    assertThat(PointFileReaderWriter.readOneToOne(capitals))
+        .as("the flag's place found, as the game hangs it from the center without one")
+        .containsOnlyKeys(TERRITORY);
+    assertThat(
+            PointFileReaderWriter.readOneToOne(
+                project.getFolder().orElseThrow().resolve("name_place.txt")))
+        .as("the first save placed every territory's name")
+        .containsOnlyKeys(MapXml.territories(project.game()));
   }
 
   @DisplayName("A place in a file set by hand after opening stays when the save changes no place")

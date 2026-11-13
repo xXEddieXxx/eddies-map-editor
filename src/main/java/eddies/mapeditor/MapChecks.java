@@ -15,7 +15,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
 import lombok.experimental.UtilityClass;
@@ -57,47 +56,19 @@ class MapChecks {
     }
   }
 
-  /** The problems the map maker finds itself, quick enough to look for after every change. */
+  /**
+   * The problems the map maker finds itself, quick enough to look for after every change. What the
+   * steps to a playable map say ({@link MapGuide#steps}: no territories, no nations, a nation
+   * without land or capital) is none: finished maps have such nations on purpose.
+   */
   static List<Problem> quick(final Game game, final MapFiles files) {
     final List<Problem> problems = new ArrayList<>();
     final List<String> territories = MapXml.territories(game);
     final Set<String> known = new HashSet<>(territories);
     final Set<String> nations = new HashSet<>(MapXml.nations(game));
-    if (!files.hasOutlines()) {
-      problems.add(
-          Problem.in(
-              "Territories",
-              files.picture().isPresent()
-                  ? "No territories yet: press Make territories in Territories"
-                  : "No picture yet: load one in Territories"));
-    }
-    if (nations.isEmpty()) {
-      problems.add(Problem.in("Nations", "No nations yet: add them in Nations"));
-    } else if (!territories.isEmpty()) {
-      final Set<String> owning =
-          territories.stream()
-              .flatMap(t -> MapXml.owner(game, t).stream())
-              .collect(Collectors.toSet());
-      // only nations that take turns: a map's neutrals' player owns no land on purpose
-      MapXml.nations(game).stream()
-          .filter(nation -> MapXml.takesTurns(game, nation))
-          .filter(nation -> !owning.contains(nation))
-          .forEach(
-              nation -> problems.add(Problem.in("Territories", nation + " owns no territory")));
-    }
-    final Set<String> namedByRules = namedByRules(game);
     for (final String territory : territories) {
       if (files.hasOutlines() && !files.polygons().containsKey(territory)) {
         problems.add(Problem.at(territory, territory + " has no outline on the map"));
-      }
-      // an impassable territory, eg marshes, may well stay apart
-      // so may one the rules name, eg a dial whose owner triggers change
-      if (MapXml.neighbors(game, territory).isEmpty()
-          && !MapXml.isImpassable(game, territory)
-          && !namedByRules.contains(territory)) {
-        problems.add(
-            new Problem(
-                territory + " is not connected to any territory", territory, "Connections"));
       }
       // the engine's owner of neutral land is a player of every game without being listed
       MapXml.owner(game, territory)
@@ -121,27 +92,6 @@ class MapChecks {
             t ->
                 problems.add(
                     Problem.in("Connections", "A connection leads to " + t + ", no territory")));
-    final boolean mapHasCapitals = territories.stream().anyMatch(t -> MapXml.isCapital(game, t));
-    if (mapHasCapitals) {
-      // a nation without land, eg the neutrals' player, needs none
-      final Set<String> landed =
-          new HashSet<>(territories.stream().flatMap(t -> MapXml.owner(game, t).stream()).toList());
-      landed.remove(Constants.PLAYER_NAME_NEUTRAL);
-      for (final String nation : landed) {
-        final boolean hasCapital =
-            territories.stream()
-                .anyMatch(t -> MapXml.capitalOf(game, t).filter(nation::equals).isPresent());
-        if (!hasCapital) {
-          // shown at one of its territories, where Territories makes a capital
-          final String owned =
-              territories.stream()
-                  .filter(t -> MapXml.owner(game, t).filter(nation::equals).isPresent())
-                  .findFirst()
-                  .orElseThrow();
-          problems.add(Problem.at(owned, nation + " has no capital"));
-        }
-      }
-    }
     // the game refuses a canal without exactly two sea zones or without land
     for (final CanalXml.Canal canal : CanalXml.canals(game)) {
       if (canal.seaZones().size() != 2 || canal.lands().isEmpty()) {
@@ -155,6 +105,27 @@ class MapChecks {
       }
     }
     return problems;
+  }
+
+  /**
+   * Worth a look, but no problem: territories without a neighbour, which many finished maps have on
+   * purpose, eg a box for units off the board.
+   */
+  static List<Problem> notes(final Game game) {
+    final Set<String> namedByRules = namedByRules(game);
+    // an impassable territory, eg marshes, may well stay apart
+    // so may one the rules name, eg a dial whose owner triggers change
+    return MapXml.territories(game).stream()
+        .filter(
+            territory ->
+                MapXml.neighbors(game, territory).isEmpty()
+                    && !MapXml.isImpassable(game, territory)
+                    && !namedByRules.contains(territory))
+        .map(
+            territory ->
+                new Problem(
+                    territory + " is not connected to any territory", territory, "Connections"))
+        .toList();
   }
 
   /**

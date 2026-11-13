@@ -24,62 +24,59 @@ final class MapChecksTest {
     }
   }
 
-  @DisplayName("A nation without a capital is shown at a territory of its own")
+  @DisplayName("What the guide's steps say is no problem: no nations, a nation without capital")
   @Test
-  void noCapitalShowsATerritoryOfTheNation() throws Exception {
-    final Game game = givenMinimapWithoutItaliansCapital();
-
-    final Optional<String> shown =
-        MapChecks.quick(game, MapFiles.none()).stream()
-            .filter(problem -> problem.text().equals("Italians has no capital"))
-            .findFirst()
-            .flatMap(Problem::territory);
-
-    assertThat(shown.flatMap(territory -> MapXml.owner(game, territory)))
-        .as("Show opens a territory the nation owns, where Territories sets its capital")
-        .contains("Italians");
-  }
-
-  @DisplayName("A problem that names a tool tells it, so Home opens that tool")
-  @Test
-  void problemsNameTheirTool() throws Exception {
+  void whatStepsSayIsNoProblem() throws Exception {
+    final Game withoutCapital = givenMinimapWithoutItaliansCapital();
     final Game withoutNations = MapProject.newEmpty().game();
-    final Game withLoneTerritory =
-        MapXml.withTerritory(givenMinimapWithoutItaliansCapital(), "Atlantis", List.of());
 
     final List<Problem> problems =
         Stream.concat(
-                MapChecks.quick(withoutNations, MapFiles.none()).stream(),
-                MapChecks.quick(withLoneTerritory, MapFiles.none()).stream())
+                MapChecks.quick(withoutCapital, MapFiles.none()).stream(),
+                MapChecks.quick(withoutNations, MapFiles.none()).stream())
             .toList();
 
     assertThat(problems)
-        .as("nations are added in Nations, borders checked in Connections")
-        .filteredOn(p -> p.text().startsWith("No nations yet") || p.text().startsWith("Atlantis "))
-        .extracting(Problem::text, p -> p.tool().orElse(""))
-        .containsExactly(
-            tuple("No nations yet: add them in Nations", "Nations"),
-            tuple("Atlantis is not connected to any territory", "Connections"));
+        .as("finished maps have nations without a capital on purpose; a new map has its steps")
+        .isEmpty();
   }
 
-  @DisplayName("A lone territory the rules name, eg an ownership dial, is no problem")
+  @DisplayName("A territory without neighbours is a note with its tool and territory, no problem")
+  @Test
+  void loneTerritoryIsANote() throws Exception {
+    final Game withLoneTerritory =
+        MapXml.withTerritory(givenMinimapWithoutItaliansCapital(), "Atlantis", List.of());
+
+    final List<Problem> notes = MapChecks.notes(withLoneTerritory);
+
+    assertThat(notes)
+        .as("worth a look, shown at the territory, changed in Connections")
+        .extracting(Problem::text, p -> p.tool().orElse(""), p -> p.territory().orElse(""))
+        .containsExactly(
+            tuple("Atlantis is not connected to any territory", "Connections", "Atlantis"));
+    assertThat(MapChecks.quick(withLoneTerritory, MapFiles.none()))
+        .as("many finished maps have such a territory on purpose: no problem")
+        .isEmpty();
+  }
+
+  @DisplayName("A lone territory the rules name, eg an ownership dial, is not even a note")
   @Test
   void loneTerritoryNamedByRulesIsNoProblem() throws Exception {
     final Game withDial = givenLoneRingWith("triggerRing", "Italians", "territories", "Ring");
 
-    assertThat(MapChecks.quick(withDial, MapFiles.none()))
+    assertThat(MapChecks.notes(withDial))
         .as("a trigger changes its owner, so it stays apart on purpose")
         .extracting(Problem::text)
         .doesNotContain("Ring is not connected to any territory");
   }
 
-  @DisplayName("A lone territory named only by its own attachment is still a problem")
+  @DisplayName("A lone territory named only by its own attachment is still a note")
   @Test
   void loneTerritoryNamedByItsOwnAttachmentIsAProblem() throws Exception {
     final Game withOwnAttachment =
         givenLoneRingWith("territoryAttachment", "Ring", "originalOwner", "Ring");
 
-    assertThat(MapChecks.quick(withOwnAttachment, MapFiles.none()))
+    assertThat(MapChecks.notes(withOwnAttachment))
         .as("no rule uses it, so a connection may be missing")
         .extracting(Problem::text)
         .contains("Ring is not connected to any territory");

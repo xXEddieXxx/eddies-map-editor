@@ -313,11 +313,11 @@ class MapXml {
     final Set<String> seen = new LinkedHashSet<>();
     final Set<String> nations = new LinkedHashSet<>();
     for (final Attachment attachment : attachments(game)) {
-      if (TERRITORY.equals(attachment.getName())
+      if (AttachmentsXml.isNamed(attachment, TERRITORY)
           && territories.contains(attachment.getAttachTo())) {
         for (final Option option :
             Optional.ofNullable(attachment.getOptions()).orElse(List.of())) {
-          if ("capital".equals(option.getName())
+          if (AttachmentsXml.isOption(option, "capital")
               && option.getValue() != null
               && seen.add(attachment.getAttachTo())) {
             nations.add(option.getValue());
@@ -503,7 +503,7 @@ class MapXml {
   /** The territory's effects, eg Forest, in the order the game draws them. */
   static List<String> territoryEffects(final Game game, final String territory) {
     return attachments(game).stream()
-        .filter(a -> TERRITORY.equals(a.getName()) && territory.equals(a.getAttachTo()))
+        .filter(a -> AttachmentsXml.isNamed(a, TERRITORY) && territory.equals(a.getAttachTo()))
         .flatMap(MapXml::effectsOf)
         .toList();
   }
@@ -511,7 +511,7 @@ class MapXml {
   /** Each territory's effects, as {@link #territoryEffects(Game, String)}, in one pass. */
   static java.util.Map<String, List<String>> territoryEffects(final Game game) {
     return attachments(game).stream()
-        .filter(a -> TERRITORY.equals(a.getName()) && a.getAttachTo() != null)
+        .filter(a -> AttachmentsXml.isNamed(a, TERRITORY) && a.getAttachTo() != null)
         .collect(
             Collectors.groupingBy(
                 Attachment::getAttachTo,
@@ -520,7 +520,7 @@ class MapXml {
 
   private static Stream<String> effectsOf(final Attachment attachment) {
     return Optional.ofNullable(attachment.getOptions()).orElse(List.of()).stream()
-        .filter(o -> "territoryEffect".equals(o.getName()) && o.getValue() != null)
+        .filter(o -> AttachmentsXml.isOption(o, "territoryEffect") && o.getValue() != null)
         .flatMap(o -> Arrays.stream(o.getValue().split(":")))
         .map(String::strip)
         .filter(effect -> !effect.isEmpty());
@@ -1087,7 +1087,8 @@ class MapXml {
   private static Attachment withoutOption(
       final Attachment attachment, final String option, final String value) {
     final List<Option> options = Optional.ofNullable(attachment.getOptions()).orElse(List.of());
-    final Predicate<Option> removed = o -> option.equals(o.getName()) && value.equals(o.getValue());
+    final Predicate<Option> removed =
+        o -> AttachmentsXml.isOption(o, option) && value.equals(o.getValue());
     return options.stream().anyMatch(removed)
         ? attachment.toBuilder().options(without(options, removed)).build()
         : attachment;
@@ -1417,7 +1418,7 @@ class MapXml {
   /** Which attachment: its name, class, the kind of thing it is attached to, and that thing. */
   record AttachmentKey(String name, String javaClass, String type, String attachTo) {
     boolean matches(final Attachment attachment) {
-      return name.equals(attachment.getName()) && attachTo.equals(attachment.getAttachTo());
+      return AttachmentsXml.isNamed(attachment, name) && attachTo.equals(attachment.getAttachTo());
     }
   }
 
@@ -1432,9 +1433,9 @@ class MapXml {
   static Optional<String> option(
       final Game game, final String attachment, final String attachTo, final String option) {
     return attachments(game).stream()
-        .filter(a -> attachment.equals(a.getName()) && attachTo.equals(a.getAttachTo()))
+        .filter(a -> AttachmentsXml.isNamed(a, attachment) && attachTo.equals(a.getAttachTo()))
         .flatMap(a -> Optional.ofNullable(a.getOptions()).orElse(List.of()).stream())
-        .filter(o -> option.equals(o.getName()))
+        .filter(o -> AttachmentsXml.isOption(o, option))
         .map(Option::getValue)
         .filter(Objects::nonNull)
         .findFirst();
@@ -1490,13 +1491,13 @@ class MapXml {
   private static Attachment withOption(
       final Attachment attachment, final String option, @Nullable final String value) {
     final List<Option> before = Optional.ofNullable(attachment.getOptions()).orElse(List.of());
-    final boolean present = before.stream().anyMatch(o -> option.equals(o.getName()));
+    final boolean present = before.stream().anyMatch(o -> AttachmentsXml.isOption(o, option));
     final Stream<Option> kept =
         before.stream()
-            .filter(o -> value != null || !option.equals(o.getName()))
+            .filter(o -> value != null || !AttachmentsXml.isOption(o, option))
             .map(
                 o ->
-                    option.equals(o.getName())
+                    AttachmentsXml.isOption(o, option)
                         ? o.toBuilder().value(value).count(null).build()
                         : o);
     final List<Option> options =

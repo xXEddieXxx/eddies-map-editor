@@ -57,6 +57,7 @@ final class HomeEditor implements Editor {
   // a tile's text at the narrowest overview: a third, less the margins and the glyph
   static final int TILE_TEXT_WIDTH = 92;
   private static final int SHOWN_PROBLEMS = 8;
+  private static final int SHOWN_NOTES = 3;
   private static final int MARK_WIDTH = 16;
 
   private final MapProject project;
@@ -74,8 +75,11 @@ final class HomeEditor implements Editor {
   private final MiniMap miniMap;
   private final List<String> welcome = new ArrayList<>();
   private List<Problem> problems;
+  // worth a look, but no problems: never red, not counted
+  private List<Problem> notes;
   private boolean checked;
   private boolean allProblemsShown;
+  private boolean allNotesShown;
   private boolean finishedStepsShown;
   private boolean allTilesShown;
   // the tiles as counted, and the state they were counted for
@@ -116,9 +120,11 @@ final class HomeEditor implements Editor {
     miniMap = new MiniMap(project, showTerritory, RIGHT_MIN_WIDTH);
     nationsRow.setOpaque(false);
     problems = project.problems();
+    notes = MapChecks.notes(project.game());
     project.onChange(
         () -> {
           problems = project.problems();
+          notes = MapChecks.notes(project.game());
           checked = false;
           if (page.isShowing()) {
             fill();
@@ -256,6 +262,7 @@ final class HomeEditor implements Editor {
       steps.forEach(step -> left.row(stepRow(step)));
     }
     fillProblems();
+    fillNotes(steps);
     final JButton files =
         tertiary("What's in the map folder? See Files.", () -> openTool.accept("Files"));
     left.row(leftAligned(files, Theme.GAP_L));
@@ -347,7 +354,9 @@ final class HomeEditor implements Editor {
     }
     final int shown =
         allProblemsShown ? problems.size() : Math.min(SHOWN_PROBLEMS, problems.size());
-    problems.subList(0, shown).forEach(problem -> left.row(problemRow(problem)));
+    problems
+        .subList(0, shown)
+        .forEach(problem -> left.row(problemRow(problem)));
     if (shown < problems.size()) {
       left.row(
           leftAligned(
@@ -368,6 +377,38 @@ final class HomeEditor implements Editor {
       Theme.setSecondaryButtonStyle(checkNow);
       left.row(leftAligned(checkNow, Theme.GAP_XS));
     }
+  }
+
+  /**
+   * What is worth a look but keeps no map from being played, eg a territory without neighbours:
+   * calm and apart from the problems; not while the connections step still says it.
+   */
+  private void fillNotes(final List<Step> steps) {
+    final boolean connected =
+        steps.stream().anyMatch(s -> s.id() == Step.Id.CONNECTIONS && s.done());
+    if (notes.isEmpty() || !connected) {
+      return;
+    }
+    left.row(heading("Worth a look", String.valueOf(notes.size())));
+    left.row(note("No problems: fine if you meant them.", LEFT_WIDTH));
+    final int shown = allNotesShown ? notes.size() : Math.min(SHOWN_NOTES, notes.size());
+    notes.subList(0, shown).forEach(note -> left.row(noteRow(note)));
+    if (shown < notes.size()) {
+      left.row(
+          leftAligned(
+              tertiary(
+                  "Show all " + notes.size(),
+                  () -> {
+                    allNotesShown = true;
+                    fill();
+                  }),
+              Theme.GAP_XS));
+    }
+  }
+
+  /** The notes shown under "Worth a look", for tests. */
+  List<Problem> notes() {
+    return notes;
   }
 
   /** The map small with the nations' colors, then a tile per tool. */
@@ -393,13 +434,15 @@ final class HomeEditor implements Editor {
     final List<Tile> tiles = tiles();
     final JPanel grid = new JPanel(new GridLayout(0, TILE_COLUMNS, Theme.GAP_S, Theme.GAP_S));
     grid.setOpaque(false);
-    for (final Tile tile : allTilesShown ? tiles : tiles.subList(0, MAIN_TILES)) {
+    final List<Tile> main = mainTiles(tiles, steps);
+    for (final Tile tile : allTilesShown ? tiles : main) {
       grid.add(tileButton(tile, problemsByTool.getOrDefault(tile.tool(), 0L), steps));
     }
     right.row(grid);
     // the folded tiles' problems, else they would not show
     final long foldedProblems =
-        tiles.subList(MAIN_TILES, tiles.size()).stream()
+        tiles.stream()
+            .filter(tile -> !main.contains(tile))
             .mapToLong(tile -> problemsByTool.getOrDefault(tile.tool(), 0L))
             .sum();
     final JButton more =
@@ -419,6 +462,20 @@ final class HomeEditor implements Editor {
                     ? ""
                     : ", " + problemCount(foldedProblems)));
     right.row(leftAligned(more, Theme.GAP_XS));
+  }
+
+  /**
+   * The tiles before "More tools": the ones most maps need; while the map is new (no nations or
+   * no units yet, which every finished map has) only the tools of its steps, as the others'
+   * numbers, eg 32 turn order steps, are the template's, not the map maker's.
+   */
+  private static List<Tile> mainTiles(final List<Tile> tiles, final List<Step> steps) {
+    final List<Step.Id> start = List.of(Step.Id.NATIONS, Step.Id.UNITS);
+    if (steps.stream().noneMatch(s -> !s.done() && start.contains(s.id()))) {
+      return tiles.subList(0, MAIN_TILES);
+    }
+    final List<String> stepTools = steps.stream().map(Step::tool).toList();
+    return tiles.stream().filter(tile -> stepTools.contains(tile.tool())).toList();
   }
 
   /** No outlines yet: a way to make them, not the main action, which the next step has. */
@@ -726,6 +783,19 @@ final class HomeEditor implements Editor {
             todo.ifPresentOrElse(
                 step -> followStep.accept(step.id()), () -> openTool.accept(tile.tool())));
     return button;
+  }
+
+  /** A note's Show opens its tool, eg Connections, with its territory chosen there. */
+  private JComponent noteRow(final Problem note) {
+    final JButton show =
+        tertiary(
+            "Show",
+            () ->
+                MapMakerWindow.openTool(
+                    page, note.tool().orElse("Territories"), note.territory().orElse(null)));
+    show.getAccessibleContext().setAccessibleName("Show: " + note.text());
+    final int textWidth = LEFT_WIDTH - MARK_WIDTH - 2 * Theme.GAP_S - show.getPreferredSize().width;
+    return row(mark(Status.TODO), wrapped(note.text(), textWidth), show);
   }
 
   private JComponent problemRow(final Problem problem) {

@@ -430,7 +430,7 @@ class RulesXml {
    */
   static List<String> playerNames(final Game game, final String nation, final String option) {
     return playerOptions(game, nation).stream()
-        .filter(o -> option.equals(o.getName()) && o.getValue() != null)
+        .filter(o -> AttachmentsXml.isOption(o, option) && o.getValue() != null)
         .flatMap(o -> Arrays.stream(o.getValue().split(":")))
         .map(String::strip)
         .filter(n -> !n.isEmpty())
@@ -456,10 +456,11 @@ class RulesXml {
         final List<Option> options = new ArrayList<>();
         boolean placed = false;
         for (final Option o : AttachmentsXml.options(attachments.get(i))) {
-          if (!option.equals(o.getName())) {
+          if (!AttachmentsXml.isOption(o, option)) {
             options.add(o);
           } else if (!placed) {
-            options.add(Option.builder().name(option).value(String.join(":", names)).build());
+            options.add(
+                Option.builder().name(o.getName()).value(String.join(":", names)).build());
             placed = true;
           }
         }
@@ -529,6 +530,101 @@ class RulesXml {
       }
     }
     return game;
+  }
+
+  // ---- a nation's rules for placing and moving, its rulesAttachment
+
+  /** All options of the nation's rulesAttachment, where the game looks for its rules. */
+  static List<Option> nationRules(final Game game, final String nation) {
+    final List<Attachment> attachments = AttachmentsXml.attachments(game);
+    final int at = nationRulesAt(attachments, nation);
+    return at < 0 ? List.of() : AttachmentsXml.options(attachments.get(at));
+  }
+
+  /** The rule as the game reads it, its count and value joined, eg "4:Peasant"; the first. */
+  static Optional<String> nationRule(final Game game, final String nation, final String option) {
+    return nationRules(game, nation).stream()
+        .filter(o -> AttachmentsXml.isOption(o, option))
+        .map(TriggerXml::joined)
+        .findFirst();
+  }
+
+  /**
+   * The game with the nation's rule set where it is, else after its other rules; the nation's
+   * rulesAttachment is added when missing. What else the attachment has stays.
+   */
+  static Game withNationRule(
+      final Game game, final String nation, final String option, final String value) {
+    return withNationRule(game, nation, option, "", value);
+  }
+
+  /** As withNationRule, with the count map makers write beside the value, eg count="4". */
+  static Game withNationRule(
+      final Game game,
+      final String nation,
+      final String option,
+      final String count,
+      final String value) {
+    final String joined = count.isEmpty() ? value : count + ":" + value;
+    if (nationRule(game, nation, option).filter(joined::equals).isPresent()) {
+      return game;
+    }
+    final Option rule =
+        Option.builder().name(option).value(value).count(count.isEmpty() ? null : count).build();
+    final List<Attachment> attachments = AttachmentsXml.attachments(game);
+    final int at = nationRulesAt(attachments, nation);
+    if (at < 0) {
+      final List<Attachment> added = new ArrayList<>(attachments);
+      added.add(
+          AttachmentsXml.withNewOption(
+              AttachmentsXml.newAttachment(
+                  TriggerXml.CONDITION, Constants.RULES_ATTACHMENT_NAME, nation),
+              rule));
+      return AttachmentsXml.withAttachments(game, added);
+    }
+    final Attachment rules = attachments.get(at);
+    final List<Option> options = AttachmentsXml.options(rules);
+    for (int row = 0; row < options.size(); row++) {
+      if (AttachmentsXml.isOption(options.get(row), option)) {
+        // the map's spelling of the name stays, eg an old capital first letter
+        return AttachmentsXml.withAttachment(
+            game,
+            at,
+            AttachmentsXml.withOption(
+                rules, row, rule.toBuilder().name(options.get(row).getName()).build()));
+      }
+    }
+    return AttachmentsXml.withAttachment(game, at, AttachmentsXml.withNewOption(rules, rule));
+  }
+
+  /** The game without the nation's rule, so the game's default applies. */
+  static Game withoutNationRule(final Game game, final String nation, final String option) {
+    final List<Attachment> attachments = AttachmentsXml.attachments(game);
+    final int at = nationRulesAt(attachments, nation);
+    if (at < 0 || nationRule(game, nation, option).isEmpty()) {
+      return game;
+    }
+    final Attachment rules = attachments.get(at);
+    return AttachmentsXml.withAttachment(
+        game,
+        at,
+        rules.toBuilder()
+            .options(
+                AttachmentsXml.options(rules).stream()
+                    .filter(o -> !AttachmentsXml.isOption(o, option))
+                    .toList())
+            .build());
+  }
+
+  // of two on a nation the game keeps the last read
+  private static int nationRulesAt(final List<Attachment> attachments, final String nation) {
+    for (int i = attachments.size() - 1; i >= 0; i--) {
+      if (AttachmentsXml.isNamed(attachments.get(i), Constants.RULES_ATTACHMENT_NAME)
+          && nation.equals(attachments.get(i).getAttachTo())) {
+        return i;
+      }
+    }
+    return -1;
   }
 
   // ---- names

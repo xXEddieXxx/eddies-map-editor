@@ -160,12 +160,18 @@ final class ConnectionsEditor implements Editor {
             .toList();
     if (!problems.isEmpty()) {
       inspector.section("Problems");
-      problems.forEach(p -> inspector.row(problemRow(p)));
+      problems.forEach(p -> inspector.row(problemRow(p, Theme.Status.PROBLEM)));
+    }
+    // territories without a neighbour: no problem, many finished maps have one on purpose
+    final List<Problem> notes = MapChecks.notes(project.game());
+    if (!notes.isEmpty() && connections > 0) {
+      inspector.section("Worth a look");
+      notes.forEach(p -> inspector.row(problemRow(p, Theme.Status.TODO)));
     }
     inspector.end();
   }
 
-  private JPanel problemRow(final Problem problem) {
+  private JPanel problemRow(final Problem problem, final Theme.Status status) {
     final JPanel row = new JPanel(new BorderLayout(Theme.GAP_S, 0));
     row.setOpaque(false);
     // wrapped, as territory names can be long
@@ -174,9 +180,11 @@ final class ConnectionsEditor implements Editor {
             "<html><div style='width:"
                 + Theme.htmlWidth(200)
                 + "'>"
-                + SearchList.escape(Theme.Status.PROBLEM.mark() + " " + problem.text())
+                + SearchList.escape(status.mark() + " " + problem.text())
                 + "</div></html>");
-    text.setForeground(Theme.Status.PROBLEM.color());
+    if (status == Theme.Status.PROBLEM) {
+      text.setForeground(status.color());
+    }
     row.add(text, BorderLayout.CENTER);
     problem
         .territory()

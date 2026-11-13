@@ -18,6 +18,8 @@ import java.awt.Point;
 import java.awt.Polygon;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.awt.image.BufferedImage;
@@ -101,6 +103,9 @@ final class MapView extends JPanel {
   private Optional<String> shownState = Optional.empty();
   // the map's size when fitted last: lines drawn into the picture keep the view where it is
   private transient Optional<Dimension> fittedTo = Optional.empty();
+  // an opened map is fitted once its view has a size, ie when a tool first shows it; after that
+  // the map maker's own zoom and scrolling stay
+  private boolean fitPending = true;
 
   /**
    * @param choosePicture asks for a picture of the map and loads it
@@ -122,6 +127,15 @@ final class MapView extends JPanel {
     scroll = SwingComponents.newJScrollPane(canvas);
     scroll.getVerticalScrollBar().setUnitIncrement(24);
     scroll.getHorizontalScrollBar().setUnitIncrement(24);
+    scroll
+        .getViewport()
+        .addComponentListener(
+            new ComponentAdapter() {
+              @Override
+              public void componentResized(final ComponentEvent e) {
+                fitOnce();
+              }
+            });
     views = new MapViewsBar(MapMode.GAME, this::viewChosen);
     legend = new MapLegend(project);
     goal = new GoalStrip(project);
@@ -460,8 +474,18 @@ final class MapView extends JPanel {
     final boolean newSize = fittedTo.isPresent() && size.isPresent() && !size.equals(fittedTo);
     size.ifPresent(s -> fittedTo = Optional.of(s));
     if (SwingUtilities.isDescendingFrom(scroll, this) && (!hadMap || newSize)) {
+      fitPending = true;
       // fit once the view has its size
-      SwingUtilities.invokeLater(canvas::zoomToFit);
+      SwingUtilities.invokeLater(this::fitOnce);
+    }
+  }
+
+  /** Fits the map into the view, at most at 100 %, if that is due and the view has a size. */
+  private void fitOnce() {
+    final Dimension view = scroll.getViewport().getExtentSize();
+    if (fitPending && view.width > 0 && view.height > 0 && project.getFiles().size().width > 0) {
+      fitPending = false;
+      canvas.zoomToFit(1);
     }
   }
 

@@ -6,12 +6,17 @@ import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import eddies.mapeditor.MapMakerWindow.Check;
 import eddies.mapeditor.MapMakerWindow.Pill;
 import eddies.mapeditor.Theme.Status;
+import java.awt.Component;
+import java.awt.Container;
 import java.awt.GraphicsEnvironment;
+import java.awt.image.BufferedImage;
 import java.lang.reflect.Field;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
+import javax.swing.AbstractButton;
 import javax.swing.JButton;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.DisplayName;
@@ -136,5 +141,88 @@ final class MapMakerWindowTest {
     } catch (final ReflectiveOperationException e) {
       throw new IllegalStateException(e);
     }
+  }
+
+  @DisplayName("The units step, followed after the capitals, says what to do, no old brush")
+  @Test
+  void unitsStepLeavesTheBrushOfTheStepBefore() throws Exception {
+    assumeFalse(GraphicsEnvironment.isHeadless(), "the window needs a screen");
+    // given
+    final MapProject project = givenMinimapWithoutItalianLand();
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapMakerWindow window = new MapMakerWindow();
+          try {
+            window.showProject(project);
+            final MapView map = givenMap(window);
+            window.followStep(MapGuide.Step.Id.CAPITALS);
+            window.followStep(MapGuide.Step.Id.UNITS);
+            seen.add(map.bannerText().orElseThrow());
+            seen.add(map.goalStep());
+          } finally {
+            window.dispose();
+          }
+        });
+
+    // then
+    assertThat(seen)
+        .as("not still \"Painting capitals\": one sentence for the units, with their step")
+        .containsExactly(
+            "Click a territory, then + Add units in the panel on the right.",
+            Optional.of(MapGuide.Step.Id.UNITS));
+  }
+
+  @DisplayName("Show on a note of Home opens Connections with the territory chosen")
+  @Test
+  void noteOpensConnections() throws Exception {
+    assumeFalse(GraphicsEnvironment.isHeadless(), "the window needs a screen");
+    // given: a map from a picture with a territory off the board
+    final MapProject project = MapProject.newEmpty();
+    final BufferedImage picture = MapPictureTest.givenPicture();
+    project.loadPicture(picture, MapPicture.detect(picture));
+    project.edit(game -> MapXml.withTerritory(game, "Atlantis", List.of()));
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapMakerWindow window = new MapMakerWindow();
+          try {
+            window.showProject(project);
+            buttons(window.getContentPane())
+                .filter(
+                    b ->
+                        "Show: Atlantis is not connected to any territory"
+                            .equals(b.getAccessibleContext().getAccessibleName()))
+                .findFirst()
+                .orElseThrow()
+                .doClick();
+            seen.add(givenMap(window).bannerText().orElse(""));
+          } finally {
+            window.dispose();
+          }
+        });
+
+    // then
+    assertThat(seen)
+        .as("in Connections, the tool that connects it, ready to click its neighbours")
+        .containsExactly("Connecting Atlantis: click a territory to connect it or part it.");
+  }
+
+  private static Stream<AbstractButton> buttons(
+      final Component component) {
+    final Stream<AbstractButton> own =
+        component instanceof AbstractButton b
+            ? Stream.of(b)
+            : Stream.empty();
+    return component instanceof Container container
+        ? Stream.concat(
+            own,
+            Stream.of(container.getComponents())
+                .flatMap(MapMakerWindowTest::buttons))
+        : own;
   }
 }

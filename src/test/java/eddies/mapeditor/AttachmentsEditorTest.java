@@ -306,4 +306,22 @@ final class AttachmentsEditorTest {
       Stream.of(container.getComponents()).forEach(AttachmentsEditorTest::layOut);
     }
   }
+
+  @DisplayName("An objective's attachment links to the Objectives tool, a plain condition not")
+  @Test
+  void objectiveLinksToObjectives() {
+    // given
+    final MapProject project = givenG40();
+    final AttachmentsEditor editor = new AttachmentsEditor(project);
+
+    // when
+    editor.show("objectiveAttachment_Germans_1_Trade_with_Russia");
+    final List<String> onObjective = all(editor, JButton.class).map(JButton::getText).toList();
+    editor.show("conditionAttachmentJapaneseDoNotControlBurmaRoad");
+    final List<String> onCondition = all(editor, JButton.class).map(JButton::getText).toList();
+
+    // then
+    assertThat(onObjective).as("an attachment with an objectiveValue").contains("Open in Objectives");
+    assertThat(onCondition).as("a condition that pays nothing").doesNotContain("Open in Objectives");
+  }
 }

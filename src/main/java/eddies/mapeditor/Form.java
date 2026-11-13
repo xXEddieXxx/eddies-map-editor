@@ -1,5 +1,6 @@
 package eddies.mapeditor;
 
+import com.formdev.flatlaf.FlatClientProperties;
 import com.formdev.flatlaf.util.UIScale;
 import java.awt.BorderLayout;
 import java.awt.Component;
@@ -15,6 +16,8 @@ import java.awt.Rectangle;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.io.Serial;
+import java.text.DecimalFormat;
+import java.text.ParseException;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -24,6 +27,7 @@ import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.JButton;
 import javax.swing.JComponent;
+import javax.swing.JFormattedTextField;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JSpinner;
@@ -31,8 +35,11 @@ import javax.swing.Scrollable;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingConstants;
 import javax.swing.plaf.basic.BasicHTML;
+import javax.swing.text.DefaultFormatterFactory;
 import javax.swing.text.JTextComponent;
+import javax.swing.text.NumberFormatter;
 import javax.swing.text.View;
+import org.triplea.swing.WrapLayout;
 
 /**
  * The inspector of an editor: a title, then fields one below the other, each with its label above
@@ -213,11 +220,13 @@ final class Form extends JPanel implements Scrollable {
   private Form addNumber(final JComponent label, final JSpinner spinner) {
     final Dimension size = label.getPreferredSize();
     label.setPreferredSize(new Dimension(Math.max(NUMBER_LABEL_WIDTH, size.width), size.height));
-    return add(
-        leftAligned(
-            label, (JComponent) Box.createHorizontalStrut(Theme.GAP_S), narrowed(spinner)),
-        Theme.GAP_M,
-        0);
+    // a long label in a narrow form, eg beside the map: the number goes below it, not out of sight
+    final JPanel line = new JPanel(new WrapLayout(FlowLayout.LEFT, 0, 0));
+    line.setOpaque(false);
+    line.add(label);
+    line.add(Box.createHorizontalStrut(Theme.GAP_S));
+    line.add(narrowed(spinner));
+    return add(line, Theme.GAP_M, 0);
   }
 
   /** A component of its own, eg a check box or a list of rows. */
@@ -464,5 +473,43 @@ final class Form extends JPanel implements Scrollable {
     spinner.setEditor(new JSpinner.NumberEditor(spinner, "#"));
     spinner.addChangeListener(e -> onChange.accept((Integer) spinner.getValue()));
     return spinner;
+  }
+
+  /**
+   * A number whose default -1 shows as an empty field with the word in it, eg "none"; emptied, it
+   * is -1 again, which leaves the option out.
+   */
+  static JSpinner newBlankNumber(
+      final int value, final int min, final String word, final IntConsumer onChange) {
+    final JSpinner spinner = newNumber(value, min, 9999, onChange);
+    final JFormattedTextField text = ((JSpinner.DefaultEditor) spinner.getEditor()).getTextField();
+    text.setFormatterFactory(
+        new DefaultFormatterFactory(new BlankFormatter((SpinnerNumberModel) spinner.getModel())));
+    text.setValue(spinner.getValue());
+    text.putClientProperty(FlatClientProperties.PLACEHOLDER_TEXT, word);
+    return spinner;
+  }
+
+  /** Digits only, as Form's numbers, with -1 as the empty text. */
+  private static final class BlankFormatter extends NumberFormatter {
+    @Serial private static final long serialVersionUID = 1L;
+    private static final Integer BLANK = -1;
+
+    BlankFormatter(final SpinnerNumberModel model) {
+      super(new DecimalFormat("#"));
+      setValueClass(Integer.class);
+      setMinimum(model.getMinimum());
+      setMaximum(model.getMaximum());
+    }
+
+    @Override
+    public String valueToString(final Object value) throws ParseException {
+      return BLANK.equals(value) ? "" : super.valueToString(value);
+    }
+
+    @Override
+    public Object stringToValue(final String text) throws ParseException {
+      return text == null || text.isBlank() ? BLANK : super.stringToValue(text);
+    }
   }
 }

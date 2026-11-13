@@ -277,8 +277,7 @@ class MapGuide {
 
   private static Next next(
       final MapProject project, final List<Problem> problems, final boolean checked) {
-    final Optional<Step> todo =
-        steps(project).stream().filter(s -> !s.done() && !s.tool().equals(CHECK)).findFirst();
+    final Optional<Step> todo = firstOpen(steps(project)).filter(s -> !s.tool().equals(CHECK));
     if (todo.isPresent()) {
       return new Next(
           Kind.GO_TO_TOOL,
@@ -320,6 +319,14 @@ class MapGuide {
         Optional.empty());
   }
 
+  /**
+   * The next step: the first not done in the list's order, the same on Home and on a tool's goal,
+   * so a step done ahead of others, eg connections found in the picture, is never offered.
+   */
+  static Optional<Step> firstOpen(final List<Step> steps) {
+    return steps.stream().filter(s -> !s.done()).findFirst();
+  }
+
   private static List<Step> steps(final MapProject project, final boolean checked) {
     final Game game = project.game();
     final List<String> territories = MapXml.territories(game);
@@ -330,7 +337,9 @@ class MapGuide {
     final List<String> withoutLand = withoutLand(playing, owners);
     final Set<String> withCapital = MapXml.nationsWithCapital(game, known);
     final List<String> landed = nations.stream().filter(owners::contains).toList();
-    final long capitals = landed.stream().filter(withCapital::contains).count();
+    final List<String> withoutCapital =
+        landed.stream().filter(n -> !withCapital.contains(n)).toList();
+    final long capitals = landed.size() - withoutCapital.size();
     final boolean nationsAndLand = !nations.isEmpty() && !territories.isEmpty();
     // the placements read once, not per territory: a big map has hundreds of territories
     final long withUnits =
@@ -340,21 +349,22 @@ class MapGuide {
             .distinct()
             .count();
     final int connections = MapXml.connections(game).size();
-    return List.of(
+    final List<Step> building =
+        List.of(
         new Step(
             Id.TERRITORIES,
             "Make the territories from a picture of the map",
             state(project.getFiles().hasOutlines()),
             "Territories",
             "The game needs each territory's outline; Territories makes them from a picture.",
-            SearchList.count(territories.size(), territories.size(), "territory", "territories")),
+            count(territories.size(), "territory", "territories")),
         new Step(
             Id.NATIONS,
             "Add the nations that play",
             state(!nations.isEmpty()),
             "Nations",
             "A game needs the nations that take turns.",
-            SearchList.count(nations.size(), nations.size(), "nation", "nations")),
+            count(nations.size(), "nation", "nations")),
         new Step(
             Id.LAND,
             "Give every nation its land",
@@ -363,10 +373,15 @@ class MapGuide {
                 : nationsAndLand ? State.FAILING : State.TODO,
             "Territories",
             "Each nation that takes turns needs land to start with.",
-            (playing.size() - withoutLand.size())
-                + " of "
-                + playing.size()
-                + (playing.size() == 1 ? " nation has land" : " nations have land")),
+            nations.isEmpty()
+                ? "No nations yet: add them first"
+                : playing.isEmpty()
+                    ? "No nation takes turns yet"
+                    : (playing.size() - withoutLand.size())
+                        + " of "
+                        + playing.size()
+                        + (playing.size() == 1 ? " nation has land" : " nations have land")
+                        + without(withoutLand)),
         new Step(
             Id.CAPITALS,
             "Mark each nation's capital",
@@ -375,32 +390,62 @@ class MapGuide {
                 : landed.isEmpty() ? State.TODO : State.FAILING,
             "Territories",
             "A nation's capital is where it collects its income.",
-            capitals
-                + " of "
-                + landed.size()
-                + (landed.size() == 1 ? " nation with land has" : " nations with land have")
-                + " a capital"),
+            landed.isEmpty()
+                ? "No nation has land yet"
+                : capitals
+                    + " of "
+                    + landed.size()
+                    + (landed.size() == 1 ? " nation with land has" : " nations with land have")
+                    + " a capital"
+                    + without(withoutCapital)),
         new Step(
             Id.UNITS,
             "Place the units each territory starts with",
             state(withUnits > 0),
             "Territories",
             "The units in the territories are what the players start with.",
-            withUnits + (withUnits == 1 ? " territory has units" : " territories have units")),
+            withUnits == 0
+                ? "No territory has units yet"
+                : withUnits + (withUnits == 1 ? " territory has units" : " territories have units")),
         new Step(
             Id.CONNECTIONS,
             "Check which territories border each other",
             state(connections > 0),
             "Connections",
             "Units move only between territories that border each other.",
-            SearchList.count(connections, connections, "connection", "connections")),
+            count(connections, "connection", "connections")));
+    final List<Step> steps = new ArrayList<>(building);
+    steps.add(
         new Step(
             Id.CHECK,
             "Check the map and play it",
-            state(checked && !project.hasUnsavedChanges()),
+            // not ticked ahead of the steps before it: a game may load with a nation without land
+            state(
+                checked
+                    && !project.hasUnsavedChanges()
+                    && building.stream().allMatch(Step::done)),
             CHECK,
             "Check (F6) loads the game as TripleA does; then play it in TripleA.",
             ""));
+    return List.copyOf(steps);
+  }
+
+  /** "No nations yet" rather than "0 nations": what is missing, not a number nobody made. */
+  private static String count(final int count, final String noun, final String nounPlural) {
+    return count == 0
+        ? "No " + nounPlural + " yet"
+        : SearchList.count(count, count, noun, nounPlural);
+  }
+
+  /** Who is still without, eg " · without: Germans, Russians and 2 more"; empty for nobody. */
+  private static String without(final List<String> nations) {
+    if (nations.isEmpty()) {
+      return "";
+    }
+    final int named = Math.min(2, nations.size());
+    return " · without: "
+        + String.join(", ", nations.subList(0, named))
+        + (nations.size() > named ? " and " + (nations.size() - named) + " more" : "");
   }
 
   /** The nations taking turns that own no land at the start, in their order. */
@@ -422,7 +467,7 @@ class MapGuide {
       case NATIONS -> "Add a nation with + below the list.";
       case LAND -> "Painting an owner: drag across land to give it to the nation.";
       case CAPITALS -> "Painting capitals: click land to make it its owner's capital.";
-      case UNITS -> "Click a territory, then add its units in the panel.";
+      case UNITS -> "Click a territory, then + Add units in the panel on the right.";
       case CONNECTIONS -> "Click a territory, then its neighbours.";
       case CHECK -> "Check (F6) loads the game as TripleA does.";
     };

@@ -113,17 +113,22 @@ final class GoalStrip extends JPanel {
     text.setText(
         "Step " + (steps.indexOf(current) + 1) + " of " + steps.size() + " · " + current.text());
     progress.setText(current.progress());
-    final Optional<Step> following =
-        steps.stream().filter(s -> !s.done() && s != current).findFirst();
-    next.setVisible(current.done() && following.isPresent());
+    // the same next step as Home's; "Next" only for one further down the list
+    final Optional<Step> following = MapGuide.firstOpen(steps);
+    final String lead =
+        following.filter(then -> steps.indexOf(then) < steps.indexOf(current)).isPresent()
+            ? "Still open: "
+            : "Next: ";
+    // also for a step that waits for one before it, eg capitals while no nation has land
+    next.setVisible(following.filter(then -> then != current).isPresent());
     following.ifPresent(
         then -> {
-          next.setText("Next: " + then.text() + " ›");
+          next.setText(lead + then.text() + " ›");
           nextAction = () -> followStep.accept(then.id());
         });
     if (current.done() && !wasDone) {
       following.ifPresentOrElse(
-          then -> Toast.show(this, "✓ " + current.text(), "Next: " + then.text(), nextAction),
+          then -> Toast.show(this, "✓ " + current.text(), lead + then.text(), nextAction),
           () -> Toast.show(this, "✓ " + current.text()));
     }
     wasDone = current.done();

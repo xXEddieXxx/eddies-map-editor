@@ -47,6 +47,44 @@ final class MapProjectTest {
     return MapProject.open(xml);
   }
 
+  @DisplayName("Notes that are not UTF-8 open as TripleA shows them; only changed, they are saved")
+  @Test
+  void opensNotesInAnotherEncoding() throws Exception {
+    // given notes as old maps have them: ISO-8859-1, which is no UTF-8 for the é
+    givenMinimapProject();
+    final Path xml = folder.resolve("minimap.xml");
+    final Path notes = MapProject.notesFile(xml);
+    final byte[] original =
+        "<p>Café de la Paix</p>".getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
+    Files.write(notes, original);
+
+    // when
+    final MapProject project = MapProject.open(xml);
+    project.edit(game -> MapXml.withProduction(game, "red north 1", 9));
+    project.save();
+
+    // then
+    assertThat(MapXml.notes(project.game()))
+        .as("read as TripleA does: UTF-8, else ISO-8859-1")
+        .isEqualTo("<p>Café de la Paix</p>");
+    assertThat(notes).as("unchanged notes are not written again").hasBinaryContent(original);
+    assertThat(notes.resolveSibling(notes.getFileName() + ".bak"))
+        .as("so there is no .bak")
+        .doesNotExist();
+
+    // when the map maker changes them
+    project.edit(game -> MapXml.withNotes(game, "<p>Café Central</p>"));
+    project.save();
+
+    // then
+    assertThat(Files.readString(notes))
+        .as("changed notes are saved as UTF-8")
+        .isEqualTo("<p>Café Central</p>");
+    assertThat(notes.resolveSibling(notes.getFileName() + ".bak"))
+        .as("the original stays as .bak, byte for byte")
+        .hasBinaryContent(original);
+  }
+
   private MapProject givenSavedMapWithRed() throws Exception {
     return MapProject.newMap(
             "Island Wars", MapPictureTest.givenPicture(), List.of("Red"), folder.resolve("maps"))
@@ -658,9 +696,8 @@ final class MapProjectTest {
   void findsProblems() throws Exception {
     final MapProject project = givenMinimapProject();
     assertThat(MapChecks.all(project.game(), project.getFiles()))
-        .as("the minimap is fine, but the test resources have no polygons.txt")
-        .extracting(Problem::text)
-        .containsExactly("No picture yet: load one in Territories");
+        .as("the minimap is fine; its missing polygons.txt is the guide's first step")
+        .isEmpty();
 
     project.edit(
         game ->
@@ -684,11 +721,15 @@ final class MapProjectTest {
                 2));
 
     assertThat(MapChecks.all(project.game(), project.getFiles()))
-        .as("all neighbours removed, an unknown unit type, and the engine refuses it")
+        .as("an unknown unit type, and the engine refuses it")
         .extracting(Problem::text)
-        .contains(
-            NORTH + " is not connected to any territory", NORTH + " has units of no type: tank")
+        .contains(NORTH + " has units of no type: tank")
+        .doesNotContain(NORTH + " is not connected to any territory")
         .anyMatch(text -> text.startsWith("The game does not load"));
+    assertThat(MapChecks.notes(project.game()))
+        .as("all neighbours removed: worth a look, no problem")
+        .extracting(Problem::text)
+        .containsExactly(NORTH + " is not connected to any territory");
   }
 
   private MapProject givenProjectWithOutlines() throws Exception {

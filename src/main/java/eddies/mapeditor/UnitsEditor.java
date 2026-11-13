@@ -15,8 +15,6 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.Serial;
 import java.nio.file.Path;
-import java.text.DecimalFormat;
-import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -50,7 +48,6 @@ import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
-import javax.swing.JFormattedTextField;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
@@ -58,10 +55,7 @@ import javax.swing.JRadioButton;
 import javax.swing.JSpinner;
 import javax.swing.JTextField;
 import javax.swing.ListSelectionModel;
-import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingUtilities;
-import javax.swing.text.DefaultFormatterFactory;
-import javax.swing.text.NumberFormatter;
 import org.triplea.map.data.elements.AttachmentList.Attachment.Option;
 import org.triplea.map.data.elements.Game;
 import org.triplea.swing.SwingComponents;
@@ -643,7 +637,7 @@ final class UnitsEditor implements Editor {
       final JSpinner spinner =
           word == null
               ? Form.newNumber(number.get(), option.minimum(), 9999, setNumber)
-              : blankNumber(number.get(), option.minimum(), word, setNumber);
+              : Form.newBlankNumber(number.get(), option.minimum(), word, setNumber);
       form.number(option.label(), withTip(spinner, option.help()));
     } else {
       form.field(
@@ -663,44 +657,6 @@ final class UnitsEditor implements Editor {
       component.setToolTipText(tip);
     }
     return component;
-  }
-
-  /**
-   * A number whose default -1 shows as an empty field with the word in it, eg "none"; emptied, it
-   * is -1 again, which leaves the option out.
-   */
-  private static JSpinner blankNumber(
-      final int value, final int min, final String word, final IntConsumer onChange) {
-    final JSpinner spinner = Form.newNumber(value, min, 9999, onChange);
-    final JFormattedTextField text = ((JSpinner.DefaultEditor) spinner.getEditor()).getTextField();
-    text.setFormatterFactory(
-        new DefaultFormatterFactory(new BlankFormatter((SpinnerNumberModel) spinner.getModel())));
-    text.setValue(spinner.getValue());
-    text.putClientProperty(FlatClientProperties.PLACEHOLDER_TEXT, word);
-    return spinner;
-  }
-
-  /** Digits only, as Form's numbers, with -1 as the empty text. */
-  private static final class BlankFormatter extends NumberFormatter {
-    @Serial private static final long serialVersionUID = 1L;
-    private static final Integer BLANK = -1;
-
-    BlankFormatter(final SpinnerNumberModel model) {
-      super(new DecimalFormat("#"));
-      setValueClass(Integer.class);
-      setMinimum(model.getMinimum());
-      setMaximum(model.getMaximum());
-    }
-
-    @Override
-    public String valueToString(final Object value) throws ParseException {
-      return BLANK.equals(value) ? "" : super.valueToString(value);
-    }
-
-    @Override
-    public Object stringToValue(final String text) throws ParseException {
-      return text == null || text.isBlank() ? BLANK : super.stringToValue(text);
-    }
   }
 
   private static Optional<Integer> parseInt(final String value) {
@@ -1033,11 +989,13 @@ final class UnitsEditor implements Editor {
   // ---- every other option
 
   /** The unit's options the sections do not show, eg counted or repeated ones. */
-  private static List<Option> moreOptions(final Game game, final String unit) {
+  static List<Option> moreOptions(final Game game, final String unit) {
     return UnitsXml.options(game, unit).stream()
         .filter(
             o ->
-                !UnitOptions.NAMES.contains(o.getName())
+                !UnitOptions.NAMES.contains(AttachmentsXml.optionName(o.getName()))
+                    // an old name, eg isInfantry, stays here: the sections say "Set by" it
+                    || !AttachmentsXml.optionName(o.getName()).equalsIgnoreCase(o.getName())
                     || !UnitsXml.isPlain(game, unit, o.getName()))
         .toList();
   }
@@ -1047,7 +1005,8 @@ final class UnitsEditor implements Editor {
       final Form form, final Game game, final String unit, final List<Option> more) {
     final Map<String, Integer> seen = new HashMap<>();
     for (final Option option : UnitsXml.options(game, unit)) {
-      final int occurrence = seen.merge(option.getName(), 1, Integer::sum) - 1;
+      final int occurrence =
+          seen.merge(AttachmentsXml.optionName(option.getName()), 1, Integer::sum) - 1;
       if (more.contains(option)) {
         showMoreOption(form, unit, option, occurrence);
       }

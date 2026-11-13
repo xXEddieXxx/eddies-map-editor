@@ -75,7 +75,7 @@ class CanalXml {
 
   private static Optional<String> value(final Attachment attachment, final String option) {
     return AttachmentsXml.options(attachment).stream()
-        .filter(o -> option.equals(o.getName()) && o.getValue() != null)
+        .filter(o -> AttachmentsXml.isOption(o, option) && o.getValue() != null)
         .map(o -> o.getValue().strip())
         .findFirst();
   }

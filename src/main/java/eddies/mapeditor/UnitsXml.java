@@ -42,7 +42,7 @@ class UnitsXml {
     return IntStream.range(0, attachments.size())
         .filter(
             i ->
-                name.equals(attachments.get(i).getName())
+                AttachmentsXml.isNamed(attachments.get(i), name)
                     && attachTo.equals(attachments.get(i).getAttachTo()))
         .findFirst();
   }
@@ -53,7 +53,7 @@ class UnitsXml {
    */
   static boolean isPlain(final Game game, final String unit, final String option) {
     final List<Option> named =
-        options(game, unit).stream().filter(o -> option.equals(o.getName())).toList();
+        options(game, unit).stream().filter(o -> AttachmentsXml.isOption(o, option)).toList();
     return named.isEmpty() || (named.size() == 1 && named.getFirst().getCount() == null);
   }
 
@@ -150,7 +150,7 @@ class UnitsXml {
   static Optional<Option> optionAt(
       final Game game, final String unit, final String name, final int occurrence) {
     return options(game, unit).stream()
-        .filter(o -> name.equals(o.getName()))
+        .filter(o -> AttachmentsXml.isOption(o, name))
         .skip(occurrence)
         .findFirst();
   }
@@ -159,7 +159,7 @@ class UnitsXml {
       final Game game, final String unit, final String name, final int occurrence) {
     final List<Option> options = options(game, unit);
     return IntStream.range(0, options.size())
-        .filter(row -> name.equals(options.get(row).getName()))
+        .filter(row -> AttachmentsXml.isOption(options.get(row), name))
         .skip(occurrence)
         .findFirst();
   }
@@ -194,7 +194,9 @@ class UnitsXml {
     return AttachmentsXml.attachments(game).stream()
         .filter(a -> unit.equals(a.getAttachTo()) && SUPPORT_KIND.equals(AttachmentsXml.kind(a)))
         .map(Attachment::getName)
-        .filter(name -> name != null && name.startsWith(Constants.SUPPORT_ATTACHMENT_PREFIX))
+        .filter(name -> name != null
+                    && AttachmentsXml.readName(name)
+                        .startsWith(Constants.SUPPORT_ATTACHMENT_PREFIX))
         .toList();
   }
 

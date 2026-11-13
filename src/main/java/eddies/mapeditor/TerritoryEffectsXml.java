@@ -48,11 +48,14 @@ class TerritoryEffectsXml {
   /** The territories that have each effect, in one pass over the attachments of a big map. */
   static Map<String, List<String>> territoriesWith(final Game game) {
     return AttachmentsXml.attachments(game).stream()
-        .filter(a -> Constants.TERRITORY_ATTACHMENT_NAME.equals(a.getName()))
+        .filter(a -> AttachmentsXml.isNamed(a, Constants.TERRITORY_ATTACHMENT_NAME))
         .flatMap(
             a ->
                 AttachmentsXml.options(a).stream()
-                    .filter(o -> TerritoryXml.EFFECT.equals(o.getName()) && o.getValue() != null)
+                    .filter(
+                        o ->
+                            AttachmentsXml.isOption(o, TerritoryXml.EFFECT)
+                                && o.getValue() != null)
                     .flatMap(o -> Arrays.stream(o.getValue().split(":")))
                     .map(String::strip)
                     .distinct()
@@ -118,12 +121,12 @@ class TerritoryEffectsXml {
   /** A territory attachment with the effect names its territoryEffect options list changed. */
   private static Attachment withEffectNames(
       final Attachment attachment, final UnaryOperator<Stream<String>> change) {
-    if (!Constants.TERRITORY_ATTACHMENT_NAME.equals(attachment.getName())) {
+    if (!AttachmentsXml.isNamed(attachment, Constants.TERRITORY_ATTACHMENT_NAME)) {
       return attachment;
     }
     final List<Option> options = new ArrayList<>();
     for (final Option o : AttachmentsXml.options(attachment)) {
-      if (!TerritoryXml.EFFECT.equals(o.getName()) || o.getValue() == null) {
+      if (!AttachmentsXml.isOption(o, TerritoryXml.EFFECT) || o.getValue() == null) {
         options.add(o);
         continue;
       }

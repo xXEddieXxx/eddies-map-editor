@@ -85,6 +85,7 @@ final class GameXmlKeeper {
         try (InputStream in = Files.newInputStream(original)) {
           read = new XmlMapper(in).mapXmlToObject(Game.class);
         }
+        unnest(old.getDocumentElement());
         keep(old, dom(read), written);
         doctype = Optional.ofNullable(old.getDoctype());
       } catch (final SAXException | XmlParsingException e) {
@@ -92,6 +93,24 @@ final class GameXmlKeeper {
       }
     }
     write(written, doctype, to);
+  }
+
+  /**
+   * Brings elements inside one of their own name, eg the steps after a step that was not closed,
+   * out behind it, but the first: TripleA's XmlParser ends the outer one at the first one's end,
+   * which it skips, and reads the others one after the other. Kept inside, each would be written
+   * twice; the first stays where it is, so the saved file reads as before.
+   */
+  // shortcut: a skipped first one's own children, which TripleA reads as the outer one's, are
+  // written there again with each save; handle when a map has such a step
+  private static void unnest(final Element element) {
+    // the children's first: they come out beside them, then on from here
+    elements(element).forEach(GameXmlKeeper::unnest);
+    final Node behind = element.getNextSibling();
+    elements(element).stream()
+        .filter(child -> child.getTagName().equals(element.getTagName()))
+        .skip(1)
+        .forEach(child -> element.getParentNode().insertBefore(child, behind));
   }
 
   private static Document dom(final Game game) throws IOException {

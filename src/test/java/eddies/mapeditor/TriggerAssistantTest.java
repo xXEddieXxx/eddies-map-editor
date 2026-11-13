@@ -7,6 +7,7 @@ import java.awt.Container;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -555,5 +556,60 @@ final class TriggerAssistantTest {
     assertThat(whileTyping).as("no check over the whole game on each key").isTrue();
     assertThat(assistant.verb().isEnabled()).as("Save checked what was typed").isFalse();
     assertThat(project.game()).as("a resource the game lacks is not saved").isSameAs(before);
+  }
+
+  @Test
+  @DisplayName("The If page's fields, used by another tool, give a condition back unchanged")
+  void checksOfAnotherToolComeBackUnchanged() throws Exception {
+    // given every condition of G40, objectives too
+    final MapProject project = givenG40();
+    final List<Attachment> conditions = TriggerXml.conditions(project.game());
+    final List<String> told = new ArrayList<>();
+
+    // when
+    final List<Attachment> back =
+        conditions.stream()
+            .map(c -> TriggerAssistant.checksOf(project, c, () -> told.add(c.getName())))
+            .map(TriggerAssistant.Checks::attachment)
+            .toList();
+
+    // then
+    assertThat(conditions).as("G40 has conditions").hasSizeGreaterThan(20);
+    assertThat(IntStream.range(0, back.size()).filter(i -> back.get(i) != conditions.get(i)))
+        .as("conditions the fields would change without the map maker doing anything")
+        .isEmpty();
+    assertThat(told).as("filling the fields is no change to tell").isEmpty();
+  }
+
+  @Test
+  @DisplayName("A check added in another tool's fields is told, and does not read while empty")
+  void addedCheckIsTold() throws Exception {
+    // given
+    final MapProject project = givenG40();
+    final Attachment trade =
+        TriggerXml.condition(project.game(), "objectiveAttachment_Germans_1_Trade_with_Russia")
+            .orElseThrow();
+    final List<String> told = new ArrayList<>();
+    final TriggerAssistant.Checks checks =
+        TriggerAssistant.checksOf(project, trade, () -> told.add("changed"));
+
+    // when
+    found(checks.rows(), JButton.class).stream()
+        .filter(b -> "+ Add check".equals(b.getText()))
+        .findFirst()
+        .orElseThrow()
+        .doClick();
+
+    // then
+    assertThat(told).as("the tool is told at once").containsExactly("changed");
+    assertThat(AttachmentsXml.options(checks.attachment()))
+        .as("the new check after the options the objective had")
+        .hasSize(AttachmentsXml.options(trade).size() + 1);
+    assertThat(TriggerXml.checkProblem(project.game(), checks.attachment()))
+        .as("not filled in yet: the game would not read it")
+        .isPresent();
+    assertThat(TriggerXml.checkProblem(project.game(), trade))
+        .as("the map's own check reads")
+        .isEmpty();
   }
 }

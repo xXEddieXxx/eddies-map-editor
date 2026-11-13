@@ -258,6 +258,8 @@ final class TriggerAssistant {
   private final JLabel chanceIn = new JLabel("in");
   private final JSpinner chanceSides = Form.newNumber(6, 1, 120, n -> changed());
   private boolean filling = true;
+  // set when only the checks show in another tool: it is told each change instead
+  private final Optional<Runnable> outside;
   // the problems are checked over the whole game, too slow for each key on a big map
   private final Timer typingPause = new Timer(TYPING_PAUSE_MS, e -> changed());
 
@@ -266,6 +268,7 @@ final class TriggerAssistant {
     this.project = project;
     this.game = project.game();
     this.original = trigger;
+    outside = Optional.empty();
     verb = new JButton(isNew() ? "Add trigger" : "Save trigger");
     nation = named(chooser(MapXml.nations(game), trigger.nation()), "Whose turn it fires in");
     nation.setEditable(false);
@@ -282,6 +285,78 @@ final class TriggerAssistant {
     content = newContent();
     applied = state();
     go(steps.getFirst() == Step.START ? Step.START : Step.REVIEW);
+  }
+
+  /** Only the parts of the If page, for {@link #checksOf}: no dialog, each change told. */
+  private TriggerAssistant(
+      final MapProject project, final String nationName, final Runnable onChange) {
+    this.project = project;
+    this.game = project.game();
+    this.original = TriggerXml.newTrigger("", nationName);
+    outside = Optional.of(onChange);
+    verb = new JButton();
+    nation = chooser(MapXml.nations(game), nationName);
+    players = new ListField("Nations", List.of(), "");
+    steps = List.of();
+    content = new JPanel();
+    filling = false;
+  }
+
+  /**
+   * The checks of a condition the map has, with the fields the If page gives them, for another
+   * tool's form, eg an objective's: each change is told to onChange, typing after a pause.
+   */
+  static Checks checksOf(
+      final MapProject project, final Attachment condition, final Runnable onChange) {
+    final TriggerAssistant parts =
+        new TriggerAssistant(project, Objects.toString(condition.getAttachTo(), ""), onChange);
+    return new Checks(parts, parts.new ConditionBox(Optional.of(condition), condition));
+  }
+
+  /** A condition's checks, and the nations it is for and whether it is turned around. */
+  static final class Checks {
+    private final ConditionBox box;
+    private final JPanel rows = column();
+
+    private Checks(final TriggerAssistant parts, final ConditionBox box) {
+      this.box = box;
+      rows.setOpaque(false);
+      box.checks.setAlignmentX(Component.LEFT_ALIGNMENT);
+      rows.add(box.checks);
+      // at the left edge, in line with the checks above it
+      final JPanel add = new JPanel(new BorderLayout());
+      add.setOpaque(false);
+      add.setAlignmentX(Component.LEFT_ALIGNMENT);
+      add.add(
+          Theme.newAddButton(
+              "Add check",
+              "Adds something that must be true",
+              () -> {
+                box.addCheck();
+                parts.changed();
+              }),
+          BorderLayout.WEST);
+      rows.add(add);
+    }
+
+    /** A box per check, each with its fields, and "Add check" below them. */
+    JComponent rows() {
+      return rows;
+    }
+
+    /** The nations whose land and units count instead of the condition's own nation. */
+    JComponent forNations() {
+      return box.forNations;
+    }
+
+    JCheckBox inverted() {
+      return box.inverted;
+    }
+
+    /** The condition as the fields have it; what the fields do not show stays as it was. */
+    Attachment attachment() {
+      return box.attachment();
+    }
   }
 
   /** Opens the assistant for a new trigger of the first nation. */
@@ -482,7 +557,7 @@ final class TriggerAssistant {
       if (spec.isEmpty()) {
         continue;
       }
-      if (paired.remove(option.getName())) {
+      if (paired.remove(AttachmentsXml.optionName(option.getName()))) {
         if (!pairShown) {
           pairShown = true;
           effectRows.add(new OptionRow(effectChoices(), TriggerXml.GIVE_RESOURCE, List.of(
@@ -970,7 +1045,10 @@ final class TriggerAssistant {
     if (names.equals(List.copyOf(new LinkedHashSet<>(original.conditionNames())))) {
       // the same names: the options as they were, eg the old name "trigger" or two of them
       AttachmentsXml.options(before).stream()
-          .filter(o -> List.of("conditions", TriggerXml.OLD_CONDITIONS).contains(o.getName()))
+          .filter(
+              o ->
+                  List.of("conditions", TriggerXml.OLD_CONDITIONS)
+                      .contains(AttachmentsXml.optionName(o.getName())))
           .map(o -> TriggerXml.option(o.getName(), TriggerXml.joined(o)))
           .forEach(wanted::add);
     } else if (!names.isEmpty()) {
@@ -1051,6 +1129,10 @@ final class TriggerAssistant {
   private void changed() {
     typingPause.stop();
     if (filling) {
+      return;
+    }
+    if (outside.isPresent()) {
+      outside.get().run();
       return;
     }
     final Trigger trigger = trigger();

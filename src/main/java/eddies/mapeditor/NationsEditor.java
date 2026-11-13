@@ -26,6 +26,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiFunction;
+import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
 import javax.swing.BorderFactory;
@@ -64,7 +65,8 @@ import eddies.mapeditor.MapFolder.UnitPictures;
 
 /**
  * The nations: adding and removing them, their color, alliance, the PUs they start with, who
- * plays them, their unit pictures and their own rules (playerAttachment).
+ * plays them, their unit pictures and their own rules (playerAttachment, and rulesAttachment
+ * for placing and moving).
  */
 final class NationsEditor implements Editor {
   private static final String NO_ALLIANCE = "No alliance";
@@ -86,6 +88,29 @@ final class NationsEditor implements Editor {
           GIVE_UNIT_CONTROL_EVERYWHERE,
           SHARE_TECHNOLOGY,
           HELP_PAY_TECH_COST);
+  // the nation's rulesAttachment: where and how much it places, where it moves
+  private static final String MOVE_TYPE = "movementRestrictionType";
+  private static final String MOVE_TERRITORIES = "movementRestrictionTerritories";
+  private static final String MOVE_ONLY_INTO = "allowed";
+  private static final String MOVE_NOT_INTO = "disallowed";
+  private static final String FREE_UNITS = "productionPerXTerritories";
+  // the rules of the rulesAttachment that More options shows; others stay, shown in Attachments
+  private static final List<String> NATION_RULES =
+      List.of(
+          "placementAnyTerritory",
+          "placementAnySeaZone",
+          "placementCapturedTerritory",
+          "placementInCapitalRestricted",
+          "unlimitedProduction",
+          "maxPlacePerTerritory",
+          "placementPerTerritory",
+          FREE_UNITS,
+          MOVE_TYPE,
+          MOVE_TERRITORIES,
+          "dominatingFirstRoundAttack",
+          "negateDominatingFirstRoundAttack");
+  private static final List<String> MOVE_LABELS =
+      List.of("May move anywhere", "May move only into", "May not move into");
   // the player list's defaultType: none is a person, as the game reads it
   private static final List<String> PLAYED_BY = List.of("", "AI", "DoesNothing");
   private static final List<String> PLAYED_BY_LABELS =
@@ -301,9 +326,16 @@ final class NationsEditor implements Editor {
     SwingUtilities.invokeLater(inspector::revalidate);
   }
 
-  /** How many options "More options" holds: all of the nation's playerAttachment. */
+  /**
+   * How many options "More options" holds: all of the nation's playerAttachment and those of its
+   * rulesAttachment that it shows.
+   */
   static int moreCount(final Game game, final String nation) {
-    return RulesXml.playerOptions(game, nation).size();
+    return RulesXml.playerOptions(game, nation).size()
+        + (int)
+            RulesXml.nationRules(game, nation).stream()
+                .filter(o -> NATION_RULES.stream().anyMatch(r -> AttachmentsXml.isOption(o, r)))
+                .count();
   }
 
   // ---- the top: color, name and what it is
@@ -726,6 +758,7 @@ final class NationsEditor implements Editor {
     f.field(
         "Helps pay its research",
         playerNations(nation, HELP_PAY_TECH_COST, "Helps pay its research"));
+    showPlacingAndMoving(f, game, nation);
     showOtherRules(f, game, nation);
   }
 
@@ -804,6 +837,194 @@ final class NationsEditor implements Editor {
     row.add(Box.createHorizontalStrut(Theme.GAP_S));
     row.add(choose);
     return row;
+  }
+
+  // ---- placing and moving: the nation's rulesAttachment
+
+  private void showPlacingAndMoving(final Form f, final Game game, final String nation) {
+    f.section("Placing units");
+    f.row(
+        Help.with(
+            ruleCheck(nation, "placementAnyTerritory", "May place in any land it owns"),
+            "Also without a factory there. Needs the game option Place in Any Territory."));
+    f.row(ruleCheck(nation, "placementAnySeaZone", "May place in any sea zone by its land"));
+    f.row(ruleCheck(nation, "placementCapturedTerritory", "May place in land it took this turn"));
+    f.row(ruleCheck(nation, "placementInCapitalRestricted", "May place only in its capital"));
+    f.row(
+        Help.with(
+            ruleCheck(nation, "unlimitedProduction", "May buy more than it can place"),
+            "The game does not warn it when it buys more units than it can place."));
+    f.number(
+        "Units placed per territory each turn, at most",
+        ruleNumber(nation, "maxPlacePerTerritory"));
+    f.number(
+        "No placing where it has this many units",
+        "It may not place in a territory that holds this many of its units already. Needs the"
+            + " game option Unit Placement Per Territory Restricted.",
+        ruleNumber(nation, "placementPerTerritory"));
+    showFreeUnits(f, game, nation);
+    f.section("Moving and attacking");
+    showMovement(f, game, nation);
+    f.row(
+        Help.with(
+            ruleCheck(
+                nation, "dominatingFirstRoundAttack", "In round 1 its enemies defend at 1 at most"),
+            "In its turn of the first round, units it attacks defend at 1 and get no support."));
+    f.row(
+        ruleCheck(
+            nation, "negateDominatingFirstRoundAttack", "Defends as usual against such an attack"));
+  }
+
+  private JCheckBox ruleCheck(final String nation, final String option, final String label) {
+    final JCheckBox box =
+        new JCheckBox(
+            label,
+            RulesXml.nationRule(project.game(), nation, option)
+                .map(v -> Boolean.parseBoolean(v.strip()))
+                .orElse(false));
+    box.addActionListener(
+        e ->
+            project.edit(
+                g ->
+                    box.isSelected()
+                        ? RulesXml.withNationRule(g, nation, option, "true")
+                        : RulesXml.withoutNationRule(g, nation, option)));
+    return box;
+  }
+
+  /** A number the game takes as "no limit" when it is not set; emptied, it is taken out. */
+  private JSpinner ruleNumber(final String nation, final String option) {
+    return Form.newBlankNumber(
+        RulesXml.nationRule(project.game(), nation, option)
+            .flatMap(NationsEditor::parseInt)
+            .orElse(-1),
+        -1,
+        "no limit",
+        chosen ->
+            editHere(
+                g ->
+                    chosen < 0
+                        ? RulesXml.withoutNationRule(g, nation, option)
+                        : RulesXml.withNationRule(g, nation, option, String.valueOf(chosen))));
+  }
+
+  /** A step made by a field that keeps the focus: the inspector is not built again. */
+  private void editHere(final UnaryOperator<Game> change) {
+    editingHere = true;
+    try {
+      project.edit(change);
+    } finally {
+      editingHere = false;
+    }
+  }
+
+  /** A unit for nothing per so many territories owned: "4:Peasant", the unit infantry if none. */
+  private void showFreeUnits(final Form f, final Game game, final String nation) {
+    final List<String> units = MapXml.unitTypes(game);
+    final String[] rule = RulesXml.nationRule(game, nation, FREE_UNITS).orElse("").split(":", 2);
+    final int every = parseInt(rule[0]).orElse(-1);
+    final String unit =
+        rule.length > 1 ? rule[1] : units.contains("infantry") ? "infantry" : "";
+    final JComboBox<String> type = new JComboBox<>(units.toArray(String[]::new));
+    type.setSelectedItem(unit.isEmpty() ? units.stream().findFirst().orElse(null) : unit);
+    final JSpinner territories =
+        Form.newBlankNumber(
+            every,
+            -1,
+            "none",
+            chosen ->
+                editHere(
+                    g ->
+                        chosen <= 0 || type.getSelectedItem() == null
+                            ? RulesXml.withoutNationRule(g, nation, FREE_UNITS)
+                            : RulesXml.withNationRule(
+                                g,
+                                nation,
+                                FREE_UNITS,
+                                String.valueOf(chosen),
+                                (String) type.getSelectedItem())));
+    type.addActionListener(
+        e -> {
+          final int chosen = (Integer) territories.getValue();
+          if (chosen > 0 && type.getSelectedItem() != null) {
+            editHere(
+                g ->
+                    RulesXml.withNationRule(
+                        g,
+                        nation,
+                        FREE_UNITS,
+                        String.valueOf(chosen),
+                        (String) type.getSelectedItem()));
+          }
+        });
+    f.number(
+        "A free unit per this many territories",
+        "At its purchase step it gets one unit for nothing for every so many territories it"
+            + " owns. Needs the game option Production Per X Territories Restricted and a"
+            + " purchase step without PUs (Turn order).",
+        territories);
+    f.field("The free unit", type);
+  }
+
+  /** Where the nation may move: anywhere, only into some territories, or not into them. */
+  private void showMovement(final Form f, final Game game, final String nation) {
+    final String type = RulesXml.nationRule(game, nation, MOVE_TYPE).orElse("").strip();
+    final List<String> listed =
+        Stream.of(RulesXml.nationRule(game, nation, MOVE_TERRITORIES).orElse("").split(":"))
+            .map(String::strip)
+            .filter(t -> !t.isEmpty())
+            .toList();
+    final int shown = List.of("", MOVE_ONLY_INTO, MOVE_NOT_INTO).indexOf(type);
+    final JComboBox<String> kind = new JComboBox<>(MOVE_LABELS.toArray(String[]::new));
+    kind.setSelectedIndex(Math.max(0, shown));
+    kind.addActionListener(
+        e ->
+            project.edit(
+                g ->
+                    switch (kind.getSelectedIndex()) {
+                      case 1 -> RulesXml.withNationRule(g, nation, MOVE_TYPE, MOVE_ONLY_INTO);
+                      case 2 -> RulesXml.withNationRule(g, nation, MOVE_TYPE, MOVE_NOT_INTO);
+                      default ->
+                          RulesXml.withoutNationRule(
+                              RulesXml.withoutNationRule(g, nation, MOVE_TYPE),
+                              nation,
+                              MOVE_TERRITORIES);
+                    }));
+    f.field("Movement", "Needs the game option Movement By Territory Restricted.", kind);
+    if (shown <= 0) {
+      return;
+    }
+    final JLabel names = new JLabel(shortList(listed));
+    names.setToolTipText(listed.isEmpty() ? null : String.join(", ", listed));
+    final List<String> territories = MapXml.territories(game);
+    final JButton choose =
+        newLink(
+            "Choose…",
+            () ->
+                Dialogs.pickMany(page, MOVE_LABELS.get(shown), territories, listed, "Choose")
+                    .ifPresent(
+                        ticked -> {
+                          // words the game knows, eg "original", are no territories: they stay
+                          final List<String> result =
+                              new ArrayList<>(
+                                  listed.stream()
+                                      .filter(t -> !territories.contains(t) || ticked.contains(t))
+                                      .distinct()
+                                      .toList());
+                          ticked.stream().filter(t -> !result.contains(t)).forEach(result::add);
+                          project.edit(
+                              g ->
+                                  result.isEmpty()
+                                      ? RulesXml.withoutNationRule(g, nation, MOVE_TERRITORIES)
+                                      : RulesXml.withNationRule(
+                                          g, nation, MOVE_TERRITORIES, String.join(":", result)));
+                        }));
+    final JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+    row.setOpaque(false);
+    row.add(names);
+    row.add(Box.createHorizontalStrut(Theme.GAP_S));
+    row.add(choose);
+    f.row(row);
   }
 
   /** "None", "Russians and British", "Russians, British and 3 more". */

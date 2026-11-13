@@ -1868,8 +1868,16 @@ final class MapCanvas extends JComponent {
     firePropertyChange("zoom", before, zoom);
   }
 
-  /** Zooms so that the whole map fits into the view. */
+  /** Zooms so that the whole map fits into the view, as the Fit button does. */
   void zoomToFit() {
+    zoomToFit(3.0);
+  }
+
+  /**
+   * Zooms so that the whole map fits into the view, but shows it at most this much bigger than it
+   * is: an opened map is fitted at most at 100 %, as a small picture blown up is blurred.
+   */
+  void zoomToFit(final double most) {
     if (getParent() instanceof JViewport viewport) {
       final Dimension view = viewport.getExtentSize();
       final Dimension map = project.getFiles().size();
@@ -1879,7 +1887,7 @@ final class MapCanvas extends JComponent {
             Math.clamp(
                 Math.min(view.width / (double) map.width, view.height / (double) map.height),
                 0.1,
-                3.0);
+                most);
         revalidate();
         repaint();
         firePropertyChange("zoom", before, zoom);

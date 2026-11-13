@@ -785,4 +785,33 @@ final class MapViewTest {
         .as("the picture box keeps its width")
         .containsExactly(pictures.getPreferredSize().width);
   }
+
+  @DisplayName("An opened map is fitted once its view has a size, at most at 100 %, then left")
+  @Test
+  void fitsOnceWhenFirstShown() throws Exception {
+    // given: a map of 400 x 300, its view without a size yet, as before a tool shows it
+    final MapView[] map = new MapView[1];
+    final List<Double> zoom = new ArrayList<>();
+    SwingUtilities.invokeAndWait(() -> map[0] = givenMap());
+    SwingUtilities.invokeAndWait(() -> zoom.add(map[0].zoom()));
+
+    // when: a tool shows it in a big view, then the window gets smaller
+    SwingUtilities.invokeAndWait(
+        () -> {
+          map[0].setSize(1200, 900);
+          layOut(map[0]);
+        });
+    SwingUtilities.invokeAndWait(() -> zoom.add(map[0].zoom()));
+    SwingUtilities.invokeAndWait(
+        () -> {
+          map[0].setSize(300, 250);
+          layOut(map[0]);
+        });
+    SwingUtilities.invokeAndWait(() -> zoom.add(map[0].zoom()));
+
+    // then
+    assertThat(zoom)
+        .as("50 % until shown; fitted, but a small map not blown up; the zoom then stays")
+        .containsExactly(0.5, 1.0, 1.0);
+  }
 }

@@ -106,7 +106,7 @@ class AttachmentsXml {
 
   /** Whether the attachment has the name TripleA reads its kind by, eg "unitAttachment". */
   static boolean hasDefaultName(final Attachment attachment) {
-    return Objects.equals(attachment.getName(), NAMES.get(kind(attachment)));
+    return NAMES.containsKey(kind(attachment)) && isNamed(attachment, NAMES.get(kind(attachment)));
   }
 
   private static final Set<String> NUMBERED =
@@ -156,10 +156,53 @@ class AttachmentsXml {
         .orElseThrow();
   }
 
+  /** Whether TripleA reads the attachment by this name; {@link #readName}. */
+  static boolean isNamed(final Attachment attachment, final String name) {
+    // the usual case first: this runs for every attachment of a big map
+    return name.equals(attachment.getName())
+        || (attachment.getName() != null
+            && readName(name).equals(readName(attachment.getName())));
+  }
+
+  /**
+   * An attachment's name as TripleA's GameParser reads it: old maps write "territoryAttatchment".
+   * The map's spelling stays in the file.
+   */
+  static String readName(final String name) {
+    return name.contains("ttatchment") ? name.replace("ttatchment", "ttachment") : name;
+  }
+
+  /** Whether TripleA reads the option by this name; {@link #optionName}. */
+  static boolean isOption(final Option option, final String name) {
+    return option.getName() != null && optionName(name).equals(optionName(option.getName()));
+  }
+
+  /**
+   * An option's name as TripleA's GameParser reads it: the first letter in lower case, eg
+   * "ConvoyRoute", and the old names its LegacyPropertyMapper knows as today's; the rest of the
+   * name counts as written. The map's spelling stays in the file.
+   */
+  static String optionName(final String name) {
+    final String read =
+        name.isEmpty() || !Character.isUpperCase(name.charAt(0))
+            ? name
+            : name.substring(0, 1).toLowerCase(Locale.ROOT) + name.substring(1);
+    return OLD_OPTION_NAMES.getOrDefault(read.toLowerCase(Locale.ROOT), read);
+  }
+
+  private static final Map<String, String> OLD_OPTION_NAMES =
+      Map.of(
+          "isparatroop", "isAirTransportable",
+          "isinfantry", "isLandTransportable",
+          "ismechanized", "isLandTransportable",
+          "occupiedterrof", "originalOwner",
+          "isimpassible", "isImpassable",
+          "turns", "rounds");
+
   /** Whether the game has an attachment of the name on the thing. */
   static boolean has(final Game game, final String name, final String attachTo) {
     return attachments(game).stream()
-        .anyMatch(a -> name.equals(a.getName()) && attachTo.equals(a.getAttachTo()));
+        .anyMatch(a -> isNamed(a, name) && attachTo.equals(a.getAttachTo()));
   }
 
   /** The game with the attachment at this place replaced. */

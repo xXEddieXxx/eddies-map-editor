@@ -92,9 +92,11 @@ final class NewMapTest {
         .as("classic units")
         .contains("infantry", "cruiser");
     assertThat(MapChecks.quick(project.game(), project.getFiles()))
-        .as("what is missing")
-        .extracting(Problem::text)
-        .contains("No picture yet: load one in Territories", "No nations yet: add them in Nations");
+        .as("what is missing is the guide's steps, no problems beside them")
+        .isEmpty();
+    assertThat(MapGuide.nextStep(project, List.of()).title())
+        .as("the first step says what is missing")
+        .isEqualTo("Make the territories from a picture of the map");
   }
 
   @DisplayName("Loading a picture is one step; undo brings the empty map back")
@@ -135,10 +137,9 @@ final class NewMapTest {
     empty.loadPicture(new BufferedImage(500, 300, BufferedImage.TYPE_INT_RGB));
 
     assertThat(MapXml.territories(empty.game())).as("nothing found yet").isEmpty();
-    assertThat(MapChecks.quick(empty.game(), empty.getFiles()))
+    assertThat(MapGuide.nextStep(empty, List.of()).title())
         .as("what to do next")
-        .extracting(Problem::text)
-        .contains("No territories yet: press Make territories in Territories");
+        .isEqualTo("Make the territories from a picture of the map");
   }
 
   @DisplayName("Land of the engine's Neutral owner is no problem and needs no capital")
@@ -263,7 +264,7 @@ final class NewMapTest {
     assertThat(project.getFiles().nationColor("Red")).as("undone").isNotEqualTo(Color.BLACK);
   }
 
-  @DisplayName("A nation that takes turns but owns no land is reported")
+  @DisplayName("A nation that takes turns but owns no land is what the land step waits for")
   @Test
   void reportsNationsWithoutLand() {
     final MapProject project = givenNewMapWithPicture();
@@ -283,11 +284,9 @@ final class NewMapTest {
                         .build())
                 .build());
 
-    assertThat(MapChecks.quick(project.game(), project.getFiles()))
+    assertThat(MapGuide.withoutLand(project.game()))
         .as("a new nation has turns, so it needs land to play; the neutrals need none")
-        .extracting(Problem::text)
-        .contains("Red owns no territory")
-        .doesNotContain("Neutrals owns no territory");
+        .containsExactly("Red");
   }
 
   @DisplayName("Save makes a whole map folder that the engine and the game's map loading take")
@@ -395,7 +394,7 @@ final class NewMapTest {
         .containsOnlyKeys("Territory 4");
   }
 
-  @DisplayName("A marker follows the game on every save; a place set by hand stays")
+  @DisplayName("A place set by hand stays, also of a capital taken away: other games share it")
   @Test
   void keepsMarkersSetByHand() throws Exception {
     final MapProject project = givenNewMapWithNations();
@@ -408,8 +407,9 @@ final class NewMapTest {
     project.save();
 
     assertThat(PointFileReaderWriter.readOneToOne(capitals))
-        .as("the hand-set place kept, the capital no more left out")
-        .containsExactly(Map.entry("Territory 1", new Point(7, 7)));
+        .as("the hand-set places kept, also where this game has no capital now")
+        .containsOnly(
+            Map.entry("Territory 1", new Point(7, 7)), Map.entry("Territory 4", new Point(9, 9)));
   }
 
   @DisplayName("Renamed twice and saved, a territory keeps its hand-set places and overflow")

@@ -76,6 +76,20 @@ class Dialogs {
     return show(parent, title, pane).filter(pane.verb()::equals).isPresent();
   }
 
+  /**
+   * As confirm, the other answer in the caller's words too, eg [Keep editing] [Discard check];
+   * whether the verb was chosen.
+   */
+  static boolean confirm(
+      final Component parent,
+      final String title,
+      final String text,
+      final String stay,
+      final String verb) {
+    final Pane pane = newPane(text, List.of(), null, List.of(), List.of(stay, verb), () -> true);
+    return show(parent, title, pane).filter(pane.verb()::equals).isPresent();
+  }
+
   /** As confirm, with what goes with it listed and the verb filled in the danger color. */
   static boolean confirmRemove(
       final Component parent,

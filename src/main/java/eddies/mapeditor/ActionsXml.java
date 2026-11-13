@@ -63,7 +63,8 @@ class ActionsXml {
   /** An action: its attachment's name and the nation it belongs to. */
   record Action(String name, String nation) {
     boolean isPolitical() {
-      return name.startsWith(Constants.POLITICALACTION_ATTACHMENT_PREFIX);
+      return AttachmentsXml.readName(name)
+          .startsWith(Constants.POLITICALACTION_ATTACHMENT_PREFIX);
     }
 
     boolean matches(final Attachment attachment) {
@@ -90,7 +91,8 @@ class ActionsXml {
 
   private static boolean isAction(final Attachment attachment) {
     final String kind = AttachmentsXml.kind(attachment);
-    final String name = Objects.toString(attachment.getName(), "");
+    final String name =
+        AttachmentsXml.readName(Objects.toString(attachment.getName(), ""));
     return attachment.getAttachTo() != null
         && (POLITICAL.equals(kind) && name.startsWith(Constants.POLITICALACTION_ATTACHMENT_PREFIX)
             || USER.equals(kind) && name.startsWith(Constants.USERACTION_ATTACHMENT_PREFIX));
@@ -108,7 +110,7 @@ class ActionsXml {
   static List<String> values(final Game game, final Action action, final String option) {
     return AttachmentsXml.options(AttachmentsXml.attachments(game).get(indexOf(game, action)))
         .stream()
-        .filter(o -> option.equals(o.getName()))
+        .filter(o -> AttachmentsXml.isOption(o, option))
         .map(o -> Objects.toString(o.getValue(), ""))
         .toList();
   }
@@ -145,10 +147,10 @@ class ActionsXml {
     final List<Option> options = new ArrayList<>();
     boolean placed = false;
     for (final Option o : AttachmentsXml.options(attachment)) {
-      if (!option.equals(o.getName())) {
+      if (!AttachmentsXml.isOption(o, option)) {
         options.add(o);
       } else if (!placed) {
-        values.forEach(v -> options.add(Option.builder().name(option).value(v).build()));
+        values.forEach(v -> options.add(Option.builder().name(o.getName()).value(v).build()));
         placed = true;
       }
     }

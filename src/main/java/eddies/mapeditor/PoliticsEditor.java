@@ -581,8 +581,9 @@ final class PoliticsEditor implements Editor {
   /** The type's options the details have no words for: all but its kind and the 8 rules. */
   private static List<Option> otherOptions(final Game game, final String type) {
     return RulesXml.relationshipOptions(game, type).stream()
-        .filter(o -> !ARCHETYPE.equals(o.getName()))
-        .filter(o -> TYPE_RULES.stream().noneMatch(r -> r.getKey().equals(o.getName())))
+        .filter(o -> !AttachmentsXml.isOption(o, ARCHETYPE))
+        .filter(
+            o -> TYPE_RULES.stream().noneMatch(r -> AttachmentsXml.isOption(o, r.getKey())))
         .toList();
   }
 

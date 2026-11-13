@@ -150,6 +150,35 @@ final class GameXmlKeeperTest {
     assertThat(MapChecks.findError(xml)).as("the game still loads in TripleA").isEmpty();
   }
 
+  @DisplayName("Steps inside a step that was not closed are saved once, as TripleA reads them")
+  @Test
+  void savesNestedStepsOnce() throws Exception {
+    // given a map maker's slip: a step left open, closed after the steps that follow it
+    final Path xml =
+        givenMinimap(
+            "<step name=\"russianPlace\" delegate=\"place\" player=\"Russians\"/>",
+            "<step name=\"russianPlace\" delegate=\"place\" player=\"Russians\">");
+    Files.writeString(
+        xml, Files.readString(xml).replace("</sequence>", "</step></sequence>"));
+    final MapProject project = MapProject.open(xml);
+    final List<String> steps = stepNames(project.game());
+    project.edit(game -> MapXml.withOwner(game, NORTH, "Italians"));
+
+    project.save();
+
+    assertThat(steps)
+        .as("TripleA skips the first step inside and reads the others one after the other")
+        .contains("russianPlace", "italianPurchase", "endRoundStep")
+        .doesNotContain("russianEndTurn");
+    assertThat(counts(xml).get("step"))
+        .as("each step once in the saved file, with the skipped one")
+        .isEqualTo(steps.size() + 1);
+    assertThat(stepNames(MapProject.open(xml).game()))
+        .as("the saved file reads as the file before")
+        .isEqualTo(steps);
+    assertThat(MapChecks.findError(xml)).as("the game still loads in TripleA").isEmpty();
+  }
+
   private static List<String> stepNames(final Game game) {
     return RulesXml.steps(game).stream().map(Step::getName).toList();
   }

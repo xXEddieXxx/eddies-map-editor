@@ -60,6 +60,7 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
     EFFECTS,
     ACTIONS,
     TRIGGERS,
+    OBJECTIVES,
     LOCK,
     UNLOCK,
     FREEHAND,
@@ -274,6 +275,11 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
         // a lightning bolt
         g.drawPolygon(
             new Polygon(new int[] {9, 3, 8, 6, 13, 8}, new int[] {1, 9, 9, 15, 6, 6}, 6));
+      }
+      case OBJECTIVES -> {
+        // a flag on its pole
+        g.drawLine(4, 1, 4, 15);
+        g.drawPolygon(new Polygon(new int[] {4, 13, 4}, new int[] {2, 5, 8}, 3));
       }
       case LOCK -> {
         // a padlock, its shackle closed

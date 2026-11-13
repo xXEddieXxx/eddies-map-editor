@@ -142,7 +142,7 @@ final class MapProject {
       final Path notes = notesFile(xmlFile);
       return new MapProject(
           xmlFile,
-          Files.exists(notes) ? MapXml.withNotes(game, Files.readString(notes)) : game,
+          Files.exists(notes) ? MapXml.withNotes(game, MapFolder.readNotes(notes)) : game,
           MapFiles.of(xmlFile));
     }
   }
@@ -182,9 +182,25 @@ final class MapProject {
       final List<String> nations,
       final Path mapsFolder)
       throws IOException, XmlParsingException {
+    return newMap(
+        mapName, picture, picture == null ? null : MapPicture.detect(picture), nations, mapsFolder);
+  }
+
+  /**
+   * Like {@link #newMap(String, BufferedImage, List, Path)}, with what was already found in the
+   * picture, eg by the wizard to show it, so a big picture is not searched twice.
+   */
+  static NewMap newMap(
+      final String mapName,
+      @Nullable final BufferedImage picture,
+      @Nullable final DetectedMap found,
+      final List<String> nations,
+      final Path mapsFolder)
+      throws IOException, XmlParsingException {
     final MapProject made = newEmpty();
     if (picture != null) {
-      made.loadPicture(picture, MapPicture.detect(picture));
+      made.loadPicture(
+          picture, Objects.requireNonNull(found, "a picture comes with what was found in it"));
     }
     final List<String> refused = new ArrayList<>();
     for (final String line : nations) {
@@ -1279,11 +1295,7 @@ final class MapProject {
         || saving.files().centers() != saved.files().centers()) {
       files.writeOutlines();
     }
-    // a map made here gets them also when its picture comes after the first save
-    if (mapName != null) {
-      files.writeNamePlaces(saving.game(), saved.files());
-    }
-    files.writePlaces(saving.game(), saved.files());
+    files.writePlaces(saving.game(), saved.files(), saved.game());
     if (firstSave || !saving.files().properties().equals(saved.files().properties())) {
       files.writeProperties();
     }

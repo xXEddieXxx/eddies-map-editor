@@ -150,14 +150,14 @@ final class MapLegendTest {
     SwingUtilities.invokeAndWait(
         () -> {
           final MapProject project = givenMinimap();
-          project.edit(game -> MapXml.withTerritory(game, "island", List.of()));
+          project.edit(game -> MapXml.withOwner(game, "red north 1", "Nobody"));
           final MapLegend legend = givenLegend(project, 900);
           legend.onShowProblems(() -> clicked.add("problems"));
           shown.addAll(shownTexts(legend));
           button(legend, "■ 1 problem").doClick();
         });
 
-    assertThat(shown).as("a territory without neighbours").contains("■ 1 problem");
+    assertThat(shown).as("land of a nation the game has not").contains("■ 1 problem");
     assertThat(clicked).as("the list shows").containsExactly("problems");
   }
 

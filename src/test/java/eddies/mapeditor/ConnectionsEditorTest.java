@@ -173,4 +173,45 @@ final class ConnectionsEditorTest {
         .contains("Connections need the map")
         .doesNotContain("Click a territory");
   }
+
+  @DisplayName("The overview lists territories without neighbours as worth a look, with Show")
+  @Test
+  void overviewListsLoneTerritories() throws Exception {
+    // given: a map from a picture with a territory off the board
+    final MapProject project = MapProject.newEmpty();
+    final BufferedImage picture = MapPictureTest.givenPicture();
+    project.loadPicture(picture, MapPicture.detect(picture));
+    project.edit(game -> MapXml.withTerritory(game, "Atlantis", List.of()));
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = new MapView(project, () -> {}, () -> {}, () -> {});
+          final ConnectionsEditor editor = new ConnectionsEditor(project, map);
+          editor.showing();
+          seen.add(
+              texts(editor.page()).anyMatch(text -> text.contains("Worth a look")));
+          seen.add(
+              texts(editor.page())
+                  .anyMatch(text -> text.contains("Atlantis is not connected to any territory")));
+          seen.add(texts(editor.page()).anyMatch(text -> text.equals("Problems")));
+        });
+
+    // then
+    assertThat(seen)
+        .as("named where it is fixed, but not as a problem")
+        .containsExactly(true, true, false);
+  }
+
+  private static Stream<String> texts(final Component component) {
+    final Stream<String> own =
+        component instanceof JLabel label && label.getText() != null
+            ? Stream.of(label.getText())
+            : Stream.empty();
+    return component instanceof Container container
+        ? Stream.concat(
+            own, Stream.of(container.getComponents()).flatMap(ConnectionsEditorTest::texts))
+        : own;
+  }
 }

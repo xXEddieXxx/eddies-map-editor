@@ -311,6 +311,22 @@ games:
         .isEqualTo(typed);
   }
 
+  @DisplayName("Only notes are read as ISO-8859-1 when they are no UTF-8; an XML is not")
+  @Test
+  void readsOnlyNotesLeniently(@TempDir final Path folder) throws Exception {
+    final String text =
+        "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><game><info name=\"Caf\u00e9\"/></game>";
+    final Path xml = folder.resolve("game.xml");
+    Files.write(xml, text.getBytes(StandardCharsets.ISO_8859_1));
+
+    assertThat(MapFolder.readNotes(xml))
+        .as("notes open as TripleA shows them")
+        .isEqualTo(text);
+    assertThatThrownBy(() -> MapFolder.readText(xml))
+        .as("Files does not open it: saved as UTF-8 under its declaration, its names would break")
+        .isInstanceOf(java.nio.charset.MalformedInputException.class);
+  }
+
 
   @DisplayName("Renaming a game in map.yml keeps every other entry and the first version as .bak")
   @Test

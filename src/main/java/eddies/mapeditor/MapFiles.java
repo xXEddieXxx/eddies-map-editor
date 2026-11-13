@@ -19,6 +19,8 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -30,6 +32,7 @@ import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -42,6 +45,7 @@ import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
@@ -51,6 +55,7 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.triplea.io.FileUtils;
 import org.triplea.java.ColorUtils;
+import org.triplea.map.data.elements.AttachmentList.Attachment;
 import org.triplea.map.data.elements.Game;
 import org.triplea.util.PointFileReaderWriter;
 import org.triplea.util.Tuple;
@@ -811,137 +816,258 @@ record MapFiles(
   }
 
   /**
-   * Writes where the game draws each territory's units, each capital's flag and each victory city's
-   * marker; the other markers' files ({@link Marker#isAlwaysWritten}) and decorations.txt only when
-   * the map has them or places were set here; without a folder or outlines, none. Lines of
-   * territories removed since the last save go.
+   * Writes the places that changed here since the last save into place.txt, the markers' files and
+   * decorations.txt, each as its line: every other line stays as it is, also of a territory the
+   * game does not draw the marker for, as the map's other games share the files. So a save that
+   * changed no place writes none of them. A territory removed here loses its lines, a new one gets
+   * unit places found. A marker the game draws only since a change made here, eg of a new capital
+   * or territory, gets its found place as a new line, in a new file if the map has none. Without a
+   * folder or outlines, nothing is written.
    *
-   * @param saved the files as last saved, {@link #writeKeeping}
+   * @param saved the files as last saved
+   * @param savedGame the game as last saved
    */
-  void writePlaces(final Game game, final MapFiles saved) throws IOException {
+  void writePlaces(final Game game, final MapFiles saved, final Game savedGame)
+      throws IOException {
     if (folder.isEmpty() || !hasOutlines()) {
       return;
     }
-    // place.txt, which the game needs for every territory
+    final Map<String, String> savedNames = savedNames(saved);
+    // the game starts only with unit places for every territory
     writeKeeping(
         PLACEMENTS,
-        polygons.keySet(),
         places.units(),
         saved.places().units(),
+        saved,
+        t -> !savedNames.containsKey(t),
         t -> Tuple.of(unitPlaces(t), Boolean.FALSE),
-        t -> !polygons.containsKey(t) && !saved.polygons().containsKey(t),
-        PointFileReaderWriter::readOneToManyPlacements,
-        PointFileReaderWriter::writeOneToManyPlacements);
-    // the game reads each file on its own and falls back on a place of its own without it
+        placed -> pointsText(placed.getFirst()) + " | overflowToLeft=" + placed.getSecond());
+    final Set<String> changed = changedTerritories(game, savedGame, savedNames);
     for (final Marker marker : Marker.values()) {
-      if (marker.isAlwaysWritten() || isKept(marker.file, places.markers(marker))) {
-        writeMarkers(game, marker, saved);
-      }
-    }
-    if (isKept(DECORATIONS, places.decorations())) {
       writeKeeping(
-          DECORATIONS,
-          places.decorations().keySet(),
-          places.decorations(),
-          saved.places().decorations(),
-          image -> List.of(),
-          image -> true,
-          PointFileReaderWriter::readOneToMany,
-          PointFileReaderWriter::writeOneToMany);
+          marker.file,
+          places.markers(marker),
+          saved.places().markers(marker),
+          saved,
+          t ->
+              changed.contains(t)
+                  && marker.isOn(game, t)
+                  && !(savedNames.containsKey(t) && marker.isOn(savedGame, savedNames.get(t))),
+          t -> foundMarkers(game, marker, t),
+          // the game reads one point but for the effects
+          points -> pointsText(marker == Marker.EFFECT ? points : points.subList(0, 1)));
     }
-  }
-
-  private boolean isKept(final String fileName, final Map<String, ?> placed) {
-    return !placed.isEmpty() || Files.exists(folder.orElseThrow().resolve(fileName));
-  }
-
-  /**
-   * Writes name_place.txt and pu_place.txt: each territory's name centered above the units around
-   * its center, and below it the value of land that gives PUs. Without them the game finds a place
-   * for the name itself and draws the value below it; a map made here gets them, an opened map
-   * keeps its way until a name or value is moved.
-   *
-   * @param saved the files as last saved, {@link #writeKeeping}
-   */
-  void writeNamePlaces(final Game game, final MapFiles saved) throws IOException {
-    if (folder.isPresent() && hasOutlines()) {
-      writeMarkers(game, Marker.NAME, saved);
-      writeMarkers(game, Marker.VALUE, saved);
-    }
-  }
-
-  private void writeMarkers(final Game game, final Marker marker, final MapFiles saved)
-      throws IOException {
-    final Map<String, List<Point>> had = places.markers(marker);
-    final boolean keepsAll = marker.keepsUnused();
     writeKeeping(
-        marker.file,
-        territories(t -> marker.isOn(game, t) || (keepsAll && had.containsKey(t))),
-        had,
-        saved.places().markers(marker),
-        t -> foundMarkers(game, marker, t),
-        // a territory removed since the last save loses its line
-        t -> polygons.containsKey(t) ? keepsAll : !saved.polygons().containsKey(t),
-        marker::read,
-        marker::write);
+        DECORATIONS,
+        places.decorations(),
+        saved.places().decorations(),
+        saved,
+        picture -> false,
+        picture -> List.of(),
+        MapFiles::pointsText);
   }
 
   /**
-   * Writes a file of points by territory. For these territories: a place changed here since the
-   * last save, else the file's, maybe set by hand meanwhile, else the one here, else a found one.
-   * Other lines of the file stay if {@code keeps} says so, unless they were taken away here, eg by
-   * a rename. Written only when that changes the file; a file left with no territory is removed.
+   * Each territory's name at the last save; a new one has none. A renamed one is known by its
+   * outlines, which a rename hands on as they are, so it does not count as new.
+   */
+  private Map<String, String> savedNames(final MapFiles saved) {
+    final Map<List<Polygon>, String> gone = new IdentityHashMap<>();
+    saved
+        .polygons()
+        .forEach(
+            (name, outlines) -> {
+              if (!polygons.containsKey(name)) {
+                gone.put(outlines, name);
+              }
+            });
+    final Map<String, String> names = new HashMap<>();
+    polygons.forEach(
+        (name, outlines) -> {
+          if (saved.polygons().containsKey(name)) {
+            names.put(name, name);
+          } else if (gone.containsKey(outlines)) {
+            names.put(name, gone.get(outlines));
+          }
+        });
+    return names;
+  }
+
+  /**
+   * The territories new since the last save or whose attachments read differently now, found in
+   * one pass over each game's attachments: only for these a save asks whether a marker is drawn
+   * now, as that reads all attachments again.
+   */
+  // shortcut: a marker drawn only since an owner or water change (a convoy's comment, a value) is
+  // not seen; the game then places it itself
+  private Set<String> changedTerritories(
+      final Game game, final Game savedGame, final Map<String, String> savedNames) {
+    final Set<String> changed = new HashSet<>(polygons.keySet());
+    changed.removeAll(savedNames.keySet());
+    if (game != savedGame) {
+      final Map<String, List<String>> before = territoryAttachments(savedGame);
+      final Map<String, List<String>> now = territoryAttachments(game);
+      savedNames.forEach(
+          (territory, savedName) -> {
+            if (!Objects.equals(now.get(territory), before.get(savedName))) {
+              changed.add(territory);
+            }
+          });
+    }
+    return changed;
+  }
+
+  /** Each territory's attachments as text, as an edit makes new ones also where nothing changed. */
+  private static Map<String, List<String>> territoryAttachments(final Game game) {
+    return AttachmentsXml.attachments(game).stream()
+        .filter(a -> "territory".equals(a.getType()) && a.getAttachTo() != null)
+        .collect(
+            Collectors.groupingBy(
+                Attachment::getAttachTo,
+                Collectors.mapping(
+                    a ->
+                        a.getName()
+                            + AttachmentsXml.options(a).stream()
+                                .map(o -> o.getName() + "=" + o.getCount() + ":" + o.getValue())
+                                .toList(),
+                    Collectors.toList())));
+  }
+
+  /** Points as TripleA's PointFileReaderWriter writes them after a name. */
+  private static String pointsText(final List<Point> points) {
+    return points.stream()
+        .map(point -> " (" + point.x + "," + point.y + ") ")
+        .collect(Collectors.joining());
+  }
+
+  /**
+   * Changes a file of points by name, line by line. A place changed here since the last save is
+   * written as its line; one taken away here is found again while its territory is there, else its
+   * line goes, as the lines of territories removed here do. A territory that needs a line and has
+   * none gets a found one. All other lines stay, maybe set by hand meanwhile.
    *
    * @param had the places here
-   * @param saved the places as last saved
+   * @param savedPlaces the places as last saved
+   * @param needed whether the territory must have a line in the file
    */
   private <T> void writeKeeping(
       final String fileName,
-      final Collection<String> territories,
       final Map<String, T> had,
-      final Map<String, T> saved,
+      final Map<String, T> savedPlaces,
+      final MapFiles saved,
+      final Predicate<String> needed,
       final Function<String, T> found,
-      final Predicate<String> keeps,
-      final PointsReader<T> reader,
-      final PointsWriter<T> writer)
+      final Function<T, String> text)
       throws IOException {
     final Path file = folder.orElseThrow().resolve(fileName);
-    final Map<String, T> before = Files.exists(file) ? reader.read(file) : Map.of();
-    final Map<String, T> after = new LinkedHashMap<>();
-    for (final String territory : territories) {
-      // a place taken away here, eg found again, is found
-      final Optional<T> chosen =
-          Objects.equals(had.get(territory), saved.get(territory))
-              ? Optional.ofNullable(before.get(territory))
-                  .or(() -> Optional.ofNullable(had.get(territory)))
-              : Optional.ofNullable(had.get(territory));
-      after.put(territory, chosen.orElseGet(() -> found.apply(territory)));
-    }
-    before.forEach(
-        (territory, points) -> {
-          if (!after.containsKey(territory)
-              && keeps.test(territory)
-              && !(saved.containsKey(territory) && !had.containsKey(territory))) {
-            after.put(territory, points);
-          }
-        });
-    if (after.isEmpty()) {
-      if (Files.exists(file)) {
-        MapFolder.remove(file);
+    final PlaceLines lines = PlaceLines.read(file);
+    final Set<String> names = new LinkedHashSet<>(savedPlaces.keySet());
+    names.addAll(had.keySet());
+    for (final String name : names) {
+      if (Objects.equals(had.get(name), savedPlaces.get(name))) {
+        continue;
       }
-    } else if (!after.equals(before)) {
-      MapFolder.replace(file, written -> writer.write(written, after));
+      if (had.containsKey(name)) {
+        lines.set(name, text.apply(had.get(name)));
+      } else if (polygons.containsKey(name) && (lines.has(name) || needed.test(name))) {
+        lines.set(name, text.apply(found.apply(name)));
+      } else {
+        lines.remove(name);
+      }
+    }
+    saved.polygons().keySet().stream()
+        .filter(territory -> !polygons.containsKey(territory))
+        .forEach(lines::remove);
+    for (final String territory : polygons.keySet()) {
+      if (!lines.has(territory) && needed.test(territory)) {
+        lines.set(
+            territory,
+            text.apply(
+                Optional.ofNullable(had.get(territory)).orElseGet(() -> found.apply(territory))));
+      }
+    }
+    lines.write(file);
+  }
+
+  /** A file of points by name as its lines, changed one by one, so the others stay as written. */
+  private static final class PlaceLines {
+    // each with its line end
+    private final List<String> lines = new ArrayList<>();
+    private final Charset charset;
+    private final String lineEnd;
+    private boolean changed;
+
+    private PlaceLines(final String text, final Charset charset) {
+      this.charset = charset;
+      lineEnd = text.contains("\r\n") || !text.contains("\n") ? "\r\n" : "\n";
+      if (!text.isEmpty()) {
+        lines.addAll(List.of(text.split("(?<=\n)|(?<=\r)(?!\n)")));
+      }
+    }
+
+    /** The file's lines; of no file, none. A file that is not UTF-8 keeps its bytes. */
+    static PlaceLines read(final Path file) throws IOException {
+      if (!Files.exists(file)) {
+        return new PlaceLines("", StandardCharsets.UTF_8);
+      }
+      final byte[] bytes = Files.readAllBytes(file);
+      final Charset charset =
+          MapFolder.isUtf8(bytes) ? StandardCharsets.UTF_8 : StandardCharsets.ISO_8859_1;
+      return new PlaceLines(new String(bytes, charset), charset);
+    }
+
+    /** The name a line gives points to, as PointFileReaderWriter reads it: up to the first "(". */
+    private static String nameOf(final String line) {
+      final int points = line.indexOf('(');
+      return points < 0 ? "" : line.substring(0, points).trim();
+    }
+
+    boolean has(final String name) {
+      return lines.stream().anyMatch(line -> name.equals(nameOf(line)));
+    }
+
+    /** The name's line with these points, at its place; a new one comes last. */
+    void set(final String name, final String points) {
+      final String line = name + " " + points;
+      final int at =
+          IntStream.range(0, lines.size())
+              .filter(i -> name.equals(nameOf(lines.get(i))))
+              .reduce((first, last) -> last)
+              .orElse(-1);
+      if (at < 0) {
+        if (!lines.isEmpty() && !lines.getLast().matches("(?s).*[\r\n]")) {
+          lines.set(lines.size() - 1, lines.getLast() + lineEnd);
+        }
+        lines.add(line);
+        changed = true;
+      } else if (!lines.get(at).stripTrailing().equals(line.stripTrailing())) {
+        final String old = lines.get(at);
+        lines.set(at, line + old.substring(old.replaceFirst("[\r\n]+$", "").length()));
+        changed = true;
+      }
+    }
+
+    void remove(final String name) {
+      changed |= lines.removeIf(line -> name.equals(nameOf(line)));
+    }
+
+    /** Writes the file if a line changed, with its .bak; left without a line, it is removed. */
+    void write(final Path file) throws IOException {
+      if (!changed) {
+        return;
+      }
+      final String text = String.join("", lines);
+      if (text.isBlank()) {
+        MapFolder.remove(file);
+      } else {
+        MapFolder.replace(file, to -> Files.write(to, text.getBytes(charset)));
+      }
     }
   }
 
   @FunctionalInterface
   private interface PointsReader<T> {
     Map<String, T> read(Path file) throws IOException;
-  }
-
-  @FunctionalInterface
-  private interface PointsWriter<T> {
-    void write(Path file, Map<String, T> points) throws IOException;
   }
 
   /**
@@ -997,8 +1123,9 @@ record MapFiles(
     }
 
     /**
-     * Whether a save keeps its points where the game does not draw it now: names, values and flags
-     * follow the game, but triggers may make any sea zone a convoy route or kamikaze zone.
+     * Whether the map shows its place from the file where the game does not draw it now: names,
+     * values and flags follow the game, but triggers may make any sea zone a convoy route or
+     * kamikaze zone. A save keeps every marker's lines.
      */
     boolean keepsUnused() {
       return EnumSet.of(BLOCKADE, CONVOY, COMMENT, KAMIKAZE, EFFECT).contains(this);
@@ -1009,11 +1136,6 @@ record MapFiles(
       return this == EFFECT ? Math.max(1, MapXml.territoryEffects(game, territory).size()) : 1;
     }
 
-    /** Whether its file is written on every save, as the game draws it badly without one. */
-    boolean isAlwaysWritten() {
-      return this == CAPITAL || this == VICTORY_CITY;
-    }
-
     private Map<String, List<Point>> read(final Path from) throws IOException {
       if (this == EFFECT) {
         return PointFileReaderWriter.readOneToMany(from);
@@ -1021,16 +1143,6 @@ record MapFiles(
       final Map<String, List<Point>> points = new LinkedHashMap<>();
       PointFileReaderWriter.readOneToOne(from).forEach((t, point) -> points.put(t, List.of(point)));
       return points;
-    }
-
-    private void write(final Path to, final Map<String, List<Point>> points) throws IOException {
-      if (this == EFFECT) {
-        PointFileReaderWriter.writeOneToMany(to, points);
-      } else {
-        final Map<String, Point> first = new LinkedHashMap<>();
-        points.forEach((t, list) -> first.put(t, list.getFirst()));
-        PointFileReaderWriter.writeOneToOne(to, first);
-      }
     }
   }
 
@@ -1048,7 +1160,10 @@ record MapFiles(
       return new Places(Map.of(), Map.of(), Map.of());
     }
 
-    /** The places in the folder's files; a file that does not read gives none, a save says why. */
+    /**
+     * The places in the folder's files; a file that does not read gives none, and a save leaves it
+     * as it is.
+     */
     static Places read(final Path folder) {
       final Map<Marker, Map<String, List<Point>>> markers = new EnumMap<>(Marker.class);
       for (final Marker marker : Marker.values()) {
@@ -1504,10 +1619,6 @@ record MapFiles(
     return polygons.get(territory).stream().anyMatch(outline -> outline.contains(textMiddle))
         ? above
         : new Point(middle.x, middle.y + font.getAscent() / 2);
-  }
-
-  private List<String> territories(final Predicate<String> matching) {
-    return polygons.keySet().stream().filter(matching).toList();
   }
 
   /** The territory's center, else the middle of its outlines. */

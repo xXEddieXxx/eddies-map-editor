@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
+import lombok.experimental.ExtensionMethod;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -19,6 +20,7 @@ import eddies.mapeditor.MapGuide.Part;
 import eddies.mapeditor.MapGuide.Step;
 import eddies.mapeditor.MapGuide.Step.State;
 
+@ExtensionMethod(Builders.class)
 final class MapGuideTest {
   @TempDir Path maps;
 
@@ -193,8 +195,8 @@ final class MapGuideTest {
             MapXml.territories(project.game()).size() + " territories",
             "1 nation",
             "1 of 1 nation has land",
-            "0 of 1 nation with land has a capital",
-            "0 territories have units",
+            "0 of 1 nation with land has a capital · without: Red",
+            "No territory has units yet",
             MapXml.connections(project.game()).size() + " connections",
             "");
   }
@@ -231,5 +233,72 @@ final class MapGuideTest {
     assertThat(MapGuide.nextStep(project, List.of(Problem.of("Something is wrong"))).step())
         .as("land comes before the problems")
         .contains(Step.Id.LAND);
+  }
+
+  @DisplayName("A step's progress says what is missing, never 0 of 0")
+  @Test
+  void progressSaysWhatIsMissing() throws Exception {
+    // given
+    final MapProject project = givenSavedMapWithPicture();
+
+    // when
+    final List<String> before = MapGuide.steps(project).stream().map(Step::progress).toList();
+    project.addNation("Blue");
+    project.edit(g -> MapXml.withOwner(g, givenLand(project), "Red"));
+    final List<String> owning = MapGuide.steps(project).stream().map(Step::progress).toList();
+
+    // then
+    assertThat(before)
+        .as("Red has no land, so no capital is due yet; no units anywhere")
+        .contains(
+            "0 of 1 nation has land · without: Red",
+            "No nation has land yet",
+            "No territory has units yet")
+        .noneMatch(text -> text.contains("0 of 0"));
+    assertThat(owning)
+        .as("who is still without land, and whose capital is missing")
+        .contains(
+            "1 of 2 nations have land · without: Blue",
+            "0 of 1 nation with land has a capital · without: Red");
+  }
+
+  @DisplayName("Check is not ticked ahead of the steps before it")
+  @Test
+  void checkIsNotDoneAheadOfOpenSteps() throws Exception {
+    final MapProject project = givenSavedMapWithPicture();
+
+    final List<Step> steps = MapGuide.stepsAfterCleanCheck(project);
+
+    assertThat(steps.getLast().done())
+        .as("the game loads, but Red has no land yet: the list reads top to bottom")
+        .isFalse();
+    assertThat(MapGuide.firstOpen(steps).map(Step::id))
+        .as("the next step is the first open one in the list's order")
+        .contains(Step.Id.LAND);
+  }
+
+  @DisplayName("Nations that take no turns are not called missing by the land step")
+  @Test
+  void landStepWithoutTurnsSaysSo() {
+    // given: a game with a nation, but no turn order steps
+    final Game minimap = MapXmlTest.givenMinimap();
+    final Game withoutTurns =
+        minimap.toBuilder()
+            .gamePlay(minimap.getGamePlay().toBuilder().sequence(null).build())
+            .build();
+    final MapProject project =
+        new MapProject(Path.of("minimap.xml"), withoutTurns, MapFiles.none());
+
+    // when
+    final Step land =
+        MapGuide.steps(project).stream()
+            .filter(s -> s.id() == Step.Id.LAND)
+            .findFirst()
+            .orElseThrow();
+
+    // then
+    assertThat(land.progress())
+        .as("the game has nations: not \"No nations yet\"")
+        .isEqualTo("No nation takes turns yet");
   }
 }

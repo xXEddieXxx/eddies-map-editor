@@ -47,7 +47,7 @@ class TerritoryXml {
         .map(AttachmentsXml::options)
         .orElse(List.of())
         .stream()
-        .filter(o -> option.equals(o.getName()) && o.getValue() != null)
+        .filter(o -> AttachmentsXml.isOption(o, option) && o.getValue() != null)
         .map(Option::getValue)
         .toList();
   }
@@ -82,10 +82,12 @@ class TerritoryXml {
       final List<Option> options = new ArrayList<>();
       boolean placed = false;
       for (final Option o : AttachmentsXml.options(attachments.get(at))) {
-        if (!option.equals(o.getName())) {
+        if (!AttachmentsXml.isOption(o, option)) {
           options.add(o);
         } else if (!placed) {
-          options.addAll(written);
+          // in the map's spelling of the option, eg "ConvoyAttached"
+          values.forEach(
+              v -> options.add(Option.builder().name(o.getName()).value(v).build()));
           placed = true;
         }
       }

@@ -865,4 +865,33 @@ final class TerritoriesEditorTest {
         .as("Alpha kept, Beta's line replaced")
         .containsExactly("Alpha;Alpha.png;1;2", "Beta;Beta.png;5;6");
   }
+
+  @DisplayName("For the units step a land territory without units is chosen, its Add units shown")
+  @Test
+  void choosesATerritoryForUnits() throws Exception {
+    // given: a map from a picture, no units anywhere
+    final MapProject project = givenPictureMap();
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenMap(project);
+          final TerritoriesEditor editor = new TerritoriesEditor(project, map);
+          editor.showing();
+          editor.paintCapitals();
+          editor.select();
+          seen.add(map.bannerText().isPresent());
+          editor.chooseForUnits();
+          seen.add(
+              all(editor.page())
+                  .anyMatch(
+                      c -> c instanceof AbstractButton b && "+ Add units".equals(b.getText())));
+        });
+
+    // then
+    assertThat(seen)
+        .as("the capital brush is gone; a land territory is open with its Add units")
+        .containsExactly(false, true);
+  }
 }
