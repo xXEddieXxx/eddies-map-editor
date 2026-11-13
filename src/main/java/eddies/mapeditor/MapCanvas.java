@@ -143,6 +143,7 @@ final class MapCanvas extends JComponent {
   private transient @Nullable MapFiles filesSeen;
   private transient Optional<BufferedImage> reliefSeen = Optional.empty();
   private final transient Map<String, Rectangle> bounds = new HashMap<>();
+  private final transient Map<String, Shape> filled = new HashMap<>();
   private final transient Map<String, List<Point>> unitPlaces = new HashMap<>();
   private final transient Map<String, Optional<Image>> unitPictures = new HashMap<>();
   // the picture made smaller once, for a zoom at which the screen holds more tiles than are kept
@@ -1350,6 +1351,7 @@ final class MapCanvas extends JComponent {
     if (project.getFiles() != filesSeen) {
       filesSeen = project.getFiles();
       bounds.clear();
+      filled.clear();
       unitPlaces.clear();
       unitSize = filesSeen.unitSize();
       unitPictures.clear();
@@ -1450,7 +1452,13 @@ final class MapCanvas extends JComponent {
   private Optional<BufferedImage> overview() {
     final MapFiles files = project.getFiles();
     final List<Object> source =
-        List.of(files.picture(), files.folder(), files.relief(), files.showsRelief());
+        List.of(
+            files.picture(),
+            files.folder(),
+            files.relief(),
+            files.showsRelief(),
+            // lines drawn into a big picture itself leave it the same picture
+            project.pictureEdits());
     if (!source.equals(overviewOf)) {
       overviewOf = source;
       overview = null;
@@ -1553,6 +1561,8 @@ final class MapCanvas extends JComponent {
       final List<Polygon> shapes,
       final boolean overPicture) {
     final Look look = look(territory);
+    // without the territories inside it, eg a sea zone's islands, which the fill would cover
+    final Shape area = filled.computeIfAbsent(territory, project.getFiles()::filled);
     // the game view as the game draws it: the owner's color thin over the picture, seas clear
     final boolean asPlayed = mode == MapMode.GAME && overPicture;
     // the sides in solid colors, as in the legend; the picture only just shows through
@@ -1560,7 +1570,7 @@ final class MapCanvas extends JComponent {
     if (!(asPlayed && look.water())) {
       final Color fill = fill(look);
       g.setColor(overPicture ? withAlpha(fill, asPlayed ? 0x59 : political ? 0xE0 : 0x8C) : fill);
-      shapes.forEach(g::fill);
+      g.fill(area);
     }
     if (showingTextures) {
       if (textureFills == null) {
@@ -1572,7 +1582,7 @@ final class MapCanvas extends JComponent {
         final Composite before = g.getComposite();
         g.setComposite(AlphaComposite.SrcOver.derive(ReliefMaker.TEXTURE_ALPHA));
         g.setPaint(texture.paint());
-        shapes.forEach(g::fill);
+        g.fill(area);
         g.setComposite(before);
       }
     }
@@ -1582,24 +1592,24 @@ final class MapCanvas extends JComponent {
       final Color mark = canalMarks ? MARKED : Theme.getAccentColor();
       if (canalMarks || look.water()) {
         g.setColor(withAlpha(mark, look.water() ? (canalMarks ? 0x66 : 0x59) : 0x33));
-        shapes.forEach(g::fill);
+        g.fill(area);
       }
       if (!look.water()) {
         g.setPaint(hatch(8 / zoom, mark));
-        shapes.forEach(g::fill);
+        g.fill(area);
       }
     }
     final boolean isFaint = !isMarked && faintlyMarked.contains(territory);
     if (isFaint) {
       g.setColor(withAlpha(MARKED, 0x33));
-      shapes.forEach(g::fill);
+      g.fill(area);
       g.setColor(withAlpha(MARKED, 0xB0));
       g.setStroke(new BasicStroke((float) (2 / zoom)));
       shapes.forEach(g::draw);
     }
     if (neighbours.contains(territory)) {
       g.setColor(withAlpha(Theme.getAccentColor(), 0x40));
-      shapes.forEach(g::fill);
+      g.fill(area);
     }
     final boolean isSelected = territory.equals(selected) || isMarked;
     // a territory with a problem stands out in red, as the legend says
@@ -1706,39 +1716,92 @@ final class MapCanvas extends JComponent {
    * the others, which fade.
    */
   private void paintConnections(final Graphics2D g, final Game game) {
-    final List<Connection> ofSelected = new ArrayList<>();
+    final MapFiles files = project.getFiles();
+    final Dimension map = files.size();
+    final boolean wrapsX = files.wrapsX();
+    final boolean wrapsY = files.wrapsY();
+    final List<List<Line2D>> ofSelected = new ArrayList<>();
     for (final Connection connection : MapXml.connections(game)) {
-      final Point from = center(connection.getT1());
-      final Point to = center(connection.getT2());
+      final List<Line2D> lines =
+          connectionLines(
+              center(connection.getT1()), center(connection.getT2()), map, wrapsX, wrapsY);
       if (selected == null) {
         // the overview's lines thick enough not to be missed
-        g.setStroke(new BasicStroke((float) (6 / zoom)));
         g.setColor(Color.WHITE);
-        g.drawLine(from.x, from.y, to.x, to.y);
-        g.setStroke(new BasicStroke((float) (4 / zoom)));
+        drawConnection(g, lines, 6, BasicStroke.CAP_SQUARE);
         g.setColor(Color.DARK_GRAY);
-        g.drawLine(from.x, from.y, to.x, to.y);
+        drawConnection(g, lines, 4, BasicStroke.CAP_SQUARE);
       } else if (connection.getT1().equals(selected) || connection.getT2().equals(selected)) {
-        ofSelected.add(connection);
+        ofSelected.add(lines);
       } else {
-        g.setStroke(new BasicStroke((float) (1.5 / zoom)));
         g.setColor(withAlpha(Color.DARK_GRAY, 0x66));
-        g.drawLine(from.x, from.y, to.x, to.y);
+        drawConnection(g, lines, 1.5, BasicStroke.CAP_SQUARE);
       }
     }
     // the lines being edited in red, the color that draws the eye
-    for (final Connection connection : ofSelected) {
-      final Point from = center(connection.getT1());
-      final Point to = center(connection.getT2());
-      g.setStroke(
-          new BasicStroke((float) (10 / zoom), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+    for (final List<Line2D> lines : ofSelected) {
       g.setColor(new Color(0, 0, 0, 0xC0));
-      g.drawLine(from.x, from.y, to.x, to.y);
-      g.setStroke(
-          new BasicStroke((float) (5 / zoom), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+      drawConnection(g, lines, 10, BasicStroke.CAP_ROUND);
       g.setColor(Theme.getDangerColor());
-      g.drawLine(from.x, from.y, to.x, to.y);
+      drawConnection(g, lines, 5, BasicStroke.CAP_ROUND);
     }
+  }
+
+  // a connection that goes on at the other side of the map is dashed, the same dashes for every
+  // width, so a line drawn over a wider one covers it
+  private void drawConnection(
+      final Graphics2D g, final List<Line2D> lines, final double width, final int cap) {
+    g.setStroke(
+        lines.size() == 1
+            ? new BasicStroke((float) (width / zoom), cap, BasicStroke.JOIN_ROUND)
+            : new BasicStroke(
+                (float) (width / zoom),
+                BasicStroke.CAP_BUTT,
+                BasicStroke.JOIN_ROUND,
+                10,
+                new float[] {(float) (14 / zoom), (float) (10 / zoom)},
+                0));
+    lines.forEach(g::draw);
+  }
+
+  /**
+   * The lines that show a connection between two centers: one between them, or, on a map that
+   * goes on at the other side (map.scrollWrapX, map.scrollWrapY) where that way is the shorter
+   * one, two, from each center to the edge where the line leaves the map.
+   */
+  static List<Line2D> connectionLines(
+      final Point from,
+      final Point to,
+      final Dimension map,
+      final boolean wrapsX,
+      final boolean wrapsY) {
+    final int dx = to.x - from.x;
+    final int dy = to.y - from.y;
+    // where the other center is when the map is laid beside itself, if that is nearer
+    final int shiftX = wrapsX && 2 * Math.abs(dx) > map.width ? -Integer.signum(dx) * map.width : 0;
+    final int shiftY =
+        wrapsY && 2 * Math.abs(dy) > map.height ? -Integer.signum(dy) * map.height : 0;
+    if (shiftX == 0 && shiftY == 0) {
+      return List.of(new Line2D.Double(from, to));
+    }
+    return List.of(
+        toEdge(from, to.x + shiftX, to.y + shiftY, map),
+        toEdge(to, from.x - shiftX, from.y - shiftY, map));
+  }
+
+  // how much of the way from a coordinate on the map to one maybe off it is on the map
+  private static double shareInside(final int from, final int to, final int size) {
+    return to < 0
+        ? from / (double) (from - to)
+        : to > size ? (size - from) / (double) (to - from) : 1;
+  }
+
+  /** The line from a point on the map towards one off it, as far as the map's edge. */
+  private static Line2D toEdge(final Point from, final int x, final int y, final Dimension map) {
+    final double until =
+        Math.min(shareInside(from.x, x, map.width), shareInside(from.y, y, map.height));
+    return new Line2D.Double(
+        from.x, from.y, from.x + (x - from.x) * until, from.y + (y - from.y) * until);
   }
 
   /**

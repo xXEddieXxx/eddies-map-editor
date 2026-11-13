@@ -44,7 +44,24 @@ class MapChecks {
    * @param place the territory to show for it, if it is about one
    * @param fixedIn the title of the tool that fixes it, if the text names one
    */
-  record Problem(String text, @Nullable String place, @Nullable String fixedIn) {
+  record Problem(
+      String text, @Nullable String place, @Nullable String fixedIn, @Nullable String key) {
+    Problem(final String text, @Nullable final String place, @Nullable final String fixedIn) {
+      this(text, place, fixedIn, null);
+    }
+
+    /**
+     * The problem as one the map maker may mark "Fine as it is": no problem that keeps TripleA
+     * from loading or starting the game. Known again by its kind and what it is about, not by
+     * its text, so a mark outlives a reworded text and follows a rename.
+     *
+     * @param kind what is wrong in one word without a dot, eg noOutline
+     * @param about the territory or nation it is about, empty for the whole map
+     */
+    Problem markable(final String kind, final String about) {
+      return new Problem(text, place, fixedIn, about.isEmpty() ? kind : kind + "." + about);
+    }
+
     static Problem of(final String text) {
       return new Problem(text, null, null);
     }
@@ -71,16 +88,24 @@ class MapChecks {
   /**
    * The problems the map maker finds itself, quick enough to look for after every change. What the
    * steps to a playable map say ({@link MapGuide#steps}: no territories, no nations, a nation
-   * without land or capital) is none: finished maps have such nations on purpose.
+   * without land or capital) is none: finished maps have such nations on purpose. Nor is what
+   * the map maker marked as fine ({@link MapFiles#isFine}).
    */
   static List<Problem> quick(final Game game, final MapFiles files) {
+    return quickWithFine(game, files).stream().filter(p -> !files.isFine(p)).toList();
+  }
+
+  /** As {@link #quick}, with the problems marked as fine. */
+  static List<Problem> quickWithFine(final Game game, final MapFiles files) {
     final List<Problem> problems = new ArrayList<>();
     final List<String> territories = MapXml.territories(game);
     final Set<String> known = new HashSet<>(territories);
     final Set<String> nations = new HashSet<>(MapXml.nations(game));
     for (final String territory : territories) {
       if (files.hasOutlines() && !files.polygons().containsKey(territory)) {
-        problems.add(Problem.at(territory, territory + " has no outline on the map"));
+        problems.add(
+            Problem.at(territory, territory + " has no outline on the map")
+                .markable("noOutline", territory));
       }
       // the engine's owner of neutral land is a player of every game without being listed
       MapXml.owner(game, territory)
@@ -168,9 +193,16 @@ class MapChecks {
                 problems.add(
                     Problem.in("Nations", "Held units belong to " + nation + ", no nation")));
     for (final Attachment attachment : AttachmentsXml.attachments(game)) {
-      if (AttachmentsXml.isNamed(attachment, Constants.TERRITORY_ATTACHMENT_NAME)) {
+      // one made by foreach names its nation as a variable, eg capital="@Player@"
+      if (AttachmentsXml.isNamed(attachment, Constants.TERRITORY_ATTACHMENT_NAME)
+          && attachment.getForeach() == null
+          && !String.valueOf(attachment.getAttachTo()).contains("@")) {
         AttachmentsXml.options(attachment).stream()
-            .filter(o -> AttachmentsXml.isOption(o, "capital") && unknown.test(o.getValue()))
+            .filter(
+                o ->
+                    AttachmentsXml.isOption(o, "capital")
+                        && unknown.test(o.getValue())
+                        && !o.getValue().contains("@"))
             .forEach(
                 o ->
                     problems.add(
@@ -200,9 +232,6 @@ class MapChecks {
     return problems;
   }
 
-  // the delegates that run for no nation, by their class: the others ask for theirs
-  private static final Set<String> ROUND_DELEGATES =
-      Set.of("InitializationDelegate", "EndRoundDelegate", "RandomStartDelegate");
 
   /**
    * Of the five nations of the classic game, those without a capital, where TripleA looks for
@@ -250,7 +279,8 @@ class MapChecks {
         .map(
             territory ->
                 new Problem(
-                    territory + " is not connected to any territory", territory, "Connections"))
+                        territory + " is not connected to any territory", territory, "Connections")
+                    .markable("notConnected", territory))
         .toList();
   }
 
@@ -283,7 +313,8 @@ class MapChecks {
                     + " of "
                     + room.size()
                     + " land territories are too small for even one. Make the units smaller or"
-                    + " the map bigger in Map look."));
+                    + " the map bigger in Map look.")
+                .markable("unitRoom", ""));
   }
 
   /**
@@ -350,7 +381,8 @@ class MapChecks {
                     + " has no picture for "
                     + (units.size() == 1 ? "" : units.size() + " unit types: ")
                     + String.join(", ", units.subList(0, Math.min(3, units.size())))
-                    + (units.size() > 3 ? ", …" : "")));
+                    + (units.size() > 3 ? ", …" : ""))
+                .markable("noUnitPictures", nation));
       }
       final List<String> missing =
           flags.stream()
@@ -359,8 +391,8 @@ class MapChecks {
               .toList();
       if (!missing.isEmpty()) {
         notes.add(
-            Problem.in(
-                "Nations", nation + " has no flag picture: " + String.join(", ", missing)));
+            Problem.in("Nations", nation + " has no flag picture: " + String.join(", ", missing))
+                .markable("noFlag", nation));
       }
     }
     return notes;
@@ -542,7 +574,7 @@ class MapChecks {
     for (final GameStep step : data.getSequence()) {
       if (step.getPlayerId() == null
           && step.getDelegateOptional()
-              .filter(d -> !ROUND_DELEGATES.contains(d.getClass().getSimpleName()))
+              .filter(d -> !GameRulesXml.ROUND_CLASSES.contains(d.getClass().getSimpleName()))
               .isPresent()) {
         return Optional.of("Step " + step.getName() + " needs a nation");
       }

@@ -203,12 +203,11 @@ final class MiniMap extends JComponent {
             : Optional.ofNullable(owners.get(territory))
                 .map(project::nationColor)
                 .orElse(MapCanvas.NEUTRAL);
-    for (final Polygon outline : outlines) {
-      g.setColor(color);
-      g.fill(outline);
-      g.setColor(OUTLINE);
-      g.draw(outline);
-    }
+    // without the territories inside it, eg a lake in land, which the fill would cover
+    g.setColor(color);
+    g.fill(project.getFiles().filled(territory));
+    g.setColor(OUTLINE);
+    outlines.forEach(g::draw);
   }
 
   /** Map pixels to this component's: the map fitted in, centred. */

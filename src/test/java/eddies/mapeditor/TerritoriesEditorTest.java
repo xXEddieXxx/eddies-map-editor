@@ -123,6 +123,29 @@ final class TerritoriesEditorTest {
             false, new MakerIcon(MakerIcon.Glyph.PENCIL, Theme.MAP_TOOL_ICON), true, true);
   }
 
+  @DisplayName("From Map look, Territories opens with the first texture's brush")
+  @Test
+  void paintsTexturesFromMapLook() throws Exception {
+    // given
+    final MapProject project = givenPictureMap();
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenMap(project);
+          final TerritoriesEditor editor = new TerritoriesEditor(project, map);
+          editor.showing();
+          editor.paintTextures();
+          seen.add(map.bannerText().orElse(""));
+        });
+
+    // then
+    assertThat((String) seen.getFirst())
+        .as("the banner of the texture brush")
+        .startsWith("Painting " + Textures.names(project.getFiles()).getFirst());
+  }
+
   @DisplayName("Draw borders' Line brush, chosen in the banner, stays chosen when drawing again")
   @Test
   void lineBrushIsKept() throws Exception {
@@ -1067,7 +1090,7 @@ final class TerritoriesEditorTest {
         .containsExactly(false, true);
   }
 
-  @DisplayName("The Places menu names the kinds in plain words, files as tool tips, then two menus")
+  @DisplayName("The Places menu names the kinds in plain words, files as tool tips, two menus, the reload")
   @Test
   void placesMenuInPlainWords() throws Exception {
     // given: a map from a picture, no place set yet
@@ -1105,7 +1128,7 @@ final class TerritoriesEditorTest {
 
     // then
     assertThat(items)
-        .as("the kinds, then the two menus")
+        .as("the kinds, the two menus, then the reload")
         .containsExactly(
             "Units",
             "Centers",
@@ -1120,7 +1143,8 @@ final class TerritoriesEditorTest {
             "Terrain effects",
             "Decorations",
             "Lay out unit places",
-            "Create missing places");
+            "Create missing places",
+            "Reload places from the files");
     assertThat(tips.get(0)).as("the file only in the tool tip").endsWith("place.txt");
     assertThat(tips.get(2)).as("the names' file").endsWith("name_place.txt");
     assertThat(layOut)

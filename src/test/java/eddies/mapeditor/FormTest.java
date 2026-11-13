@@ -38,6 +38,32 @@ final class FormTest {
     }
   }
 
+  @DisplayName("A dense form, eg a unit's many options, is clearly shorter")
+  @Test
+  void denseFormIsShorter() {
+    // given the same rows in a usual and a dense form
+    final Form usual = new Form(300);
+    final Form dense = new Form(300).dense();
+    for (final Form form : java.util.List.of(usual, dense)) {
+      form.section("Combat");
+      for (int i = 0; i < 10; i++) {
+        form.number("Number " + i, new JSpinner());
+        form.row(new javax.swing.JCheckBox("Flag " + i));
+      }
+      form.section("Movement").field("Name", new JTextField());
+      form.end();
+    }
+
+    // when
+    final int usualHeight = usual.getPreferredSize().height;
+    final int denseHeight = dense.getPreferredSize().height;
+
+    // then
+    assertThat(denseHeight)
+        .as("at least a sixth shorter than %s px", usualHeight)
+        .isLessThan(usualHeight * 5 / 6);
+  }
+
   @DisplayName("More options starts its text where the labels of the fields do")
   @Test
   void moreInLineWithFields() {

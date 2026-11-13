@@ -485,6 +485,49 @@ final class MapCanvasTest {
     return count;
   }
 
+  private static List<List<Integer>> ends(final List<java.awt.geom.Line2D> lines) {
+    return lines.stream()
+        .map(
+            l ->
+                List.of(
+                    (int) Math.round(l.getX1()),
+                    (int) Math.round(l.getY1()),
+                    (int) Math.round(l.getX2()),
+                    (int) Math.round(l.getY2())))
+        .toList();
+  }
+
+  @DisplayName("A connection across the edge of a wrapping map is two lines to the nearer edges")
+  @Test
+  void connectionGoesTheShortWayAround() {
+    // given a map of 1000 x 400 and centers near its left and right edge
+    final java.awt.Dimension map = new java.awt.Dimension(1000, 400);
+    final Point west = new Point(100, 100);
+    final Point east = new Point(900, 300);
+
+    // when
+    final var wrapped = MapCanvas.connectionLines(west, east, map, true, false);
+    final var notWrapping = MapCanvas.connectionLines(west, east, map, false, false);
+    final var near = MapCanvas.connectionLines(west, new Point(400, 300), map, true, true);
+    final var overTheTop =
+        MapCanvas.connectionLines(new Point(500, 50), new Point(500, 350), map, true, true);
+
+    // then
+    assertThat(ends(wrapped))
+        .as("from each center off its nearer edge, meeting at the same height: 200 px apart in"
+            + " x the wrapped way, so half the 200 px in y on each side")
+        .containsExactly(List.of(100, 100, 0, 200), List.of(900, 300, 1000, 200));
+    assertThat(ends(notWrapping))
+        .as("a map that does not go on: the direct line")
+        .containsExactly(List.of(100, 100, 900, 300));
+    assertThat(ends(near))
+        .as("the direct way is shorter: one line")
+        .containsExactly(List.of(100, 100, 400, 300));
+    assertThat(ends(overTheTop))
+        .as("top and bottom too, where the map wraps that way")
+        .containsExactly(List.of(500, 50, 500, 0), List.of(500, 350, 500, 400));
+  }
+
   @DisplayName("In the Connections view the selected territory's lines and neighbours stand out")
   @Test
   void connectionsOfSelectedStandOut() throws Exception {
@@ -495,6 +538,8 @@ final class MapCanvasTest {
           final MapProject project = MapProject.newEmpty();
           final BufferedImage picture = MapPictureTest.givenPicture();
           project.loadPicture(picture, MapPicture.detect(picture));
+          // a map that does not go on at its other side: every line is the direct one
+          project.setMapProperty("map.scrollWrapX", "false");
           final MapCanvas canvas = new MapCanvas(project);
           canvas.setSize(400, 300);
           canvas.setMode(MapMode.CONNECTIONS);

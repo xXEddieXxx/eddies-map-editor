@@ -128,7 +128,7 @@ final class MapMakerWindowTest {
         .containsExactly("Check true true", "Play true false", "Save false false", true, false);
   }
 
-  @DisplayName("The File menu: open, new, recent, new game, export, publish, folder, close")
+  @DisplayName("The File menu: open, new, recent, new game, export, publish, folder, close, version")
   @Test
   void fileMenuHoldsTheMapsActions() throws Exception {
     assumeFalse(GraphicsEnvironment.isHeadless(), "the window needs a screen");
@@ -185,7 +185,9 @@ final class MapMakerWindowTest {
             System.getProperty("os.name").toLowerCase(Locale.ROOT).startsWith("mac")
                 ? "Show in Finder"
                 : "Show in Explorer",
-            "Close map " + KeyEvent.VK_W);
+            "Close map " + KeyEvent.VK_W,
+            "Show all options",
+            "Version dev");
     assertThat(seen).as("Publish… opens the Publish tool").containsExactly(true);
   }
 

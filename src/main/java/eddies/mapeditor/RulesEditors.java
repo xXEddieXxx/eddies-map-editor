@@ -130,7 +130,7 @@ class RulesEditors {
     private final VariablesPage variables;
     private final JButton variablesToggle = Theme.newFoldButton();
     private final JButton addVariable;
-    private boolean variablesOpen;
+    private static final String VARIABLES_FOLD = "rules.variables";
     // a change made by a control of this page: the page stays, so the focus does not jump
     private boolean editingHere;
     // the commit of a text being typed, made a step by commit()
@@ -145,7 +145,9 @@ class RulesEditors {
               "A new list of names",
               () -> {
                 // the new variable shows at once
-                variablesOpen = true;
+                if (!Folds.isOpen(VARIABLES_FOLD)) {
+                  Folds.toggle(VARIABLES_FOLD);
+                }
                 variables.add();
               });
       // the sections start where the search does
@@ -563,7 +565,7 @@ class RulesEditors {
     private JComponent newVariablesBar() {
       variablesToggle.addActionListener(
           e -> {
-            variablesOpen = !variablesOpen;
+            Folds.toggle(VARIABLES_FOLD);
             showVariablesToggle();
           });
       final JPanel bar = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_S, 0));
@@ -585,6 +587,7 @@ class RulesEditors {
 
     private void showVariablesToggle() {
       final int count = GameRulesXml.variableNames(project.game()).size();
+      final boolean variablesOpen = Folds.isOpen(VARIABLES_FOLD);
       Theme.showFold(variablesToggle, "Variables (" + count + ")", variablesOpen);
       // a fold of nothing is not shown: the way to add the first variable instead
       variablesToggle.setVisible(count > 0);

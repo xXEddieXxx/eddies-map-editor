@@ -73,7 +73,10 @@ final class StartPage extends JPanel {
     final JLabel heading = new JLabel("Eddie's Map Editor");
     heading.putClientProperty(FlatClientProperties.STYLE_CLASS, "h1");
     column.add(heading, c);
-    final JLabel intro = new JLabel("Make your own map for TripleA, or change one you have.");
+    final JLabel intro =
+        new JLabel(
+            "Make your own map for TripleA, or change one you have. · Version "
+                + EddiesMapEditor.version());
     intro.setForeground(Theme.getSecondaryTextColor());
     c.insets = new Insets(0, 0, Theme.GAP_XXL, 0);
     column.add(intro, c);

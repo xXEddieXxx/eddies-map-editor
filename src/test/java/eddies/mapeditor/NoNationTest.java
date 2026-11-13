@@ -161,6 +161,32 @@ final class NoNationTest {
             "red capitol is the capital of Nobody, which is no nation: untick it in Territories");
   }
 
+  @DisplayName("A capital that foreach fills in, eg capital=\"@Player@\", is not told")
+  @Test
+  void skipsCapitalsMadeByForeach() throws Exception {
+    // given a territory attachment made for each nation
+    final Path xml =
+        givenGame(
+            "foreach.xml",
+            givenMinimapText()
+                .replace(
+                    "<attachmentList>",
+                    "<attachmentList><attachment foreach=\"$Player$\" name=\"territoryAttachment\""
+                        + " attachTo=\"red capitol\" javaClass=\"TerritoryAttachment\""
+                        + " type=\"territory\"><option name=\"capital\" value=\"@Player@\"/>"
+                        + "</attachment>")
+                .replace(
+                    "</game>",
+                    "<variableList><variable name=\"Player\"><element name=\"Russians\"/>"
+                        + "</variable></variableList></game>"));
+
+    // when
+    final List<String> quick = nationProblems(MapProject.open(xml).game());
+
+    // then
+    assertThat(quick).as("a variable is no missing nation").isEmpty();
+  }
+
   @DisplayName("Removing, renaming and repainting leave no unit, step or capital of no nation")
   @Test
   void changesLeaveNoDanglingNation() throws Exception {

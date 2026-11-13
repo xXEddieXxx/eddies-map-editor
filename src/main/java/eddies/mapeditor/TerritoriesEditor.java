@@ -45,6 +45,7 @@ import java.util.TreeSet;
 import java.util.concurrent.ExecutionException;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
+import java.util.function.Predicate;
 import java.util.function.Consumer;
 import java.util.function.UnaryOperator;
 import java.util.regex.Pattern;
@@ -222,6 +223,11 @@ final class TerritoriesEditor implements Editor {
   // a picture only in tiles is put together in the background before lines go into it
   private boolean preparingPicture;
   private boolean pictureTooBig;
+  // the map maker agreed to lines without undo in this map's big picture, for the session
+  private boolean drawsInPlaceAgreed;
+  // asks before the first such line; not final, as tests answer instead of the dialog
+  Predicate<String> askToDrawInPlace =
+      text -> Dialogs.confirm(page, "Draw into the map's picture", text, "Draw anyway");
   private boolean pictureUnread;
   private Optional<JTextField> splitName = Optional.empty();
   private String card = LIST;
@@ -479,7 +485,37 @@ final class TerritoriesEditor implements Editor {
     menu.addSeparator();
     menu.add(layOutMenu());
     menu.add(createMissingMenu());
+    final JMenuItem reload = new JMenuItem("Reload places from the files");
+    reload.setToolTipText(
+        "Reads place.txt, the marker files and decorations.txt again, eg changed by hand or with"
+            + " another program while the map is open");
+    reload.setEnabled(project.getFolder().isPresent());
+    reload.addActionListener(e -> reloadPlaces());
+    menu.add(reload);
     return menu;
+  }
+
+  /** The places as the files have them now, as one step; places not saved yet are asked about. */
+  private void reloadPlaces() {
+    if (project.hasUnsavedPlaces()
+        && !Dialogs.confirm(
+            page,
+            "Reload places from the files",
+            "Places changed here are not saved yet. Reloading shows the files' places instead;"
+                + " Undo brings yours back.",
+            "Reload")) {
+      return;
+    }
+    final int changed = project.reloadPlaces();
+    if (changed == 0) {
+      Dialogs.toast(page, "The files have the places shown here");
+    } else {
+      Dialogs.toast(
+          page,
+          "✓ Places reloaded from the files: " + changed + " changed",
+          "Undo",
+          project::undo);
+    }
   }
 
   /** The marker's places in the menu, in plain words. */
@@ -1004,7 +1040,9 @@ final class TerritoriesEditor implements Editor {
                   // an edit mode: each line changes the map's picture, which the badge says, as
                   // the text is cut where the brushes and the line's tools need the room
                   map.showEditBanner(
-                      "Edits the picture",
+                      project.drawsInPlace()
+                          ? "Edits the picture · no undo"
+                          : "Edits the picture",
                       switch (drawBrush) {
                         case FREEHAND -> "Drag a border line.";
                         case LINE -> "Click points; double-click ends.";
@@ -1487,6 +1525,11 @@ final class TerritoriesEditor implements Editor {
         });
   }
 
+  /** The first texture's brush, so every textured territory shows its texture: from Map look. */
+  void paintTextures() {
+    paintWith(textureBrush(Textures.names(project.getFiles()).getFirst()));
+  }
+
   /** Paints the effect, its territories marked on the map, eg from the Terrain effects tool. */
   void paintEffect(final String effect) {
     paintWith(effectBrush(effect), Optional.of(effect));
@@ -1542,7 +1585,7 @@ final class TerritoriesEditor implements Editor {
     final Optional<BufferedImage> picture = project.getFiles().picture();
     final Optional<MapPicture.LineStyle> chosen =
         borderStyle().filter(style -> style.width() > 0);
-    if (picture.isEmpty() || chosen.isEmpty()) {
+    if (picture.isEmpty() || chosen.isEmpty() || !mayChangePicture()) {
       return;
     }
     // about as near as a hand misses a line, on the screen at any zoom
@@ -1565,6 +1608,9 @@ final class TerritoriesEditor implements Editor {
    * growing over them, as one step.
    */
   void bordersErased(final List<Point> stroke) {
+    if (!mayChangePicture()) {
+      return;
+    }
     if (!project.eraseBorders(stroke, eraserWidth())) {
       Dialogs.toast(page, "! Nothing erased: no border line under the eraser.");
     }
@@ -1580,15 +1626,40 @@ final class TerritoriesEditor implements Editor {
    * picture, as one step, so that they are one area for Make territories.
    */
   void borderErased(final MapFiles.SharedBorder border) {
-    if (project.eraseBorder(border)) {
-      Dialogs.toast(
-          page,
-          "✓ Erased the border between " + border.first() + " and " + border.second(),
-          "Undo",
-          project::undo);
-    } else {
-      Dialogs.toast(page, "! Nothing erased: the picture has no line between them.");
+    if (!mayChangePicture()) {
+      return;
     }
+    final String erased =
+        "✓ Erased the border between " + border.first() + " and " + border.second();
+    if (!project.eraseBorder(border)) {
+      Dialogs.toast(page, "! Nothing erased: the picture has no line between them.");
+    } else if (project.drawsInPlace()) {
+      // drawn into the big picture itself: nothing to undo
+      Dialogs.toast(page, erased);
+    } else {
+      Dialogs.toast(page, erased, "Undo", project::undo);
+    }
+  }
+
+  /**
+   * Whether the picture may be changed: asked once, before the first line drawn into or erased
+   * from a picture so big that it is changed itself, which no undo takes back ({@link
+   * MapProject#drawsInPlace}).
+   */
+  private boolean mayChangePicture() {
+    if (!project.drawsInPlace() || drawsInPlaceAgreed) {
+      return true;
+    }
+    final Dimension size = project.getFiles().size();
+    drawsInPlaceAgreed =
+        askToDrawInPlace.test(
+            "This map's picture is very large ("
+                + size.width
+                + " × "
+                + size.height
+                + "). Lines drawn into it cannot be undone. Save first if you want a point to"
+                + " return to: until you save, reopening the map brings the picture back.");
+    return drawsInPlaceAgreed;
   }
 
   /** The eraser's width in the picture's pixels: as chosen, else three times its lines' width. */
@@ -1786,7 +1857,7 @@ final class TerritoriesEditor implements Editor {
     new SwingWorker<Optional<BufferedImage>, Void>() {
       @Override
       protected Optional<BufferedImage> doInBackground() {
-        return files.tilesPicture();
+        return files.tilesPictureToDrawInto();
       }
 
       @Override
@@ -1816,7 +1887,7 @@ final class TerritoriesEditor implements Editor {
     return preparingPicture
         ? "Getting the map's picture ready to draw into…"
         : pictureTooBig
-            ? "The map's picture is too big to draw into here, or one of its tiles does not read."
+            ? project.getFiles().whyNotDrawnInto()
             : pictureUnread
                 ? "The map's picture tiles could not be read."
                 : "The map has no picture to draw into: choose one in the picture menu at the right.";
@@ -1875,6 +1946,9 @@ final class TerritoriesEditor implements Editor {
   /** The split as one step, its border drawn into the picture if given; the new territory chosen. */
   private void split(
       final String territory, final String newName, final Optional<MapProject.BorderLine> border) {
+    if (border.isPresent() && !mayChangePicture()) {
+      return;
+    }
     final Optional<OutlineCut.Cut> cut = pendingCut;
     endMode();
     if (cut.isPresent() && project.splitTerritory(territory, cut.get(), newName, border)) {

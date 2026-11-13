@@ -92,6 +92,7 @@ final class MapLookEditor implements Editor {
 
   private final MapProject project;
   private final Runnable goToTerritories;
+  private final Runnable paintTextures;
   private final Form form = new Form(TEXT_WIDTH);
   // the four sections, two side by side when wide enough
   private final Form cards = new Form(TEXT_WIDTH);
@@ -113,8 +114,19 @@ final class MapLookEditor implements Editor {
    * @param goToTerritories shows Territories, where the outlines a relief needs are found
    */
   MapLookEditor(final MapProject project, final Runnable goToTerritories) {
+    this(project, goToTerritories, goToTerritories);
+  }
+
+  /**
+   * @param goToTerritories shows Territories, where the outlines a relief needs are found
+   * @param paintTextures shows Territories with a texture brush, where the relief's textures are
+   *     painted
+   */
+  MapLookEditor(
+      final MapProject project, final Runnable goToTerritories, final Runnable paintTextures) {
     this.project = project;
     this.goToTerritories = goToTerritories;
+    this.paintTextures = paintTextures;
     cards.setBorder(BorderFactory.createEmptyBorder());
     final JComponent scrolled = SwingComponents.newJScrollPane(form);
     scrolled.setMaximumSize(new Dimension(UIScale.scale(MAX_WIDTH), Integer.MAX_VALUE));
@@ -520,6 +532,9 @@ final class MapLookEditor implements Editor {
       Theme.setTertiaryButtonStyle(go);
       go.addActionListener(e -> goToTerritories.run());
       cards.row(fitting(go));
+    } else {
+      // hard to find from here: the textures are a Paint brush of Territories
+      cards.row(Help.link("Textures for the relief are painted in", "Territories", paintTextures));
     }
     final JCheckBox show = check("Show the relief", MapData.PROPERTY_MAP_HASRELIEF, true);
     if (!hasRelief()) {
@@ -828,7 +843,12 @@ final class MapLookEditor implements Editor {
       final JLabel label = new JLabel("Strength");
       label.setLabelFor(strength);
       form.note(
-          "A part of your map with the relief, and the textures painted in Territories."
+          "A part of your map with the relief. Textures painted in Territories are included: "
+              + (fills.isEmpty()
+                  ? "no territory has one yet."
+                  : fills.size() == 1
+                      ? "1 territory has one."
+                      : fills.size() + " territories have one.")
               + " Saving writes it for the whole map into reliefTiles.");
       form.row(preview);
       form.row(

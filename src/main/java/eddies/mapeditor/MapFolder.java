@@ -9,6 +9,7 @@ import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.Graphics2D;
+import java.awt.Point;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
@@ -239,6 +240,22 @@ class MapFolder {
           MapFolder.replace(file, f -> ImageIO.write(written, "png", f.toFile()));
         }
       }
+    }
+  }
+
+  /**
+   * Writes these tiles of the picture, each given as (column, row), as {@link #writeChangedTiles}
+   * writes a changed one: for a picture changed in place, of which there is no picture before.
+   */
+  static void writeTiles(
+      final Path folder, final BufferedImage image, final Collection<Point> changed)
+      throws IOException {
+    final int size = MapFiles.tileSize();
+    final Path tiles = Files.createDirectories(folder.resolve("baseTiles"));
+    for (final Point tile : changed) {
+      final Path file = tiles.resolve(tile.x + "_" + tile.y + ".png");
+      final BufferedImage written = overOldTile(file, image, tile.x, tile.y, size);
+      MapFolder.replace(file, f -> ImageIO.write(written, "png", f.toFile()));
     }
   }
 

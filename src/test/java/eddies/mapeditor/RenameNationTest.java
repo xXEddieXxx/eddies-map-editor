@@ -319,6 +319,26 @@ final class RenameNationTest {
     assertThat(flags.resolve("Soviets.png")).as("the other name is free again").doesNotExist();
   }
 
+  @DisplayName("An old picture that does not go leaves the map saved")
+  @Test
+  void staysSavedWhenAnOldPictureStays() throws Exception {
+    // given an old flag the save cannot take away: a folder with something in it
+    final MapProject project = givenMap();
+    final Path stuck = folder.resolve("flags").resolve("Russians_fade.png");
+    Files.createDirectories(stuck.resolve("in the way"));
+    project.renameNation(OLD, NEW);
+
+    // when
+    final Throwable failure = org.assertj.core.api.Assertions.catchThrowable(project::save);
+
+    // then
+    assertThat(failure).as("the save tells what did not go").isInstanceOf(java.io.IOException.class);
+    assertThat(Files.readString(project.getXmlFile().orElseThrow()))
+        .as("the game is written")
+        .contains(NEW);
+    assertThat(project.hasUnsavedChanges()).as("so the map shows as saved").isFalse();
+  }
+
   @DisplayName("Where another game of the map has the nation, its pictures and settings are copied")
   @Test
   void copiesWhatGamesShare() throws Exception {

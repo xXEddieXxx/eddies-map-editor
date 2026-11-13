@@ -426,8 +426,10 @@ final class PublishTest {
     assertThat(notes)
         .as("one note per nation and kind, each with the tool that fixes it")
         .containsExactly(
-            Problem.in("Units", "Red has no picture for Ranger"),
-            Problem.in("Nations", "Blue has no flag picture: Blue_small.png"));
+            Problem.in("Units", "Red has no picture for Ranger")
+                .markable("noUnitPictures", "Red"),
+            Problem.in("Nations", "Blue has no flag picture: Blue_small.png")
+                .markable("noFlag", "Blue"));
     assertThat(new UnitsEditor(project).nationsWithoutPicture(project.game(), "Ranger"))
         .as("Units says which nations lack the chosen unit's picture")
         .containsExactly("Red");
@@ -499,7 +501,9 @@ final class PublishTest {
 
     assertThat(home.notes())
         .as("found when Home shows again, as an import changes no step")
-        .contains(Problem.in("Nations", "Red has no flag picture: Red_large.png"));
+        .contains(
+            Problem.in("Nations", "Red has no flag picture: Red_large.png")
+                .markable("noFlag", "Red"));
   }
 
   @DisplayName("Home finds a flag imported meanwhile also while the map has unsaved changes")
@@ -518,7 +522,9 @@ final class PublishTest {
 
     assertThat(missing)
         .as("Red's flag is missing; Green is new, a save writes its flags")
-        .containsExactly(Problem.in("Nations", "Red has no flag picture: Red_large.png"));
+        .containsExactly(
+            Problem.in("Nations", "Red has no flag picture: Red_large.png")
+                .markable("noFlag", "Red"));
     assertThat(home.notes())
         .as("the import is seen though the map is not saved")
         .noneMatch(note -> note.text().contains("picture"));

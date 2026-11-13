@@ -44,10 +44,26 @@ class UnitOptions {
 
   record Section(String title, List<UnitOption> options) {}
 
+  static final String COMBAT = "Combat";
+  private static final String AIR = "Air and anti-air";
+
+  /**
+   * What a section's "?" says about all of it. TripleA's battle round (BattleStep.Order) starts
+   * with AA_OFFENSIVE, AA_DEFENSIVE and AA_REMOVE_CASUALTIES, the fire of isAAforCombatOnly units
+   * at their targetsAA, then bombardment, then first strike, then everyone else.
+   */
+  static final Map<String, String> SECTION_HELP =
+      Map.of(
+          AIR,
+          "Anti-air is targeted fire: a unit that \"Fires at planes in battles\" shoots at the"
+              + " units of \"Planes it fires at\" (any unit types, not only planes) at the start"
+              + " of a battle round, before bombardment and before first strike. What it hits"
+              + " is removed at once and does not fire back.");
+
   static final List<Section> SECTIONS =
       List.of(
           new Section(
-              "Combat",
+              COMBAT,
               List.of(
                   number("attack", "Attack", 0, "Hits on a die roll of this or less."),
                   number("defense", "Defense", 0, "Hits when defending on this or less."),
@@ -142,7 +158,7 @@ class UnitOptions {
                       0,
                       "PUs an enemy loses when it is in a sea zone beside its territory."))),
           new Section(
-              "Air and anti-air",
+              AIR,
               List.of(
                   flag("isAir", "Flies", ""),
                   flag("canIntercept", "Can intercept bombers", ""),

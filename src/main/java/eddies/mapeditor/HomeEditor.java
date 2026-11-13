@@ -14,10 +14,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.accessibility.AccessibleContext;
+import javax.annotation.Nullable;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.JButton;
@@ -62,8 +64,14 @@ final class HomeEditor implements Editor {
   private static final int SHOWN_PROBLEMS = 8;
   private static final int SHOWN_NOTES = 3;
   private static final int MARK_WIDTH = 16;
+  private static final AtomicInteger HOMES = new AtomicInteger();
 
   private final MapProject project;
+  // the fold rows, open or not as Folds knows, for this map's Home only, as before
+  private final String foldsOf = "home." + HOMES.incrementAndGet() + ".";
+  private final String stepsFold = foldsOf + "steps";
+  private final String toolsFold = foldsOf + "tools";
+  private final String fineFold = foldsOf + "fine";
   private final Consumer<String> showTerritory;
   private final Consumer<String> openTool;
   private final Consumer<Step.Id> followStep;
@@ -83,14 +91,19 @@ final class HomeEditor implements Editor {
   // worth a look, but no problems: never red, not counted
   private List<Problem> notes;
   private List<Problem> pictureNotes = List.of();
+  // the notes marked "Fine as it is": listed apart, to count again
+  private List<Problem> fineNotes = List.of();
   // whether the units are big for the map, and what that was worked out for
   private Optional<Problem> unitRoom = Optional.empty();
   private List<Object> unitRoomState = List.of();
   private boolean checked;
+  // what Check last found and the map it ran on, by identity as each step makes a new one
+  private List<Problem> validated = List.of();
+  private transient @Nullable Game validatedGame;
+  private transient @Nullable MapFiles validatedFiles;
   private boolean allProblemsShown;
   private boolean allNotesShown;
-  private boolean finishedStepsShown;
-  private boolean allTilesShown;
+
   // the tiles as counted, and the state they were counted for
   private List<Tile> tiles = List.of();
   private List<Object> tilesState = List.of();
@@ -132,7 +145,25 @@ final class HomeEditor implements Editor {
     findPictureNotes();
     project.onChange(
         () -> {
-          problems = project.problems();
+          // a save, or an undo back to it, leaves the map Check ran on: its result still counts,
+          // so a Check before the save is not asked for again after it
+          // nor does a mark "Fine as it is": Check's other problems stay, with the quick ones
+          // counted again
+          final MapFiles files = project.getFiles();
+          checked =
+              project.game() == validatedGame
+                  && validatedFiles != null
+                  && (files == validatedFiles || files.differsInFineOnly(validatedFiles));
+          problems =
+              !checked
+                  ? project.problems()
+                  : files == validatedFiles
+                      ? validated
+                      : Stream.concat(
+                              validated.stream().filter(p -> !files.isFine(p)),
+                              project.problems().stream())
+                          .distinct()
+                          .toList();
           if (project.hasUnsavedChanges()) {
             // not read from the folder for every change: when Home shows again
             withNotes();
@@ -140,7 +171,6 @@ final class HomeEditor implements Editor {
             // just saved, which writes pictures for new nations and unit types
             findPictureNotes();
           }
-          checked = false;
           if (page.isShowing()) {
             fill();
           } else {
@@ -192,13 +222,15 @@ final class HomeEditor implements Editor {
 
   /** What is worth a look: territories apart, and the pictures last found missing. */
   private void withNotes() {
-    notes =
+    final List<Problem> all =
         Stream.of(
                 unitRoomNote().stream(),
                 MapChecks.notes(project.game()).stream(),
                 pictureNotes.stream())
             .flatMap(s -> s)
             .toList();
+    notes = all.stream().filter(note -> !project.getFiles().isFine(note)).toList();
+    fineNotes = all.stream().filter(project.getFiles()::isFine).toList();
   }
 
   /** {@link MapChecks#unitRoomNote}, looked for again only when what it reads changed. */
@@ -218,6 +250,9 @@ final class HomeEditor implements Editor {
 
   /** The problems of Check, including the engine's. */
   void setValidated(final List<Problem> validated) {
+    this.validated = validated;
+    validatedGame = project.game();
+    validatedFiles = project.getFiles();
     problems = validated;
     checked = true;
     fill();
@@ -307,13 +342,14 @@ final class HomeEditor implements Editor {
     left.row(card());
     left.row((JComponent) Box.createVerticalStrut(Theme.GAP_M));
     final long done = steps.stream().filter(Step::done).count();
+    final boolean finishedStepsShown = Folds.isOpen(stepsFold);
     if (built(steps)) {
       // a map that is built: the done steps in one row, a step still open below it
       left.row(
           fold(
               "Steps to a playable map · " + done + " of " + steps.size() + " done",
               finishedStepsShown,
-              () -> finishedStepsShown = !finishedStepsShown));
+              () -> Folds.toggle(stepsFold)));
       steps.stream()
           .filter(step -> finishedStepsShown || !step.done())
           .forEach(step -> left.row(stepRow(step)));
@@ -323,6 +359,7 @@ final class HomeEditor implements Editor {
     }
     fillProblems();
     fillNotes(steps);
+    fillFine();
     final JButton files =
         tertiary("What's in the map folder? See Files.", () -> openTool.accept("Files"));
     left.row(leftAligned(files, Theme.GAP_L));
@@ -473,6 +510,47 @@ final class HomeEditor implements Editor {
     }
   }
 
+  /**
+   * What the map maker marked "Fine as it is", behind one fold row, each with the way back; it
+   * shows and counts nowhere else.
+   */
+  private void fillFine() {
+    final List<Problem> fine =
+        Stream.concat(project.fineProblems().stream(), fineNotes.stream()).toList();
+    if (fine.isEmpty()) {
+      return;
+    }
+    final boolean open = Folds.isOpen(fineFold);
+    left.row(fold("Marked as fine (" + fine.size() + ")", open, () -> Folds.toggle(fineFold)));
+    if (open) {
+      for (final Problem problem : fine) {
+        final JButton again = tertiary("Count again", () -> project.countAgain(problem));
+        again.getAccessibleContext().setAccessibleName("Count again: " + problem.text());
+        final int textWidth =
+            LEFT_WIDTH - MARK_WIDTH - 2 * Theme.GAP_S - again.getPreferredSize().width;
+        left.row(row(mark(Status.DONE), note(problem.text(), textWidth), again));
+      }
+    }
+  }
+
+  /**
+   * The row's action, and before it "Fine as it is" for a problem or note that may be meant so:
+   * none that keeps TripleA from loading or starting the game.
+   */
+  private JComponent withFine(final Problem problem, final JComponent action) {
+    if (problem.key() == null) {
+      return action;
+    }
+    final JButton fine = tertiary("Fine as it is", () -> project.markFine(problem));
+    fine.setToolTipText("Meant so: it no longer shows or counts. Kept with the map.");
+    fine.getAccessibleContext().setAccessibleName("Fine as it is: " + problem.text());
+    final JPanel both = new JPanel(new FlowLayout(FlowLayout.TRAILING, 0, 0));
+    both.setOpaque(false);
+    both.add(fine);
+    both.add(action);
+    return both;
+  }
+
   /** The notes shown under "Worth a look", for tests. */
   List<Problem> notes() {
     return notes;
@@ -500,6 +578,7 @@ final class HomeEditor implements Editor {
             .flatMap(p -> p.territory().map(t -> "Territories").or(p::tool).stream())
             .collect(Collectors.groupingBy(tool -> tool, Collectors.counting()));
     final List<Tile> tiles = tiles();
+    final boolean allTilesShown = Folds.isOpen(toolsFold);
     final JPanel grid = new JPanel(new GridLayout(0, TILE_COLUMNS, Theme.GAP_S, Theme.GAP_S));
     grid.setOpaque(false);
     // a built map shows every tool; a new one those it needs first, the rest behind "More tools"
@@ -524,7 +603,7 @@ final class HomeEditor implements Editor {
                 + ")"
                 + (allTilesShown || foldedProblems == 0 ? "" : " · ! " + foldedProblems),
             allTilesShown,
-            () -> allTilesShown = !allTilesShown);
+            () -> Folds.toggle(toolsFold));
     if (!allTilesShown && foldedProblems > 0) {
       final AccessibleContext spoken = more.getComponent(0).getAccessibleContext();
       spoken.setAccessibleName(
@@ -863,8 +942,10 @@ final class HomeEditor implements Editor {
                 MapMakerWindow.openTool(
                     page, note.tool().orElse("Territories"), note.territory().orElse(null)));
     show.getAccessibleContext().setAccessibleName("Show: " + note.text());
-    final int textWidth = LEFT_WIDTH - MARK_WIDTH - 2 * Theme.GAP_S - show.getPreferredSize().width;
-    return row(mark(Status.TODO), wrapped(note.text(), textWidth), show);
+    final JComponent actions = withFine(note, show);
+    final int textWidth =
+        LEFT_WIDTH - MARK_WIDTH - 2 * Theme.GAP_S - actions.getPreferredSize().width;
+    return row(mark(Status.TODO), wrapped(note.text(), textWidth), actions);
   }
 
   private JComponent problemRow(final Problem problem) {
@@ -878,9 +959,10 @@ final class HomeEditor implements Editor {
       action.setOpaque(false);
     }
     action.getAccessibleContext().setAccessibleName("Show: " + problem.text());
+    final JComponent actions = withFine(problem, action);
     final int textWidth =
-        LEFT_WIDTH - MARK_WIDTH - 2 * Theme.GAP_S - action.getPreferredSize().width;
-    return row(mark(Status.PROBLEM), wrapped(problem.text(), textWidth), action);
+        LEFT_WIDTH - MARK_WIDTH - 2 * Theme.GAP_S - actions.getPreferredSize().width;
+    return row(mark(Status.PROBLEM), wrapped(problem.text(), textWidth), actions);
   }
 
   /** Where the problem is fixed: its territory, else its tool, else the list of problems. */

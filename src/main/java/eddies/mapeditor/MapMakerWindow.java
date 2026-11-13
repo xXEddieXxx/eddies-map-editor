@@ -49,6 +49,7 @@ import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.ButtonGroup;
 import javax.swing.JButton;
+import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComponent;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
@@ -817,7 +818,13 @@ public final class MapMakerWindow extends JFrame {
                           showEditor(territoriesEditor);
                           territoriesEditor.paintEffect(effect);
                         }),
-                    new MapLookEditor(opened, () -> showTool("Territories")))),
+                    new MapLookEditor(
+                        opened,
+                        () -> showTool("Territories"),
+                        () -> {
+                          showEditor(territoriesEditor);
+                          territoriesEditor.paintTextures();
+                        }))),
             new Sidebar.Group(
                 "Players",
                 List.of(
@@ -876,9 +883,10 @@ public final class MapMakerWindow extends JFrame {
     setContentPane(content);
     opened.onChange(
         () -> {
-          // a Check was of the map before this change
-          if (check == Check.DONE) {
-            check = Check.NOT_YET;
+          // a Check was of the map before this change, unless it is that map still, eg after a
+          // save (Home, which heard of the change first, knows)
+          if (check != Check.RUNNING) {
+            check = homeEditor.checked() ? Check.DONE : Check.NOT_YET;
           }
           updateState();
         });
@@ -1205,6 +1213,18 @@ public final class MapMakerWindow extends JFrame {
     menu.addSeparator();
     menu.add(menuItem("Close map", KeyEvent.VK_W, InputEvent.CTRL_DOWN_MASK))
         .addActionListener(e -> closeMap());
+    menu.addSeparator();
+    final JCheckBoxMenuItem all = new JCheckBoxMenuItem("Show all options", Folds.showsAll());
+    all.setToolTipText(
+        "Every \"▸ More options\" row starts open, in every tool and the next time too");
+    all.addActionListener(
+        e -> {
+          editors.values().forEach(Editor::commit);
+          Folds.toggleShowAll();
+          project.showAgain();
+        });
+    menu.add(all);
+    menu.add("Version " + EddiesMapEditor.version()).setEnabled(false);
     return menu;
   }
 

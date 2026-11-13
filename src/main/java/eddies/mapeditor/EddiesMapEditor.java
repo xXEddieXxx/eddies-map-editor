@@ -25,6 +25,7 @@ public final class EddiesMapEditor {
   private static final String WITH_TRIPLEA = "eddies.mapeditor.withTriplea";
   // the jar of the TripleA the player chose, for a folder that has no program Play could start
   private static final String JAR = "tripleaJar";
+  static final String MORE_MEMORY = "-XX:MaxRAMPercentage=50";
 
   private EddiesMapEditor() {}
 
@@ -159,6 +160,15 @@ public final class EddiesMapEditor {
     return Preferences.userNodeForPackage(EddiesMapEditor.class);
   }
 
+  /**
+   * The editor's version, eg 1.2.0: the Implementation-Version the release build writes into the
+   * jar's manifest (-PappVersion); "dev" for a run without one, eg from the source.
+   */
+  static String version() {
+    final String version = EddiesMapEditor.class.getPackage().getImplementationVersion();
+    return version == null ? "dev" : version;
+  }
+
   /** The editor again, with TripleA's jar after its own class path. */
   static List<String> command(final Path jar, final String[] args) {
     final Path bin = Path.of(System.getProperty("java.home"), "bin");
@@ -168,6 +178,9 @@ public final class EddiesMapEditor {
     final List<String> command = new ArrayList<>();
     command.add(java.toString());
     command.add("--enable-native-access=ALL-UNNAMED");
+    // up to half the computer's memory, not Java's quarter: a big map's picture is held whole
+    // to draw borders into (MapFiles.tilesPictureToDrawInto)
+    command.add(MORE_MEMORY);
     command.add("-D" + WITH_TRIPLEA + "=true");
     command.add("-classpath");
     command.add(System.getProperty("java.class.path") + File.pathSeparator + jar);

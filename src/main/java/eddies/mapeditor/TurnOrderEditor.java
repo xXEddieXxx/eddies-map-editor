@@ -114,7 +114,7 @@ final class TurnOrderEditor implements Editor {
     this.project = project;
     fillFilters();
     refreshRows();
-    if (steps.stepCount() >= FOLD_FROM) {
+    if (steps.stepCount() >= FOLD_FROM && !Folds.showsAll()) {
       // a long round starts as its bands, eg a nation's turn each
       steps.bands().forEach(band -> folded.add(band.key()));
       refreshRows();

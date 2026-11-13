@@ -74,6 +74,66 @@ final class MapPlacesTest {
         .containsExactly(moved);
   }
 
+  @DisplayName("Places changed in the files are reloaded as one step, and a save leaves the files")
+  @Test
+  void reloadsPlacesFromTheFiles() throws Exception {
+    // given a place moved by hand in place.txt while the map is open, and a change to save
+    final MapProject project = givenSavedMapWithUnknownPlace();
+    final List<Point> shown = project.getFiles().unitPlaces(TERRITORY);
+    final String byHand =
+        Files.readString(placeTxt(project))
+            .replaceFirst(
+                "(?m)^" + TERRITORY + " .*$", TERRITORY + " (3,4) | overflowToLeft=false");
+    Files.writeString(placeTxt(project), byHand);
+
+    // when
+    final int changed = project.reloadPlaces();
+    final boolean unsaved = project.hasUnsavedChanges();
+    final List<Point> reloaded = project.getFiles().unitPlaces(TERRITORY);
+    project.edit(game -> MapXml.withNotes(game, "A note"));
+    project.save();
+
+    // then
+    assertThat(changed).as("the one line changed by hand").isEqualTo(1);
+    assertThat(reloaded).as("the place as the file has it").containsExactly(new Point(3, 4));
+    assertThat(unsaved).as("what the files have is saved").isFalse();
+    assertThat(placeTxt(project)).as("the save left the file as it was").hasContent(byHand);
+    assertThat(placeTxt(project).resolveSibling("place.txt.bak"))
+        .as("it wrote no place, so no .bak")
+        .doesNotExist();
+
+    // when the note and the reload are undone
+    project.undo();
+    project.undo();
+
+    // then
+    assertThat(project.getFiles().unitPlaces(TERRITORY))
+        .as("the places the editor had are back")
+        .isEqualTo(shown);
+    assertThat(project.hasUnsavedChanges()).as("and differ from the file's").isTrue();
+    assertThat(project.reloadPlaces()).as("a reload is offered again").isEqualTo(1);
+  }
+
+  @DisplayName("A reload drops places changed here, which the tool asks about first")
+  @Test
+  void reloadDropsUnsavedPlaces() throws Exception {
+    // given
+    final MapProject project = givenSavedMapWithUnknownPlace();
+    final List<Point> saved = project.getFiles().unitPlaces(TERRITORY);
+    final boolean before = project.hasUnsavedPlaces();
+    project.setUnitPlaces(TERRITORY, List.of(new Point(9, 9)));
+
+    // when
+    final boolean after = project.hasUnsavedPlaces();
+    final int changed = project.reloadPlaces();
+
+    // then
+    assertThat(List.of(before, after)).as("only the moved place is to ask about").containsExactly(false, true);
+    assertThat(changed).as("the moved place").isEqualTo(1);
+    assertThat(project.getFiles().unitPlaces(TERRITORY)).as("as saved again").isEqualTo(saved);
+    assertThat(project.canUndo()).as("a step to undo").isTrue();
+  }
+
   @DisplayName("A moved center is one step and saved over centers.txt, keeping its .bak")
   @Test
   void savesMovedCenter() throws Exception {

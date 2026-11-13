@@ -4,6 +4,7 @@ import games.strategy.triplea.EngineImageLoader;
 import games.strategy.triplea.image.ImageTransformer;
 import games.strategy.triplea.ui.mapdata.MapData;
 import games.strategy.triplea.ui.mapdata.PlayerColors;
+import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Graphics2D;
@@ -25,6 +26,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -36,6 +38,7 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
@@ -82,6 +85,12 @@ final class MapProject {
   // a picture with lines drawn into it: the picture it came from, so a save writes changed tiles;
   // that first one stays in memory while a later one is used, outside the undo pictures' limit
   private final Map<BufferedImage, BufferedImage> drawnOn = new WeakHashMap<>();
+  // per picture changed in place ({@link #changeInPlace}), its tiles not written yet, as
+  // (column, row); and how often any was changed
+  private final Map<BufferedImage, Set<Point>> unsavedTiles = new WeakHashMap<>();
+  private int pictureEdits;
+  // pixels around a line drawn or erased in place that are cut out with it
+  private static final int IN_PLACE_MARGIN = 64;
   // a resized picture: the picture it was made from, so a save writes its tiles and leaves the
   // small map and the preview, which show the same map, as they are
   private final Map<BufferedImage, BufferedImage> resizedFrom = new WeakHashMap<>();
@@ -96,6 +105,7 @@ final class MapProject {
   // the quick problems of a step, worked out once for the overview and the map's markers
   private @Nullable State problemsOf;
   private List<Problem> problems = List.of();
+  private List<Problem> fineProblems = List.of();
   // how many territories changed since the save, worked out once per step and save for the legend
   private @Nullable State changedOf;
   private @Nullable State changedSince;
@@ -806,18 +816,18 @@ final class MapProject {
   }
 
   private void holdEach(final Function<State, MapFiles> held) {
+    changeEach(
+        s -> {
+          final MapFiles files = held.apply(s);
+          return files == s.files() ? s : new State(s.game(), files, s.texts(), s.drawn());
+        });
+  }
+
+  /** Changes every state there is, no step: what was done and saved stays what it was. */
+  private void changeEach(final UnaryOperator<State> change) {
     // a state is the same state after it, so current == saved stays
     final Map<State, State> holding = new IdentityHashMap<>();
-    final UnaryOperator<State> hold =
-        state ->
-            holding.computeIfAbsent(
-                state,
-                s -> {
-                  final MapFiles files = held.apply(s);
-                  return files == s.files()
-                      ? s
-                      : new State(s.game(), files, s.texts(), s.drawn());
-                });
+    final UnaryOperator<State> hold = state -> holding.computeIfAbsent(state, change);
     final List<State> undone = undos.stream().map(hold).toList();
     final List<State> redone = redos.stream().map(hold).toList();
     undos.clear();
@@ -880,6 +890,12 @@ final class MapProject {
     if (files.picture().isEmpty()) {
       return false;
     }
+    if (files.drawsInPlace()) {
+      return changeInPlace(
+          boundsOf(border),
+          regionOf(border),
+          (part, at) -> Optional.of(withLine(part, moved(border, at), Optional.empty())));
+    }
     step(
         new State(
             game(),
@@ -895,6 +911,13 @@ final class MapProject {
    * picture held ({@link #holdPicture}) or a line under the stroke.
    */
   boolean eraseBorders(final List<Point> stroke, final int width) {
+    if (current.files().drawsInPlace()) {
+      final BorderLine band = new BorderLine(stroke, width, Color.BLACK);
+      return changeInPlace(
+          boundsOf(band),
+          regionOf(band),
+          (part, at) -> MapPicture.withoutLines(part, moved(band, at).line(), width));
+    }
     final Optional<BufferedImage> picture = current.files().picture();
     final Optional<BufferedImage> erased =
         picture.flatMap(p -> MapPicture.withoutLines(p, stroke, width));
@@ -917,6 +940,21 @@ final class MapProject {
    * drawn; false without a picture held or a line there.
    */
   boolean eraseBorder(final MapFiles.SharedBorder border) {
+    if (current.files().drawsInPlace()) {
+      final Rectangle box = border.box();
+      return changeInPlace(
+          box,
+          regionOf(
+              new BorderLine(
+                  List.of(box.getLocation(), new Point(box.x + box.width, box.y + box.height)),
+                  1,
+                  Color.BLACK)),
+          (part, at) ->
+              MapPicture.withoutLines(
+                  part,
+                  new Rectangle(box.x - at.x, box.y - at.y, box.width, box.height),
+                  border.between()));
+    }
     final Optional<BufferedImage> picture = current.files().picture();
     final Optional<BufferedImage> erased =
         picture.flatMap(p -> MapPicture.withoutLines(p, border.box(), border.between()));
@@ -951,12 +989,112 @@ final class MapProject {
 
   /** The region drawn in with the line's, wide enough to reach the territories it touches. */
   private Optional<Rectangle> drawnWith(final BorderLine border) {
-    final Rectangle region = new Rectangle(border.line().getFirst());
-    border.line().forEach(region::add);
-    final int reach = 3 * border.width() + 2;
-    region.grow(reach, reach);
+    final Rectangle region = regionOf(border);
     current.drawn().ifPresent(region::add);
     return Optional.of(region);
+  }
+
+  private static Rectangle regionOf(final BorderLine border) {
+    final Rectangle region = boundsOf(border);
+    final int reach = 3 * border.width() + 2;
+    region.grow(reach, reach);
+    return region;
+  }
+
+  private static Rectangle boundsOf(final BorderLine border) {
+    final Rectangle bounds = new Rectangle(border.line().getFirst());
+    border.line().forEach(bounds::add);
+    return bounds;
+  }
+
+  /** The line as it lies in a part of the picture that starts at this point. */
+  private static BorderLine moved(final BorderLine border, final Point at) {
+    return new BorderLine(
+        border.line().stream().map(p -> new Point(p.x - at.x, p.y - at.y)).toList(),
+        border.width(),
+        border.color());
+  }
+
+  /**
+   * Whether lines are drawn into the map's picture itself, with no undo: it is held and so big
+   * ({@link MapFiles#drawsInPlace}) that a copy per line, which an undo needs, takes too much
+   * memory. The tool says so before the first line.
+   */
+  boolean drawsInPlace() {
+    return current.files().drawsInPlace();
+  }
+
+  /** How often the picture was changed in place: who keeps a copy of it makes it anew then. */
+  int pictureEdits() {
+    return pictureEdits;
+  }
+
+  /**
+   * Changes the map's big picture itself where a line is drawn or erased: the part around it is
+   * cut out, changed as a small picture is, and put back. No step and nothing to undo: every
+   * state holds the one picture. The region counts as drawn in every state, so Make territories
+   * looks there whatever is undone, and the tiles it touches are written by the next save.
+   *
+   * @param around what changes at most, in the picture's pixels
+   * @param change the part changed, given the part and where it starts; empty for no change
+   * @return false, changing nothing, when change makes none
+   */
+  private boolean changeInPlace(
+      final Rectangle around,
+      final Rectangle region,
+      final BiFunction<BufferedImage, Point, Optional<BufferedImage>> change) {
+    final BufferedImage picture = current.files().picture().orElseThrow();
+    final Rectangle grown = new Rectangle(around);
+    // room for the line's width and for the colors an eraser takes from beside a line
+    grown.grow(IN_PLACE_MARGIN, IN_PLACE_MARGIN);
+    final Rectangle part =
+        grown.intersection(new Rectangle(picture.getWidth(), picture.getHeight()));
+    if (part.isEmpty()) {
+      return false;
+    }
+    final BufferedImage cut =
+        new BufferedImage(part.width, part.height, BufferedImage.TYPE_INT_ARGB);
+    final Graphics2D from = cut.createGraphics();
+    from.drawImage(picture, -part.x, -part.y, null);
+    from.dispose();
+    // the part as it was: the cut itself may be the one changed
+    final int[] was = cut.getRGB(0, 0, part.width, part.height, null, 0, part.width);
+    final Optional<BufferedImage> changed = change.apply(cut, part.getLocation());
+    if (changed.isEmpty()) {
+      return false;
+    }
+    final int[] now = changed.get().getRGB(0, 0, part.width, part.height, null, 0, part.width);
+    // only the tiles with a pixel that changed are written by the next save
+    final Rectangle differs = new Rectangle(-1, -1);
+    for (int p = 0; p < now.length; p++) {
+      if (now[p] != was[p]) {
+        differs.add(part.x + p % part.width, part.y + p / part.width);
+      }
+    }
+    if (differs.width < 0) {
+      return false;
+    }
+    final Graphics2D into = picture.createGraphics();
+    into.setComposite(AlphaComposite.Src);
+    into.drawImage(changed.get(), part.x, part.y, null);
+    into.dispose();
+    final int size = MapFiles.tileSize();
+    final Set<Point> tiles = unsavedTiles.computeIfAbsent(picture, p -> new HashSet<>());
+    for (int column = differs.x / size; column <= (differs.x + differs.width) / size; column++) {
+      for (int row = differs.y / size; row <= (differs.y + differs.height) / size; row++) {
+        tiles.add(new Point(column, row));
+      }
+    }
+    pictureEdits++;
+    changeEach(
+        s ->
+            new State(
+                s.game(),
+                s.files(),
+                s.texts(),
+                Optional.of(s.drawn().map(r -> r.union(region)).orElse(region))));
+    listeners.forEach(Runnable::run);
+    return true;
   }
 
   /**
@@ -991,6 +1129,40 @@ final class MapProject {
     final Optional<String> owner = MapXml.owner(game(), territory);
     if (owner.isPresent()) {
       changed = MapXml.withOwner(changed, newName, owner.get());
+    }
+    if (drawn.isPresent() && files.drawsInPlace()) {
+      // the line into the big picture itself, which no undo takes out; then the split as a step
+      final List<Polygon> within = files.polygons().getOrDefault(territory, List.of());
+      changeInPlace(
+          boundsOf(drawn.get()),
+          regionOf(drawn.get()),
+          (part, at) ->
+              Optional.of(
+                  withLine(
+                      part,
+                      moved(drawn.get(), at),
+                      Optional.of(
+                          within.stream()
+                              .map(
+                                  outline -> {
+                                    final Polygon moved =
+                                        new Polygon(
+                                            outline.xpoints, outline.ypoints, outline.npoints);
+                                    moved.translate(-at.x, -at.y);
+                                    return moved;
+                                  })
+                              .toList()))));
+      step(
+          new State(
+              changed,
+              current
+                  .files()
+                  .withOutlines(territory, cut.kept())
+                  .withOutlines(newName, cut.split())
+                  .withTexture(newName, Optional.ofNullable(files.textures().get(territory))),
+              current.texts(),
+              current.drawn()));
+      return true;
     }
     final MapFiles pictured =
         drawn
@@ -1215,6 +1387,39 @@ final class MapProject {
         : Optional.empty();
   }
 
+  /** Whether places were changed here and not saved yet: {@link #reloadPlaces} drops them. */
+  boolean hasUnsavedPlaces() {
+    return !current.files().places().equals(saved.files().places());
+  }
+
+  /**
+   * Reads place.txt, the markers' files and decorations.txt again, eg changed by hand while the
+   * map is open, as one step, so an undo brings the places here back. What the files have counts
+   * as saved: a save writes none of it again, and a map without other changes stays saved.
+   *
+   * @return how many lines of the files differ from the places here; 0 changes nothing
+   */
+  int reloadPlaces() {
+    final State before = current;
+    final boolean wasSaved = current == saved;
+    final MapFiles reloaded = current.files().withPlacesReloaded(saved.files());
+    final MapFiles savedFiles = saved.files().withPlacesReloaded(saved.files());
+    if (reloaded == before.files() && savedFiles == saved.files()) {
+      return 0;
+    }
+    final int differing = reloaded.places().differing(before.files().places());
+    if (savedFiles != saved.files()) {
+      saved = new State(saved.game(), savedFiles, saved.texts(), saved.drawn());
+    }
+    if (reloaded != before.files()) {
+      undos.push(before);
+      redos.clear();
+      current = wasSaved ? saved : state(before.game(), reloaded);
+    }
+    listeners.forEach(Runnable::run);
+    return differing;
+  }
+
   /**
    * Places the territory's units here, in this order, as one step; for none, nothing, as while
    * place.txt does not read ({@link #whyNoPlaces}).
@@ -1379,6 +1584,11 @@ final class MapProject {
     return true;
   }
 
+  /** Has the tools show the map again, eg after "Show all options" changed what they show. */
+  void showAgain() {
+    listeners.forEach(Runnable::run);
+  }
+
   boolean canUndo() {
     return !undos.isEmpty();
   }
@@ -1404,7 +1614,12 @@ final class MapProject {
   }
 
   boolean hasUnsavedChanges() {
-    return current != saved;
+    return current != saved || !unsavedTilesOf(current.files()).isEmpty();
+  }
+
+  /** The tiles of the picture lines were drawn into in place since they were last written. */
+  private Set<Point> unsavedTilesOf(final MapFiles files) {
+    return files.picture().map(unsavedTiles::get).orElse(Set.of());
   }
 
   /** The game as last saved or opened, eg to tell what a save has written pictures for. */
@@ -1418,21 +1633,53 @@ final class MapProject {
         && !getFiles().relief().equals(saved.files().relief());
   }
 
-  /** The problems {@link MapChecks#quick} finds in the map as it is now. */
+  /**
+   * The problems {@link MapChecks#quick} finds in the map as it is now, without those marked as
+   * fine.
+   */
   List<Problem> problems() {
+    findProblems();
+    return problems;
+  }
+
+  /** The problems of the map as it is now that are marked "Fine as it is". */
+  List<Problem> fineProblems() {
+    findProblems();
+    return fineProblems;
+  }
+
+  private void findProblems() {
     if (problemsOf != current) {
-      problems =
+      final List<Problem> all =
           Stream.concat(
-                  MapChecks.quick(game(), getFiles()).stream(),
+                  MapChecks.quickWithFine(game(), getFiles()).stream(),
                   Stream.concat(
                       MapTexts.foreignObjectivesProblem(texts(), game()).stream()
-                          .map(t -> Problem.in("Texts", t)),
+                          .map(t -> Problem.in("Texts", t).markable("foreignObjectives", "")),
                       ProductionTabs.problems(texts(), game()).stream()
                           .map(t -> Problem.in("Production", t))))
               .toList();
+      problems = all.stream().filter(p -> !getFiles().isFine(p)).toList();
+      fineProblems = all.stream().filter(getFiles()::isFine).toList();
       problemsOf = current;
     }
-    return problems;
+  }
+
+  /**
+   * Marks the problem or note "Fine as it is", as one step, kept in map.properties: it no longer
+   * shows or counts. Nothing for a problem that keeps TripleA from loading or starting the game.
+   */
+  void markFine(final Problem problem) {
+    if (problem.key() != null) {
+      setMapProperty(MapFiles.FINE + problem.key(), "true");
+    }
+  }
+
+  /** Takes the mark "Fine as it is" back, as one step: the problem counts again. */
+  void countAgain(final Problem problem) {
+    if (problem.key() != null) {
+      setMapProperty(MapFiles.FINE + problem.key(), "");
+    }
   }
 
   /** How many territories {@link #isChanged} finds changed. */
@@ -1668,6 +1915,14 @@ final class MapProject {
         MapFolder.writePicture(mapFolder, picture);
       }
     }
+    // lines drawn into a big picture itself: the tiles they touched, unless all were just written
+    final Set<Point> drawnTiles = unsavedTilesOf(files);
+    if (!drawnTiles.isEmpty()) {
+      if (!firstSave && files.picture().equals(saved.files().picture())) {
+        MapFolder.writeTiles(mapFolder, files.picture().orElseThrow(), drawnTiles);
+      }
+      drawnTiles.clear();
+    }
     if (files.relief().isPresent() && !files.relief().equals(saved.files().relief())) {
       MapFolder.writeRelief(mapFolder, files.relief().get());
       // a map without a small map gets one with the relief; one there may be made by hand and
@@ -1704,14 +1959,6 @@ final class MapProject {
     final Game game = mapName == null ? saving.game() : MapXml.withMapName(saving.game(), mapName);
     // the file there is the last save: what TripleA's model does not hold is kept from it
     MapFolder.replace(xml, file -> GameXmlKeeper.export(game, xml, file));
-    // the game is saved under the new names: the pictures under the old ones go, unless a
-    // nation of this or another game of the map still has the name
-    for (final Map.Entry<String, String> moved : movedNations.entrySet()) {
-      if (!MapXml.nations(saving.game()).contains(moved.getKey())
-          && !MapFolder.otherGameHasNation(mapFolder, xml, moved.getKey())) {
-        MapFolder.removeNationFiles(mapFolder, moved.getKey(), moved.getValue());
-      }
-    }
     saved = saving;
     current = saved;
     if (!movedNations.isEmpty()) {
@@ -1722,7 +1969,19 @@ final class MapProject {
                   .files()
                   .withNationFilesMoved(movedNations, MapXml.nations(state.game())));
     }
-    listeners.forEach(Runnable::run);
+    try {
+      // the game is saved under the new names: the pictures under the old ones go, unless a
+      // nation of this or another game of the map still has the name. After the map counts as
+      // saved: a picture that does not go, eg open in another program, leaves it saved
+      for (final Map.Entry<String, String> moved : movedNations.entrySet()) {
+        if (!MapXml.nations(saving.game()).contains(moved.getKey())
+            && !MapFolder.otherGameHasNation(mapFolder, xml, moved.getKey())) {
+          MapFolder.removeNationFiles(mapFolder, moved.getKey(), moved.getValue());
+        }
+      }
+    } finally {
+      listeners.forEach(Runnable::run);
+    }
   }
 
   /**

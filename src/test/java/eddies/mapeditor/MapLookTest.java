@@ -12,7 +12,9 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -584,6 +586,37 @@ final class MapLookTest {
             .count();
 
     assertThat(helps).as("the other explanations are tool tips").isEqualTo(3);
+  }
+
+  @DisplayName("The relief section leads to the texture brushes, and Create relief counts them")
+  @Test
+  void reliefLeadsToTextures() throws Exception {
+    // given a map with one textured territory
+    final MapProject project = givenSavedMapWithRed();
+    project.editFiles(files -> files.withTexture("Territory 1", Optional.of("Forest")));
+    final List<String> opened = new ArrayList<>();
+    final MapLookEditor look =
+        new MapLookEditor(project, () -> opened.add("outlines"), () -> opened.add("textures"));
+
+    // when
+    components(look.page())
+        .filter(JButton.class::isInstance)
+        .map(JButton.class::cast)
+        .filter(b -> "Territories ›".equals(b.getText()))
+        .findFirst()
+        .orElseThrow(() -> new AssertionError("No link to Territories"))
+        .doClick();
+    final MapLookEditor.ReliefOptions options =
+        new MapLookEditor.ReliefOptions(project.getFiles(), Set.of());
+
+    // then
+    assertThat(opened).as("the link opens Territories' texture brush").containsExactly("textures");
+    assertThat(labelsIn(look.page()))
+        .as("the line before the link")
+        .contains("Textures for the relief are painted in");
+    assertThat(String.join(" ", labelsIn(options.form)))
+        .as("the dialog says the painted textures are in, and how many territories have one")
+        .contains("Textures painted in Territories are included: 1 territory has one.");
   }
 
   @DisplayName("The relief's strength shows its value as the slider moves")

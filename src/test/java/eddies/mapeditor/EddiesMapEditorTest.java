@@ -71,6 +71,18 @@ final class EddiesMapEditorTest {
             "a");
   }
 
+  @DisplayName("The editor starts again with up to half the memory, for a big map's picture")
+  @Test
+  void startsWithMoreMemory() {
+    final List<String> command =
+        EddiesMapEditor.command(Path.of("game-headed.jar"), new String[0]);
+
+    assertThat(command)
+        .as("before the class path, so Java takes it as its own option")
+        .containsSubsequence(EddiesMapEditor.MORE_MEMORY, "-classpath");
+    assertThat(EddiesMapEditor.MORE_MEMORY).as("half").isEqualTo("-XX:MaxRAMPercentage=50");
+  }
+
   @DisplayName("Only a TripleA with FlatLaf (from 2026-06) is new enough; an older one is not")
   @Test
   void tellsTooOldTriplea() throws Exception {

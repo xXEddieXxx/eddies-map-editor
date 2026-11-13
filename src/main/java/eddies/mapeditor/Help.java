@@ -101,21 +101,29 @@ class Help {
    * per nation in" [Nations ›]: a setting here depends on it.
    */
   static JComponent link(final String text, final String tool) {
-    return link(text, tool, null);
+    return link(text, tool, (String) null);
   }
 
   /** As link, the tool showing the item, eg a territory. */
   static JComponent link(final String text, final String tool, @Nullable final String item) {
+    final JComponent row = link(text, tool, () -> {});
+    final Component open = row.getComponent(row.getComponentCount() - 1);
+    ((JButton) open).addActionListener(e -> MapMakerWindow.openTool(open, tool, item));
+    return row;
+  }
+
+  /** As link, for a tool that is given the way there, eg into a mode of the other tool. */
+  static JComponent link(final String text, final String tool, final Runnable open) {
     // no gap at the left, so the text lines up with the labels above and below
     final JPanel row = new JPanel(new FlowLayout(FlowLayout.LEADING, 0, 0));
     row.setOpaque(false);
     row.add(Theme.newSecondaryLabel(text));
     row.add(Box.createHorizontalStrut(Theme.GAP_XS));
-    final JButton open = new JButton(tool + " ›");
-    Theme.setTertiaryButtonStyle(open);
-    open.getAccessibleContext().setAccessibleName("Open " + tool);
-    open.addActionListener(e -> MapMakerWindow.openTool(open, tool, item));
-    row.add(open);
+    final JButton button = new JButton(tool + " ›");
+    Theme.setTertiaryButtonStyle(button);
+    button.getAccessibleContext().setAccessibleName("Open " + tool);
+    button.addActionListener(e -> open.run());
+    row.add(button);
     return row;
   }
 

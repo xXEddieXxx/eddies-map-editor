@@ -200,7 +200,10 @@ final class ConnectionsEditor implements Editor {
       problems.forEach(p -> inspector.row(problemRow(p, Theme.Status.PROBLEM)));
     }
     // territories without a neighbour: no problem, many finished maps have one on purpose
-    final List<Problem> notes = MapChecks.notes(project.game());
+    final List<Problem> notes =
+        MapChecks.notes(project.game()).stream()
+            .filter(note -> !project.getFiles().isFine(note))
+            .toList();
     if (!notes.isEmpty() && connections > 0) {
       inspector.section("Worth a look");
       notes.forEach(p -> inspector.row(problemRow(p, Theme.Status.TODO)));

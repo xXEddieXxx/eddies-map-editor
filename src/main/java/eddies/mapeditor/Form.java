@@ -18,8 +18,6 @@ import java.awt.event.ComponentEvent;
 import java.io.Serial;
 import java.text.DecimalFormat;
 import java.text.ParseException;
-import java.util.HashSet;
-import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import javax.annotation.Nullable;
@@ -50,9 +48,6 @@ final class Form extends JPanel implements Scrollable {
   private static final int NUMBER_WIDTH = 96;
   private static final int NUMBER_LABEL_WIDTH = 140;
   private static final int TWO_COLUMNS_FROM = 820;
-  // which "More options" are open, by id: static, so a choice outlives the form an editor rebuilds
-  // on every pick, for the session only (Swing thread)
-  private static final Set<String> OPEN = new HashSet<>();
 
   private final int textWidth;
   private int row;
@@ -61,6 +56,8 @@ final class Form extends JPanel implements Scrollable {
   // after columns(): the sections side by side, and the one that new rows go into
   private @Nullable JPanel columns;
   private @Nullable Form block;
+  // a long form, eg a unit's options: its rows and sections closer together
+  private boolean dense;
 
   /**
    * @param textWidth how wide notes may get before they wrap, in pixels
@@ -78,6 +75,17 @@ final class Form extends JPanel implements Scrollable {
             revalidate();
           }
         });
+  }
+
+  /** Rows and sections closer together from here on, for a form of very many options. */
+  Form dense() {
+    dense = true;
+    return this;
+  }
+
+  // a gap between rows, a third of it in a dense form
+  private int gap(final int usual) {
+    return dense ? usual / 3 : usual;
   }
 
   private static int columnsAt(final int formWidth) {
@@ -149,33 +157,34 @@ final class Form extends JPanel implements Scrollable {
     separated.setBorder(
         BorderFactory.createCompoundBorder(
             BorderFactory.createMatteBorder(1, 0, 0, 0, Theme.getSeparatorColor()),
-            BorderFactory.createEmptyBorder(Theme.GAP_M, 0, 0, 0)));
+            BorderFactory.createEmptyBorder(dense ? Theme.GAP_S : Theme.GAP_M, 0, 0, 0)));
     separated.add(heading, BorderLayout.CENTER);
     if (columns != null) {
       block = newBlock();
       columns.add(block);
     }
-    return add(separated, Theme.GAP_XL, Theme.GAP_S);
+    return add(separated, dense ? Theme.GAP_M : Theme.GAP_XL, gap(Theme.GAP_S));
   }
 
   private Form newBlock() {
     final Form inner = new Form(textWidth);
     inner.setBorder(BorderFactory.createEmptyBorder());
     inner.setOpaque(false);
+    inner.dense = dense;
     return inner;
   }
 
   /** A field with its label above it; a number keeps its size instead of the form's width. */
   Form field(final String label, final JComponent field) {
     fields++;
-    add(labelFor(label, field), Theme.GAP_M, Theme.GAP_XS);
+    add(labelFor(label, field), gap(Theme.GAP_M), gap(Theme.GAP_XS));
     return addField(field);
   }
 
   /** A field whose label has a "?" that explains what it means. */
   Form field(final String label, final String help, final JComponent field) {
     fields++;
-    add(Help.with(labelFor(label, field), help), Theme.GAP_M, Theme.GAP_XS);
+    add(Help.with(labelFor(label, field), help), gap(Theme.GAP_M), gap(Theme.GAP_XS));
     return addField(field);
   }
 
@@ -231,13 +240,13 @@ final class Form extends JPanel implements Scrollable {
     line.add(label);
     line.add(Box.createHorizontalStrut(Theme.GAP_S));
     line.add(narrowed(spinner));
-    return add(line, Theme.GAP_M, 0);
+    return add(line, gap(Theme.GAP_M), 0);
   }
 
   /** A component of its own, eg a check box or a list of rows. */
   Form row(final JComponent component) {
     fields++;
-    return add(component, 6, 0);
+    return add(component, gap(6), 0);
   }
 
   /** The line below a field that tells what is wrong with it; call it right after the field. */
@@ -262,7 +271,8 @@ final class Form extends JPanel implements Scrollable {
 
   /**
    * "▸ More options (n)": options the game reads more rarely, behind a row that opens them. Whether
-   * it is open is kept by id for the session. With nothing in it, it is not shown.
+   * it is open is kept by id for the session ({@link Folds}: open from the start with "Show all
+   * options"). With nothing in it, it is not shown.
    *
    * @param count how many fields fill adds
    */
@@ -294,7 +304,7 @@ final class Form extends JPanel implements Scrollable {
     toggle.setToolTipText("Options the game reads more rarely");
     final Runnable show =
         () -> {
-          final boolean open = OPEN.contains(id);
+          final boolean open = Folds.isOpen(id);
           Theme.showFold(toggle, label, open);
           // closed, the fields stay in the form, only hidden
           inner.setVisible(open);
@@ -303,9 +313,7 @@ final class Form extends JPanel implements Scrollable {
         };
     toggle.addActionListener(
         e -> {
-          if (!OPEN.remove(id)) {
-            OPEN.add(id);
-          }
+          Folds.toggle(id);
           show.run();
         });
     show.run();
@@ -314,7 +322,7 @@ final class Form extends JPanel implements Scrollable {
     line.setOpaque(false);
     line.setBorder(BorderFactory.createEmptyBorder(0, -toggle.getInsets().left, 0, 0));
     line.add(toggle, BorderLayout.CENTER);
-    add(line, Theme.GAP_M, 0);
+    add(line, gap(Theme.GAP_M), 0);
     return add(inner, 0, 0);
   }
 

@@ -62,6 +62,30 @@ final class HomeEditorTest {
     assertThat(opened).as("the problem names Territories").containsExactly("Territories");
   }
 
+  @DisplayName("A save keeps Check's result, so Check is not asked for again; a change drops it")
+  @Test
+  void saveKeepsTheCheck() throws Exception {
+    // given a map checked with a change not saved yet
+    final MapProject project =
+        MapProject.newMap("Island Wars", MapPictureTest.givenPicture(), List.of("Red"), maps)
+            .project();
+    final HomeEditor home = givenHome(project);
+    project.edit(game -> MapXml.withNotes(game, "A note"));
+    home.setValidated(List.of());
+
+    // when
+    project.save();
+    final boolean afterSave = home.checked();
+    project.edit(game -> MapXml.withNotes(game, "Another note"));
+    final boolean afterChange = home.checked();
+    project.undo();
+
+    // then
+    assertThat(afterSave).as("the saved map is the one Check loaded").isTrue();
+    assertThat(afterChange).as("a changed map is not").isFalse();
+    assertThat(home.checked()).as("back at the checked map by undo").isTrue();
+  }
+
   @DisplayName("After the wizard, Home tells which nations it left out")
   @Test
   void welcomeShowsRefusedNations() throws Exception {

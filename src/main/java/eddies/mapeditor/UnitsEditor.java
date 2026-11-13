@@ -4,6 +4,7 @@ import com.formdev.flatlaf.FlatClientProperties;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Dimension;
+import java.awt.Color;
 import java.awt.FlowLayout;
 import java.awt.GridLayout;
 import java.awt.Image;
@@ -49,6 +50,7 @@ import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
+import javax.swing.SwingConstants;
 import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JRadioButton;
@@ -59,6 +61,7 @@ import javax.swing.SwingUtilities;
 import org.triplea.map.data.elements.AttachmentList.Attachment.Option;
 import org.triplea.map.data.elements.Game;
 import org.triplea.swing.SwingComponents;
+import org.triplea.swing.WrapLayout;
 import eddies.mapeditor.MakerIcon.Glyph;
 import eddies.mapeditor.MapFiles.UnitPicture;
 import eddies.mapeditor.MapFiles.UnitPicture.Coloring;
@@ -84,6 +87,8 @@ final class UnitsEditor implements Editor {
   private static final int STACKING_LABEL_WIDTH = 110;
   private static final int PICTURE_SIZE = 48;
   private static final int NUMBER_WIDTH = 96;
+  // the numbers beside the picture: narrower, so the kind fits beside them
+  private static final int ESSENTIAL_WIDTH = 72;
   private static final int MORE_NAME_WIDTH = 220;
   private static final Map<String, String> SIDES =
       orderedMap("offence", "attacking", "defence", "defending");
@@ -103,11 +108,11 @@ final class UnitsEditor implements Editor {
   private final MapProject project;
   private final JPanel page = new JPanel(new BorderLayout(8, 0));
   private final SearchList list;
-  private final Form inspector = new Form(280);
+  private final Form inspector = new Form(280).dense();
   // the sections, side by side when wide enough
-  private final Form grid = new Form(280);
+  private final Form grid = new Form(280).dense();
   // what the sections leave for the whole width: the other kinds' sections, every other option
-  private final Form below = new Form(280);
+  private final Form below = new Form(280).dense();
   private final JTextField optionSearch = new JTextField(22);
   private @Nullable String selected;
   private @Nullable String openSupport;
@@ -402,8 +407,6 @@ final class UnitsEditor implements Editor {
     }
     final String unit = selected;
     showHeader(game, unit);
-    showEssentials(game, unit);
-    showKind(game, unit);
     inspector.row(leftAligned(optionSearch));
     inspector.row(grid);
     inspector.row(below);
@@ -437,16 +440,21 @@ final class UnitsEditor implements Editor {
     lineAndLinks.setLayout(new BoxLayout(lineAndLinks, BoxLayout.Y_AXIS));
     lineAndLinks.setOpaque(false);
     final JPanel linkRow = leftAligned(links.toArray(JComponent[]::new));
-    headerLine.setAlignmentX(Component.LEFT_ALIGNMENT);
-    linkRow.setAlignmentX(Component.LEFT_ALIGNMENT);
-    lineAndLinks.add(headerLine);
-    lineAndLinks.add(linkRow);
-    inspector.row(
-        Details.header(
-            project.unitPicture(unit).map(UnitsEditor::newPicture),
-            unit,
-            lineAndLinks,
-            List.of()));
+    // the numbers of the list's line and the kind beside the picture, on its lines; the kind
+    // goes below them where the panel is narrow
+    final JPanel essentials = new JPanel(new WrapLayout(FlowLayout.LEFT, 0, 0));
+    essentials.setOpaque(false);
+    essentials.add(newEssentials(game, unit));
+    essentials.add(Box.createHorizontalStrut(Theme.GAP_L));
+    essentials.add(newKind(game, unit));
+    for (final JComponent part : List.of(headerLine, linkRow, essentials)) {
+      part.setAlignmentX(Component.LEFT_ALIGNMENT);
+      lineAndLinks.add(part);
+    }
+    final Optional<JComponent> picture = project.unitPicture(unit).map(UnitsEditor::newPicture);
+    // at the top, beside the name, not in the middle of the lines beside it
+    picture.ifPresent(p -> ((JLabel) p).setVerticalAlignment(SwingConstants.TOP));
+    inspector.row(Details.header(picture, unit, lineAndLinks, List.of()));
     showMissingPictures(game, unit);
     // an uploaded picture's coloring says it too: one choice, not two
     uploaded.ifPresentOrElse(u -> showColoring(unit, u), () -> showNationTint(unit));
@@ -568,7 +576,7 @@ final class UnitsEditor implements Editor {
   }
 
   /** Cost, attack, defense, movement and hit points in one row, labels above. */
-  private void showEssentials(final Game game, final String unit) {
+  private JComponent newEssentials(final Game game, final String unit) {
     final JPanel cells = new JPanel(new GridLayout(2, 5, Theme.GAP_M, Theme.GAP_XS));
     cells.setOpaque(false);
     final List<JComponent> fields = new ArrayList<>();
@@ -595,10 +603,10 @@ final class UnitsEditor implements Editor {
     }
     fields.forEach(
         field -> {
-          field.setPreferredSize(new Dimension(NUMBER_WIDTH, field.getPreferredSize().height));
+          field.setPreferredSize(new Dimension(ESSENTIAL_WIDTH, field.getPreferredSize().height));
           cells.add(field);
         });
-    inspector.row(leftAligned(cells));
+    return cells;
   }
 
   /** The number's field, or where it is set instead. */
@@ -623,11 +631,14 @@ final class UnitsEditor implements Editor {
     return field;
   }
 
-  /** Land, sea or air; none chosen for a unit that both sails and flies. */
-  private void showKind(final Game game, final String unit) {
+  /**
+   * Land, sea or air, under its label like the numbers beside it; none chosen for a unit that
+   * both sails and flies.
+   */
+  private JComponent newKind(final Game game, final String unit) {
     final Optional<UnitKind> kind = UnitsXml.kind(game, unit);
     final ButtonGroup group = new ButtonGroup();
-    final List<JComponent> parts = new ArrayList<>(List.of(new JLabel("Kind")));
+    final List<JComponent> parts = new ArrayList<>();
     for (final UnitKind each : UnitKind.values()) {
       final String word = each.name().charAt(0) + each.name().substring(1).toLowerCase(Locale.ROOT);
       final JRadioButton radio = new JRadioButton(word, kind.equals(Optional.of(each)));
@@ -645,7 +656,11 @@ final class UnitsEditor implements Editor {
     if (kind.isEmpty()) {
       parts.add(Theme.newSecondaryLabel("Both sail and fly: set in Sea / Air"));
     }
-    inspector.row(leftAligned(parts.toArray(JComponent[]::new)));
+    final JPanel cells = new JPanel(new GridLayout(2, 1, 0, Theme.GAP_XS));
+    cells.setOpaque(false);
+    cells.add(new JLabel("Kind"));
+    cells.add(leftAligned(parts.toArray(JComponent[]::new)));
+    return cells;
   }
 
   // ---- the sections
@@ -664,8 +679,14 @@ final class UnitsEditor implements Editor {
     // read once: every key typed into the search asks about each option
     final List<Option> own = UnitsXml.options(game, unit);
     grid.columns();
+    String before = "";
     for (final UnitOptions.Section section : UnitOptions.SECTIONS) {
       final String title = section.title();
+      if (before.equals(UnitOptions.COMBAT)) {
+        // what the unit gives others in a battle, right after what it does there itself
+        found += showSupportSection(game, unit, filter);
+      }
+      before = title;
       final List<UnitOptions.UnitOption> all =
           section.options().stream()
               .filter(o -> !UnitOptions.ESSENTIALS.contains(o.name()))
@@ -676,7 +697,7 @@ final class UnitsEditor implements Editor {
         final List<UnitOptions.UnitOption> matching =
             all.stream().filter(o -> UnitOptions.matches(o, filter)).toList();
         if (!matching.isEmpty()) {
-          grid.section(title);
+          showSectionTitle(grid, title);
           matching.forEach(o -> showOption(grid, game, unit, o));
           found += matching.size();
         }
@@ -694,7 +715,7 @@ final class UnitsEditor implements Editor {
           all.stream().filter(o -> isSet.test(o) || UnitOptions.COMMON.contains(o.name())).toList();
       final List<UnitOptions.UnitOption> rest =
           all.stream().filter(o -> !few.contains(o)).toList();
-      grid.section(title);
+      showSectionTitle(grid, title);
       if (few.isEmpty()) {
         grid.note("Nothing special.");
       }
@@ -707,11 +728,6 @@ final class UnitsEditor implements Editor {
       }
     }
     found += showStackingLimits(game, unit, filter);
-    if (SUPPORT.toLowerCase(Locale.ROOT).contains(filter)) {
-      grid.section(SUPPORT);
-      showSupports(game, unit);
-      found++;
-    }
     final List<Option> more = moreOptions(game, unit);
     if (!filter.isEmpty()) {
       final List<Option> matching =
@@ -737,7 +753,7 @@ final class UnitsEditor implements Editor {
             f.columns();
             notForKind.forEach(
                 (title, options) -> {
-                  f.section(title);
+                  showSectionTitle(f, title);
                   options.forEach(o -> showOption(f, game, unit, o));
                 });
           });
@@ -745,6 +761,22 @@ final class UnitsEditor implements Editor {
     // with no other option, the way to add one alone
     below.more("units.more", more.size(), form -> showMoreOptions(form, game, unit, more));
     below.row(leftAligned(newAddOption(unit)));
+  }
+
+  /** The section's heading, with a "?" where there is something to say about all of it. */
+  private static void showSectionTitle(final Form form, final String title) {
+    Optional.ofNullable(UnitOptions.SECTION_HELP.get(title))
+        .ifPresentOrElse(help -> form.section(title, help), () -> form.section(title));
+  }
+
+  /** Gives support, unless the search has text that is not in its title; 1 when shown. */
+  private int showSupportSection(final Game game, final String unit, final String filter) {
+    if (!SUPPORT.toLowerCase(Locale.ROOT).contains(filter)) {
+      return 0;
+    }
+    grid.section(SUPPORT);
+    showSupports(game, unit);
+    return 1;
   }
 
   /** eg "Not for land units": the sections that are for other kinds of unit. */
@@ -1022,6 +1054,8 @@ final class UnitsEditor implements Editor {
                   + SearchList.escape(supportSentence(game, unit, support))
                   + "</div></html>");
       sentence.setToolTipText(support);
+      // green for a help to allies, red for a harm to enemies; the sentence says which, too
+      supportColor(game, unit, support).ifPresent(sentence::setForeground);
       final JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, Theme.GAP_XS, 0));
       buttons.setOpaque(false);
       buttons.add(
@@ -1091,6 +1125,20 @@ final class UnitsEditor implements Editor {
             : String.join(", ", units.subList(0, 2)) + " and " + (units.size() - 2) + " more")
         + " when "
         + both(attacking, defending, "attacking", "defending", " or ");
+  }
+
+  /**
+   * The color a support's sentence reads in: the theme's green for one to allied units only, its
+   * red for one to enemy units only (which a map makes a malus); none for both or neither.
+   */
+  static Optional<Color> supportColor(final Game game, final String unit, final String support) {
+    final List<String> factions =
+        words(UnitsXml.supportOption(game, unit, support, "faction").orElse(""));
+    final boolean allied = factions.stream().anyMatch("allied"::equalsIgnoreCase);
+    final boolean enemy = factions.stream().anyMatch("enemy"::equalsIgnoreCase);
+    return allied == enemy
+        ? Optional.empty()
+        : Optional.of(allied ? Theme.getSuccessColor() : Theme.getDangerColor());
   }
 
   /** The first, the second, or both joined, eg "attack and defense"; empty for neither. */

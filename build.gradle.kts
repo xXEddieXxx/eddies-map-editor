@@ -51,6 +51,14 @@ if (triplea.isEmpty) {
 val appName = "Eddies Map Editor"
 // jpackage takes numbers only, eg 1.2.0: -PappVersion=1.2.0
 val appVersion = providers.gradleProperty("appVersion").getOrElse("1.0.0")
+
+// The editor shows its version (File menu, start page) from its jar's manifest
+// (EddiesMapEditor.version); a build without -PappVersion has none and shows "dev".
+tasks.jar {
+    providers.gradleProperty("appVersion").orNull?.let { version ->
+        manifest { attributes("Implementation-Version" to version) }
+    }
+}
 val jpackage = javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(25)) }
     .map { it.metadata.installationPath.file("bin/jpackage").asFile.absolutePath }
 val appImageDir = layout.buildDirectory.dir("app-image")

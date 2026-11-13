@@ -14,10 +14,12 @@ import java.util.List;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.UnaryOperator;
 import javax.swing.AbstractButton;
 import javax.swing.JFormattedTextField;
 import com.formdev.flatlaf.FlatClientProperties;
 import javax.swing.JLabel;
+import javax.swing.JRadioButton;
 import javax.swing.JList;
 import javax.swing.JSpinner;
 import javax.swing.JCheckBox;
@@ -169,6 +171,83 @@ final class UnitsEditorTest {
     assertThat(sentence)
         .as("G40's fighter: bonus 1, strength, number 1, allied tactical_bomber, offence")
         .isEqualTo("+1 attack to 1 allied tactical_bomber when attacking");
+  }
+
+  @DisplayName("A support to allied units reads green, one to enemy units red, one to both plain")
+  @Test
+  void supportReadsInItsSidesColor() throws Exception {
+    // given G40's fighter, which supports allied tactical bombers
+    final MapProject project = givenG40();
+    final String support = "supportAttachmentFighter";
+    final UnaryOperator<String> faction =
+        value ->
+            UnitsEditor.supportColor(
+                    UnitsXml.withSupportOption(
+                        project.game(), "fighter", support, "faction", value),
+                    "fighter",
+                    support)
+                .map(color -> color.equals(Theme.getSuccessColor()) ? "green" : "red")
+                .orElse("plain");
+
+    // when, then
+    assertThat(List.of(faction.apply("allied"), faction.apply("enemy"), faction.apply("allied:enemy")))
+        .as("the theme's success and danger colors; the sentence keeps the words")
+        .containsExactly("green", "red", "plain");
+    assertThat(Theme.getSuccessColor()).as("two colors").isNotEqualTo(Theme.getDangerColor());
+  }
+
+  @DisplayName("The numbers and the kind sit beside the picture's name; Gives support follows"
+      + " Combat; Air and anti-air says when targeted fire comes")
+  @Test
+  void topRowAndSectionOrder() throws Exception {
+    // given
+    final MapProject project = givenG40();
+    final List<String> labels = new ArrayList<>();
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          try {
+            final Component page = givenEditor(project, "fighter", "none").page();
+            labels.addAll(givenLabels(page));
+            final JLabel name =
+                collect(page, JLabel.class).stream()
+                    .filter(l -> "fighter".equals(l.getText()))
+                    .findFirst()
+                    .orElseThrow();
+            final JLabel cost =
+                collect(page, JLabel.class).stream()
+                    .filter(l -> "Cost".equals(l.getText()))
+                    .findFirst()
+                    .orElseThrow();
+            // the header's text column holds the name, and the numbers and kind below it
+            seen.add(SwingUtilities.isDescendingFrom(cost, name.getParent()));
+            seen.add(
+                collect(name.getParent(), JRadioButton.class).stream()
+                    .map(AbstractButton::getText)
+                    .toList());
+            seen.add(
+                collect(page, AbstractButton.class).stream()
+                    .filter(b -> "?".equals(b.getText()))
+                    .map(b -> b.getAccessibleContext().getAccessibleName())
+                    .anyMatch(spoken -> spoken != null && spoken.contains("Air and anti-air")));
+          } catch (final Exception e) {
+            throw new IllegalStateException(e);
+          }
+        });
+
+    // then
+    assertThat(seen)
+        .as("Cost and the kind in the header beside the picture; a \"?\" on Air and anti-air")
+        .containsExactly(true, List.of("Land", "Sea", "Air"), true);
+    assertThat(labels.indexOf("Gives support"))
+        .as("Gives support comes right after Combat, before Movement")
+        // the last Movement: the first is the number's label at the top
+        .isBetween(labels.indexOf("Combat"), labels.lastIndexOf("Movement"));
+    assertThat(UnitOptions.SECTION_HELP.get("Air and anti-air"))
+        .as("what the \"?\" says")
+        .contains("before bombardment and before first strike");
   }
 
   @DisplayName("Combat shows its common options and those set; the rest behind a fold row")

@@ -553,7 +553,7 @@ class GameRulesXml {
 
   // the delegates TripleA runs for no nation; every other asks for its step's nation and fails
   // without one ("gamePlayer is null")
-  private static final Set<String> ROUND_CLASSES =
+  static final Set<String> ROUND_CLASSES =
       Set.of("InitializationDelegate", "EndRoundDelegate", "RandomStartDelegate");
 
   /** Whether the step's delegate, one the game has, asks for the step's nation. */

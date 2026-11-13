@@ -15,7 +15,9 @@ import java.awt.Point;
 import java.awt.Polygon;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
+import java.awt.Shape;
 import java.awt.geom.Area;
+import java.awt.geom.Path2D;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
@@ -112,6 +114,9 @@ record MapFiles(
   // the nations that have no capital on purpose, which the game does not read either: the guide
   // then asks for none, eg guide.noCapital=Chinese,Dutch
   static final String NO_CAPITAL = "guide.noCapital";
+  // the problems and notes the map maker marked "Fine as it is", which the game does not read
+  // either: by the problem's kind and what it is about, eg guide.fine.notConnected.Sahara=true
+  static final String FINE = "guide.fine.";
   // a renamed nation's name in the folder, where its flags and unit pictures stay until the next
   // save moves them, eg editor.filesOf.Soviets=Russians; held in memory only, never written
   private static final String FILES_OF = "editor.filesOf.";
@@ -153,6 +158,11 @@ record MapFiles(
   private static final int SAME_BORDER_PIXELS = 3;
   // 50 million pixels, 200 MB: a picture in tiles bigger than this is not held to draw into
   private static final long MAX_HELD_PICTURE = 50_000_000L;
+  // a held picture of more pixels is drawn into itself, with no copy per line for undo
+  // ({@link #drawsInPlace}); not final, as tests lower it rather than make such a picture
+  static long undoPictureLimit = MAX_HELD_PICTURE;
+  // beside a big picture's own bytes: the canvas's smaller copy and squares, tiles being read
+  private static final long BESIDE_PICTURE_BYTES = 256_000_000L;
   // a resized map's sides at least: below it territories fall together
   private static final int MIN_RESIZED_SIDE = 200;
   // a picture counts as drawn in flat colors when this share of its pixels equals its neighbour
@@ -285,7 +295,48 @@ record MapFiles(
       renamed.ifPresent(r -> moved.put(TEXTURE + r, texture));
     }
     renameInList(moved, HIDDEN_NAMES, territory, renamed.stream().toList());
+    moveFine(moved, territory, renamed.stream().toList());
     return moved;
+  }
+
+  /** The marks "Fine as it is" about this territory or nation under these names instead. */
+  private static void moveFine(
+      final Properties properties, final String about, final List<String> put) {
+    for (final String key : properties.stringPropertyNames()) {
+      if (key.startsWith(FINE) && key.endsWith("." + about)) {
+        final String kind = key.substring(0, key.length() - about.length());
+        final Object mark = properties.remove(key);
+        put.forEach(name -> properties.put(kind + name, mark));
+      }
+    }
+  }
+
+  /**
+   * Whether these are the other files but for the marks "Fine as it is": what Check found for
+   * the others then holds for these.
+   */
+  boolean differsInFineOnly(final MapFiles other) {
+    return withoutFine().equals(other.withoutFine());
+  }
+
+  private MapFiles withoutFine() {
+    final Properties plain = copyOfProperties();
+    plain.keySet().removeIf(key -> String.valueOf(key).startsWith(FINE));
+    return new MapFiles(
+        folder,
+        polygons,
+        centers,
+        plain,
+        picture,
+        unitPictures,
+        nationUnitPictures,
+        relief,
+        places);
+  }
+
+  /** Whether the map maker marked the problem "Fine as it is": it then counts nowhere. */
+  boolean isFine(final MapChecks.Problem problem) {
+    return problem.key() != null && properties.containsKey(FINE + problem.key());
   }
 
   /** The list of names between commas with these in the name's place; an emptied list goes. */
@@ -335,6 +386,7 @@ record MapFiles(
       }
     }
     renameInList(moved, NO_CAPITAL, old, put);
+    moveFine(moved, old, put);
     final String inFolder = nationFilesName(old);
     moved.remove(FILES_OF + old);
     if (!inFolder.equals(renamed)) {
@@ -674,6 +726,37 @@ record MapFiles(
   }
 
   /**
+   * The territory's area to fill: its outlines without the other territories' that lie inside
+   * them, eg an island in a sea zone, whose outline has no hole for it; so the island is not
+   * covered or tinted by the sea, whichever is drawn first. Asked once per change by who draws.
+   */
+  Shape filled(final String territory) {
+    final List<Polygon> own = polygons.getOrDefault(territory, List.of());
+    final Path2D shape = new Path2D.Float(Path2D.WIND_EVEN_ODD);
+    own.forEach(outline -> shape.append(outline, false));
+    final List<Polygon> inside =
+        polygons.entrySet().stream()
+            .filter(other -> !other.getKey().equals(territory))
+            .flatMap(other -> other.getValue().stream())
+            .filter(outline -> own.stream().anyMatch(around -> isInside(outline, around)))
+            .toList();
+    // one inside another of them, eg an island in a lake of an island, is no hole of its own
+    inside.stream()
+        .filter(outline -> inside.stream().noneMatch(around -> isInside(outline, around)))
+        .forEach(outline -> shape.append(outline, false));
+    return shape;
+  }
+
+  // the boxes first: only a handful of outlines are looked at closely
+  private static boolean isInside(final Polygon outline, final Polygon around) {
+    final Rectangle box = outline.getBounds();
+    final Rectangle aroundBox = around.getBounds();
+    return aroundBox.contains(box)
+        && (long) box.width * box.height < (long) aroundBox.width * aroundBox.height
+        && pointInside(outline).filter(around::contains).isPresent();
+  }
+
+  /**
    * Borders redrawn for these territories, the others kept as they are.
    *
    * @param taken areas that are other territories', which none of these may take
@@ -995,6 +1078,7 @@ record MapFiles(
     uncolored.remove(PlayerColors.PROPERTY_COLOR_PREFIX + nation);
     uncolored.remove(FILES_OF + nation);
     renameInList(uncolored, NO_CAPITAL, nation, List.of());
+    moveFine(uncolored, nation, List.of());
     return new MapFiles(
         folder,
         polygons,
@@ -1723,6 +1807,22 @@ record MapFiles(
       return markers.getOrDefault(marker, Map.of());
     }
 
+    /** How many lines of the places' files differ between these and the other places. */
+    int differing(final Places other) {
+      int lines = differing(units, other.units) + differing(decorations, other.decorations);
+      for (final Marker marker : Marker.values()) {
+        lines += differing(markers(marker), other.markers(marker));
+      }
+      return lines;
+    }
+
+    private static <T> int differing(final Map<String, T> some, final Map<String, T> others) {
+      final Set<String> names = new HashSet<>(some.keySet());
+      names.addAll(others.keySet());
+      return (int)
+          names.stream().filter(n -> !Objects.equals(some.get(n), others.get(n))).count();
+    }
+
     Places renamed(final String old, final String renamed) {
       final Map<Marker, Map<String, List<Point>>> moved = new EnumMap<>(Marker.class);
       markers.forEach(
@@ -2290,6 +2390,27 @@ record MapFiles(
     return folder.map(f -> f.resolve("misc"));
   }
 
+  /**
+   * The files with the places as the folder's files have them now, eg changed by hand or with
+   * another program while the map is open; a territory renamed since the last save keeps its
+   * line's places under its new name. Unchanged when they are the places here, or without a
+   * folder.
+   *
+   * @param saved the files as last saved
+   */
+  MapFiles withPlacesReloaded(final MapFiles saved) {
+    if (folder.isEmpty()) {
+      return this;
+    }
+    Places read = Places.read(folder.get());
+    for (final Map.Entry<String, String> name : savedNames(saved).entrySet()) {
+      if (!name.getKey().equals(name.getValue())) {
+        read = read.renamed(name.getValue(), name.getKey());
+      }
+    }
+    return read.equals(places) ? this : withPlaces(read);
+  }
+
   private MapFiles withPlaces(final Places changed) {
     return new MapFiles(
         folder,
@@ -2647,6 +2768,74 @@ record MapFiles(
    * reach); empty without tiles, for one that does not read, or one too big to hold in memory.
    */
   Optional<BufferedImage> tilesPicture() {
+    return tilesPicture(MAX_HELD_PICTURE);
+  }
+
+  /**
+   * As {@link #tilesPicture} to draw borders into, also a picture too big for the other uses,
+   * which make copies of it, while the memory Java may take has room for it ({@link
+   * #memoryMissing}); lines are then drawn into it without undo ({@link #drawsInPlace}).
+   */
+  Optional<BufferedImage> tilesPictureToDrawInto() {
+    final Dimension size = size();
+    final long pixels = (long) size.width * size.height;
+    if (pixels <= MAX_HELD_PICTURE) {
+      return tilesPicture();
+    }
+    try {
+      return memoryMissing(pixels, freeMemory()) > 0
+          ? Optional.empty()
+          : tilesPicture(Long.MAX_VALUE);
+    } catch (final OutOfMemoryError e) {
+      // less room than Java said, eg taken meanwhile: as too big
+      return Optional.empty();
+    }
+  }
+
+  /**
+   * Why {@link #tilesPictureToDrawInto} gives no picture though the map has tiles: how much
+   * memory is missing for one this big, else that a tile does not read.
+   */
+  String whyNotDrawnInto() {
+    final Dimension size = size();
+    final long missing = memoryMissing((long) size.width * size.height, freeMemory());
+    return missing > 0
+        ? "The map's picture ("
+            + size.width
+            + " × "
+            + size.height
+            + ") is too big to draw into: the editor would need about "
+            + (missing + 999_999) / 1_000_000
+            + " MB more memory. Close other programs and open the map again, or start the"
+            + " editor's Java with more (-Xmx)."
+        : "One of the map's picture tiles does not read.";
+  }
+
+  /** The bytes Java may still take: its most, less what it uses now. */
+  private static long freeMemory() {
+    final Runtime runtime = Runtime.getRuntime();
+    return runtime.maxMemory() - runtime.totalMemory() + runtime.freeMemory();
+  }
+
+  /**
+   * How many bytes are missing to hold a picture of so many pixels (4 bytes each) with what the
+   * map on screen needs beside it; 0 when it fits.
+   */
+  static long memoryMissing(final long pixels, final long freeBytes) {
+    return Math.max(0, 4 * pixels + BESIDE_PICTURE_BYTES - freeBytes);
+  }
+
+  /**
+   * Whether lines are drawn into the picture held itself: it has more pixels than a copy per
+   * line, which an undo needs, may take.
+   */
+  boolean drawsInPlace() {
+    return picture
+        .filter(p -> (long) p.getWidth() * p.getHeight() > undoPictureLimit)
+        .isPresent();
+  }
+
+  private Optional<BufferedImage> tilesPicture(final long mostPixels) {
     if (tile(0, 0).isEmpty()) {
       return Optional.empty();
     }
@@ -2661,7 +2850,7 @@ record MapFiles(
     }
     final int width = intProperty(WIDTH).orElse(columns * tileSize);
     final int height = intProperty(HEIGHT).orElse(rows * tileSize);
-    if (width <= 0 || height <= 0 || (long) width * height > MAX_HELD_PICTURE) {
+    if (width <= 0 || height <= 0 || (long) width * height > mostPixels) {
       return Optional.empty();
     }
     final BufferedImage whole = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
@@ -2796,6 +2985,18 @@ record MapFiles(
   boolean showsRelief() {
     return Boolean.parseBoolean(
         properties.getProperty(MapData.PROPERTY_MAP_HASRELIEF, "true").strip());
+  }
+
+  /** Whether the game's map goes on at the other side, left and right: so unless set to false. */
+  boolean wrapsX() {
+    return Boolean.parseBoolean(
+        properties.getProperty(MapData.PROPERTY_MAP_SCROLLWRAPX, "true").strip());
+  }
+
+  /** Whether the game's map goes on at the other side, top and bottom: only when set. */
+  boolean wrapsY() {
+    return Boolean.parseBoolean(
+        properties.getProperty(MapData.PROPERTY_MAP_SCROLLWRAPY, "false").strip());
   }
 
   static int tileSize() {
