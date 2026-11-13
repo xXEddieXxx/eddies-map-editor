@@ -165,6 +165,7 @@ final class MapCanvas extends JComponent {
   private transient Optional<Runnable> onEscape = Optional.empty();
   // the selected territory's places shown to move, add and remove
   private boolean editingPlaces;
+  private boolean addsUnitPlaces;
   // the place being dragged and how far, in pixels of the screen
   private transient @Nullable Place dragged;
   private Point draggedBy = new Point();
@@ -182,6 +183,13 @@ final class MapCanvas extends JComponent {
   private boolean byCircle;
   // the eraser's width in the map's pixels while its band is dragged, else 0
   private int eraserWidth;
+  // the eraser's click: the whole border between two territories, shown while the mouse is on it
+  private transient Optional<Consumer<MapFiles.SharedBorder>> onBorder = Optional.empty();
+  private int borderLineWidth;
+  private transient Optional<MapFiles.SharedBorder> hoveredBorder = Optional.empty();
+  private transient Optional<List<String>> hoveredPair = Optional.empty();
+  private transient Optional<BufferedImage> hoveredBorderPicture = Optional.empty();
+  private transient @Nullable MapFiles hoveredBorderOf;
   private transient Optional<Point> pointer = Optional.empty();
   // screen px a click may move between press and release and still set a point
   private static final int CLICK_SLOP = 4;
@@ -487,6 +495,82 @@ final class MapCanvas extends JComponent {
     eraserWidth = width;
   }
 
+  /**
+   * Like {@link #eraseLine(Consumer, int)}; besides, the whole border between two territories
+   * shows while the mouse is on it, and a click there gives it to onBorder instead of a dot to
+   * onLine.
+   *
+   * @param lineWidth how wide the picture's border lines are, in its pixels
+   */
+  void eraseLine(
+      final Consumer<List<Point>> onLine,
+      final int width,
+      final int lineWidth,
+      final Consumer<MapFiles.SharedBorder> onBorder) {
+    eraseLine(onLine, width);
+    borderLineWidth = lineWidth;
+    this.onBorder = Optional.of(onBorder);
+  }
+
+  /** The border under the mouse while the eraser is chosen; worked out once per border. */
+  private void hoverBorder(final Point onMap) {
+    final MapFiles files = project.getFiles();
+    final Optional<List<String>> meeting = files.territoriesMeetingAt(onMap, borderLineWidth);
+    // also a pair without a border between them: asked once, not with every move of the mouse
+    if (meeting.equals(hoveredPair) && hoveredBorderOf == files) {
+      return;
+    }
+    hoveredPair = meeting;
+    final Optional<Rectangle> before = hoveredBorder.map(MapFiles.SharedBorder::box);
+    // shortcut: found on the Swing thread, some 100 ms for a border across a 2000 px box; in a
+    // SwingWorker if a map's long borders make the mouse stutter
+    hoveredBorder = meeting.flatMap(two -> files.sharedBorderAt(onMap, borderLineWidth));
+    hoveredBorderOf = files;
+    hoveredBorderPicture =
+        hoveredBorder.map(
+            border -> {
+              final Rectangle box = border.box();
+              final BufferedImage picture =
+                  new BufferedImage(box.width, box.height, BufferedImage.TYPE_INT_ARGB);
+              final int color = 0xD0000000 | (MARKED.getRGB() & 0xFFFFFF);
+              for (int p = 0; p < border.between().length; p++) {
+                if (border.between()[p]) {
+                  picture.setRGB(p % box.width, p / box.width, color);
+                }
+              }
+              return picture;
+            });
+    java.util.stream.Stream.concat(
+            before.stream(), hoveredBorder.map(MapFiles.SharedBorder::box).stream())
+        .forEach(
+            box ->
+                repaint(
+                    (int) (box.x * zoom) - 2,
+                    (int) (box.y * zoom) - 2,
+                    (int) (box.width * zoom) + 4,
+                    (int) (box.height * zoom) + 4));
+  }
+
+  /** The border a click of the eraser would take away, over the map. */
+  private void paintHoveredBorder(final Graphics2D g) {
+    if (hoveredBorder.isEmpty() || hoveredBorderPicture.isEmpty()) {
+      return;
+    }
+    final Rectangle box = hoveredBorder.get().box();
+    g.drawImage(
+        hoveredBorderPicture.get(),
+        (int) Math.round(box.x * zoom),
+        (int) Math.round(box.y * zoom),
+        (int) Math.round(box.width * zoom),
+        (int) Math.round(box.height * zoom),
+        null);
+  }
+
+  /** The border the eraser shows now, eg for a test. */
+  Optional<MapFiles.SharedBorder> hoveredBorder() {
+    return hoveredBorder;
+  }
+
   /** The line set point by point goes to onLine, if it has two points. */
   private void finishLine() {
     final List<Point> drawn = List.copyOf(line);
@@ -534,14 +618,28 @@ final class MapCanvas extends JComponent {
     }
   }
 
+  /**
+   * While the unit places show on every territory, a click inside the chosen territory, off its
+   * places, adds one there, wherever it is, also where the unit does not wholly fit; until {@link
+   * #stopEditingPlaces}.
+   */
+  void addUnitPlacesByClick() {
+    addsUnitPlaces = true;
+  }
+
   void stopEditingPlaces() {
     editingPlaces = false;
+    addsUnitPlaces = false;
     decorating = Optional.empty();
     drawingLine = Optional.empty();
     line = new ArrayList<>();
     byPoints = false;
     byCircle = false;
     eraserWidth = 0;
+    onBorder = Optional.empty();
+    hoveredBorder = Optional.empty();
+    hoveredPair = Optional.empty();
+    hoveredBorderPicture = Optional.empty();
     pointer = Optional.empty();
     lineCheck = Optional.empty();
     lineCheckTimer.stop();
@@ -672,12 +770,7 @@ final class MapCanvas extends JComponent {
   }
 
   private Optional<String> territoryAt(final Point point) {
-    final double x = point.x / zoom;
-    final double y = point.y / zoom;
-    return project.getFiles().polygons().entrySet().stream()
-        .filter(e -> e.getValue().stream().anyMatch(p -> p.contains(x, y)))
-        .map(Map.Entry::getKey)
-        .findFirst();
+    return project.getFiles().territoryAt(point.x / zoom, point.y / zoom);
   }
 
   /**
@@ -749,6 +842,7 @@ final class MapCanvas extends JComponent {
         .forEach(place -> paintPlace(g, place));
     paintVeil(g, visible);
     paintCut(g);
+    paintHoveredBorder(g);
     paintLine(g);
     g.dispose();
   }
@@ -2009,7 +2103,20 @@ final class MapCanvas extends JComponent {
         lineCheckTimer.stop();
         repaint();
         setCursor(Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR));
-        if (drawn.size() >= 2 && SwingUtilities.isLeftMouseButton(e)) {
+        if (onBorder.isPresent() && shortMove && SwingUtilities.isLeftMouseButton(e)) {
+          // the eraser's click: the whole border there, not a dot of it
+          hoverBorder(onMap(e.getPoint()));
+          final Optional<MapFiles.SharedBorder> clicked = hoveredBorder;
+          hoveredBorder = Optional.empty();
+          hoveredPair = Optional.empty();
+          hoveredBorderPicture = Optional.empty();
+          clicked.ifPresentOrElse(
+              onBorder.get(),
+              () ->
+                  Dialogs.toast(
+                      MapCanvas.this,
+                      "! No border between two territories here: drag to erase a line."));
+        } else if (drawn.size() >= 2 && SwingUtilities.isLeftMouseButton(e)) {
           drawingLine.get().accept(byCircle ? ellipse(drawn.getFirst(), drawn.getLast()) : drawn);
         }
       } else {
@@ -2036,6 +2143,17 @@ final class MapCanvas extends JComponent {
           addDecoration(decorating.get(), e.getPoint());
         } else if (editingPlaces && territory.isPresent() && territory.get().equals(selected)) {
           addUnitPlace(e.getPoint());
+        } else if (addsUnitPlaces
+            && everywhere.shows(PlaceKind.UNITS)
+            && territory.isPresent()
+            && territory.get().equals(selected)) {
+          // the unit places show on every territory: a click in the chosen one adds one there
+          addUnitPlace(e.getPoint());
+          Dialogs.toast(
+              MapCanvas.this,
+              "✓ Added a place for units in " + selected,
+              "Undo",
+              project::undo);
         } else {
           territory.ifPresent(onClick);
         }
@@ -2059,6 +2177,9 @@ final class MapCanvas extends JComponent {
     @Override
     public void mouseMoved(final MouseEvent e) {
       hovered = Optional.of(e.getPoint());
+      if (onBorder.isPresent()) {
+        hoverBorder(onMap(e.getPoint()));
+      }
       if (settingPoints()) {
         // only the last segment moves: big maps repaint just its part
         final Rectangle changed = lastSegment();

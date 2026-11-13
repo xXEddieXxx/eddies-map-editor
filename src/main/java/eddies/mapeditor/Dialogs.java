@@ -186,6 +186,11 @@ class Dialogs {
     return show(parent, title, pane).filter(pane.verb()::equals).isPresent();
   }
 
+  /** Something to look at, eg a table, with [Close]. */
+  static void show(final Component parent, final String title, final JComponent content) {
+    show(parent, title, newPane("", List.of(), content, List.of(), List.of(CLOSE), () -> true));
+  }
+
   /** One of the items, with a search above them from 12 items; empty when cancelled. */
   static <T> Optional<T> pick(
       final Component parent,

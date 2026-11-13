@@ -691,13 +691,7 @@ class RulesXml {
 
   // of two on a nation the game keeps the last read
   private static int nationRulesAt(final List<Attachment> attachments, final String nation) {
-    for (int i = attachments.size() - 1; i >= 0; i--) {
-      if (AttachmentsXml.isNamed(attachments.get(i), Constants.RULES_ATTACHMENT_NAME)
-          && nation.equals(attachments.get(i).getAttachTo())) {
-        return i;
-      }
-    }
-    return -1;
+    return AttachmentsXml.lastIndexOf(attachments, Constants.RULES_ATTACHMENT_NAME, nation);
   }
 
   // ---- names

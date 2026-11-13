@@ -38,13 +38,8 @@ class UnitsXml {
 
   private static OptionalInt attachmentIndex(
       final Game game, final String name, final String attachTo) {
-    final List<Attachment> attachments = AttachmentsXml.attachments(game);
-    return IntStream.range(0, attachments.size())
-        .filter(
-            i ->
-                AttachmentsXml.isNamed(attachments.get(i), name)
-                    && attachTo.equals(attachments.get(i).getAttachTo()))
-        .findFirst();
+    final int at = AttachmentsXml.lastIndexOf(AttachmentsXml.attachments(game), name, attachTo);
+    return at < 0 ? OptionalInt.empty() : OptionalInt.of(at);
   }
 
   /**

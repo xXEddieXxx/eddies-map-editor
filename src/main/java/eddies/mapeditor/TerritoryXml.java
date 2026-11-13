@@ -50,11 +50,9 @@ class TerritoryXml {
    * option.
    */
   static List<String> values(final Game game, final AttachmentKey key, final String option) {
-    return AttachmentsXml.attachments(game).stream()
-        .filter(key::matches)
-        .findFirst()
-        .map(AttachmentsXml::options)
-        .orElse(List.of())
+    final List<Attachment> attachments = AttachmentsXml.attachments(game);
+    final int at = AttachmentsXml.lastIndexOf(attachments, key.name(), key.attachTo());
+    return (at < 0 ? List.<Option>of() : AttachmentsXml.options(attachments.get(at)))
         .stream()
         .filter(o -> AttachmentsXml.isOption(o, option) && o.getValue() != null)
         .map(TriggerXml::joined)
@@ -71,11 +69,7 @@ class TerritoryXml {
       return game;
     }
     final List<Attachment> attachments = new ArrayList<>(AttachmentsXml.attachments(game));
-    final int at =
-        IntStream.range(0, attachments.size())
-            .filter(i -> key.matches(attachments.get(i)))
-            .findFirst()
-            .orElse(-1);
+    final int at = AttachmentsXml.lastIndexOf(attachments, key.name(), key.attachTo());
     if (at < 0) {
       attachments.add(
           Attachment.builder()

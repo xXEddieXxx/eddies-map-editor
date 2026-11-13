@@ -107,6 +107,7 @@ final class TerritoriesEditor implements Editor {
   private static final String TERRITORY = "territory";
   private static final String SPLIT = "split";
   private static final String NAME_REFUSED = "Already used, empty, or holds : < (.";
+  static final String ERASER_HOW_TO = "Click a border to erase all of it; drag to erase a part.";
   private static final int MAX_NAMED = 6;
   // how near a border, in pixels of the screen, a drawn line's end is brought to it
   private static final int SNAP_PIXELS = 12;
@@ -119,12 +120,9 @@ final class TerritoriesEditor implements Editor {
   private static final Brush CAPITAL =
       new Brush(
           "Capital",
-          "Painting capitals: click or drag across land to make it its owner's capital.",
+          MapGuide.CAPITAL_HOW_TO,
           Optional.empty(),
-          (g, t) ->
-              MapXml.isWater(g, t)
-                  ? g
-                  : MapXml.owner(g, t).map(owner -> MapXml.withCapital(g, t, owner)).orElse(g));
+          MapXml::withCapitalMovedTo);
 
   // with the effect brushes: the map shows the effects it clears
   private static final Brush NO_EFFECTS =
@@ -649,7 +647,11 @@ final class TerritoriesEditor implements Editor {
 
   private JCheckBoxMenuItem placesItem(final String text, final String file, final Enum<?> kind) {
     final JCheckBoxMenuItem item = new JCheckBoxMenuItem(text, shownPlaces.shows(kind));
-    item.setToolTipText("Shown on every territory, to drag — " + file);
+    item.setToolTipText(
+        "Shown on every territory, to drag"
+            + (kind == PlaceKind.UNITS ? "; a click in the chosen territory adds a place" : "")
+            + " — "
+            + file);
     item.putClientProperty("CheckBoxMenuItem.doNotCloseOnMouseClick", true);
     item.addActionListener(
         e -> {
@@ -776,15 +778,55 @@ final class TerritoriesEditor implements Editor {
       }
       return;
     }
+    final boolean capitalBrush = mode == Mode.PAINT && brush.equals(Optional.of(CAPITAL));
+    final boolean capitalsWanted = capitalBrush && !MapGuide.withoutCapital(project).isEmpty();
+    final Optional<String> capitalBefore =
+        MapXml.owner(project.game(), territory)
+            .filter(owner -> capitalBrush)
+            .map(owner -> MapXml.capitalsOf(project.game(), owner))
+            .filter(capitals -> capitals.size() == 1)
+            .map(List::getFirst);
+    final Game before = project.game();
     brush.filter(b -> mode == Mode.PAINT).ifPresent(b -> paint(b, List.of(territory)));
+    final boolean capitalPainted = capitalBrush && project.game() != before;
+    if (capitalPainted && capitalsWanted && MapGuide.withoutCapital(project).isEmpty()) {
+      // the last capital: the brush has done its work, and a later click must not move one
+      final boolean stepTold = map.goalStep().filter(Step.Id.CAPITALS::equals).isPresent();
+      endMode();
+      if (!stepTold) {
+        Dialogs.toast(page, "✓ Every nation with land has its capital");
+      }
+    } else if (capitalPainted) {
+      tellCapital(territory, capitalBefore);
+    }
     choose(territory);
     list.choose(territory);
+  }
+
+  /** "Canada's capital is now Ottawa (was Toronto)", with Undo, as a click moved it. */
+  private void tellCapital(final String territory, final Optional<String> before) {
+    final String owner = MapXml.owner(project.game(), territory).orElse("");
+    final int capitals = MapXml.capitalsOf(project.game(), owner).size();
+    Dialogs.toast(
+        page,
+        capitals > 1
+            ? "✓ " + territory + " is another capital of " + owner + " (it has " + capitals + ")"
+            : "✓ "
+                + owner
+                + "'s capital is now "
+                + territory
+                + before.map(was -> " (was " + was + ")").orElse(""),
+        "Undo",
+        project::undo);
   }
 
   /** A drag across the map with a brush: paints each territory it passed, as one step. */
   void paintStroke(final List<String> territories) {
     commit();
-    brush.filter(b -> mode == Mode.PAINT).ifPresent(b -> paint(b, territories));
+    // capitals are clicked one by one: a drag across land would make every territory one
+    brush
+        .filter(b -> mode == Mode.PAINT && b != CAPITAL)
+        .ifPresent(b -> paint(b, territories));
   }
 
   /** The brush on the territories as one step: a brush changes the game or the files. */
@@ -885,10 +927,17 @@ final class TerritoriesEditor implements Editor {
     switch (mode) {
       case SELECT -> {
         map.stopEditingPlaces();
+        // with the Places menu's Units shown, a click in the chosen territory adds a place
+        map.addUnitPlacesByClick();
         map.hideBanner();
       }
       case PAINT -> {
-        map.paintStrokes(this::paintStroke);
+        if (brush.equals(Optional.of(CAPITAL))) {
+          // click only: no drag paints, so none shows its territories filled
+          map.stopEditingPlaces();
+        } else {
+          map.paintStrokes(this::paintStroke);
+        }
         map.showBanner(
             brush.orElseThrow().banner(),
             map.goalStep()
@@ -950,7 +999,7 @@ final class TerritoriesEditor implements Editor {
                     case FREEHAND -> map.drawLine(this::borderDrawn);
                     case LINE -> map.drawLineByPoints(this::borderDrawn);
                     case CIRCLE -> map.drawCircle(this::borderDrawn);
-                    case ERASER -> map.eraseLine(this::bordersErased, eraserWidth());
+                    case ERASER -> eraseOnMap(style);
                   }
                   // an edit mode: each line changes the map's picture, which the badge says, as
                   // the text is cut where the brushes and the line's tools need the room
@@ -960,7 +1009,7 @@ final class TerritoriesEditor implements Editor {
                         case FREEHAND -> "Drag a border line.";
                         case LINE -> "Click points; double-click ends.";
                         case CIRCLE -> "Drag a circle, corner to corner.";
-                        case ERASER -> "Drag over border lines to erase them.";
+                        case ERASER -> ERASER_HOW_TO;
                       },
                       drawingTools(style),
                       this::endMode);
@@ -1521,6 +1570,27 @@ final class TerritoriesEditor implements Editor {
     }
   }
 
+  /** The eraser on the map: a drag erases under its band, a click the whole border it is on. */
+  private void eraseOnMap(final MapPicture.LineStyle style) {
+    map.eraseLine(this::bordersErased, eraserWidth(), style.width(), this::borderErased);
+  }
+
+  /**
+   * A click of the eraser on a border: all of the line between the two territories goes from the
+   * picture, as one step, so that they are one area for Make territories.
+   */
+  void borderErased(final MapFiles.SharedBorder border) {
+    if (project.eraseBorder(border)) {
+      Dialogs.toast(
+          page,
+          "✓ Erased the border between " + border.first() + " and " + border.second(),
+          "Undo",
+          project::undo);
+    } else {
+      Dialogs.toast(page, "! Nothing erased: the picture has no line between them.");
+    }
+  }
+
   /** The eraser's width in the picture's pixels: as chosen, else three times its lines' width. */
   private int eraserWidth() {
     return eraserWidth.orElseGet(
@@ -1763,7 +1833,7 @@ final class TerritoriesEditor implements Editor {
         e -> {
           eraserWidth = Optional.of((Integer) width.getValue());
           // the band dragged next is as wide; the banner stays, with the field being typed in
-          map.eraseLine(this::bordersErased, eraserWidth());
+          borderStyle().ifPresent(this::eraseOnMap);
         });
     final JPanel fields = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
     fields.setOpaque(false);
@@ -1865,7 +1935,12 @@ final class TerritoriesEditor implements Editor {
                 g ->
                     MapXml.withCapital(
                         g, territory, capital.isSelected() ? owner.orElse(null) : null)));
-    inspector.row(capital);
+    inspector.row(
+        Help.with(
+            capital,
+            "Where the nation collects its income; losing it costs the nation its PUs. A nation"
+                + " normally has one: the Capital brush moves it. Tick this on another territory"
+                + " for a second capital, which TripleA allows."));
     final JCheckBox victoryCity =
         new JCheckBox("Victory city", MapXml.isVictoryCity(game, territory));
     victoryCity.addActionListener(
@@ -1886,6 +1961,14 @@ final class TerritoriesEditor implements Editor {
     addUnits.setEnabled(!MapXml.unitTypes(game).isEmpty());
     final JPanel addRow = leftAligned();
     addRow.add(addUnits);
+    if (!units.isEmpty()) {
+      final JButton removeAll = new JButton("Remove all");
+      Theme.setTertiaryButtonStyle(removeAll);
+      removeAll.setToolTipText("Take all units away from " + territory + "; Undo brings them back");
+      removeAll.addActionListener(e -> removeUnits(territory));
+      addRow.add(Box.createHorizontalStrut(Theme.GAP_S));
+      addRow.add(removeAll);
+    }
     inspector.row(addRow);
 
     final boolean water = MapXml.isWater(game, territory);
@@ -2664,19 +2747,45 @@ final class TerritoriesEditor implements Editor {
                 + " · "
                 + Optional.ofNullable(units.getOwner()).orElse(NO_OWNER)),
         BorderLayout.CENTER);
+    final UnaryOperator<Game> removed =
+        g -> MapXml.withUnits(g, territory, units.getOwner(), units.getUnitType(), 0);
     final JSpinner count =
         Form.newNumber(
             units.getQuantity(),
             9999,
-            c ->
+            c -> {
+              if (c == 0) {
+                // through the project, so the list is built again without the row
+                project.edit(removed);
+              } else {
                 edit(
                     g ->
                         MapXml.withUnits(
-                            g, territory, units.getOwner(), units.getUnitType(), c)));
+                            g, territory, units.getOwner(), units.getUnitType(), c));
+              }
+            });
     count.setToolTipText("0 removes them");
     count.setPreferredSize(new Dimension(96, count.getPreferredSize().height));
-    row.add(count, BorderLayout.EAST);
+    final JPanel end = leftAligned();
+    end.add(count);
+    end.add(
+        Theme.newIconButton(
+            "×", "Remove " + units.getUnitType(), () -> project.edit(removed)));
+    row.add(end, BorderLayout.EAST);
     return row;
+  }
+
+  /** All the territory's units away as one step, told with Undo instead of asked before. */
+  private void removeUnits(final String territory) {
+    commit();
+    final int count =
+        MapXml.units(project.game(), territory).stream().mapToInt(UnitPlacement::getQuantity).sum();
+    project.edit(g -> MapXml.withTerritoryUnits(g, territory, List.of()));
+    Dialogs.toast(
+        page,
+        "✓ Removed " + SearchList.count(count, count, "unit", "units") + " from " + territory,
+        "Undo",
+        project::undo);
   }
 
   /** Asks for a unit type and its owner, the territory's first (none for null), and adds one. */

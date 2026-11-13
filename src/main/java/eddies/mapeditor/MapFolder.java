@@ -475,6 +475,148 @@ class MapFolder {
   }
 
   /**
+   * Whether another game of the map, not the one in this file, has a nation of the name: the
+   * games of a map share its flags, unit pictures and settings by the nations' names. Read as
+   * text, as a map may have many big games.
+   */
+  static boolean otherGameHasNation(final Path folder, final Path xml, final String nation) {
+    final Pattern player =
+        Pattern.compile(
+            "<player\\s[^>]*\\bname\\s*=\\s*[\"']"
+                + Pattern.quote(nation.replace("&", "&amp;"))
+                + "[\"']");
+    try {
+      for (final Path game : gamesOf(folder).values()) {
+        if (!Files.isSameFile(game, xml) && player.matcher(readNotes(game)).find()) {
+          return true;
+        }
+      }
+      return false;
+    } catch (final IOException e) {
+      // games that cannot be read may name it: the safe answer keeps the old name's files
+      return true;
+    }
+  }
+
+  /**
+   * Copies a renamed nation's pictures to its new name: its flags (flags/&lt;nation&gt;.png or
+   * .gif, _small, _large, _fade, _convoy) and its folder of unit pictures. A picture there under
+   * the new name keeps its first version as ".bak". Where the map has none but the game has its
+   * own for the old name, eg the Germans' flag, those are copied, so the nation looks as before.
+   * The old name keeps its pictures: {@link #removeNationFiles} takes them away once the game is
+   * saved under the new name, unless another game's nation has them. A name that differs in its
+   * letters' case only is the same file on Windows: those are renamed here.
+   */
+  static void copyNationFiles(
+      final Path folder, final String old, final String renamed, final Collection<String> units)
+      throws IOException {
+    final Path flags = folder.resolve("flags");
+    for (final String name : names(flags)) {
+      final Matcher matcher = flagOf(old).matcher(name);
+      if (matcher.matches()) {
+        copy(flags.resolve(name), flags.resolve(renamed + matcher.group(1)));
+      }
+    }
+    for (final String ending : List.of("", "_small", "_large", "_fade", "_convoy")) {
+      for (final String type : List.of(".gif", ".png")) {
+        copyEngineAsset(
+            flags.resolve(renamed + ending + type),
+            List.of("flags", old + ending + type),
+            List.of("flags", renamed + ending + type));
+      }
+    }
+    final Path from = folder.resolve("units").resolve(old);
+    final Path to = folder.resolve("units").resolve(renamed);
+    if (Files.isDirectory(from) && Files.exists(to) && Files.isSameFile(from, to)) {
+      // the folder itself in the new letters
+      copy(from, to);
+    } else if (Files.isDirectory(from)) {
+      final List<Path> pictures;
+      try (Stream<Path> walk = Files.walk(from)) {
+        pictures = walk.filter(Files::isRegularFile).toList();
+      }
+      for (final Path picture : pictures) {
+        copy(picture, to.resolve(from.relativize(picture).toString()));
+      }
+    }
+    // shortcut: of the game's own unit pictures only the unit, hit and disabled ones are copied,
+    // not eg a technology's variants; list the game's folder if a map misses those
+    for (final String unit : units) {
+      for (final String ending : List.of("", "_hit", "_disabled")) {
+        final String name = unit + ending + ".png";
+        copyEngineAsset(
+            to.resolve(name), List.of("units", old, name), List.of("units", renamed, name));
+      }
+    }
+  }
+
+  /** A nation's flags among the names in flags/, their ending as the group. */
+  private static Pattern flagOf(final String nation) {
+    return Pattern.compile(
+        Pattern.quote(nation) + "((?:_small|_large|_fade|_convoy)?\\.(?:png|gif))",
+        Pattern.CASE_INSENSITIVE);
+  }
+
+  /**
+   * Takes a renamed nation's pictures under its old name away, after {@link #copyNationFiles}
+   * and the game's save: they are under the new name now. Nothing where the names differ in
+   * their letters' case only, as those were renamed.
+   */
+  static void removeNationFiles(final Path folder, final String old, final String renamed)
+      throws IOException {
+    if (old.equalsIgnoreCase(renamed)) {
+      return;
+    }
+    final Path flags = folder.resolve("flags");
+    for (final String name : names(flags)) {
+      if (flagOf(old).matcher(name).matches()) {
+        Files.deleteIfExists(flags.resolve(name));
+      }
+    }
+    final Path units = folder.resolve("units").resolve(old);
+    if (Files.isDirectory(units)) {
+      try (Stream<Path> walk = Files.walk(units)) {
+        // deepest first: the files, then the folders they leave empty
+        for (final Path left : walk.sorted(java.util.Comparator.reverseOrder()).toList()) {
+          Files.deleteIfExists(left);
+        }
+      }
+    }
+  }
+
+  private static void copy(final Path from, final Path to) throws IOException {
+    Files.createDirectories(to.getParent());
+    if (Files.exists(to) && Files.isSameFile(from, to)) {
+      // only the letters' case differs, which Windows takes for the same file: renamed, by way
+      // of another name, as a move to itself is none
+      if (!to.toRealPath().getFileName().equals(to.getFileName())) {
+        final Path between = from.resolveSibling(from.getFileName() + ".renaming");
+        Files.move(from, between, StandardCopyOption.REPLACE_EXISTING);
+        Files.move(between, to);
+      }
+      return;
+    }
+    backUp(to);
+    Files.copy(from, to, StandardCopyOption.REPLACE_EXISTING);
+  }
+
+  /** The game's own picture into the map, where the map has none and the game none of that name. */
+  private static void copyEngineAsset(
+      final Path to, final List<String> asset, final List<String> assetOfNewName)
+      throws IOException {
+    final Optional<URL> own = engineAsset(asset.toArray(String[]::new));
+    if (own.isPresent()
+        && !Files.exists(to)
+        && engineAsset(assetOfNewName.toArray(String[]::new)).isEmpty()) {
+      Files.createDirectories(to.getParent());
+      try (java.io.InputStream in = own.get().openStream()) {
+        Files.copy(in, to);
+      }
+    }
+  }
+
+
+  /**
    * Writes the map's whole picture, without its relief, as one png: the one loaded, else put
    * together from its base tiles (TripleA's Tile Image Reconstructor), eg for a paint program.
    *

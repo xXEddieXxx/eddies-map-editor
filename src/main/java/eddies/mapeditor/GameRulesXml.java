@@ -551,6 +551,25 @@ class GameRulesXml {
         .or(() -> ofClass.stream().findFirst());
   }
 
+  // the delegates TripleA runs for no nation; every other asks for its step's nation and fails
+  // without one ("gamePlayer is null")
+  private static final Set<String> ROUND_CLASSES =
+      Set.of("InitializationDelegate", "EndRoundDelegate", "RandomStartDelegate");
+
+  /** Whether the step's delegate, one the game has, asks for the step's nation. */
+  static boolean needsNation(final Game game, final Step step) {
+    return delegate(game, step.getDelegate())
+        .map(Delegate::getJavaClass)
+        .filter(java.util.Objects::nonNull)
+        .filter(name -> !ROUND_CLASSES.contains(name.substring(name.lastIndexOf('.') + 1)))
+        .isPresent();
+  }
+
+  /** Whether the step has no nation though its delegate asks for one. */
+  static boolean lacksNation(final Game game, final Step step) {
+    return (step.getPlayer() == null || step.getPlayer().isBlank()) && needsNation(game, step);
+  }
+
   private static Optional<Delegate> delegate(final Game game, @Nullable final String name) {
     return Optional.ofNullable(game.getGamePlay())
         .map(GamePlay::getDelegates)

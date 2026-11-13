@@ -109,6 +109,19 @@ record MapFiles(
   // territory's, eg relief.texture.Mordor=Mountains, and where one starts, relief.textureOffset.
   static final String TEXTURE = "relief.texture.";
   static final String TEXTURE_OFFSET = "relief.textureOffset.";
+  // the nations that have no capital on purpose, which the game does not read either: the guide
+  // then asks for none, eg guide.noCapital=Chinese,Dutch
+  static final String NO_CAPITAL = "guide.noCapital";
+  // a renamed nation's name in the folder, where its flags and unit pictures stay until the next
+  // save moves them, eg editor.filesOf.Soviets=Russians; held in memory only, never written
+  private static final String FILES_OF = "editor.filesOf.";
+  // map.properties' entries of one nation, each with its name at the end (MapData, PlayerColors)
+  private static final List<String> NATION_KEYS =
+      List.of(
+          PlayerColors.PROPERTY_COLOR_PREFIX,
+          UNIT_TINT,
+          "units.transform.brightness.",
+          "units.transform.flip.");
   private static final String POLYGONS = "polygons.txt";
   static final String CENTERS = "centers.txt";
   static final String PLACEMENTS = "place.txt";
@@ -122,6 +135,11 @@ record MapFiles(
   private static final int MAX_PLACES = 30;
   // pixels kept free around each laid out unit place, so neighbours stand 4 px apart
   private static final int UNIT_GUTTER = 2;
+  // below so many places a territory also gets some that stick out over its border
+  private static final int FEW_PLACES = 3;
+  // off the grid only for territories with at most so many positions to try, so a layout of every
+  // territory stays quick: a sea of 3000 px has room on the grid
+  private static final int MOST_OFF_GRID = 4000;
   // pixels around the territories redrawn where borders were drawn, for the lines around them
   private static final int REDRAW_MARGIN = 10;
   // found effects side by side, about as wide as the game's effect pictures
@@ -266,20 +284,138 @@ record MapFiles(
     if (texture != null) {
       renamed.ifPresent(r -> moved.put(TEXTURE + r, texture));
     }
-    final String unnamed = moved.getProperty(HIDDEN_NAMES);
+    renameInList(moved, HIDDEN_NAMES, territory, renamed.stream().toList());
+    return moved;
+  }
+
+  /** The list of names between commas with these in the name's place; an emptied list goes. */
+  private static void renameInList(
+      final Properties properties, final String key, final String name, final List<String> put) {
+    final String listed = properties.getProperty(key);
     // the game reads the names between the commas as they are
-    if (unnamed != null && List.of(unnamed.split(",")).contains(territory)) {
+    if (listed != null && List.of(listed.split(",")).contains(name)) {
       final String rest =
-          Stream.of(unnamed.split(","))
-              .flatMap(name -> name.equals(territory) ? renamed.stream() : Stream.of(name))
+          Stream.of(listed.split(","))
+              .flatMap(n -> n.equals(name) ? put.stream() : Stream.of(n))
+              .distinct()
               .collect(Collectors.joining(","));
       if (rest.isEmpty()) {
-        moved.remove(HIDDEN_NAMES);
+        properties.remove(key);
       } else {
-        moved.setProperty(HIDDEN_NAMES, rest);
+        properties.setProperty(key, rest);
       }
     }
-    return moved;
+  }
+
+  /**
+   * The files with the nation's settings under its new name: its color, its units' tint,
+   * brightness and flip, its "has no capital", and the unit pictures imported for it. Its flags
+   * and unit pictures in the folder keep the old name until the next save: {@link
+   * #nationFilesName}.
+   */
+  MapFiles withRenamedNation(final String old, final String renamed) {
+    return withNationAs(old, renamed, List.of(renamed));
+  }
+
+  /**
+   * As {@link #withRenamedNation}, but the old name keeps its settings too: another game of the
+   * map still has a nation of that name.
+   */
+  MapFiles withRenamedNationKeeping(final String old, final String renamed) {
+    return withNationAs(old, renamed, List.of(old, renamed));
+  }
+
+  private MapFiles withNationAs(final String old, final String renamed, final List<String> put) {
+    final Properties moved = copyOfProperties();
+    for (final String key : NATION_KEYS) {
+      final String value = properties.getProperty(key + old);
+      if (value != null) {
+        moved.remove(key + old);
+        put.forEach(name -> moved.setProperty(key + name, value));
+      }
+    }
+    renameInList(moved, NO_CAPITAL, old, put);
+    final String inFolder = nationFilesName(old);
+    moved.remove(FILES_OF + old);
+    if (!inFolder.equals(renamed)) {
+      moved.setProperty(FILES_OF + renamed, inFolder);
+    }
+    final Map<NationUnit, BufferedImage> pictures = new LinkedHashMap<>();
+    nationUnitPictures.forEach(
+        (key, image) ->
+            pictures.put(
+                key.nation().equals(old) ? new NationUnit(renamed, key.unit()) : key, image));
+    return new MapFiles(
+        folder, polygons, centers, moved, picture, unitPictures, pictures, relief, places);
+  }
+
+  /**
+   * The name the nation's flags and unit pictures have in the map's folder: its own, or for one
+   * renamed since the last save the name it had then.
+   */
+  String nationFilesName(final String nation) {
+    return properties.getProperty(FILES_OF + nation, nation);
+  }
+
+  /** The nations renamed since the last save, each with its {@link #nationFilesName}. */
+  Map<String, String> renamedNations() {
+    final Map<String, String> renamed = new TreeMap<>();
+    for (final String key : properties.stringPropertyNames()) {
+      if (key.startsWith(FILES_OF)) {
+        renamed.put(key.substring(FILES_OF.length()), properties.getProperty(key));
+      }
+    }
+    return renamed;
+  }
+
+  /**
+   * The files after a save moved nations' files in the folder: each of these nations with the
+   * name its files have now, eg in an undo step from before a rename the name it was saved under.
+   *
+   * @param moved the new name by the name in the folder before the save
+   */
+  MapFiles withNationFilesMoved(final Map<String, String> moved, final List<String> nations) {
+    final Properties named = copyOfProperties();
+    for (final String nation : nations) {
+      final String before = nationFilesName(nation);
+      final String now = moved.getOrDefault(before, before);
+      if (now.equals(nation)) {
+        named.remove(FILES_OF + nation);
+      } else {
+        named.setProperty(FILES_OF + nation, now);
+      }
+    }
+    return named.equals(properties)
+        ? this
+        : new MapFiles(
+            folder,
+            polygons,
+            centers,
+            named,
+            picture,
+            unitPictures,
+            nationUnitPictures,
+            relief,
+            places);
+  }
+
+  /** The nations that have no capital on purpose, so the guide asks for none. */
+  Set<String> nationsWithoutCapital() {
+    return Stream.of(properties.getProperty(NO_CAPITAL, "").split(","))
+        .filter(name -> !name.isEmpty())
+        .collect(Collectors.toCollection(LinkedHashSet::new));
+  }
+
+  /** The files with the nation having no capital on purpose. */
+  MapFiles withNoCapital(final String nation) {
+    final Set<String> without = nationsWithoutCapital();
+    return without.add(nation) ? withProperty(NO_CAPITAL, String.join(",", without)) : this;
+  }
+
+  /** The files with the nation wanting a capital again, as every nation does at first. */
+  MapFiles withCapitalWanted(final String nation) {
+    final Set<String> without = nationsWithoutCapital();
+    return without.remove(nation) ? withProperty(NO_CAPITAL, String.join(",", without)) : this;
   }
 
   private static <T> Map<String, T> renamedKey(
@@ -404,18 +540,137 @@ record MapFiles(
                         && box.y + box.height < whole.y + whole.height));
   }
 
-  /** The innermost territory with an outline holding the point: the island, not the sea around. */
   private Optional<String> territoryAt(final Point point) {
-    return polygons.entrySet().stream()
-        .filter(e -> e.getValue().stream().anyMatch(o -> o.contains(point)))
-        .min(
+    return territoryAt(point.x, point.y);
+  }
+
+  /**
+   * The whole border between two territories: the pixels of the map between their outlines.
+   *
+   * @param box the part of the map the pixels are of
+   * @param between row by row, which of the box's pixels lie between the two
+   */
+  record SharedBorder(String first, String second, Rectangle box, boolean[] between) {}
+
+  /**
+   * The two territories that meet at the point, if just two do there, eg under the mouse on their
+   * border line; told by the outlines within a line's width around it.
+   */
+  Optional<List<String>> territoriesMeetingAt(final Point at, final int lineWidth) {
+    final int reach = borderReach(lineWidth);
+    final Set<String> around = new TreeSet<>();
+    for (int dx = -1; dx <= 1; dx++) {
+      for (int dy = -1; dy <= 1; dy++) {
+        territoryAt(at.x + dx * reach, at.y + dy * reach).ifPresent(around::add);
+      }
+    }
+    return around.size() == 2 ? Optional.of(List.copyOf(around)) : Optional.empty();
+  }
+
+  /** How far from a territory's outline its border line's pixels may lie. */
+  private static int borderReach(final int lineWidth) {
+    // outlines made here meet in the line's middle; those of other tools end at its edges
+    return Math.max(3, lineWidth + 2);
+  }
+
+  /**
+   * The border between the two territories that meet at the point ({@link #territoriesMeetingAt}):
+   * every pixel within a line's width of both, where each pixel is its smallest outline's as for
+   * {@link #territoryAt}, but none that close to a third territory, whose own border runs there.
+   * Empty where not just two meet.
+   */
+  Optional<SharedBorder> sharedBorderAt(final Point at, final int lineWidth) {
+    return territoriesMeetingAt(at, lineWidth)
+        .flatMap(two -> sharedBorder(two.getFirst(), two.getLast(), lineWidth));
+  }
+
+  private Optional<SharedBorder> sharedBorder(
+      final String first, final String second, final int lineWidth) {
+    final int reach = borderReach(lineWidth);
+    final Rectangle firstBox = boundsOf(polygons.getOrDefault(first, List.of()));
+    final Rectangle secondBox = boundsOf(polygons.getOrDefault(second, List.of()));
+    firstBox.grow(reach + 3, reach + 3);
+    secondBox.grow(reach + 3, reach + 3);
+    final Rectangle box = firstBox.intersection(secondBox);
+    if (box.isEmpty()) {
+      return Optional.empty();
+    }
+    // whose each pixel is: the outlines drawn big to small, so the smallest one has the pixel
+    final BufferedImage owners =
+        new BufferedImage(box.width, box.height, BufferedImage.TYPE_INT_RGB);
+    final Graphics2D g = owners.createGraphics();
+    g.translate(-box.x, -box.y);
+    polygons.entrySet().stream()
+        .flatMap(e -> e.getValue().stream().map(outline -> Tuple.of(e.getKey(), outline)))
+        .filter(outline -> outline.getSecond().getBounds().intersects(box))
+        .sorted(
             Comparator.comparingDouble(
-                e ->
-                    e.getValue().stream()
-                        .map(Polygon::getBounds)
-                        .mapToDouble(b -> (double) b.width * b.height)
-                        .sum()))
-        .map(Map.Entry::getKey);
+                (Tuple<String, Polygon> outline) -> {
+                  final Rectangle bounds = outline.getSecond().getBounds();
+                  return -(double) bounds.width * bounds.height;
+                }))
+        .forEach(
+            outline -> {
+              final String name = outline.getFirst();
+              g.setColor(new Color(name.equals(first) ? 1 : name.equals(second) ? 2 : 3));
+              g.fill(outline.getSecond());
+            });
+    g.dispose();
+    final int[] owner = owners.getRGB(0, 0, box.width, box.height, null, 0, box.width);
+    final boolean[][] of = new boolean[4][owner.length];
+    for (int p = 0; p < owner.length; p++) {
+      of[owner[p] & 3][p] = true;
+    }
+    final boolean[] nearFirst = MapPicture.dilated(of[1], box.width, reach);
+    final boolean[] nearSecond = MapPicture.dilated(of[2], box.width, reach);
+    // a third territory's border line reaches half its width from the territory
+    final int half = (lineWidth + 1) / 2 + 1;
+    final boolean[] nearOthers = MapPicture.dilated(of[3], box.width, half);
+    // what is no territory and wider than a line, eg beyond the map's frame, has its line too;
+    // the gap a line fills between outlines that end at its edges is not that wide
+    final int thin = lineWidth / 2 + 1;
+    final boolean[] territory = new boolean[owner.length];
+    for (int p = 0; p < owner.length; p++) {
+      territory[p] = !of[0][p];
+    }
+    final boolean[] nearTerritory = MapPicture.dilated(territory, box.width, thin);
+    final boolean[] wide = new boolean[owner.length];
+    for (int p = 0; p < owner.length; p++) {
+      wide[p] = !nearTerritory[p];
+    }
+    final boolean[] nearOutside = MapPicture.dilated(wide, box.width, thin + half);
+    final boolean[] between = new boolean[owner.length];
+    boolean any = false;
+    for (int p = 0; p < owner.length; p++) {
+      between[p] = nearFirst[p] && nearSecond[p] && !nearOthers[p] && !nearOutside[p];
+      any |= between[p];
+    }
+    return any ? Optional.of(new SharedBorder(first, second, box, between)) : Optional.empty();
+  }
+
+  /**
+   * The territory at the point of the map: the one whose outline holds it, any of its outlines,
+   * eg each island of a group; of several the smallest outline wins, so an island is hit and not
+   * the sea zone drawn around it. Every click, tool tip and paint stroke asks this: an outline's
+   * box is asked first (Polygon.contains), which leaves a handful to look at closely even on a
+   * map of 700 territories.
+   */
+  Optional<String> territoryAt(final double x, final double y) {
+    String found = null;
+    double smallest = Double.MAX_VALUE;
+    for (final Map.Entry<String, List<Polygon>> territory : polygons.entrySet()) {
+      for (final Polygon outline : territory.getValue()) {
+        if (outline.contains(x, y)) {
+          final Rectangle box = outline.getBounds();
+          final double size = (double) box.width * box.height;
+          if (size < smallest) {
+            smallest = size;
+            found = territory.getKey();
+          }
+        }
+      }
+    }
+    return Optional.ofNullable(found);
   }
 
   /**
@@ -738,6 +993,8 @@ record MapFiles(
   MapFiles withoutNationColor(final String nation) {
     final Properties uncolored = copyOfProperties();
     uncolored.remove(PlayerColors.PROPERTY_COLOR_PREFIX + nation);
+    uncolored.remove(FILES_OF + nation);
+    renameInList(uncolored, NO_CAPITAL, nation, List.of());
     return new MapFiles(
         folder,
         polygons,
@@ -1664,7 +1921,18 @@ record MapFiles(
             : gridOrder(toLeft, toRight, up, down);
     final List<Point> kept =
         new ArrayList<>(cells.stream().filter(fits).limit(Math.max(1, most)).toList());
+    // where the grid leaves room unused, eg in a narrow or slanted shape: places off the grid
+    final List<Point> offGrid =
+        placesOffGrid(
+            territory,
+            others,
+            place.apply(new Point()),
+            kept.stream().map(place).toList(),
+            Math.max(1, most) - kept.size());
     if (kept.isEmpty()) {
+      if (!offGrid.isEmpty()) {
+        return Tuple.of(offGrid, toLeftNow);
+      }
       final List<Point> found = placesInside(outlines, centers.get(territory), unit);
       return Tuple.of(found.subList(0, Math.min(found.size(), Math.max(1, most))), toLeftNow);
     }
@@ -1675,8 +1943,124 @@ record MapFiles(
     final boolean overflowToLeft = roomBeyond(leftEnd, -1, fits) > roomBeyond(rightEnd, 1, fits);
     final Point last = overflowToLeft ? leftEnd : rightEnd;
     kept.remove(last);
-    kept.add(last);
-    return Tuple.of(kept.stream().map(place).toList(), overflowToLeft);
+    // the grid's places, then those off it, then the place the extra units go on from
+    final List<Point> laidOut = new ArrayList<>(kept.stream().map(place).toList());
+    laidOut.addAll(offGrid);
+    laidOut.add(place.apply(last));
+    return Tuple.of(List.copyOf(laidOut), overflowToLeft);
+  }
+
+
+  /**
+   * Up to so many more places for the territory's units, off the layout's grid, nearest the
+   * center first: positions a quarter step apart whose unit square is wholly inside the outlines,
+   * on no other territory, off the center's square and {@link #UNIT_GUTTER} px from every other
+   * place. If the territory then has fewer than {@value #FEW_PLACES} places, also squares that
+   * stick out over its border, with most of the square inside and off the center's square: first
+   * those on no other territory's center or set unit places, then, if still too few, any.
+   *
+   * @param centerSquare the place of the grid's square on the center, which stays free
+   * @param taken the places the grid gave
+   */
+  private List<Point> placesOffGrid(
+      final String territory,
+      final List<Polygon> others,
+      final Point centerSquare,
+      final List<Point> taken,
+      final int most) {
+    final List<Polygon> outlines = polygons.getOrDefault(territory, List.of());
+    final Dimension unit = unitSize();
+    final Rectangle bounds =
+        outlines.stream().map(Polygon::getBounds).reduce(Rectangle::union).orElseThrow();
+    final int stepX = Math.max(1, (unit.width + 2 * UNIT_GUTTER) / 4);
+    final int stepY = Math.max(1, (unit.height + 2 * UNIT_GUTTER) / 4);
+    final int columns = bounds.width / stepX + 2;
+    final int rows = bounds.height / stepY + 2;
+    if (most <= 0 || (long) columns * rows > MOST_OFF_GRID) {
+      return List.of();
+    }
+    final Rectangle center = new Rectangle(centerSquare, unit);
+    final Point middle = new Point((int) center.getCenterX(), (int) center.getCenterY());
+    final List<Point> candidates = new ArrayList<>();
+    // on the grid's own lines, so a place beside a grid place can stand right at its gutter
+    for (int x = centerSquare.x - Math.ceilDiv(centerSquare.x - bounds.x + unit.width, stepX) * stepX;
+        x < bounds.x + bounds.width;
+        x += stepX) {
+      for (int y =
+              centerSquare.y - Math.ceilDiv(centerSquare.y - bounds.y + unit.height, stepY) * stepY;
+          y < bounds.y + bounds.height;
+          y += stepY) {
+        candidates.add(new Point(x, y));
+      }
+    }
+    candidates.sort(
+        Comparator.comparingDouble(
+            p -> middle.distanceSq(p.x + unit.width / 2.0, p.y + unit.height / 2.0)));
+    final List<Rectangle> placed =
+        new ArrayList<>(taken.stream().map(p -> new Rectangle(p, unit)).toList());
+    final List<Point> added = new ArrayList<>();
+    final Predicate<Rectangle> apart =
+        square -> {
+          final Rectangle grown = new Rectangle(square);
+          grown.grow(UNIT_GUTTER, UNIT_GUTTER);
+          return placed.stream().noneMatch(grown::intersects);
+        };
+    final Predicate<Rectangle> inside =
+        square ->
+            !square.intersects(center)
+                && outlines.stream().anyMatch(o -> o.contains(square))
+                && others.stream().noneMatch(o -> o.intersects(square));
+    // most of the square inside: its middle and at least 6 of 9 points spread over it
+    final Predicate<Rectangle> mostlyInside =
+        square ->
+            !square.intersects(center)
+                && outlines.stream()
+                    .anyMatch(o -> o.contains(square.getCenterX(), square.getCenterY()))
+                && IntStream.range(0, 9)
+                        .filter(
+                            i ->
+                                outlines.stream()
+                                    .anyMatch(
+                                        o ->
+                                            o.contains(
+                                                square.x + square.width * (1 + 2 * (i % 3)) / 6.0,
+                                                square.y + square.height * (1 + 2 * (i / 3)) / 6.0)))
+                        .count()
+                    >= 6;
+    final List<Rectangle> othersOwn = new ArrayList<>();
+    centers.forEach(
+        (name, point) -> {
+          if (!name.equals(territory)) {
+            othersOwn.add(new Rectangle(point.x, point.y, 1, 1));
+          }
+        });
+    places
+        .units()
+        .forEach(
+            (name, set) -> {
+              if (!name.equals(territory)) {
+                set.getFirst().forEach(p -> othersOwn.add(new Rectangle(p, unit)));
+              }
+            });
+    final Predicate<Rectangle> offOthers =
+        square -> othersOwn.stream().noneMatch(square::intersects);
+    final List<Predicate<Rectangle>> rules =
+        List.of(inside, mostlyInside.and(offOthers), mostlyInside);
+    for (int rule = 0; rule < rules.size(); rule++) {
+      // squares that stick out only for a territory that would have too few places
+      final int wanted = rule == 0 ? most : Math.min(most, FEW_PLACES - taken.size());
+      for (final Point candidate : candidates) {
+        if (added.size() >= wanted) {
+          break;
+        }
+        final Rectangle square = new Rectangle(candidate, unit);
+        if (rules.get(rule).test(square) && apart.test(square)) {
+          placed.add(square);
+          added.add(candidate);
+        }
+      }
+    }
+    return List.copyOf(added);
   }
 
   /** The free squares inside the outlines on from this end of its row, one after another. */
@@ -2132,7 +2516,9 @@ record MapFiles(
     final Map<String, String> changed = new TreeMap<>();
     for (final String key : properties.stringPropertyNames()) {
       final String value = properties.getProperty(key);
-      if (!value.equals(before.getProperty(key)) && !value.equals(inFile.getProperty(key))) {
+      if (!key.startsWith(FILES_OF)
+          && !value.equals(before.getProperty(key))
+          && !value.equals(inFile.getProperty(key))) {
         changed.put(key, value);
       }
     }
@@ -2140,7 +2526,9 @@ record MapFiles(
         MapTexts.withEntries(
             text,
             changed,
-            before.stringPropertyNames().stream().filter(k -> !properties.containsKey(k)).toList());
+            before.stringPropertyNames().stream()
+                .filter(k -> !properties.containsKey(k) && !k.startsWith(FILES_OF))
+                .toList());
     if (!written.equals(text) || !Files.exists(file)) {
       MapFolder.replaceText(file, written);
     }

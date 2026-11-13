@@ -19,6 +19,7 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
 import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import lombok.AllArgsConstructor;
@@ -380,6 +381,97 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable, Map<String, Strin
               .filter(k -> !present.contains(newPrefix + k.substring(oldPrefix.length())))
               .map(k -> renamedChunk(chunk, k, oldPrefix, newPrefix))
               .orElse(chunk));
+    }
+    final String text = renamed.toString();
+    return text.equals(text(kind)) ? this : withText(kind, text);
+  }
+
+  /**
+   * The texts with the nation's entries under its new name: this game's objectives and the group
+   * named after it (the game puts a nation's objectives into the group of its name), its unit
+   * tool tips, its sounds and its own buy window tabs. Other texts are found by an attachment's
+   * name or a message's, which stay.
+   */
+  MapTexts withRenamedNation(final Game game, final String old, final String renamed) {
+    return withNationAs(game, old, renamed, List.of());
+  }
+
+  /**
+   * As {@link #withRenamedNation}, but the old name keeps what the games of a map share: tool
+   * tips, sounds and buy window tabs, as another game still has a nation of that name.
+   */
+  MapTexts withRenamedNationKeeping(final Game game, final String old, final String renamed) {
+    return withNationAs(game, old, renamed, List.of(Kind.TOOLTIPS, Kind.SOUNDS));
+  }
+
+  private MapTexts withNationAs(
+      final Game game, final String old, final String renamed, final List<Kind> kept) {
+    final String objectives = objectivesPrefix(game);
+    final MapTexts keyed =
+        withKeys(
+                Kind.OBJECTIVES,
+                key -> {
+                  if (key.startsWith(objectives + old + ";")) {
+                    return objectives + renamed + key.substring(objectives.length() + old.length());
+                  }
+                  return key.startsWith(objectives + GROUP) && key.endsWith(";" + old)
+                      ? key.substring(0, key.length() - old.length()) + renamed
+                      : key;
+                },
+                kept)
+            .withKeys(
+                Kind.TOOLTIPS,
+                key ->
+                    Stream.of("", APPEND)
+                        .filter(end -> key.startsWith(TOOLTIP) && key.endsWith("." + old + end))
+                        .findFirst()
+                        .map(
+                            end ->
+                                key.substring(0, key.length() - old.length() - end.length())
+                                    + renamed
+                                    + end)
+                        .orElse(key),
+                kept)
+            .withKeys(
+                Kind.SOUNDS,
+                key ->
+                    key.endsWith("_" + old)
+                            && SOUND_NAMES.containsKey(
+                                key.substring(0, key.length() - old.length() - 1))
+                        ? key.substring(0, key.length() - old.length()) + renamed
+                        : key,
+                kept);
+    final String tabs = buyTabs(ProductionTabs.fileOf(old));
+    if (tabs.isBlank() || !buyTabs(ProductionTabs.fileOf(renamed)).isBlank()) {
+      return keyed;
+    }
+    final MapTexts withTabs = keyed.withBuyTabs(ProductionTabs.fileOf(renamed), tabs);
+    return kept.isEmpty() ? withTabs.withBuyTabs(ProductionTabs.fileOf(old), "") : withTabs;
+  }
+
+  /**
+   * With each key as the function names it, its text and place kept; a key whose new name the
+   * file has already stays as it is. For a kind that is kept, the old entry stays too.
+   */
+  private MapTexts withKeys(
+      final Kind kind, final UnaryOperator<String> renamedKey, final List<Kind> kept) {
+    if (unreadable.contains(kind)) {
+      return this;
+    }
+    final Set<String> present =
+        entries(kind).stream().map(Entry::key).collect(Collectors.toSet());
+    final StringBuilder renamed = new StringBuilder();
+    for (final String chunk : logicalLines(text(kind))) {
+      final Optional<String> key = parse(chunk).map(Entry::key);
+      final Optional<String> newKey = key.map(renamedKey).filter(k -> !present.contains(k));
+      if (newKey.isEmpty()) {
+        renamed.append(chunk);
+        continue;
+      }
+      if (kept.contains(kind)) {
+        renamed.append(chunk).append(lineEnd(chunk).isEmpty() ? "\n" : "");
+      }
+      renamed.append(renamedChunk(chunk, key.get(), key.get(), newKey.get()));
     }
     final String text = renamed.toString();
     return text.equals(text(kind)) ? this : withText(kind, text);

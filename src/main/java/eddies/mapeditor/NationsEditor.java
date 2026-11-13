@@ -27,6 +27,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiFunction;
+import java.util.function.Function;
 import java.util.function.IntFunction;
 import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
@@ -70,6 +71,7 @@ import eddies.mapeditor.MapFolder.UnitPictures;
  */
 final class NationsEditor implements Editor {
   private static final String NO_ALLIANCE = "No alliance";
+  private static final String SHARED_LIST = "—";
   private static final String RETAIN_CAPITAL = "retainCapitalNumber";
   private static final String RETAIN_CAPITAL_PRODUCE = "retainCapitalProduceNumber";
   private static final String DESTROYS_PUS = "destroysPUs";
@@ -191,7 +193,7 @@ final class NationsEditor implements Editor {
     // the fields start where the tool's title does: the panel has its margin already
     inspector.setBorder(
         BorderFactory.createEmptyBorder(Theme.GAP_XS, 0, Theme.GAP_L, Theme.GAP_L));
-    page.add(list, LIST);
+    page.add(newListCard(), LIST);
     page.add(newNationCard(), NATION);
     project.onChange(
         () -> {
@@ -199,11 +201,44 @@ final class NationsEditor implements Editor {
           if (!editingHere) {
             showInspector();
           } else if (headerLine != null && selected != null) {
-            showLine(headerLine, project.game(), selected);
+            showLine(headerLine, project.game(), selected, hasNoCapital(selected));
           }
           showOnMap();
         });
     showInspector();
+  }
+
+  /** The list of nations over "Compare nations ›", which shows them all side by side. */
+  private JComponent newListCard() {
+    final JButton compare = newLink("Compare nations ›", this::compare);
+    compare.setToolTipText(
+        "All nations side by side: territories, income, starting PUs, units and their value");
+    final JPanel foot = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+    foot.setBorder(BorderFactory.createEmptyBorder(Theme.GAP_XS, 0, Theme.GAP_S, 0));
+    foot.add(compare);
+    final JPanel card = new JPanel(new BorderLayout());
+    card.add(list, BorderLayout.CENTER);
+    card.add(foot, BorderLayout.SOUTH);
+    return card;
+  }
+
+  /** The nations' balance in a dialog, as the column beside the map is too narrow for a table. */
+  private void compare() {
+    commit();
+    final String[] opened = new String[1];
+    final JComponent[] table = new JComponent[1];
+    table[0] =
+        NationsBalance.table(
+            project,
+            nation -> {
+              opened[0] = nation;
+              SwingUtilities.getWindowAncestor(table[0]).dispose();
+            });
+    Dialogs.show(page, "Compare nations", table[0]);
+    if (opened[0] != null) {
+      choose(opened[0]);
+      list.choose(opened[0]);
+    }
   }
 
   /** "← All nations" over the chosen nation's form; Esc goes back too. */
@@ -318,13 +353,68 @@ final class NationsEditor implements Editor {
   }
 
   private void addNation() {
-    Dialogs.askName(page, "Add nation", "Name", "", "Add", project::nameProblem)
-        .filter(project::addNation)
-        .ifPresent(
-            nation -> {
-              choose(nation);
-              list.choose(nation);
-            });
+    final JTextField name = new JTextField(20);
+    final JComboBox<String> buysLike = newBuysLikeBox(project.game());
+    if (!Dialogs.ask(
+        page,
+        "Add nation",
+        newNationFields(name, buysLike, project::nationNameProblem),
+        "Add",
+        () ->
+            !name.getText().isBlank()
+                && project.nationNameProblem(name.getText().strip()).isEmpty())) {
+      return;
+    }
+    final String nation = name.getText().strip();
+    if (project.addNation(nation, buysLikeChosen(buysLike))) {
+      choose(nation);
+      list.choose(nation);
+    }
+  }
+
+  /**
+   * "—" first: the nation buys from the game's shared list, as every new nation did; then the
+   * nations that buy something.
+   */
+  static JComboBox<String> newBuysLikeBox(final Game game) {
+    final JComboBox<String> box = new JComboBox<>();
+    box.addItem(SHARED_LIST);
+    MapXml.nations(game).stream()
+        .filter(n -> ProductionXml.frontierOf(game, n).isPresent())
+        .forEach(box::addItem);
+    return box;
+  }
+
+  /** The nation chosen in the box, none for its first entry. */
+  static Optional<String> buysLikeChosen(final JComboBox<String> box) {
+    return box.getSelectedIndex() <= 0
+        ? Optional.empty()
+        : Optional.of(String.valueOf(box.getSelectedItem()));
+  }
+
+  /** The name, checked as typed, over "Buys what … buys". */
+  static JComponent newNationFields(
+      final JTextField name,
+      final JComboBox<String> buysLike,
+      final Function<String, Optional<String>> problem) {
+    final Form fields = new Form(280);
+    fields.setBorder(BorderFactory.createEmptyBorder());
+    fields.field("Name", name);
+    final FieldError error = fields.error(name);
+    OnTyping.attach(
+        name,
+        () -> {
+          final String typed = name.getText().strip();
+          error.setProblem(typed.isEmpty() ? Optional.empty() : problem.apply(typed));
+        });
+    fields.field(
+        "Buys the same as",
+        "The new nation gets a purchase list of its own with the same rules as the chosen"
+            + " nation's, and a repair list likewise; change either in Production. With "
+            + SHARED_LIST
+            + " it buys from the game's first list, shared with the nations that use it.",
+        buysLike);
+    return fields;
   }
 
   private void showInspector() {
@@ -395,7 +485,7 @@ final class NationsEditor implements Editor {
     // its parts wrap in a narrow inspector instead of being cut
     final JPanel line = new JPanel(new WrapLayout(FlowLayout.LEFT, 0, 0));
     line.setOpaque(false);
-    showLine(line, game, nation);
+    showLine(line, game, nation, hasNoCapital(nation));
     headerLine = line;
     final List<JComponent> links = new ArrayList<>();
     links.add(newLink("Change color", () -> changeColor(nation)));
@@ -404,7 +494,7 @@ final class NationsEditor implements Editor {
         "Choose a picture: it becomes the nation's flags in the sizes the game shows"
             + " (flags/" + nation + ".png, _small, _large, _fade)");
     links.add(flag);
-    if (capital(game, nation).isEmpty()) {
+    if (capital(game, nation).isEmpty() && !hasNoCapital(nation)) {
       links.add(newLink(
               "Mark one in Territories", () -> map.followStep(MapGuide.Step.Id.CAPITALS)));
     }
@@ -427,7 +517,9 @@ final class NationsEditor implements Editor {
     return project
         .getFiles()
         .folder()
-        .flatMap(folder -> MapFolder.flag(folder, nation, ""))
+        // a nation renamed since the last save has its flags under the name it was saved with
+        .flatMap(
+            folder -> MapFolder.flag(folder, project.getFiles().nationFilesName(nation), ""))
         // read anew each time, as an import replaces the file under the same name
         .flatMap(
             url -> {
@@ -465,7 +557,9 @@ final class NationsEditor implements Editor {
                 if (picture == null) {
                   throw new IOException("It is no png, gif or jpg picture.");
                 }
-                MapFolder.importFlag(folder.get(), nation, picture);
+                // under the name its flags have in the folder: the next save moves them
+                MapFolder.importFlag(
+                    folder.get(), project.getFiles().nationFilesName(nation), picture);
                 showInspector();
                 Dialogs.toast(page, "✓ " + nation + " has a new flag, in 4 sizes in flags/");
               } catch (final IOException e) {
@@ -478,7 +572,8 @@ final class NationsEditor implements Editor {
   }
 
   /** "Axis · 30 PUs at the start · capital Germany · 9 territories", a missing capital warned. */
-  private static void showLine(final JPanel line, final Game game, final String nation) {
+  private static void showLine(
+      final JPanel line, final Game game, final String nation, final boolean noCapital) {
     line.removeAll();
     line.add(Theme.newSecondaryLabel(allianceLine(game, nation) + " · "));
     line.add(
@@ -488,6 +583,10 @@ final class NationsEditor implements Editor {
         .ifPresentOrElse(
             capital -> line.add(Theme.newSecondaryLabel("capital " + capital + " · ")),
             () -> {
+              if (noCapital) {
+                line.add(Theme.newSecondaryLabel("no capital · "));
+                return;
+              }
               final JLabel missing = new JLabel("! no capital yet");
               missing.setForeground(Theme.getWarningColor());
               line.add(missing);
@@ -496,6 +595,10 @@ final class NationsEditor implements Editor {
     line.add(Theme.newSecondaryLabel(owned(game, nation).size() + " territories"));
     line.revalidate();
     line.repaint();
+  }
+
+  private boolean hasNoCapital(final String nation) {
+    return project.getFiles().nationsWithoutCapital().contains(nation);
   }
 
   private static List<String> owned(final Game game, final String nation) {
@@ -535,6 +638,7 @@ final class NationsEditor implements Editor {
 
   private void showTeam(final Game game, final String nation) {
     start.section("Team and start");
+    addName(nation);
     final JComboBox<String> alliance = new JComboBox<>();
     alliance.setEditable(true);
     alliance.addItem(NO_ALLIANCE);
@@ -561,8 +665,84 @@ final class NationsEditor implements Editor {
             MapXml.startingResource(game, nation, MapXml.PUS),
             9999,
             value -> quietly(nation, MapXml.PUS, value)));
-    final int income = owned(game, nation).stream().mapToInt(t -> MapXml.production(game, t)).sum();
+    final int income = NationsBalance.income(game, owned(game, nation));
     start.note("Its territories are worth " + income + " PUs per turn.");
+    addNoCapital(game, nation);
+  }
+
+  /**
+   * The name, checked as it is typed and renamed on Enter, focus loss or commit(); a refused one
+   * stays typed with the reason below it, the nation keeping its name.
+   */
+  private void addName(final String nation) {
+    final JTextField name = new JTextField(nation);
+    start.field(
+        "Name",
+        "Renames the nation everywhere in the game: its land, units, turn, rules and texts."
+            + " Its flags and unit pictures get the new name with the next save.",
+        capped(name));
+    final FieldError error = start.error(name);
+    final Runnable rename =
+        () -> {
+          typing = null;
+          final String typed = name.getText().strip();
+          // after a rename the old field may still lose the focus: its nation is gone then
+          if (typed.equals(nation) || !MapXml.nations(project.game()).contains(nation)) {
+            return;
+          }
+          // chosen before the change, so that the inspector shown after it is the renamed one's
+          selected = typed;
+          if (project.renameNation(nation, typed)) {
+            list.choose(typed);
+          } else {
+            selected = nation;
+          }
+        };
+    OnTyping.attach(
+        name,
+        () -> {
+          final String typed = name.getText().strip();
+          error.setProblem(
+              typed.equals(nation)
+                  ? Optional.empty()
+                  : project.whyNotRenamedNation(nation, typed));
+          typing = rename;
+        });
+    name.addActionListener(e -> rename.run());
+    name.addFocusListener(
+        new FocusAdapter() {
+          @Override
+          public void focusLost(final FocusEvent e) {
+            rename.run();
+          }
+        });
+  }
+
+  /**
+   * "Has no capital": the guide then asks for none. Off while the nation has one, as the capital
+   * says more than the box.
+   */
+  private void addNoCapital(final Game game, final String nation) {
+    final Optional<String> capital = capital(game, nation);
+    final JCheckBox none =
+        new JCheckBox(
+            "Has no capital",
+            capital.isEmpty() && project.getFiles().nationsWithoutCapital().contains(nation));
+    none.setEnabled(capital.isEmpty());
+    capital.ifPresent(
+        c -> none.setToolTipText("Its capital is " + c + ": untick that in Territories first"));
+    none.addActionListener(
+        e ->
+            project.editFiles(
+                files ->
+                    none.isSelected()
+                        ? files.withNoCapital(nation)
+                        : files.withCapitalWanted(nation)));
+    start.row(
+        Help.with(
+            none,
+            "For a nation that has no capital on purpose, eg one that only holds colonies: the"
+                + " steps to a playable map then stop asking for one. TripleA itself needs none."));
   }
 
   // the same edit as Production's Resources, so both show one value

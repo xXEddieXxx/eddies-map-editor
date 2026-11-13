@@ -13,6 +13,7 @@ import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.GamePlay;
 import org.triplea.map.data.elements.GamePlay.Sequence;
 import org.triplea.map.data.elements.GamePlay.Sequence.Step;
+import org.triplea.map.data.elements.GamePlay.Sequence.Step.StepProperty;
 import org.triplea.map.data.elements.Initialize;
 import org.triplea.map.data.elements.Initialize.OwnerInitialize;
 import org.triplea.map.data.elements.Initialize.OwnerInitialize.TerritoryOwner;
@@ -21,13 +22,17 @@ import org.triplea.map.data.elements.Initialize.RelationshipInitialize.Relations
 import org.triplea.map.data.elements.Initialize.ResourceInitialize;
 import org.triplea.map.data.elements.Initialize.ResourceInitialize.ResourceGiven;
 import org.triplea.map.data.elements.Initialize.UnitInitialize;
+import org.triplea.map.data.elements.Initialize.UnitInitialize.HeldUnits;
 import org.triplea.map.data.elements.Initialize.UnitInitialize.UnitPlacement;
 import org.triplea.map.data.elements.Map;
 import org.triplea.map.data.elements.Map.Connection;
 import org.triplea.map.data.elements.Map.Territory;
 import org.triplea.map.data.elements.PlayerList;
+import org.triplea.map.data.elements.PlayerList.Alliance;
+import org.triplea.map.data.elements.PlayerList.Player;
 import org.triplea.map.data.elements.Production;
 import org.triplea.map.data.elements.Production.PlayerProduction;
+import org.triplea.map.data.elements.Production.PlayerRepair;
 import org.triplea.map.data.elements.Production.ProductionFrontier;
 import org.triplea.map.data.elements.Production.ProductionRule;
 import org.triplea.map.data.elements.Production.Rule.Cost;
@@ -35,10 +40,15 @@ import org.triplea.map.data.elements.Production.Rule.Result;
 import org.triplea.map.data.elements.PropertyList;
 import org.triplea.map.data.elements.PropertyList.Property;
 import org.triplea.map.data.elements.RelationshipTypes;
+import org.triplea.map.data.elements.ResourceList;
+import org.triplea.map.data.elements.ResourceList.Resource;
 import org.triplea.map.data.elements.Technology;
 import org.triplea.map.data.elements.Technology.PlayerTech;
 import org.triplea.map.data.elements.Technology.PlayerTech.Category;
 import org.triplea.map.data.elements.Technology.Technologies;
+import org.triplea.map.data.elements.VariableList;
+import org.triplea.map.data.elements.VariableList.Variable;
+import org.triplea.map.data.elements.VariableList.Variable.Element;
 
 /**
  * {@code toBuilder()} for the parts of the XML model the editor changes, as extension methods
@@ -184,6 +194,46 @@ public class Builders {
 
   public static Category.CategoryBuilder toBuilder(final Category value) {
     return filled(value, Category.builder());
+  }
+
+  public static Player.PlayerBuilder toBuilder(final Player value) {
+    return filled(value, Player.builder());
+  }
+
+  public static Alliance.AllianceBuilder toBuilder(final Alliance value) {
+    return filled(value, Alliance.builder());
+  }
+
+  public static HeldUnits.HeldUnitsBuilder toBuilder(final HeldUnits value) {
+    return filled(value, HeldUnits.builder());
+  }
+
+  public static PlayerRepair.PlayerRepairBuilder toBuilder(final PlayerRepair value) {
+    return filled(value, PlayerRepair.builder());
+  }
+
+  public static StepProperty.StepPropertyBuilder toBuilder(final StepProperty value) {
+    return filled(value, StepProperty.builder());
+  }
+
+  public static ResourceList.ResourceListBuilder toBuilder(final ResourceList value) {
+    return filled(value, ResourceList.builder());
+  }
+
+  public static Resource.ResourceBuilder toBuilder(final Resource value) {
+    return filled(value, Resource.builder());
+  }
+
+  public static VariableList.VariableListBuilder toBuilder(final VariableList value) {
+    return filled(value, VariableList.builder());
+  }
+
+  public static Variable.VariableBuilder toBuilder(final Variable value) {
+    return filled(value, Variable.builder());
+  }
+
+  public static Element.ElementBuilder toBuilder(final Element value) {
+    return filled(value, Element.builder());
   }
 
   /**

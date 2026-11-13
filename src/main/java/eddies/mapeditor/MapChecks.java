@@ -1,7 +1,9 @@
 package eddies.mapeditor;
 
 import games.strategy.engine.data.GameData;
+import games.strategy.engine.data.GameStep;
 import games.strategy.engine.data.Territory;
+import games.strategy.engine.data.Unit;
 import games.strategy.engine.data.gameparser.GameParser;
 import games.strategy.engine.data.gameparser.XmlGameElementMapper;
 import games.strategy.triplea.Constants;
@@ -19,12 +21,17 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
 import lombok.experimental.UtilityClass;
+import org.triplea.map.data.elements.AttachmentList.Attachment;
 import org.triplea.map.data.elements.Game;
+import org.triplea.map.data.elements.GamePlay.Sequence.Step;
+import org.triplea.map.data.elements.Initialize.UnitInitialize.HeldUnits;
 import org.triplea.map.data.elements.Initialize.UnitInitialize.UnitPlacement;
 import org.triplea.map.xml.writer.GameXmlWriter;
+import org.triplea.util.Tuple;
 import eddies.mapeditor.MapFiles.NationUnit;
 
 /** The problems of a map, each with the territory to show for it if there is one. */
@@ -97,6 +104,18 @@ class MapChecks {
             t ->
                 problems.add(
                     Problem.in("Connections", "A connection leads to " + t + ", no territory")));
+    problems.addAll(ofNoNation(game, nations));
+    classicWithoutCapital(game)
+        .forEach(
+            nation ->
+                problems.add(
+                    Problem.in(
+                        "Nations",
+                        nation
+                            + " needs a capital: a game of just Russians, Germans, British,"
+                            + " Japanese and Americans stops after the first round without"
+                            + " one (mark it in Territories, or turn on WW2V2 in Game"
+                            + " options)")));
     // the game refuses a canal without exactly two sea zones or without land
     for (final CanalXml.Canal canal : CanalXml.canals(game)) {
       if (canal.seaZones().size() != 2 || canal.lands().isEmpty()) {
@@ -110,6 +129,108 @@ class MapChecks {
       }
     }
     return problems;
+  }
+
+  /**
+   * What names a nation the game does not have, or lacks one it needs: TripleA's parser takes
+   * these and fails later, while playing ("gamePlayer is null"): a unit at the start, a capital,
+   * a step of a nation that is none, and a step without a nation whose delegate asks for one.
+   * Held units too, which the parser refuses.
+   */
+  private static List<Problem> ofNoNation(final Game game, final Set<String> nations) {
+    final List<Problem> problems = new ArrayList<>();
+    final Predicate<String> unknown =
+        name ->
+            name != null
+                && !name.isBlank()
+                && !nations.contains(name)
+                && !Constants.PLAYER_NAME_NEUTRAL.equals(name);
+    MapXml.placements(game).stream()
+        .filter(units -> unknown.test(units.getOwner()))
+        .map(units -> Tuple.of(units.getTerritory(), units.getOwner()))
+        .distinct()
+        .forEach(
+            units ->
+                problems.add(
+                    Problem.at(
+                        units.getFirst(),
+                        "Units in "
+                            + units.getFirst()
+                            + " belong to "
+                            + units.getSecond()
+                            + ", no nation of the game: give them an owner in Territories")));
+    MapXml.heldUnits(game).stream()
+        .map(HeldUnits::getPlayer)
+        .filter(unknown)
+        .distinct()
+        .forEach(
+            nation ->
+                problems.add(
+                    Problem.in("Nations", "Held units belong to " + nation + ", no nation")));
+    for (final Attachment attachment : AttachmentsXml.attachments(game)) {
+      if (AttachmentsXml.isNamed(attachment, Constants.TERRITORY_ATTACHMENT_NAME)) {
+        AttachmentsXml.options(attachment).stream()
+            .filter(o -> AttachmentsXml.isOption(o, "capital") && unknown.test(o.getValue()))
+            .forEach(
+                o ->
+                    problems.add(
+                        Problem.at(
+                            attachment.getAttachTo(),
+                            attachment.getAttachTo()
+                                + " is the capital of "
+                                + o.getValue()
+                                + ", which is no nation: untick it in Territories")));
+      }
+    }
+    for (final Step step : RulesXml.steps(game)) {
+      if (unknown.test(step.getPlayer())) {
+        problems.add(
+            Problem.in(
+                "Turn order",
+                "Step " + step.getName() + " is of " + step.getPlayer() + ", no nation"));
+      } else if (GameRulesXml.lacksNation(game, step)) {
+        problems.add(
+            Problem.in(
+                "Turn order",
+                "Step "
+                    + step.getName()
+                    + " needs a nation: choose one in Turn order, or TripleA stops there"));
+      }
+    }
+    return problems;
+  }
+
+  // the delegates that run for no nation, by their class: the others ask for theirs
+  private static final Set<String> ROUND_DELEGATES =
+      Set.of("InitializationDelegate", "EndRoundDelegate", "RandomStartDelegate");
+
+  /**
+   * Of the five nations of the classic game, those without a capital, where TripleA looks for
+   * them: its EndRoundDelegate asks each of them for its capital at the end of every round, and
+   * throws without one, in a game that has all five, no more than five players and neither WW2V2
+   * nor WW2V3. "Has no capital" in Nations does not help there.
+   */
+  static List<String> classicWithoutCapital(final Game game) {
+    final List<String> classic =
+        List.of(
+            Constants.PLAYER_NAME_RUSSIANS,
+            Constants.PLAYER_NAME_GERMANS,
+            Constants.PLAYER_NAME_BRITISH,
+            Constants.PLAYER_NAME_JAPANESE,
+            Constants.PLAYER_NAME_AMERICANS);
+    final List<String> nations = MapXml.nations(game);
+    if (nations.size() > classic.size()
+        || !nations.containsAll(classic)
+        || MapXml.properties(game).stream()
+            .anyMatch(
+                p ->
+                    ("WW2V2".equals(p.getName()) || "WW2V3".equals(p.getName()))
+                        && Boolean.parseBoolean(GameRulesXml.value(p)))) {
+      return List.of();
+    }
+    final Set<String> withCapital =
+        MapXml.nationsWithCapital(game, Set.copyOf(MapXml.territories(game)));
+    return classic.stream().filter(n -> !withCapital.contains(n)).toList();
   }
 
   /**
@@ -385,7 +506,74 @@ class MapChecks {
     return loaded
         .filter(GameData.class::isInstance)
         .map(GameData.class::cast)
-        .flatMap(MapChecks::landWithoutAttachment);
+        .flatMap(
+            data ->
+                landWithoutAttachment(data)
+                    .or(() -> unitOfNoNation(data))
+                    .or(() -> stepWithoutNation(data))
+                    .or(() -> capitalOfNoNation(data)));
+  }
+
+  /**
+   * A unit whose owner the parser did not find among the players: it takes the unit without an
+   * owner, and TripleA then fails where it draws it ("gamePlayer is null").
+   */
+  private static Optional<String> unitOfNoNation(final GameData data) {
+    for (final Territory territory : data.getMap().getTerritories()) {
+      for (final Unit unit : territory.getUnitCollection()) {
+        if (unit.getOwner() == null) {
+          return Optional.of(
+              "A unit ("
+                  + unit.getType().getName()
+                  + ") in "
+                  + territory.getName()
+                  + " belongs to a nation the game does not have");
+        }
+      }
+    }
+    return Optional.empty();
+  }
+
+  /**
+   * A step without a nation whose delegate asks for its nation: all but the game's start, the
+   * round's end and the random start do, and TripleA fails when the step begins.
+   */
+  private static Optional<String> stepWithoutNation(final GameData data) {
+    for (final GameStep step : data.getSequence()) {
+      if (step.getPlayerId() == null
+          && step.getDelegateOptional()
+              .filter(d -> !ROUND_DELEGATES.contains(d.getClass().getSimpleName()))
+              .isPresent()) {
+        return Optional.of("Step " + step.getName() + " needs a nation");
+      }
+    }
+    return Optional.empty();
+  }
+
+  /** A capital of something that is no nation: TripleA fails where it draws the capital's flag. */
+  private static Optional<String> capitalOfNoNation(final GameData data) {
+    for (final Territory territory : data.getMap().getTerritories()) {
+      final Optional<String> capital;
+      try {
+        // an Optional in today's TripleA, the name itself in older ones
+        final Object named =
+            TerritoryAttachment.class
+                .getMethod("getCapital")
+                .invoke(TerritoryAttachment.get(territory));
+        capital =
+            named instanceof Optional<?> optional
+                ? optional.map(String::valueOf)
+                : Optional.ofNullable(named).map(String::valueOf);
+      } catch (final ReflectiveOperationException | RuntimeException e) {
+        // no attachment, or a TripleA that names its capitals otherwise: nothing to say here
+        continue;
+      }
+      if (capital.filter(nation -> data.getPlayerList().getPlayerId(nation) == null).isPresent()) {
+        return Optional.of(
+            territory.getName() + " is the capital of " + capital.get() + ", which is no nation");
+      }
+    }
+    return Optional.empty();
   }
 
   private static Optional<String> landWithoutAttachment(final GameData data) {

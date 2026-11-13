@@ -18,6 +18,8 @@ final class FieldError extends JLabel {
 
   void setProblem(final Optional<String> problem) {
     setText(problem.map(text -> "! " + text).orElse(""));
+    // a narrow column cuts a long reason: the tool tip has all of it
+    setToolTipText(problem.orElse(null));
     // the theme's color now, as the theme may have changed since the field was made
     setForeground(Theme.getDangerColor());
     setVisible(problem.isPresent());

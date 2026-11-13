@@ -235,9 +235,7 @@ final class MiniMap extends JComponent {
     } catch (final NoninvertibleTransformException e) {
       return Optional.empty();
     }
-    final Map<String, List<Polygon>> polygons = project.getFiles().polygons();
-    return landFirst.stream()
-        .filter(t -> polygons.get(t).stream().anyMatch(p -> p.contains(at)))
-        .findFirst();
+    // the map's own test, so a click here hits what a click on the big map hits
+    return project.getFiles().territoryAt(at.getX(), at.getY());
   }
 }

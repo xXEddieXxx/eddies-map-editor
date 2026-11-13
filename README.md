@@ -50,7 +50,8 @@ The tools sit in the sidebar in the same groups as below. Every change can be un
 step, its progress and *Next ›* over the map. Beside it is an overview: the map small in its
 owners' colors (problems outlined red; a click shows the territory) and a tile per tool with what
 the map has there and its problems; a click on a tile opens the tool. What the steps already say
-(a nation without land or capital) is no problem beside them, and a territory without neighbours
+(a nation without land or capital) is no problem beside them (but for a game of just Russians,
+Germans, British, Japanese and Americans, which TripleA stops without their capitals), and a territory without neighbours
 is listed apart under *Worth a look*, as many finished maps have one on purpose; so are a nation's
 unit types and flags the saved map has no picture for (the game would draw a placeholder). A new map shows
 only the tiles of its steps. An opened map is fitted to the view once (at most at 100 %). Where a setting comes from another tool, a small
@@ -69,15 +70,15 @@ link leads there, and a remove that triggers still need offers *Show in Attachme
 
 | Tool | What you do there |
 |------|-------------------|
-| **Territories** | Make territories from the picture (areas between dark or thin grey lines, blue = sea). Rename them, set owner, PUs, capital, victory city and starting units. |
-| ↳ *Paint* | Give many territories an owner, a capital, PUs (any value, changed in the banner while painting), units, rules, effects or textures at once: click them, or hold the left button and drag across them (one undo step per stroke). With a terrain effect brush the map shows every territory's effects as small pictures. Textures (light line drawings that hint at open sea, coastal sea, grass, forest, hills, mountains, desert, swamp or snow, or your own pictures, *Import texture…*; *Find textures in the map…* takes the ones painted into the map's picture or relief) mark territories in the relief that *Map look → Create relief* makes; while one is chosen the map shows them all, and *Offset X/Y* moves a texture to line it up with its neighbour. |
-| ↳ *Draw borders* | Draw border lines into the map picture by hand (like its lines, black or grey; width in px), freehand, as a line of clicked points (double-click or Enter ends it, Backspace takes back a point) or as a circle dragged from corner to corner (Shift: round); a line's ends snap to the borders near them, and a line that ends back at its start is a closed border of its own, eg an island. The *Eraser* takes border lines out of the picture under a band you drag (width in px), each side's color growing over the line. *Make territories* then turns the areas between the lines into territories, looking only where lines were drawn or erased since: territories elsewhere stay as they are, and where a line went it asks which territory keeps the joined area. |
+| **Territories** | Make territories from the picture (areas between dark or thin grey lines, blue = sea). Rename them, set owner, PUs, capital, victory city and starting units (a × removes a row, as does a number of 0; *Remove all* clears them). A click on any island of a group chooses the group, not the sea around it. |
+| ↳ *Paint* | Give many territories an owner, PUs (any value, changed in the banner while painting), units, rules, effects or textures at once: click them, or hold the left button and drag across them (one undo step per stroke). The *Capital* brush is clicked, not dragged: a nation has one capital, so a click moves it (a second one is ticked in the territory's panel), and the brush ends once every nation that wants a capital has one. With a terrain effect brush the map shows every territory's effects as small pictures. Textures (light line drawings that hint at open sea, coastal sea, grass, forest, hills, mountains, desert, swamp or snow, or your own pictures, *Import texture…*; *Find textures in the map…* takes the ones painted into the map's picture or relief) mark territories in the relief that *Map look → Create relief* makes; while one is chosen the map shows them all, and *Offset X/Y* moves a texture to line it up with its neighbour. |
+| ↳ *Draw borders* | Draw border lines into the map picture by hand (like its lines, black or grey; width in px), freehand, as a line of clicked points (double-click or Enter ends it, Backspace takes back a point) or as a circle dragged from corner to corner (Shift: round); a line's ends snap to the borders near them, and a line that ends back at its start is a closed border of its own, eg an island. The *Eraser* takes border lines out of the picture under a band you drag (width in px), each side's color growing over the line; a click on a border erases the whole border between its two territories, shown while the mouse is on it, so that they become one. *Make territories* then turns the areas between the lines into territories, looking only where lines were drawn or erased since: territories elsewhere stay as they are, and where a line went it asks which territory keeps the joined area. |
 | ↳ *Split with a line* | Cut one territory in two; the new border is drawn into the picture in the same line style. |
 | ↳ *Merge* | Several islands can be one territory: *Merge into this…* (in a territory's "On the map"), then click each territory that belongs to it; or *Merge into…* to make the chosen one part of another. The keeper gets the other's outlines and neighbours and keeps its own owner, units, settings and places. Land and sea stay apart. |
 | ↳ *Remove territories* | In the list's ⋯ menu: tick many territories, the smallest first with their area, eg islands found by mistake, and remove them in one step. |
 | ↳ *Export territory pictures* | In the list's ⋯ menu: a PNG of each territory you tick, cut from the map picture and see-through outside its border, to draw on in a paint program; `territory-pictures.txt` says where each lies on the map. |
 | ↳ *Move places* | Drag where the game draws one territory's units, names, flags and markers. *Show its name on the map* off: the game draws no name there. |
-| ↳ *Places* | Show units, centers, names, PUs, capitals, victory cities, convoys and the other markers on every territory, several kinds at once, and drag them into place. *Lay out unit places* for one or all territories, 4 px apart, at most 16 (or as set) per territory, numbered: *Round the center* (clockwise from 12:00) or *In rows below the center* (the first at 6:00); the last place ends the bottom row on the side with room, and the units beyond go that way (overflowToLeft). *Create missing places* gives every territory without a line in a place file (names, PUs, capitals, ...) its found place, per kind or for all, and says how many are missing; the next save writes them, making the file if the map has none (Files' map folder overview links there). *Decorations* places pictures from the map's `misc` folder anywhere on the map. |
+| ↳ *Places* | Show units, centers, names, PUs, capitals, victory cities, convoys and the other markers on every territory, several kinds at once, and drag them into place. *Lay out unit places* for one or all territories, 4 px apart, at most 16 (or as set) per territory, numbered: *Round the center* (clockwise from 12:00) or *In rows below the center* (the first at 6:00); the last place ends the bottom row on the side with room, and the units beyond go that way (overflowToLeft); where the rows leave room unused, places between them fill it, and a territory with room for fewer than three gets up to three that stick out a little over its border. With *Units* shown, a click in the chosen territory adds a place, also where a unit does not wholly fit. *Create missing places* gives every territory without a line in a place file (names, PUs, capitals, ...) its found place, per kind or for all, and says how many are missing; the next save writes them, making the file if the map has none (Files' map folder overview links there). *Decorations* places pictures from the map's `misc` folder anywhere on the map. |
 | **Connections** | Which territories are neighbours. *Find neighbours again…* compares them with the outlines: territories that touch without a connection, and connections between territories that do not touch, for you to tick. |
 | **Canals** | Click two sea zones and the land between; choose the units that pass freely. The map shows every canal, the open one strongest. |
 | **Terrain effects** | Effects like forest: what they do to each unit type, and their picture. |
@@ -91,14 +92,14 @@ link leads there, and a remove that triggers still need offers *Show in Attachme
 
 ### ⚔️ Players
 
-- **Nations:** the list of nations in their colors; a click on one, or on its land, opens it: color (shown live on the map), alliance, starting PUs, who plays it, and its own
+- **Nations:** the list of nations in their colors; a click on one, or on its land, opens it: its name (type a new one to rename it everywhere in the game, its colors and texts; its flags and unit pictures follow with the next save; refused while a territory has the name or the game builds other names from it with foreach), color (shown live on the map), alliance, starting PUs, *Has no capital* for a nation that has none on purpose (the steps then stop asking for one), who plays it, and its own
   rules such as capitals to hold, *Stacking limits* (at most so many of a group of unit types
   per territory when placing, moving in or attacking), where it may place units (any land it owns,
   captured land, how many per territory), the units it holds at the start to place in its first
   turn, and where it may move (only into, or not into, chosen
   territories). *In the nation's color* tints its unit pictures;
   click a unit's picture to keep it in its own colors for every nation. *Flag…* makes the nation's
-  flags in all the game's sizes from one picture (gif flags of the nation make way, kept as `.bak`).
+  flags in all the game's sizes from one picture (gif flags of the nation make way, kept as `.bak`). *Add nation…* can give the new nation the purchase and repair lists of another, as lists of its own. *Compare nations ›* lists all nations side by side: alliance, territories, income, starting PUs and other resources, units and their value (TUV, as TripleA counts it), with a sum per alliance; click a column to sort, a nation to open it.
 - **Politics:** how nations start, in a diplomacy matrix like the game's (a cell per pair, colored
   war, allied or neutral; click to change, a kind the map has no type of yet makes that type), and the relationship types with what each allows.
 - **Objectives:** the national objectives, nation by nation: the PUs each pays, the text the
@@ -122,7 +123,7 @@ link leads there, and a remove that triggers still need offers *Show in Attachme
   bigger than the map's units can be scaled to their size. Units says which nations have no
   picture of the chosen unit.
 - **Production:** what each nation can buy and repair (its purchase list, called by the nations
-  that use it), at which cost, the resources with
+  that use it; *Copy from…* takes another list's rules), at which cost, the resources with
   their icons and starting amounts, and the tabs of the buy window (TripleA's own, or yours, for
   all nations or one).
 
@@ -226,6 +227,7 @@ All code is in `src/main/java/eddies/mapeditor`:
 | `MapCanvas`, `MapView`                                                      | The map on screen                                                                             |
 | `PlayWith`                                                                  | Which TripleA Play starts                                                                     |
 | `HomeEditor`, `TerritoriesEditor`, `NationsEditor`, `UnitsEditor`, ...      | The tools                                                                                     |
+| `NationsBalance`                                                            | Compare nations: what each starts with, and the sums per alliance                             |
 
 ## License
 

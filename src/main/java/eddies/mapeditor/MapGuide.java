@@ -343,9 +343,12 @@ class MapGuide {
     final List<String> withoutLand = withoutLand(playing, owners);
     final Set<String> withCapital = MapXml.nationsWithCapital(game, known);
     final List<String> landed = nations.stream().filter(owners::contains).toList();
-    final List<String> withoutCapital =
-        landed.stream().filter(n -> !withCapital.contains(n)).toList();
-    final long capitals = landed.size() - withoutCapital.size();
+    final List<String> withoutCapital = withoutCapital(project);
+    // those with land that have no capital on purpose are not asked for one
+    final long needNone =
+        landed.stream().filter(n -> !withCapital.contains(n)).count() - withoutCapital.size();
+    final long wanting = landed.size() - needNone;
+    final long capitals = wanting - withoutCapital.size();
     final boolean nationsAndLand = !nations.isEmpty() && !territories.isEmpty();
     // the placements read once, not per territory: a big map has hundreds of territories
     final long withUnits =
@@ -392,7 +395,7 @@ class MapGuide {
         new Step(
             Id.CAPITALS,
             "Mark each nation's capital",
-            !landed.isEmpty() && (capitals == landed.size() || (checked && capitals > 0))
+            !landed.isEmpty() && (withoutCapital.isEmpty() || (checked && capitals > 0))
                 ? State.DONE
                 : landed.isEmpty() ? State.TODO : State.FAILING,
             "Territories",
@@ -401,10 +404,11 @@ class MapGuide {
                 ? "No nation has land yet"
                 : capitals
                     + " of "
-                    + landed.size()
-                    + (landed.size() == 1 ? " nation with land has" : " nations with land have")
+                    + wanting
+                    + (wanting == 1 ? " nation with land has" : " nations with land have")
                     + " a capital"
-                    + without(withoutCapital)),
+                    + without(withoutCapital)
+                    + (needNone == 0 ? "" : " · " + needNone + " need none")),
         new Step(
             Id.UNITS,
             "Place the units each territory starts with",
@@ -463,9 +467,29 @@ class MapGuide {
         playing, MapXml.nationsWithLand(game, Set.copyOf(MapXml.territories(game))));
   }
 
+  /**
+   * The nations with land that still want a capital: they have none, and are not marked "Has no
+   * capital" in Nations ({@link MapFiles#nationsWithoutCapital}).
+   */
+  static List<String> withoutCapital(final MapProject project) {
+    final Game game = project.game();
+    final Set<String> known = Set.copyOf(MapXml.territories(game));
+    final Set<String> owners = MapXml.nationsWithLand(game, known);
+    final Set<String> withCapital = MapXml.nationsWithCapital(game, known);
+    final Set<String> needNone = project.getFiles().nationsWithoutCapital();
+    return MapXml.nations(game).stream()
+        .filter(owners::contains)
+        .filter(n -> !withCapital.contains(n) && !needNone.contains(n))
+        .toList();
+  }
+
   private static List<String> withoutLand(final List<String> playing, final Set<String> owners) {
     return playing.stream().filter(n -> !owners.contains(n)).toList();
   }
+
+  /** What a click of the Capital brush does, for its banner too. */
+  static final String CAPITAL_HOW_TO =
+      "Click a territory to make it its owner's capital. One per nation: another click moves it.";
 
   /** What to do for a step on the map, shown while its tool has no mode of its own for it. */
   static String howTo(final Step.Id step) {
@@ -473,7 +497,7 @@ class MapGuide {
       case TERRITORIES -> "Load a picture of the map, then make the territories from it.";
       case NATIONS -> "Add a nation with + below the list.";
       case LAND -> "Painting an owner: drag across land to give it to the nation.";
-      case CAPITALS -> "Painting capitals: click land to make it its owner's capital.";
+      case CAPITALS -> CAPITAL_HOW_TO;
       case UNITS -> "Click a territory, then + Add units in the panel on the right.";
       case CONNECTIONS -> "Click a territory, then its neighbours.";
       case CHECK -> "Check (F6) loads the game as TripleA does.";

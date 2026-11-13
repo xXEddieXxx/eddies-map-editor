@@ -120,6 +120,21 @@ class AttachmentsXml {
 
   private static final Map<String, List<String>> KNOWN_OPTIONS = new ConcurrentHashMap<>();
 
+  /**
+   * Where the attachment of this name on the thing is: of two the last, as TripleA keeps one per
+   * name and thing, eg G40's second territoryAttachment of Russia; -1 for none. Every read and
+   * change of one attachment's options asks this, so a box reads what it writes.
+   */
+  static int lastIndexOf(
+      final List<Attachment> attachments, final String name, final String attachTo) {
+    for (int i = attachments.size() - 1; i >= 0; i--) {
+      if (isNamed(attachments.get(i), name) && attachTo.equals(attachments.get(i).getAttachTo())) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
   static List<Attachment> attachments(final Game game) {
     return Optional.ofNullable(game.getAttachmentList())
         .map(AttachmentList::getAttachments)

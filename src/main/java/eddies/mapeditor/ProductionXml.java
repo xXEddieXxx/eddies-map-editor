@@ -212,6 +212,41 @@ class ProductionXml {
         game, frontier, rules -> rules.stream().filter(r -> !rule.equals(r.getName())).toList());
   }
 
+  /**
+   * The game with the frontier selling what the other sells, in its order, in place of what it
+   * sold: a frontier lists rules by name, so both then name the same rules, and each list is
+   * changed on its own after that.
+   */
+  static Game withRulesCopied(final Game game, final String from, final String to) {
+    final List<FrontierRules> copied =
+        rulesIn(game, from).stream().map(rule -> FrontierRules.builder().name(rule).build()).toList();
+    return rulesIn(game, to).equals(rulesIn(game, from))
+        ? game
+        : withFrontierRules(game, to, rules -> copied);
+  }
+
+  /**
+   * The game with the nation buying what the other one buys, from a frontier of its own with the
+   * same rules ("production" and its name, made free), and repairing likewise if the other has a
+   * repair frontier. The same game when the other buys nothing.
+   */
+  static Game withPurchasesLike(final Game game, final String nation, final String like) {
+    final Game buying = withFrontierLike(game, nation, like, "production");
+    return withRepairChange(buying, view -> withFrontierLike(view, nation, like, "repair"));
+  }
+
+  private static Game withFrontierLike(
+      final Game game, final String nation, final String like, final String prefix) {
+    final Optional<String> from = frontierOf(game, like);
+    if (from.isEmpty()) {
+      return game;
+    }
+    final String frontier =
+        RulesXml.freeName(Set.copyOf(frontiers(game)), prefix + nation.replace(' ', '_'));
+    return withFrontierOf(
+        withRulesCopied(withFrontier(game, frontier), from.get(), frontier), nation, frontier);
+  }
+
   private static Game withFrontierRules(
       final Game game, final String frontier, final UnaryOperator<List<FrontierRules>> change) {
     return withFrontiers(

@@ -36,6 +36,7 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Function;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -404,6 +405,102 @@ final class MapProject {
         : Optional.of("the new name is taken, or holds : < or (");
   }
 
+  /**
+   * Renames the nation wherever the game names it ({@link MapXml#withRenamedNation}), in
+   * map.properties (color, unit tint, "has no capital") and in the texts (objectives, tool tips,
+   * sounds, buy window tabs), all as one step. Its flags and unit pictures in the folder keep the
+   * old name until the next save moves them, so an undo needs nothing on disk; until then they
+   * are found under {@link MapFiles#nationFilesName}. Where another game of the map still has a
+   * nation of the old name, that name keeps the settings and texts the games share.
+   *
+   * @return false, changing nothing, where {@link #whyNotRenamedNation} gives a reason
+   */
+  boolean renameNation(final String old, final String renamed) {
+    if (whyNotRenamedNation(old, renamed).isPresent()) {
+      return false;
+    }
+    final boolean shared = isInOtherGame(old);
+    final MapFiles files = current.files();
+    final MapTexts texts = current.texts();
+    step(
+        new State(
+            MapXml.withRenamedNation(game(), old, renamed),
+            shared
+                ? files.withRenamedNationKeeping(old, renamed)
+                : files.withRenamedNation(old, renamed),
+            shared
+                ? texts.withRenamedNationKeeping(game(), old, renamed)
+                : texts.withRenamedNation(game(), old, renamed),
+            current.drawn()));
+    return true;
+  }
+
+  private boolean isInOtherGame(final String nation) {
+    return folder != null
+        && xmlFile != null
+        && MapFolder.otherGameHasNation(folder, xmlFile, nation);
+  }
+
+  /** Why the nation may not take the name, in words for the map maker; empty if it may. */
+  Optional<String> whyNotRenamedNation(final String old, final String renamed) {
+    final Game game = game();
+    if (!MapXml.nations(game).contains(old)) {
+      return Optional.of("No nation is called " + old + ".");
+    }
+    if (renamed.isBlank()) {
+      return Optional.of("A nation needs a name.");
+    }
+    if (!renamed.strip().equals(renamed)) {
+      return Optional.of("No spaces at the start or end.");
+    }
+    // ':' '<' '(' as for every name; the others cannot be in the names of its flags and its
+    // folder of unit pictures, ';' and ',' part its name from others in the texts and lists
+    if (renamed.chars().anyMatch(c -> ":<(\\/*?\">|;,".indexOf(c) >= 0)) {
+      return Optional.of("No : < ( > \\ / * ? \" | ; or comma in a name.");
+    }
+    // told by letters alone too: Windows takes Soviets.png and soviets.png for one file
+    if (!isFreeName(game, renamed)
+        || MapXml.nations(game).stream()
+            .anyMatch(n -> !n.equals(old) && n.equalsIgnoreCase(renamed))) {
+      return Optional.of("Already used by a territory, nation or unit.");
+    }
+    // the options name all of these alike, so a rename would rename the other one too
+    if (Stream.of(
+            MapXml.territories(game),
+            MapXml.unitTypes(game),
+            ProductionXml.resources(game),
+            ProductionXml.frontiers(game),
+            RulesXml.relationshipTypes(game),
+            TerritoryEffectsXml.effects(game),
+            TechXml.techNames(game),
+            RulesXml.delegates(game),
+            RulesXml.steps(game).stream().map(step -> step.getName()).toList(),
+            MapXml.properties(game).stream().map(property -> property.getName()).toList(),
+            ProductionXml.rules(game).stream().map(rule -> rule.getName()).toList(),
+            ProductionXml.rules(ProductionXml.repairView(game)).stream()
+                .map(rule -> rule.getName())
+                .toList(),
+            ProductionXml.frontiers(ProductionXml.repairView(game)),
+            AttachmentsXml.attachments(game).stream().map(a -> a.getName()).toList())
+        .anyMatch(names -> names.contains(old))) {
+      return Optional.of(old + " also names something else: it stays.");
+    }
+    if (MapXml.buildsNamesFrom(game, old)) {
+      return Optional.of("foreach attachments build names from it: it stays.");
+    }
+    return filesNameTakenBy(renamed)
+        .filter(other -> !other.equals(old))
+        .map(other -> "Save first: " + other + "'s pictures still have this name.");
+  }
+
+  /** The nation renamed since the last save whose pictures in the folder still have the name. */
+  private Optional<String> filesNameTakenBy(final String name) {
+    return getFiles().renamedNations().entrySet().stream()
+        .filter(e -> e.getValue().equalsIgnoreCase(name))
+        .map(Map.Entry::getKey)
+        .findFirst();
+  }
+
   /** How many territories {@link #renameAll} renamed, and the lines it refused with the reason. */
   record Renamed(int count, List<String> refused) {}
 
@@ -487,6 +584,16 @@ final class MapProject {
   }
 
   /**
+   * As {@link #nameProblem} for a new nation; also a name whose flags and unit pictures in the
+   * folder are still those of a nation renamed since the last save.
+   */
+  Optional<String> nationNameProblem(final String name) {
+    return filesNameTakenBy(name)
+        .map(other -> "Save first: " + other + "'s pictures still have this name")
+        .or(() -> nameProblem(name));
+  }
+
+  /**
    * The first of base, "base 2", "base 3", ... that {@link #isFreeName} takes and alsoTaken has not.
    */
   String freeName(final String base, final Collection<String> alsoTaken) {
@@ -511,12 +618,21 @@ final class MapProject {
    * @return false, changing nothing, for a name {@link #isFreeName} refuses
    */
   boolean addNation(final String nation) {
-    if (!isFreeName(nation)) {
+    return addNation(nation, Optional.empty());
+  }
+
+  /**
+   * As {@link #addNation(String)}; the nation buys, and repairs, what the other one does, from
+   * lists of its own with the same rules ({@link ProductionXml#withPurchasesLike}), all one step.
+   */
+  boolean addNation(final String nation, final Optional<String> buysLike) {
+    if (!isFreeName(nation) || filesNameTakenBy(nation).isPresent()) {
       return false;
     }
+    final Game added = MapXml.withNation(game(), nation);
     step(
         state(
-            MapXml.withNation(game(), nation),
+            buysLike.map(like -> ProductionXml.withPurchasesLike(added, nation, like)).orElse(added),
             current.files().withNationColor(nation, newNationColor())));
     return true;
   }
@@ -686,6 +802,10 @@ final class MapProject {
   }
 
   private void hold(final UnaryOperator<MapFiles> held) {
+    holdEach(state -> held.apply(state.files()));
+  }
+
+  private void holdEach(final Function<State, MapFiles> held) {
     // a state is the same state after it, so current == saved stays
     final Map<State, State> holding = new IdentityHashMap<>();
     final UnaryOperator<State> hold =
@@ -693,7 +813,7 @@ final class MapProject {
             holding.computeIfAbsent(
                 state,
                 s -> {
-                  final MapFiles files = held.apply(s.files());
+                  final MapFiles files = held.apply(s);
                   return files == s.files()
                       ? s
                       : new State(s.game(), files, s.texts(), s.drawn());
@@ -788,6 +908,33 @@ final class MapProject {
             current.files().withPicture(erased.get()),
             current.texts(),
             drawnWith(new BorderLine(stroke, width, Color.BLACK))));
+    return true;
+  }
+
+  /**
+   * Takes the whole border between two territories out of the map's picture, every line pixel
+   * between their outlines ({@link MapFiles#sharedBorderAt}), as one step, its box counting as
+   * drawn; false without a picture held or a line there.
+   */
+  boolean eraseBorder(final MapFiles.SharedBorder border) {
+    final Optional<BufferedImage> picture = current.files().picture();
+    final Optional<BufferedImage> erased =
+        picture.flatMap(p -> MapPicture.withoutLines(p, border.box(), border.between()));
+    if (erased.isEmpty()) {
+      return false;
+    }
+    drawnOn.put(erased.get(), firstOf(picture.orElseThrow()));
+    final Rectangle box = border.box();
+    step(
+        new State(
+            game(),
+            current.files().withPicture(erased.get()),
+            current.texts(),
+            drawnWith(
+                new BorderLine(
+                    List.of(box.getLocation(), new Point(box.x + box.width, box.y + box.height)),
+                    1,
+                    Color.BLACK))));
     return true;
   }
 
@@ -1363,6 +1510,8 @@ final class MapProject {
   Optional<Image> unitPicture(final String nation, final Color color, final String unit) {
     return mapsUnitPicture(nation, color, unit)
         .or(() -> gamesUnitPicture(nation, unit))
+        // a save copies the game's pictures of the name a renamed nation had
+        .or(() -> gamesUnitPicture(getFiles().nationFilesName(nation), unit))
         .or(() -> gamesUnitPicture("Germans", unit))
         .map(picture -> tinted(nation, unit, picture));
   }
@@ -1407,14 +1556,16 @@ final class MapProject {
     if (uploaded.isPresent()) {
       return Optional.of(uploaded.get().forNation(color));
     }
+    // a nation renamed since the last save has its pictures under the name it was saved with
+    final String inFolder = getFiles().nationFilesName(nation);
     // the last save wrote a picture taken back since: the next save brings the game's back
     final boolean takenBack =
-        saved.files().nationUnitPictures().containsKey(new NationUnit(nation, unit))
+        saved.files().nationUnitPictures().containsKey(new NationUnit(inFolder, unit))
             || saved.files().unitPictures().containsKey(unit);
     final Optional<Path> own =
         getFolder()
             .filter(f -> !takenBack)
-            .map(f -> f.resolve("units").resolve(nation).resolve(unit + ".png"))
+            .map(f -> f.resolve("units").resolve(inFolder).resolve(unit + ".png"))
             .filter(Files::exists);
     if (own.isPresent()) {
       try {
@@ -1528,6 +1679,15 @@ final class MapProject {
       }
     }
     final Game before = firstSave ? Game.builder().build() : saved.game();
+    // before pictures are made for new names: a renamed nation brings its own
+    // copied only: should the save fail before the game is written, the game there still names
+    // the old nation and finds its pictures
+    final Map<String, String> movedNations = new HashMap<>();
+    for (final Map.Entry<String, String> renamed : files.renamedNations().entrySet()) {
+      MapFolder.copyNationFiles(
+          mapFolder, renamed.getValue(), renamed.getKey(), MapXml.unitTypes(saving.game()));
+      movedNations.put(renamed.getValue(), renamed.getKey());
+    }
     writeNationPictures(saving.game(), files, before);
     if (firstSave
         || !files.unitPictures().equals(saved.files().unitPictures())
@@ -1544,8 +1704,24 @@ final class MapProject {
     final Game game = mapName == null ? saving.game() : MapXml.withMapName(saving.game(), mapName);
     // the file there is the last save: what TripleA's model does not hold is kept from it
     MapFolder.replace(xml, file -> GameXmlKeeper.export(game, xml, file));
+    // the game is saved under the new names: the pictures under the old ones go, unless a
+    // nation of this or another game of the map still has the name
+    for (final Map.Entry<String, String> moved : movedNations.entrySet()) {
+      if (!MapXml.nations(saving.game()).contains(moved.getKey())
+          && !MapFolder.otherGameHasNation(mapFolder, xml, moved.getKey())) {
+        MapFolder.removeNationFiles(mapFolder, moved.getKey(), moved.getValue());
+      }
+    }
     saved = saving;
     current = saved;
+    if (!movedNations.isEmpty()) {
+      // every step finds its nations' pictures where they are now, eg after an undo of the rename
+      holdEach(
+          state ->
+              state
+                  .files()
+                  .withNationFilesMoved(movedNations, MapXml.nations(state.game())));
+    }
     listeners.forEach(Runnable::run);
   }
 
@@ -1597,7 +1773,10 @@ final class MapProject {
         units.stream().filter(u -> !MapXml.unitTypes(before).contains(u)).toList();
     for (final String nation : MapXml.nations(game)) {
       final Color color = files.nationColor(nation).orElse(Color.GRAY);
-      final boolean isNew = !MapXml.nations(before).contains(nation);
+      // a nation only renamed has its pictures, also those all nations share (units/<unit>.png)
+      final boolean isNew =
+          !MapXml.nations(before).contains(nation)
+              && !files.renamedNations().containsKey(nation);
       if (isNew) {
         MapFolder.writeFlags(mapFolder, nation, color);
       }

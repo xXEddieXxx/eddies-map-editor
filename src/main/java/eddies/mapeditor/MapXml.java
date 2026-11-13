@@ -59,6 +59,7 @@ import org.triplea.map.data.elements.ResourceList;
 import org.triplea.map.data.elements.ResourceList.Resource;
 import org.triplea.map.data.elements.UnitList;
 import org.triplea.map.data.elements.UnitList.Unit;
+import org.triplea.map.data.elements.VariableList;
 import eddies.mapeditor.MapPicture.DetectedMap;
 
 /**
@@ -115,12 +116,7 @@ class MapXml {
    * which territories those reach shows only when TripleA loads it.
    */
   static Game withTerritoryAttachments(final Game game) {
-    if (AttachmentsXml.attachments(game).stream()
-        .anyMatch(
-            a ->
-                AttachmentsXml.isNamed(a, TERRITORY)
-                    && (a.getForeach() != null
-                        || (a.getAttachTo() != null && a.getAttachTo().contains("@"))))) {
+    if (makesTerritoryAttachmentsByForeach(game)) {
       return game;
     }
     final Set<String> attached =
@@ -134,15 +130,7 @@ class MapXml {
         territoryElements(game).stream()
             .filter(t -> !Boolean.TRUE.equals(t.getWater()) || owned.contains(t.getName()))
             .filter(t -> !attached.contains(t.getName()))
-            .map(
-                t ->
-                    Attachment.builder()
-                        .name(TERRITORY)
-                        .attachTo(t.getName())
-                        .javaClass(TerritoryAttachment.class.getName())
-                        .type("territory")
-                        .options(List.of(Option.builder().name(PRODUCTION).value("0").build()))
-                        .build())
+            .map(t -> newTerritoryAttachment(t.getName()))
             .toList();
     if (missing.isEmpty()) {
       return game;
@@ -157,12 +145,76 @@ class MapXml {
         .anyMatch(t -> t.getName().equals(territory) && Boolean.TRUE.equals(t.getWater()));
   }
 
-  static Game withWater(final Game game, final String territory) {
-    return withWaterValue(game, territory, Boolean.TRUE);
+  /**
+   * Whether the game makes territory attachments in a loop: which territories those reach shows
+   * only when TripleA loads it, so a territory there may have one that is not written for it.
+   */
+  private static boolean makesTerritoryAttachmentsByForeach(final Game game) {
+    return attachments(game).stream()
+        .anyMatch(
+            a ->
+                AttachmentsXml.isNamed(a, TERRITORY)
+                    && (a.getForeach() != null
+                        || (a.getAttachTo() != null && a.getAttachTo().contains("@"))));
   }
 
+  /**
+   * As {@link #withTerritoryAttachment} for a territory the game had before: not in a game that
+   * makes territory attachments by foreach, where one written here, the last of its name, would
+   * take the place of the loop's with its production and capital.
+   */
+  private static Game withAttachmentOfOldTerritory(final Game game, final String territory) {
+    return makesTerritoryAttachmentsByForeach(game)
+        ? game
+        : withTerritoryAttachment(game, territory);
+  }
+
+  /**
+   * The game with the territory's own attachment, with a production of 0, unless it has one: land
+   * and owned sea zones need it to start ({@link #withTerritoryAttachments}). Always for a
+   * territory made here, also in a game that makes the others' by foreach, which it is not part of.
+   */
+  private static Game withTerritoryAttachment(final Game game, final String territory) {
+    if (attachments(game).stream()
+        .anyMatch(a -> AttachmentsXml.isNamed(a, TERRITORY) && territory.equals(a.getAttachTo()))) {
+      return game;
+    }
+    final List<Attachment> all = new ArrayList<>(attachments(game));
+    all.add(newTerritoryAttachment(territory));
+    return AttachmentsXml.withAttachments(game, all);
+  }
+
+  private static Attachment newTerritoryAttachment(final String territory) {
+    return Attachment.builder()
+        .name(TERRITORY)
+        .attachTo(territory)
+        .javaClass(TerritoryAttachment.class.getName())
+        .type("territory")
+        .options(List.of(Option.builder().name(PRODUCTION).value("0").build()))
+        .build();
+  }
+
+  /**
+   * The game with the territory a sea zone; an attachment that says no more than the one made for
+   * new land goes, unless the sea zone has an owner, which needs it.
+   */
+  static Game withWater(final Game game, final String territory) {
+    final Game water = withWaterValue(game, territory, Boolean.TRUE);
+    final Predicate<Attachment> bare =
+        a ->
+            AttachmentsXml.isNamed(a, TERRITORY)
+                && territory.equals(a.getAttachTo())
+                && Optional.ofNullable(a.getOptions()).orElse(List.of()).stream()
+                    .allMatch(o -> PRODUCTION.equals(o.getName()) && "0".equals(o.getValue()));
+    return owner(game, territory).isPresent() || attachments(game).stream().noneMatch(bare)
+        ? water
+        : AttachmentsXml.withAttachments(
+            water, attachments(game).stream().filter(bare.negate()).toList());
+  }
+
+  /** The game with the territory land, with its territory attachment, which land needs. */
   static Game withLand(final Game game, final String territory) {
-    return withWaterValue(game, territory, null);
+    return withAttachmentOfOldTerritory(withWaterValue(game, territory, null), territory);
   }
 
   private static Game withWaterValue(
@@ -191,7 +243,7 @@ class MapXml {
     for (final String neighbour : neighbours) {
       changed = withConnection(changed, territory, neighbour);
     }
-    return changed;
+    return withTerritoryAttachment(changed, territory);
   }
 
   /**
@@ -303,17 +355,20 @@ class MapXml {
       owners.add(TerritoryOwner.builder().territory(territory).owner(owner).build());
     }
     final Initialize initialize = initialize(game);
-    return game.toBuilder()
-        .initialize(
-            initialize.toBuilder()
-                .ownerInitialize(
-                    Optional.ofNullable(initialize.getOwnerInitialize())
-                        .orElseGet(() -> OwnerInitialize.builder().build())
-                        .toBuilder()
-                        .territoryOwners(owners)
-                        .build())
-                .build())
-        .build();
+    final Game owned =
+        game.toBuilder()
+            .initialize(
+                initialize.toBuilder()
+                    .ownerInitialize(
+                        Optional.ofNullable(initialize.getOwnerInitialize())
+                            .orElseGet(() -> OwnerInitialize.builder().build())
+                            .toBuilder()
+                            .territoryOwners(owners)
+                            .build())
+                    .build())
+            .build();
+    // an owned territory, a sea zone too, does not start without its attachment
+    return owner == null ? owned : withAttachmentOfOldTerritory(owned, territory);
   }
 
   private static Initialize initialize(final Game game) {
@@ -372,6 +427,34 @@ class MapXml {
       }
     }
     return nations;
+  }
+
+  /** The nation's capitals, as {@link #capitalOf} finds them; the attachments read once. */
+  static List<String> capitalsOf(final Game game, final String nation) {
+    final Set<String> capitals = new LinkedHashSet<>();
+    for (final Attachment attachment : attachments(game)) {
+      if (AttachmentsXml.isNamed(attachment, TERRITORY)
+          && Optional.ofNullable(attachment.getOptions()).orElse(List.of()).stream()
+              .anyMatch(o -> AttachmentsXml.isOption(o, "capital") && nation.equals(o.getValue()))) {
+        capitals.add(attachment.getAttachTo());
+      }
+    }
+    return List.copyOf(capitals);
+  }
+
+  /**
+   * The game with the land the capital of its owner, as the Capital brush paints it: a nation has
+   * one capital as a rule, so the one it had is none any more. A nation with several, made on
+   * purpose in a territory's panel, gets one more. Water and land without an owner stay.
+   */
+  static Game withCapitalMovedTo(final Game game, final String territory) {
+    final Optional<String> owner = isWater(game, territory) ? Optional.empty() : owner(game, territory);
+    if (owner.isEmpty() || owner.equals(capitalOf(game, territory))) {
+      return game;
+    }
+    final List<String> before = capitalsOf(game, owner.get());
+    final Game moved = before.size() == 1 ? withCapital(game, before.getFirst(), null) : game;
+    return withCapital(moved, territory, owner.get());
   }
 
   /** Whether no unit may enter the territory, eg marshes. */
@@ -1085,6 +1168,283 @@ class MapXml {
         .build();
   }
 
+  // options whose value is the key of a text, eg a message's, not a name of the game
+  private static final Set<String> TEXT_OPTIONS = Set.of("notification", "victory", "text");
+  private static final java.util.regex.Pattern NAME_PREFIX =
+      java.util.regex.Pattern.compile("(-(?:clear|reset)-|-|)(.*)", java.util.regex.Pattern.DOTALL);
+
+  /**
+   * The game with the nation renamed wherever the XML names it: the player list and the alliances,
+   * owners, units, held units, resources and relationships at the start, production and repair,
+   * technology, the steps' player and their lists of nations, its bid option and an option's
+   * player, the resources shown for it, the variables' elements, the attachments to it and every
+   * option that names it (names between ':', one taken away as "-name", and the count, which the
+   * game reads before the value). Names that only hold the word stay, eg a step "russianBid" or a
+   * unit "Russian_Tank", and so do the keys of texts.
+   */
+  static Game withRenamedNation(final Game game, final String old, final String renamed) {
+    // a name taken away is "-Name"; a trigger's "-reset-Name" or "-clear-Name" empties the list
+    // first (TriggerAttachment's clearFirstNewValueRegex)
+    final UnaryOperator<String> rename =
+        name -> {
+          if (name == null) {
+            return null;
+          }
+          final java.util.regex.Matcher prefixed = NAME_PREFIX.matcher(name);
+          return prefixed.matches() && old.equals(prefixed.group(2))
+              ? prefixed.group(1) + renamed
+              : name;
+        };
+    final UnaryOperator<String> inList = value -> renamedInList(value, rename);
+    final Game.GameBuilder changed = game.toBuilder();
+    Optional.ofNullable(game.getPlayerList())
+        .ifPresent(
+            list ->
+                changed.playerList(
+                    list.toBuilder()
+                        .players(
+                            each(
+                                list.getPlayers(),
+                                p -> p.toBuilder().name(rename.apply(p.getName())).build()))
+                        .alliances(
+                            each(
+                                list.getAlliances(),
+                                a -> a.toBuilder().player(rename.apply(a.getPlayer())).build()))
+                        .build()));
+    Optional.ofNullable(game.getInitialize())
+        .ifPresent(start -> changed.initialize(withRenamedNation(start, rename)));
+    Optional.ofNullable(game.getProduction())
+        .ifPresent(
+            production ->
+                changed.production(
+                    production.toBuilder()
+                        .playerProductions(
+                            each(
+                                production.getPlayerProductions(),
+                                p -> p.toBuilder().player(rename.apply(p.getPlayer())).build()))
+                        .playerRepairs(
+                            each(
+                                production.getPlayerRepairs(),
+                                p -> p.toBuilder().player(rename.apply(p.getPlayer())).build()))
+                        .build()));
+    Optional.ofNullable(game.getTechnology())
+        .ifPresent(
+            technology ->
+                changed.technology(
+                    technology.toBuilder()
+                        .playerTechs(
+                            each(
+                                technology.getPlayerTechs(),
+                                p -> p.toBuilder().player(rename.apply(p.getPlayer())).build()))
+                        .build()));
+    Optional.ofNullable(game.getPropertyList())
+        .ifPresent(
+            list ->
+                changed.propertyList(
+                    list.toBuilder()
+                        .properties(
+                            each(
+                                list.getProperties(),
+                                p ->
+                                    p.toBuilder()
+                                        .name(
+                                            bidOption(old).equals(p.getName())
+                                                ? bidOption(renamed)
+                                                : p.getName())
+                                        .player(rename.apply(p.getPlayer()))
+                                        .build()))
+                        .build()));
+    Optional.ofNullable(game.getResourceList())
+        .ifPresent(
+            list ->
+                changed.resourceList(
+                    list.toBuilder()
+                        .resources(
+                            each(
+                                list.getResources(),
+                                r ->
+                                    r.toBuilder()
+                                        .isDisplayedFor(inList.apply(r.getIsDisplayedFor()))
+                                        .build()))
+                        .build()));
+    Optional.ofNullable(game.getVariableList())
+        .ifPresent(
+            list ->
+                changed.variableList(
+                    list.toBuilder()
+                        .variables(
+                            each(
+                                list.getVariables(),
+                                v ->
+                                    v.toBuilder()
+                                        .elements(
+                                            each(
+                                                v.getElements(),
+                                                e ->
+                                                    e.toBuilder()
+                                                        .name(rename.apply(e.getName()))
+                                                        .build()))
+                                        .build()))
+                        .build()));
+    Optional.ofNullable(game.getAttachmentList())
+        .ifPresent(
+            list ->
+                changed.attachmentList(
+                    list.toBuilder()
+                        .attachments(
+                            each(
+                                list.getAttachments(),
+                                a ->
+                                    a.toBuilder()
+                                        .attachTo(
+                                            "player".equals(a.getType())
+                                                ? rename.apply(a.getAttachTo())
+                                                : a.getAttachTo())
+                                        .options(
+                                            each(
+                                                a.getOptions(),
+                                                o ->
+                                                    o.getName() != null
+                                                            && TEXT_OPTIONS.contains(
+                                                                AttachmentsXml.optionName(
+                                                                    o.getName()))
+                                                        ? o
+                                                        : o.toBuilder()
+                                                            .value(inList.apply(o.getValue()))
+                                                            .count(inList.apply(o.getCount()))
+                                                            .build()))
+                                        .build()))
+                        .build()));
+    final Game renamedGame = changed.build();
+    return game.getGamePlay() == null
+        ? renamedGame
+        : withSteps(
+            renamedGame,
+            steps(renamedGame).stream()
+                .map(
+                    s ->
+                        s.toBuilder()
+                            .player(rename.apply(s.getPlayer()))
+                            .stepProperties(
+                                each(
+                                    s.getStepProperties(),
+                                    p -> p.toBuilder().value(inList.apply(p.getValue())).build()))
+                            .build())
+                .toList());
+  }
+
+  /**
+   * Whether attachments made for each element of a variable (foreach) build longer names from this
+   * one, eg "conditionAttachment_Turn1_@AllPlayers@": other attachments and the texts name what
+   * that makes letter by letter ("conditionAttachment_Turn1_Date"), so the name cannot change
+   * without breaking them.
+   */
+  static boolean buildsNamesFrom(final Game game, final String name) {
+    final List<VariableList.Variable> variables =
+        Optional.ofNullable(game.getVariableList())
+            .map(VariableList::getVariables)
+            .orElse(List.of());
+    // the variables that hold the name, also through a variable they list
+    final Set<String> holding = new java.util.HashSet<>();
+    final Set<String> listed = new java.util.HashSet<>(Set.of(name));
+    while (true) {
+      final List<String> more =
+          variables.stream()
+              .filter(v -> !holding.contains(bare(v.getName())))
+              .filter(
+                  v ->
+                      Optional.ofNullable(v.getElements()).orElse(List.of()).stream()
+                          .anyMatch(e -> listed.contains(e.getName())))
+              .map(v -> bare(v.getName()))
+              .toList();
+      if (more.isEmpty()) {
+        break;
+      }
+      holding.addAll(more);
+      more.forEach(v -> listed.add("$" + v + "$"));
+    }
+    return attachments(game).stream()
+        .filter(a -> a.getForeach() != null)
+        .anyMatch(
+            a ->
+                Stream.concat(
+                        Stream.of(a.getName(), a.getAttachTo()),
+                        Optional.ofNullable(a.getOptions()).orElse(List.of()).stream()
+                            .flatMap(o -> Stream.of(o.getValue(), o.getCount())))
+                    .filter(Objects::nonNull)
+                    .flatMap(value -> Arrays.stream(value.split(":")))
+                    .anyMatch(
+                        part ->
+                            holding.stream()
+                                .map(v -> "@" + v + "@")
+                                .anyMatch(used -> part.contains(used) && !part.equals(used))));
+  }
+
+  /** A variable's name without the '$' around it, as some files write it. */
+  private static String bare(final String variable) {
+    return variable.replace("$", "");
+  }
+
+  private static Initialize withRenamedNation(
+      final Initialize start, final UnaryOperator<String> rename) {
+    final InitializeBuilder changed = start.toBuilder();
+    Optional.ofNullable(start.getOwnerInitialize())
+        .ifPresent(
+            o ->
+                changed.ownerInitialize(
+                    o.toBuilder()
+                        .territoryOwners(
+                            each(
+                                o.getTerritoryOwners(),
+                                t -> t.toBuilder().owner(rename.apply(t.getOwner())).build()))
+                        .build()));
+    Optional.ofNullable(start.getUnitInitialize())
+        .ifPresent(
+            u ->
+                changed.unitInitialize(
+                    u.toBuilder()
+                        .unitPlacements(
+                            each(
+                                u.getUnitPlacements(),
+                                p -> p.toBuilder().owner(rename.apply(p.getOwner())).build()))
+                        .heldUnits(
+                            each(
+                                u.getHeldUnits(),
+                                h -> h.toBuilder().player(rename.apply(h.getPlayer())).build()))
+                        .build()));
+    Optional.ofNullable(start.getResourceInitialize())
+        .ifPresent(
+            r ->
+                changed.resourceInitialize(
+                    r.toBuilder()
+                        .resourcesGiven(
+                            each(
+                                r.getResourcesGiven(),
+                                g -> g.toBuilder().player(rename.apply(g.getPlayer())).build()))
+                        .build()));
+    Optional.ofNullable(start.getRelationshipInitialize())
+        .ifPresent(
+            r ->
+                changed.relationshipInitialize(
+                    r.toBuilder()
+                        .relationships(
+                            each(
+                                r.getRelationships(),
+                                p ->
+                                    p.toBuilder()
+                                        .player1(rename.apply(p.getPlayer1()))
+                                        .player2(rename.apply(p.getPlayer2()))
+                                        .build()))
+                        .build()));
+    return changed.build();
+  }
+
+  /** The list with each value changed; no list stays none, as the file had none. */
+  @Nullable
+  private static <T> List<T> each(@Nullable final List<T> values, final UnaryOperator<T> change) {
+    return values == null ? null : values.stream().map(change).toList();
+  }
+
   /**
    * The game without the nation and all that names it: its alliances, resources, production,
    * technology, turn and its name in the steps' lists, relationships, the territories it owns and
@@ -1186,10 +1546,42 @@ class MapXml {
                 .build();
     final Game withoutTech =
         RulesXml.withoutNameInStepProperties(
-            TechXml.withoutNation(withoutProduction, nation), nation);
+            TechXml.withoutNation(withoutShownResources(withoutProduction, nation), nation),
+            nation);
     return game.getGamePlay() == null
         ? withoutTech
         : withSteps(withoutTech, without(steps(withoutTech), s -> isNation.test(s.getPlayer())));
+  }
+
+  /**
+   * The game without the nation among those a resource is shown for (isDisplayedFor), where the
+   * parser refuses a name that is no nation; shown for it alone, the resource is shown for none.
+   */
+  private static Game withoutShownResources(final Game game, final String nation) {
+    if (game.getResourceList() == null) {
+      return game;
+    }
+    return game.toBuilder()
+        .resourceList(
+            game.getResourceList().toBuilder()
+                .resources(
+                    each(
+                        game.getResourceList().getResources(),
+                        resource -> {
+                          final String shown = resource.getIsDisplayedFor();
+                          if (shown == null || !List.of(shown.split(":")).contains(nation)) {
+                            return resource;
+                          }
+                          final String rest =
+                              Arrays.stream(shown.split(":"))
+                                  .filter(name -> !name.equals(nation))
+                                  .collect(Collectors.joining(":"));
+                          return resource.toBuilder()
+                              .isDisplayedFor(rest.isEmpty() ? "NONE" : rest)
+                              .build();
+                        }))
+                .build())
+        .build();
   }
 
   private static <T> List<T> without(final List<T> values, final Predicate<T> removed) {
@@ -1560,11 +1952,46 @@ class MapXml {
             .build();
   }
 
+  /** A game's attachments by name and thing, of two alike the last. */
+  private record Indexed(
+      java.lang.ref.WeakReference<Game> game, java.util.Map<String, Attachment> last) {}
+
+  // of the two games asked last: a tool asks for many things of one game, a big one has 35,000
+  // attachments, and a save asks the game and the saved one in turn. Held weakly, so a closed
+  // map's game goes
+  private static volatile List<Indexed> indexed = List.of();
+
+  /**
+   * The attachment of this name on the thing; of two the last, as TripleA keeps one per name, eg
+   * G40's second territoryAttachment of Russia, which gives it its 3 PUs.
+   */
+  private static Optional<Attachment> lastAttachment(
+      final Game game, final String attachment, final String attachTo) {
+    final List<Indexed> known = indexed;
+    final Optional<Indexed> found =
+        known.stream().filter(i -> i.game().get() == game).findFirst();
+    final Indexed now;
+    if (found.isPresent()) {
+      now = found.get();
+    } else {
+      final java.util.Map<String, Attachment> last = new HashMap<>();
+      for (final Attachment a : attachments(game)) {
+        if (a.getName() != null) {
+          last.put(AttachmentsXml.readName(a.getName()) + '\n' + a.getAttachTo(), a);
+        }
+      }
+      now = new Indexed(new java.lang.ref.WeakReference<>(game), last);
+      // this one and the one asked before it
+      indexed = Stream.concat(Stream.of(now), known.stream().limit(1)).toList();
+    }
+    return Optional.ofNullable(
+        now.last().get(AttachmentsXml.readName(attachment) + '\n' + attachTo));
+  }
+
   /** The option's value in the attachment of this name on the thing, eg its "production". */
   static Optional<String> option(
       final Game game, final String attachment, final String attachTo, final String option) {
-    return attachments(game).stream()
-        .filter(a -> AttachmentsXml.isNamed(a, attachment) && attachTo.equals(a.getAttachTo()))
+    return lastAttachment(game, attachment, attachTo).stream()
         .flatMap(a -> Optional.ofNullable(a.getOptions()).orElse(List.of()).stream())
         .filter(o -> AttachmentsXml.isOption(o, option))
         .map(Option::getValue)
@@ -1591,15 +2018,12 @@ class MapXml {
    */
   static Game withOption(
       final Game game, final AttachmentKey key, final String option, @Nullable final String value) {
-    final List<Attachment> attachments = new ArrayList<>();
-    boolean found = false;
-    for (final Attachment attachment : attachments(game)) {
-      if (!found && key.matches(attachment)) {
-        attachments.add(withOption(attachment, option, value));
-        found = true;
-      } else {
-        attachments.add(attachment);
-      }
+    final List<Attachment> attachments = new ArrayList<>(attachments(game));
+    // the last of the name, which is the one TripleA keeps and option() reads
+    final int at = AttachmentsXml.lastIndexOf(attachments, key.name(), key.attachTo());
+    final boolean found = at >= 0;
+    if (found) {
+      attachments.set(at, withOption(attachments.get(at), option, value));
     }
     if (!found && value != null) {
       attachments.add(

@@ -894,8 +894,12 @@ final class MapView extends JPanel {
   }
 
   /** A band dragged on the map goes to onLine, {@link MapCanvas#eraseLine}. */
-  void eraseLine(final Consumer<List<Point>> onLine, final int width) {
-    canvas.eraseLine(onLine, width);
+  void eraseLine(
+      final Consumer<List<Point>> onLine,
+      final int width,
+      final int lineWidth,
+      final Consumer<MapFiles.SharedBorder> onBorder) {
+    canvas.eraseLine(onLine, width, lineWidth, onBorder);
   }
 
   /**
@@ -917,6 +921,11 @@ final class MapView extends JPanel {
 
   void stopEditingPlaces() {
     canvas.stopEditingPlaces();
+  }
+
+  /** As {@link MapCanvas#addUnitPlacesByClick}. */
+  void addUnitPlacesByClick() {
+    canvas.addUnitPlacesByClick();
   }
 
   void select(@Nullable final String territory) {

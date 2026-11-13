@@ -326,6 +326,42 @@ final class ProductionEditor implements Editor {
           });
     }
 
+    /**
+     * Another list's rules in place of this list's, as one step; asked first when this list has
+     * rules, as they go from it (the rules themselves stay in the game).
+     */
+    private void copyFrom(final String frontier) {
+      commit();
+      final Game game = view();
+      final List<String> others =
+          ProductionXml.frontiers(game).stream().filter(f -> !f.equals(frontier)).toList();
+      final Optional<String> from =
+          Dialogs.pick(
+              page,
+              "Copy from",
+              "Which list's rules should " + title(frontier) + " have?",
+              others,
+              other -> title(other) + " · " + detail(other),
+              "Copy");
+      final int own = ProductionXml.rulesIn(game, frontier).size();
+      if (from.isEmpty()
+          || (own > 0
+              && !Dialogs.confirm(
+                  page,
+                  "Copy from " + title(from.get()),
+                  "Replace the "
+                      + SearchList.count(own, own, "rule", "rules")
+                      + " of "
+                      + title(frontier)
+                      + " with those of "
+                      + title(from.get())
+                      + "?\nUndo brings them back.",
+                  "Replace"))) {
+        return;
+      }
+      edit(g -> ProductionXml.withRulesCopied(g, from.get(), frontier));
+    }
+
     private void showHead(final String frontier, final RulesTable model) {
       final Game game = view();
       head.clear();
@@ -341,6 +377,13 @@ final class ProductionEditor implements Editor {
       final JPanel usedLine = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_S, 0));
       usedLine.add(usedBy);
       usedLine.add(chooseNations);
+      if (ProductionXml.frontiers(game).size() > 1) {
+        final JButton copy = new JButton("Copy from…");
+        Theme.setTertiaryButtonStyle(copy);
+        copy.setToolTipText("Take the rules of another list in place of this one's");
+        copy.addActionListener(e -> copyFrom(frontier));
+        usedLine.add(copy);
+      }
       head.row(usedLine);
       head.section(trade == Trade.BUY ? "What it sells" : "What it repairs");
       if (trade == Trade.REPAIR) {

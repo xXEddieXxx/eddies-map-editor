@@ -384,11 +384,19 @@ final class TurnOrderEditor implements Editor {
     for (final Component part : content.getComponents()) {
       ((JComponent) part).setAlignmentX(Component.LEFT_ALIGNMENT);
     }
-    if (!Dialogs.ask(page, "Add step", content, "Add step")) {
+    // a nation's step needs a nation: without nations only steps of the whole round
+    if (!Dialogs.ask(
+        page,
+        "Add step",
+        content,
+        "Add step",
+        () ->
+            ((DelegateKind) kinds.getSelectedItem()).isOfRound()
+                || nations.getSelectedItem() != null)) {
       return;
     }
     final DelegateKind kind = (DelegateKind) kinds.getSelectedItem();
-    final String player = (String) nations.getSelectedItem();
+    final String player = kind.isOfRound() ? null : (String) nations.getSelectedItem();
     final int at = after >= 0 ? after + 1 : all.size();
     // the new step is chosen and shown, also in a folded band
     selectedBand = -1;
@@ -517,6 +525,13 @@ final class TurnOrderEditor implements Editor {
     }
   }
 
+  /** Shows the step of this number in the panel, as a click on its row does. */
+  void choose(final int step) {
+    selectedBand = -1;
+    selected = step;
+    showInspector();
+  }
+
   private void showInspector() {
     inspector.clear();
     typing = Optional.empty();
@@ -584,7 +599,11 @@ final class TurnOrderEditor implements Editor {
     inspector.field("What happens", ofFieldWidth("What happens", kinds));
 
     final JComboBox<String> nation = new JComboBox<>();
-    nation.addItem(NO_NATION);
+    // no nation only for a step of the whole round, or one that has none (to give it one): any
+    // other step without its nation stops TripleA when it begins
+    if (step.get().getPlayer() == null || !GameRulesXml.needsNation(game, step.get())) {
+      nation.addItem(NO_NATION);
+    }
     MapXml.nations(game).forEach(nation::addItem);
     nation.setSelectedItem(Optional.ofNullable(step.get().getPlayer()).orElse(NO_NATION));
     nation.addActionListener(

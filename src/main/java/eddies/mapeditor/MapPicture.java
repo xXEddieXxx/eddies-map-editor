@@ -417,6 +417,75 @@ final class MapPicture {
     return erased == image ? Optional.empty() : Optional.of(erased);
   }
 
+  /**
+   * As {@link #withoutLines(BufferedImage, List, int)} for the line pixels among these pixels of a
+   * box of the picture, eg the whole border between two territories ({@link
+   * MapFiles#sharedBorderAt}).
+   *
+   * @param among row by row, which of the box's pixels to clear of lines
+   */
+  static Optional<BufferedImage> withoutLines(
+      final BufferedImage image, final Rectangle box, final boolean[] among) {
+    final Rectangle grown = new Rectangle(box);
+    grown.grow(MAX_ERASED_LINE + 1, MAX_ERASED_LINE + 1);
+    final Rectangle within = grown.intersection(new Rectangle(image.getWidth(), image.getHeight()));
+    if (within.isEmpty()) {
+      return Optional.empty();
+    }
+    final boolean[] under = new boolean[within.width * within.height];
+    for (int p = 0; p < among.length; p++) {
+      final int x = box.x + p % box.width - within.x;
+      final int y = box.y + p / box.width - within.y;
+      if (among[p] && x >= 0 && y >= 0 && x < within.width && y < within.height) {
+        under[y * within.width + x] = true;
+      }
+    }
+    // colors come from beside the line, as for a stroke
+    final boolean[] near = dilated(under, within.width, MAX_ERASED_LINE);
+    BufferedImage erased = image;
+    for (int pass = 0; pass < ERASE_PASSES; pass++) {
+      final Optional<BufferedImage> next = erasedOnce(erased, erased == image, under, near, within);
+      if (next.isEmpty()) {
+        break;
+      }
+      erased = next.get();
+    }
+    return erased == image ? Optional.empty() : Optional.of(erased);
+  }
+
+  /** The pixels within so many pixels, across or down, of one that is set; rows of this width. */
+  static boolean[] dilated(final boolean[] set, final int width, final int by) {
+    final int height = width == 0 ? 0 : set.length / width;
+    final boolean[] across = new boolean[set.length];
+    for (int y = 0; y < height; y++) {
+      // how far back the last set pixel of the row is, then the same from the right
+      int since = by + 1;
+      for (int x = 0; x < width; x++) {
+        since = set[y * width + x] ? 0 : since + 1;
+        across[y * width + x] = since <= by;
+      }
+      since = by + 1;
+      for (int x = width - 1; x >= 0; x--) {
+        since = set[y * width + x] ? 0 : since + 1;
+        across[y * width + x] |= since <= by;
+      }
+    }
+    final boolean[] both = new boolean[set.length];
+    for (int x = 0; x < width; x++) {
+      int since = by + 1;
+      for (int y = 0; y < height; y++) {
+        since = across[y * width + x] ? 0 : since + 1;
+        both[y * width + x] = since <= by;
+      }
+      since = by + 1;
+      for (int y = height - 1; y >= 0; y--) {
+        since = across[y * width + x] ? 0 : since + 1;
+        both[y * width + x] |= since <= by;
+      }
+    }
+    return both;
+  }
+
   /** The box's pixels a stroke of this width along the path covers. */
   private static boolean[] strokeMask(final Path2D path, final int width, final Rectangle box) {
     final BufferedImage mask =
