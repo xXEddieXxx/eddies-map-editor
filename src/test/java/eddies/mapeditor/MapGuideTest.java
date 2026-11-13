@@ -277,6 +277,37 @@ final class MapGuideTest {
         .contains(Step.Id.LAND);
   }
 
+  @DisplayName("After a clean Check a nation left without land or capital is meant so: both steps"
+      + " count as done, so a published map's guide does not stay open")
+  @Test
+  void cleanCheckTakesLandlessNationAsMeant() throws Exception {
+    // given: Red has land, a capital and units; Blue, eg a neutral, has nothing
+    final MapProject project = givenSavedMapWithPicture();
+    givenAllStepsDone(project);
+    project.addNation("Blue");
+
+    // when
+    final List<Step> quick = MapGuide.steps(project);
+    final List<Step> checked = MapGuide.stepsAfterCleanCheck(project);
+
+    // then
+    assertThat(quick.stream().filter(s -> s.id() == Step.Id.LAND).map(Step::state))
+        .as("before a Check, Blue without land keeps the step open")
+        .containsExactly(State.FAILING);
+    assertThat(checked.stream().filter(s -> s.id() != Step.Id.CHECK))
+        .as("TripleA loads the game and Red has its land and capital: the map is built")
+        .allMatch(Step::done);
+    assertThat(checked.stream().filter(s -> s.id() == Step.Id.LAND).map(Step::progress))
+        .as("the step still says who is without")
+        .containsExactly("1 of 2 nations have land · without: Blue");
+    assertThat(MapGuide.nextStepAfterCheck(project, List.of()).kind())
+        .as("the next step is no longer Blue's land")
+        .isEqualTo(Kind.SAVE);
+    assertThat(MapGuide.nextStepAfterCheck(project, List.of(Problem.of("Wrong"))).kind())
+        .as("a Check that found problems proves nothing")
+        .isEqualTo(Kind.GO_TO_TOOL);
+  }
+
   @DisplayName("Nations that take no turns are not called missing by the land step")
   @Test
   void landStepWithoutTurnsSaysSo() {

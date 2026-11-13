@@ -37,7 +37,7 @@ existing map folder. Then change its territories, nations, units and rules, and 
 3. On the start page, open a map folder (or one of the recent maps), or make a new one.
    The editor opens and saves maps in TripleA's maps folder, where TripleA finds them.
 4. **Play (F7)** tries the map. It starts your installed TripleA if the editor finds one, so you
-   test in the version your players use. *Map → TripleA for Play…* picks another TripleA.
+   test in the version your players use. *File → Play with…* picks another TripleA.
 
 Each release names the TripleA release it was tested with.
 
@@ -70,18 +70,18 @@ link leads there, and a remove that triggers still need offers *Show in Attachme
 | Tool | What you do there |
 |------|-------------------|
 | **Territories** | Make territories from the picture (areas between dark or thin grey lines, blue = sea). Rename them, set owner, PUs, capital, victory city and starting units. |
-| ↳ *Paint* | Give many territories an owner, a capital, PUs, units, rules, effects or textures at once: click them, or hold the left button and drag across them (one undo step per stroke). With a terrain effect brush the map shows every territory's effects as small pictures. Textures (light line drawings that hint at open sea, coastal sea, grass, forest, hills, mountains, desert, swamp or snow, or your own pictures, *Import texture…*; *Find textures in the map…* takes the ones painted into the map's picture or relief) mark territories in the relief that *Map look → Create relief* makes; while one is chosen the map shows them all, and *Offset X/Y* moves a texture to line it up with its neighbour. |
+| ↳ *Paint* | Give many territories an owner, a capital, PUs (any value, changed in the banner while painting), units, rules, effects or textures at once: click them, or hold the left button and drag across them (one undo step per stroke). With a terrain effect brush the map shows every territory's effects as small pictures. Textures (light line drawings that hint at open sea, coastal sea, grass, forest, hills, mountains, desert, swamp or snow, or your own pictures, *Import texture…*; *Find textures in the map…* takes the ones painted into the map's picture or relief) mark territories in the relief that *Map look → Create relief* makes; while one is chosen the map shows them all, and *Offset X/Y* moves a texture to line it up with its neighbour. |
 | ↳ *Draw borders* | Draw border lines into the map picture by hand (like its lines, black or grey; width in px), freehand, as a line of clicked points (double-click or Enter ends it, Backspace takes back a point) or as a circle dragged from corner to corner (Shift: round); a line's ends snap to the borders near them, and a line that ends back at its start is a closed border of its own, eg an island. The *Eraser* takes border lines out of the picture under a band you drag (width in px), each side's color growing over the line. *Make territories* then turns the areas between the lines into territories, looking only where lines were drawn or erased since: territories elsewhere stay as they are, and where a line went it asks which territory keeps the joined area. |
 | ↳ *Split with a line* | Cut one territory in two; the new border is drawn into the picture in the same line style. |
 | ↳ *Merge* | Several islands can be one territory: *Merge into this…* (in a territory's "On the map"), then click each territory that belongs to it; or *Merge into…* to make the chosen one part of another. The keeper gets the other's outlines and neighbours and keeps its own owner, units, settings and places. Land and sea stay apart. |
 | ↳ *Remove territories* | In the list's ⋯ menu: tick many territories, the smallest first with their area, eg islands found by mistake, and remove them in one step. |
 | ↳ *Export territory pictures* | In the list's ⋯ menu: a PNG of each territory you tick, cut from the map picture and see-through outside its border, to draw on in a paint program; `territory-pictures.txt` says where each lies on the map. |
-| ↳ *Move places* | Drag where the game draws one territory's units, names, flags and markers. |
+| ↳ *Move places* | Drag where the game draws one territory's units, names, flags and markers. *Show its name on the map* off: the game draws no name there. |
 | ↳ *Places* | Show units, centers, names, PUs, capitals, victory cities, convoys and the other markers on every territory, several kinds at once, and drag them into place. *Lay out unit places* for one or all territories, 4 px apart, at most 16 (or as set) per territory, numbered: *Round the center* (clockwise from 12:00) or *In rows below the center* (the first at 6:00); the last place ends the bottom row on the side with room, and the units beyond go that way (overflowToLeft). *Create missing places* gives every territory without a line in a place file (names, PUs, capitals, ...) its found place, per kind or for all, and says how many are missing; the next save writes them, making the file if the map has none (Files' map folder overview links there). *Decorations* places pictures from the map's `misc` folder anywhere on the map. |
-| **Connections** | Which territories are neighbours. |
+| **Connections** | Which territories are neighbours. *Find neighbours again…* compares them with the outlines: territories that touch without a connection, and connections between territories that do not touch, for you to tick. |
 | **Canals** | Click two sea zones and the land between; choose the units that pass freely. The map shows every canal, the open one strongest. |
 | **Terrain effects** | Effects like forest: what they do to each unit type, and their picture. |
-| **Map look** | Unit size and tint, scrolling, small map (*Update the small map* makes it anew with the relief; a save only makes one for a map without), relief (loaded or created, with the painted textures), mouse pointer. |
+| **Map look** | Unit size (smaller units: more fit into a territory) and tint, *Resize map…* (the whole map bigger or smaller, 25 to 400 %: picture, relief, borders, centers and every place as one undo step; units keep their size, so a bigger map gives them room; also in the map's picture menu), scrolling, which territories show no name, small map (*Update the small map* makes it anew with the relief; a save only makes one for a map without), relief (loaded or created, with the painted textures), mouse pointer. |
 
 - **Redraw borders:** changed the picture in a paint program? *Picture menu ▾ → Redraw borders
   from a picture…* keeps names, owners and units; new areas become territories you name. It looks at the whole map.
@@ -91,9 +91,11 @@ link leads there, and a remove that triggers still need offers *Show in Attachme
 
 ### ⚔️ Players
 
-- **Nations:** color (shown live on the map), alliance, starting PUs, who plays it, and its own
-  rules such as capitals to hold or unit limits, where it may place units (any land it owns,
-  captured land, how many per territory) and where it may move (only into, or not into, chosen
+- **Nations:** the list of nations in their colors; a click on one, or on its land, opens it: color (shown live on the map), alliance, starting PUs, who plays it, and its own
+  rules such as capitals to hold, *Stacking limits* (at most so many of a group of unit types
+  per territory when placing, moving in or attacking), where it may place units (any land it owns,
+  captured land, how many per territory), the units it holds at the start to place in its first
+  turn, and where it may move (only into, or not into, chosen
   territories). *In the nation's color* tints its unit pictures;
   click a unit's picture to keep it in its own colors for every nation. *Flag…* makes the nation's
   flags in all the game's sizes from one picture (gif flags of the nation make way, kept as `.bak`).
@@ -103,25 +105,37 @@ link leads there, and a remove that triggers still need offers *Show in Attachme
   players read, what it checks (territories owned, units there, war, technology, rounds; the
   same fields as the trigger assistant) and how often it pays. It tells when the game option
   *National Objectives* is off, and turns it on.
-- **Technology:** the technologies, who researches what, and what each nation starts with.
+- **Technology:** the technologies, who researches what at which cost, what each nation starts
+  with, and what a technology gives: bonuses per unit type (eg +1 movement for fighters), rockets,
+  war bonds, factories, airborne forces.
 
 ### 🛡️ Units & economy
 
-- **Units:** cost, attack, defense, movement and hit points in one row; every ability in groups;
-  the support a unit gives others, written as a sentence. *In each nation's color* off keeps a
+- **Units:** cost, attack, defense, movement and hit points in one row; every ability in groups,
+  the rarer ones folded (`▸ More combat options (9)`), those of other kinds of unit in one row
+  (`▸ Not for land units (50)`); *Search options…* finds an ability by its words or TripleA's name;
+  *Stacking limits* (how many of the unit one territory may hold when placing, moving in or
+  attacking, and whose units count); the support a unit gives others, written as a sentence. *Draw it on the map* off hides a unit
+  type on the map, eg one that only marks something. *In each nation's color* off keeps a
   unit in its own colors for everyone, eg one all nations share.
 - **Unit pictures:** upload one picture, or import a whole folder for a nation; pictures clearly
   bigger than the map's units can be scaled to their size. Units says which nations have no
   picture of the chosen unit.
-- **Production:** what each nation can buy and repair, at which cost, and the resources with
-  their icons and starting amounts.
+- **Production:** what each nation can buy and repair (its purchase list, called by the nations
+  that use it), at which cost, the resources with
+  their icons and starting amounts, and the tabs of the buy window (TripleA's own, or yours, for
+  all nations or one).
 
 ### ⏱️ Game flow
 
-- **Turn order:** each step in plain words ("Buy units"), grouped per nation; add, move, remove.
-- **Game options:** in sections, with a lock for what players may change, and variables.
-- **Triggers:** every trigger in plain words, plus an assistant that builds one step by step,
-  starting from examples like *Give PUs when a nation holds territories*.
+- **Turn order:** each step in plain words ("Buy units"), in a band per nation that folds
+  (`▸ Germans (9)`; a long round starts folded); filters for one nation or one kind of step; add,
+  move, remove, and move a whole band with ▲ ▼; the number the first round has.
+- **Game options:** in sections, with a lock for what players may change, a "?" for what
+  TripleA's own options do, and variables.
+- **Triggers:** every trigger in plain words (a message by its text, a step by what happens in
+  it), grouped by nation, by what it does or by when; plus an assistant that builds one step by
+  step, starting from examples like *Give PUs when a nation holds territories*.
 - **Actions:** political actions (declare war) and user actions, with their texts, conditions,
   cost and chance.
 
@@ -148,7 +162,8 @@ link leads there, and a remove that triggers still need offers *Show in Attachme
 
 | | |
 |---|---|
-| **Check (F6)** | Loads the map the way TripleA does and lists the problems. |
+| **File** | Open, new and recent maps, another game of this map, export, Publish, the map's folder. |
+| **Check (F6)** | Loads the map the way TripleA does and lists the problems. The highlighted button in the header is what comes next: Save, then Check, then Play. |
 | **Play (F7)** | Starts your installed TripleA with the map. |
 | **Export** | Zips the map for sharing, without the `.bak` files. |
 | **Undo / Redo** | For every change. |
@@ -199,7 +214,7 @@ All code is in `src/main/java/eddies/mapeditor`:
 | Class                                                                       | What it is                                                                                    |
 |-----------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------|
 | `EddiesMapEditor`                                                           | Starts the editor                                                                             |
-| `MapMakerWindow`, `Sidebar`                                                 | The window: the header with the map's menu, the tools by name on the left, the chosen tool    |
+| `MapMakerWindow`, `Sidebar`                                                 | The window: the header with the File menu, the tools by name on the left, the chosen tool     |
 | `MapProject`                                                                | The open map: its game and files, undo and redo, saving                                       |
 | `MapXml`                                                                    | Reads and changes the game XML model; each change makes a new model                           |
 | `RulesXml`, `ProductionXml`, `TechXml`, `GameRulesXml`                      | The same for turn order and politics, production, technology, options, dice and variables     |

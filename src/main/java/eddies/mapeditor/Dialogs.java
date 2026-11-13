@@ -174,6 +174,18 @@ class Dialogs {
     return show(parent, title, pane).filter(pane.verb()::equals).isPresent();
   }
 
+  /** As ask, under a text: its first line in semibold, the rest below it. */
+  static boolean ask(
+      final Component parent,
+      final String title,
+      final String text,
+      final JComponent content,
+      final String verb,
+      final BooleanSupplier valid) {
+    final Pane pane = newPane(text, List.of(), content, verb, valid);
+    return show(parent, title, pane).filter(pane.verb()::equals).isPresent();
+  }
+
   /** One of the items, with a search above them from 12 items; empty when cancelled. */
   static <T> Optional<T> pick(
       final Component parent,

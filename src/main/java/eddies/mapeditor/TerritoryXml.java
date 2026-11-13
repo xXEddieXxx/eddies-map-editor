@@ -5,6 +5,8 @@ import games.strategy.triplea.attachments.TerritoryAttachment;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
@@ -29,6 +31,9 @@ class TerritoryXml {
   static final String UNIT_PRODUCTION = "unitProduction";
   static final String ORIGINAL_OWNER = "originalOwner";
   static final String EFFECT = "territoryEffect";
+  // a value as TripleA reads it with its count before it, eg "1:Longboat"
+  private static final Pattern COUNTED =
+      Pattern.compile("(-?[0-9]+(?:\\.[0-9]+)?):(.*)", Pattern.DOTALL);
 
   /** The territory's attachment, "territoryAttachment". */
   static AttachmentKey key(final String territory) {
@@ -39,7 +44,11 @@ class TerritoryXml {
         territory);
   }
 
-  /** The option's values in the attachment, in their order; empty without the option. */
+  /**
+   * The option's values in the attachment, in their order, each as TripleA reads it: a count
+   * attribute before the value, eg "1:Longboat" for value="Longboat" count="1"; empty without the
+   * option.
+   */
   static List<String> values(final Game game, final AttachmentKey key, final String option) {
     return AttachmentsXml.attachments(game).stream()
         .filter(key::matches)
@@ -48,7 +57,7 @@ class TerritoryXml {
         .orElse(List.of())
         .stream()
         .filter(o -> AttachmentsXml.isOption(o, option) && o.getValue() != null)
-        .map(Option::getValue)
+        .map(TriggerXml::joined)
         .toList();
   }
 
@@ -61,8 +70,6 @@ class TerritoryXml {
     if (values(game, key, option).equals(values)) {
       return game;
     }
-    final List<Option> written =
-        values.stream().map(v -> Option.builder().name(option).value(v).build()).toList();
     final List<Attachment> attachments = new ArrayList<>(AttachmentsXml.attachments(game));
     final int at =
         IntStream.range(0, attachments.size())
@@ -76,23 +83,29 @@ class TerritoryXml {
               .attachTo(key.attachTo())
               .javaClass(key.javaClass())
               .type(key.type())
-              .options(written)
+              .options(values.stream().map(v -> written(option, v, false)).toList())
               .build());
     } else {
       final List<Option> options = new ArrayList<>();
+      final boolean counted =
+          AttachmentsXml.options(attachments.get(at)).stream()
+              .anyMatch(
+                  o ->
+                      AttachmentsXml.isOption(o, option)
+                          && o.getCount() != null
+                          && !o.getCount().isEmpty());
       boolean placed = false;
       for (final Option o : AttachmentsXml.options(attachments.get(at))) {
         if (!AttachmentsXml.isOption(o, option)) {
           options.add(o);
         } else if (!placed) {
           // in the map's spelling of the option, eg "ConvoyAttached"
-          values.forEach(
-              v -> options.add(Option.builder().name(o.getName()).value(v).build()));
+          values.forEach(v -> options.add(written(o.getName(), v, counted)));
           placed = true;
         }
       }
       if (!placed) {
-        options.addAll(written);
+        values.forEach(v -> options.add(written(option, v, false)));
       }
       attachments.set(at, attachments.get(at).toBuilder().options(List.copyOf(options)).build());
     }
@@ -102,6 +115,17 @@ class TerritoryXml {
     return game.toBuilder()
         .attachmentList(list.toBuilder().attachments(List.copyOf(attachments)).build())
         .build();
+  }
+
+  /**
+   * The option with the value as read; where the map writes this option's number as a count
+   * attribute, the number goes there again.
+   */
+  private static Option written(final String name, final String value, final boolean counted) {
+    final Matcher parts = COUNTED.matcher(value);
+    return counted && parts.matches()
+        ? Option.builder().name(name).value(parts.group(2)).count(parts.group(1)).build()
+        : Option.builder().name(name).value(value).build();
   }
 
   /** The territory's option values, eg its resources "2:Ore". */

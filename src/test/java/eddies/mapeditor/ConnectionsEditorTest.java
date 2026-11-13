@@ -4,15 +4,23 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.awt.Component;
 import java.awt.Container;
+import java.awt.Polygon;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 import javax.swing.AbstractButton;
+import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JLabel;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import eddies.mapeditor.ConnectionsEditor.Choices;
+import eddies.mapeditor.ConnectionsEditor.Found;
+import eddies.mapeditor.MapPicture.Neighbours;
 
 final class ConnectionsEditorTest {
   private static final String TOP_LEFT = "Territory 1";
@@ -44,6 +52,96 @@ final class ConnectionsEditorTest {
     return all(in)
         .flatMap(c -> c instanceof JLabel l ? Stream.of(l.getText()) : Stream.empty())
         .toList();
+  }
+
+  @DisplayName("Find neighbours again: touching pairs to connect, connections apart to review")
+  @Test
+  void findsNeighboursAgain() {
+    // given: the found map is right; then two that touch are parted and two apart connected
+    final MapProject project = givenFoundMap();
+    final Found right = ConnectionsEditor.find(project.game(), project.getFiles().polygons());
+    project.edit(
+        g ->
+            MapXml.withConnection(
+                MapXml.withoutConnection(g, TOP_LEFT, TOP_RIGHT), TOP_LEFT, BOTTOM_RIGHT));
+    // written the other way round too, as some maps do: one connection to review, not two
+    project.edit(
+        g ->
+            Builders.toBuilder(g)
+                .map(
+                    Builders.toBuilder(g.getMap())
+                        .connections(
+                            Stream.concat(
+                                    MapXml.connections(g).stream(),
+                                    Stream.of(
+                                        org.triplea.map.data.elements.Map.Connection.builder()
+                                            .t1(BOTTOM_RIGHT)
+                                            .t2(TOP_LEFT)
+                                            .build()))
+                                .toList())
+                        .build())
+                .build());
+    final int wrong = MapXml.connections(project.game()).size();
+
+    // when: found, shown, both ticked (the pair by Tick all), taken
+    final Found found = ConnectionsEditor.find(project.game(), project.getFiles().polygons());
+    final Choices choices = ConnectionsEditor.newChoices(found);
+    final List<JCheckBox> boxes =
+        all(choices.content())
+            .flatMap(c -> c instanceof JCheckBox box ? Stream.of(box) : Stream.empty())
+            .toList();
+    final List<Boolean> ticked = boxes.stream().map(JCheckBox::isSelected).toList();
+    final List<List<Neighbours>> unticked = List.of(choices.connect().get(), choices.part().get());
+    final List<AbstractButton> tickAll =
+        all(choices.content())
+            .flatMap(c -> c instanceof JButton b ? Stream.<AbstractButton>of(b) : Stream.empty())
+            // not the scroll bars' arrows
+            .filter(b -> !b.getText().isEmpty())
+            .toList();
+    tickAll.getFirst().doClick();
+    boxes.getLast().setSelected(true);
+    project.edit(g -> ConnectionsEditor.applied(g, choices.connect().get(), choices.part().get()));
+
+    // then
+    assertThat(List.of(right.missing(), right.apart()))
+        .as("what the picture gave agrees with the outlines")
+        .containsExactly(List.of(), List.of());
+    assertThat(found.missing())
+        .as("they touch but have no connection")
+        .containsExactly(new Neighbours(TOP_LEFT, TOP_RIGHT));
+    assertThat(found.apart())
+        .as("connected across the middle, without touching")
+        .containsExactly(new Neighbours(TOP_LEFT, BOTTOM_RIGHT));
+    assertThat(boxes).as("a row each").extracting(JCheckBox::getText).hasSize(2);
+    assertThat(ticked)
+        .as("nothing ticked: a pair may be apart on purpose, a sea route meant")
+        .containsExactly(false, false);
+    assertThat(unticked).as("nothing added or removed unless ticked").containsOnly(List.of());
+    assertThat(tickAll)
+        .as("a list's Tick all, which then unticks them again")
+        .extracting(AbstractButton::getText)
+        .containsExactly("Untick all", "Tick all");
+    assertThat(ConnectionsEditor.find(project.game(), project.getFiles().polygons()))
+        .as("taken: connected again, and parted")
+        .isEqualTo(right);
+    project.undo();
+    assertThat(MapXml.connections(project.game()))
+        .as("both changes were one step")
+        .hasSize(wrong);
+  }
+
+  @DisplayName("Touching is found from the outlines alone, each pair once, apart ones left out")
+  @Test
+  void findsTouchingOutlines() {
+    final Map<String, List<Polygon>> outlines = new LinkedHashMap<>();
+    outlines.put("West", List.of(new Polygon(new int[] {0, 50, 50, 0}, new int[] {0, 0, 50, 50}, 4)));
+    outlines.put("East", List.of(new Polygon(new int[] {53, 100, 100, 53}, new int[] {0, 0, 50, 50}, 4)));
+    outlines.put("Far", List.of(new Polygon(new int[] {300, 350, 350, 300}, new int[] {0, 0, 50, 50}, 4)));
+    outlines.put("Island", List.of(new Polygon(new int[] {310, 320, 320, 310}, new int[] {10, 10, 20, 20}, 4)));
+
+    assertThat(OutlineCut.touching(outlines))
+        .as("across a border line's width, and an island inside its sea")
+        .containsExactly(new Neighbours("West", "East"), new Neighbours("Far", "Island"));
   }
 
   @DisplayName("Connections opens on the overview, no territory chosen, also after one was")

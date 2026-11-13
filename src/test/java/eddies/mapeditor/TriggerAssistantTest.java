@@ -14,6 +14,7 @@ import java.util.Set;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import javax.swing.JButton;
+import javax.swing.JLabel;
 import javax.swing.JComboBox;
 import javax.swing.JRadioButton;
 import javax.swing.JSpinner;
@@ -429,13 +430,42 @@ final class TriggerAssistantTest {
         .startsWith(Theme.Status.PROBLEM.mark() + " ");
   }
 
+  @DisplayName("A new condition shows in plain words with (new), its id as the tool tip, in its"
+      + " card and in the footer's problem; the add buttons say what they add")
+  @Test
+  void newConditionInPlainWords() throws Exception {
+    final MapProject project = givenMap("minimap.xml");
+    final TriggerAssistant assistant = new TriggerAssistant(project,
+        TriggerXml.newTrigger("triggerAttachment1", "Russians"));
+    assistant.apply(Pattern.GIVE_PUS, "Russians");
+    assistant.go(Step.IF);
+
+    final String id = assistant.trigger().conditions().getFirst().getName();
+    final JLabel title = found(assistant.content(), JLabel.class).stream()
+        .filter(l -> l.getText().endsWith(" (new)"))
+        .findFirst().orElseThrow();
+
+    assertThat(id).as("the name the game's XML gets").startsWith("conditionAttachment");
+    assertThat(title.getText()).as("the card's title, without prefix or underscores")
+        .isEqualTo(TriggersEditor.conditionTitle(id) + " (new)")
+        .doesNotContain("conditionAttachment").doesNotContain("_");
+    assertThat(title.getToolTipText()).as("the id as its tool tip").isEqualTo(id);
+    assertThat(assistant.footerProblem()).as("the problem as checked names the id").contains(id);
+    assertThat(assistant.footerProblemButton().getText())
+        .as("the footer says it in plain words")
+        .contains(TriggersEditor.conditionTitle(id) + " (new)")
+        .doesNotContain(id);
+    assertThat(buttonsSaying(assistant, "+ Add effect")).as("what a trigger does is an effect")
+        .hasSize(1);
+  }
+
   @DisplayName("Each problem belongs to the step that fixes it")
   @ParameterizedTest(name = "{0} -> {1}")
   @CsvSource(delimiter = '|', value = {
       "The game has no condition x.|IF",
       "Condition x belongs to no nation.|IF",
       "Combine conditions as AND, OR, a number or a range like 2-3, not y.|IF",
-      "The trigger does nothing yet: add what happens.|THEN",
+      "The trigger does nothing yet: add an effect.|THEN",
       "Give PUs or a resource: no amount yet, so it gives nothing.|THEN",
       "Place units: Territory is missing.|THEN",
       "Message x has no text yet.|THEN",

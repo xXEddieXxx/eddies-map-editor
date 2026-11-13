@@ -1,5 +1,7 @@
 package eddies.mapeditor;
 
+import static java.util.Map.entry;
+
 import games.strategy.triplea.Constants;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
@@ -8,6 +10,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.UnaryOperator;
@@ -410,6 +413,127 @@ class GameRulesXml {
       final String ending) {
     return new DelegateKind(name, DELEGATES + javaClass, display, what, ending, false);
   }
+
+  /** What the option does in one line, for those of TripleA the table below knows. */
+  static Optional<String> optionHelp(final String option) {
+    return Optional.ofNullable(OPTION_HELP.get(option));
+  }
+
+  /** What every "<nation> bid" option is. */
+  static final String BID_HELP =
+      "PUs a nation gets before the game starts, to buy and place units with.";
+
+  /**
+   * What the game options TripleA reads do, by their names in its Constants, one line each: only
+   * those whose effect is plain from TripleA's code and rule books; the others get no "?".
+   */
+  private static final Map<String, String> OPTION_HELP =
+      Map.ofEntries(
+          entry("Low Luck", "Strength is added up: each full die of it is a sure hit, only the"
+              + " rest is rolled."),
+          entry("Low Luck for AntiAircraft", "Anti-air fire uses low luck too."),
+          entry("Low Luck for Technology", "Research rolls use low luck too."),
+          entry("Low Luck for Bombing and Territory Damage",
+              "Bombing damage uses low luck: less of it is chance."),
+          entry("Use Triggers", "Triggers fire. Off, none does."),
+          entry("Use Politics", "Nations can change their relationships with political actions."),
+          entry("National Objectives", "Objectives pay their PUs. Off, none counts."),
+          entry("Triggered Victory", "Triggers can end the game with a winner."),
+          entry("Tech Development", "Nations can research technologies."),
+          entry("Selectable Tech Roll", "A nation chooses the technology it researches."),
+          entry("WW2V3 Tech Model", "Research buys tokens that roll each turn until a technology"
+              + " is found."),
+          entry("WW2V2", "The rules of the second edition (Revised)."),
+          entry("WW2V3", "The rules of the third edition (Anniversary)."),
+          entry("Two hit battleship", "Battleships take two hits to sink."),
+          entry("Units Repair Hits End Turn",
+              "Damaged units are repaired at the end of their owner's turn."),
+          entry("Units Repair Hits Start Turn",
+              "Damaged units are repaired at the start of their owner's turn."),
+          entry("Neutrals Are Impassable", "No unit may enter a neutral territory."),
+          entry("Neutrals Are Blitzable", "Units that blitz may pass through neutral territories."),
+          entry("Neutral Flyover Allowed", "Planes may fly over neutral territories."),
+          entry("Random AA Casualties", "Planes hit by anti-air fire are picked at random."),
+          entry("Choose AA Casualties", "The attacker chooses the planes anti-air fire takes."),
+          entry("Roll AA Individually", "Anti-air fire rolls for each plane on its own."),
+          entry("Always on AA", "Anti-air guns also fire at planes flying over in non-combat"
+              + " moves."),
+          entry("Multiple AA Per Territory", "A territory may hold more than one anti-air gun."),
+          entry("Placement Restricted By Factory",
+              "A factory places at most as many units as its territory is worth."),
+          entry("Place in Any Territory", "Nations with the rule to place in any land they own"
+              + " (Nations) may place without a factory."),
+          entry("Unit Placement In Enemy Seas",
+              "New ships may be placed in sea zones with enemy units."),
+          entry("Unit Placement Restrictions", "Units keep to where their unit type may be"
+              + " placed (Units)."),
+          entry("Unit Placement Per Territory Restricted", "A nation's rule may stop it placing"
+              + " where it has many units already (Nations)."),
+          entry("Unlimited Constructions", "No limit on constructions per territory."),
+          entry("Submersible Subs", "Submarines may submerge instead of retreating."),
+          entry("Sub Retreat Before Battle", "Submarines may leave before a battle starts."),
+          entry("Defending Subs Sneak Attack", "Defending submarines strike first too."),
+          entry("Air Attack Sub Restricted",
+              "Planes hit submarines only with a destroyer of their side in the battle."),
+          entry("Ignore Sub In Movement",
+              "Ships may move through sea zones that hold only enemy submarines."),
+          entry("Ignore Transport In Movement",
+              "Ships may move through sea zones that hold only enemy transports."),
+          entry("Transport Casualties Restricted",
+              "Transports do not fight and are taken as the last casualties."),
+          entry("Partial Amphibious Retreat",
+              "In a landing, units that came over land may retreat."),
+          entry("Naval Bombard Casualties Return Fire",
+              "Units hit by a shore bombardment still fire back."),
+          entry("Shore Bombard Per Ground Unit Restricted",
+              "One ship bombards for each land unit that lands."),
+          entry("Kamikaze Airplanes", "Planes may attack without the moves to land again."),
+          entry("Scramble Rules In Effect",
+              "Planes at an air base may scramble to defend a territory under attack nearby."),
+          entry("Scramble To Sea Only", "Planes scramble only into sea zones."),
+          entry("Scramble From Island Only", "Only planes on islands scramble."),
+          entry("Scrambled Units Return To Base",
+              "Scrambled planes must land where they came from."),
+          entry("Multiply PUs", "Every income is multiplied by this number."),
+          entry("Relationships Last Extra Rounds",
+              "Extra rounds a relationship lasts before it may change again."),
+          entry("Alliances Can Chain Together", "The allies of an ally count as allies."),
+          entry("Air Battle Rounds", "Rounds an air battle lasts at most; -1 for no limit."),
+          entry("Sea Battle Rounds", "Rounds a sea battle lasts at most; -1 for no limit."),
+          entry("Land Battle Rounds", "Rounds a land battle lasts at most; -1 for no limit."),
+          entry("Raids May Be Preceeded By Air Battles",
+              "Interceptors and escorts fight an air battle before a bombing raid."),
+          entry("Use Fuel Cost", "Moving a unit costs the fuel its unit type names."),
+          entry("Damage From Bombing Done To Units Instead Of Territories",
+              "Bombing damages the unit bombed, eg a factory, not its territory."),
+          entry("Limit SBR Damage To Factory Production",
+              "Bombing damage is at most what the territory is worth."),
+          entry("All Rockets Attack", "Every rocket launcher may fire each turn, not only one."),
+          entry("Heavy Bomber Dice Rolls", "Dice a heavy bomber rolls."),
+          entry("LHTR Heavy Bombers", "Heavy bombers roll their dice and take the best one."),
+          entry("Contested Territories Produce No Income",
+              "A territory with enemy units in it gives no income."),
+          entry("Territories Are Assigned Randomly",
+              "Territories are dealt to the nations at random when the game starts."),
+          entry("Retreating Units Remain In Place",
+              "Units that retreat stay in the territory instead of moving out."),
+          entry("Units Can Load In Hostile Sea Zones",
+              "Transports may load in sea zones with enemy units."),
+          entry("Subs Can End NonCombat Move With Enemies",
+              "Submarines may end a non-combat move in a sea zone with enemy ships."),
+          entry("Paratroopers Can Move During Non Combat",
+              "Paratroopers may also be flown in non-combat moves."),
+          entry("Airborne Attacks Only In Existing Battles",
+              "Airborne units may only join battles that other units started."),
+          entry("Airborne Attacks Only In Enemy Territories",
+              "Airborne units may only attack enemy territories."),
+          entry("Disabled Players Assets Deleted",
+              "The units and land of a nation switched off before the game are removed."),
+          entry("Convoy Blockades Roll Dice For Cost",
+              "Blockading ships roll dice for the PUs they cut."),
+          entry("Selectable Zero Movement Units", "Units that cannot move can still be selected."),
+          entry("Units May Give Bonus Movement",
+              "Units may give others extra movement, eg an air base to planes."));
 
   /**
    * The kind of the step: of its delegate's class, and of several (combat and non-combat move) the

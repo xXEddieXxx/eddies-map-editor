@@ -18,14 +18,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Random;
-import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
 import java.util.stream.Stream;
@@ -57,10 +55,8 @@ final class Textures {
   // the open map's own pictures, read again only when changed (guarded by the class)
   private static final Map<Path, Read> READ = new HashMap<>();
   private static Optional<Path> readFrom = Optional.empty();
-  // a menu's icon per picture, kept as long as the picture is
-  private static final Map<BufferedImage, BufferedImage> ICONS =
-      Collections.synchronizedMap(new WeakHashMap<>());
-  private static final int ICON = 16;
+  // a menu's tile of a texture
+  private static final int ICON = 48;
   // the strokes: dark and nearly without color, as color shows the owner
   private static final Color INK = new Color(50, 44, 38, 140);
   private static final Color WATER_INK = new Color(40, 62, 88, 130);
@@ -70,11 +66,6 @@ final class Textures {
   private static final Color SHADE = new Color(50, 44, 38, 35);
   // how far a mark may stand off its square's middle, in squares
   private static final double JITTER = 0.45;
-  // the icon shows a part of the texture this big on paper, so its strokes stay visible
-  private static final int ICON_PART = 48;
-  // a premade one's marks are small: a smaller part keeps them readable
-  private static final int PREMADE_ICON_PART = 24;
-  private static final Color PAPER = new Color(0xF4, 0xF1, 0xEA);
 
   private Textures() {}
 
@@ -124,26 +115,22 @@ final class Textures {
         .flatMap(Textures::read);
   }
 
-  /** The texture's picture made small for a menu, eg the Paint menu's, made once per picture. */
-  static Optional<BufferedImage> icon(final MapFiles files, final String name) {
+  /**
+   * A tile of the texture for a menu, eg the Paint menu's: its first 48 px as on the map, on the
+   * color it lies on there, as most are strokes on a see-through ground.
+   */
+  static Optional<BufferedImage> icon(final MapFiles files, final String name, final Color ground) {
     return picture(files, name)
         .map(
-            p ->
-                ICONS.computeIfAbsent(
-                    p, q -> small(q, PREMADE.contains(name) ? PREMADE_ICON_PART : ICON_PART)));
-  }
-
-  private static BufferedImage small(final BufferedImage picture, final int most) {
-    final BufferedImage icon = new BufferedImage(ICON, ICON, BufferedImage.TYPE_INT_RGB);
-    final Graphics2D g = icon.createGraphics();
-    g.setRenderingHint(
-        RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-    g.setColor(PAPER);
-    g.fillRect(0, 0, ICON, ICON);
-    final int part = Math.min(most, Math.min(picture.getWidth(), picture.getHeight()));
-    g.drawImage(picture, 0, 0, ICON, ICON, 0, 0, part, part, null);
-    g.dispose();
-    return icon;
+            picture -> {
+              final BufferedImage icon = new BufferedImage(ICON, ICON, BufferedImage.TYPE_INT_RGB);
+              final Graphics2D g = icon.createGraphics();
+              g.setColor(ground);
+              g.fillRect(0, 0, ICON, ICON);
+              g.drawImage(picture, 0, 0, null);
+              g.dispose();
+              return icon;
+            });
   }
 
   /**

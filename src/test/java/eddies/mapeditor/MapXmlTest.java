@@ -22,6 +22,7 @@ import org.triplea.generic.xml.reader.XmlMapper;
 import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.GamePlay.Sequence.Step;
 import org.triplea.map.data.elements.Initialize.ResourceInitialize.ResourceGiven;
+import org.triplea.map.data.elements.Initialize.UnitInitialize.HeldUnits;
 import org.triplea.map.data.elements.Initialize.UnitInitialize.UnitPlacement;
 import org.triplea.map.data.elements.Production.PlayerProduction;
 import org.triplea.map.data.elements.Production.ProductionFrontier.FrontierRules;
@@ -228,6 +229,35 @@ final class MapXmlTest {
   }
 
   /** The map maker's template with three territories, nations Red and Blue owning one each. */
+  @DisplayName("Held units are added, counted anew and removed by their place; TripleA gives them")
+  @Test
+  void changesHeldUnits(@TempDir final Path folder) {
+    final Game minimap = givenMinimap();
+    final Game two =
+        MapXml.withHeldUnitsAdded(
+            MapXml.withHeldUnitsAdded(minimap, "Russians", "infantry", 2), "Italians", "armour", 1);
+    final Game more = MapXml.withHeldUnitsAt(two, 0, 5);
+    final Game one = MapXml.withHeldUnitsAt(more, 1, 0);
+
+    assertThat(MapXml.heldUnits(minimap)).as("minimap's nations hold nothing").isEmpty();
+    assertThat(MapXml.heldUnits(two))
+        .as("in the order added")
+        .extracting(HeldUnits::getPlayer, HeldUnits::getUnitType, HeldUnits::getQuantity)
+        .containsExactly(tuple("Russians", "infantry", 2), tuple("Italians", "armour", 1));
+    assertThat(MapXml.withHeldUnitsAt(two, 0, 2)).as("the same count is no change").isSameAs(two);
+    assertThat(MapXml.heldUnits(one))
+        .as("the first counted anew, the second removed with a count of 0")
+        .extracting(HeldUnits::getPlayer, HeldUnits::getQuantity)
+        .containsExactly(tuple("Russians", 5));
+    assertThat(MapXml.placements(one))
+        .as("the units on the map stay")
+        .hasSameSizeAs(MapXml.placements(minimap));
+    final GameData loaded = RulesXmlTest.givenLoaded(one, folder);
+    assertThat(loaded.getPlayerList().getPlayerId("Russians").getUnitCollection().size())
+        .as("TripleA starts the game with them in the nation's hand")
+        .isEqualTo(5);
+  }
+
   static Game givenTemplateWithTwoNations() {
     final DetectedMap world =
         new DetectedMap(

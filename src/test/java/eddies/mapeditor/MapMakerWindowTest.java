@@ -5,65 +5,234 @@ import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 import eddies.mapeditor.MapMakerWindow.Check;
 import eddies.mapeditor.MapMakerWindow.Pill;
+import eddies.mapeditor.MapMakerWindow.Primary;
 import eddies.mapeditor.Theme.Status;
 import java.awt.Component;
 import java.awt.Container;
 import java.awt.GraphicsEnvironment;
+import java.awt.event.KeyEvent;
+import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.lang.reflect.Field;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.stream.Stream;
 import javax.swing.AbstractButton;
-import javax.swing.JButton;
+import javax.swing.JMenuItem;
+import javax.swing.JPanel;
+import javax.swing.JSplitPane;
 import javax.swing.SwingUtilities;
+import javax.swing.plaf.basic.BasicSplitPaneUI;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.triplea.map.data.elements.Game;
 
 final class MapMakerWindowTest {
 
-  @DisplayName("The pill says what Check found, that it runs, or that it has not run yet")
+  @DisplayName("The pill shows only with content: the problems known, or that Check found none")
   @Test
   void pillTellsTheProblems() {
-    final List<Pill> pills =
+    final List<Optional<Pill>> pills =
         List.of(
             MapMakerWindow.pill(0, Check.NOT_YET),
-            MapMakerWindow.pill(3, Check.RUNNING),
+            MapMakerWindow.pill(0, Check.RUNNING),
             MapMakerWindow.pill(1, Check.NOT_YET),
             MapMakerWindow.pill(4, Check.DONE),
             MapMakerWindow.pill(0, Check.DONE));
 
     assertThat(pills)
-        .as("words and marks, never color alone")
+        .as("no pill before Check; words and marks, never color alone")
         .containsExactly(
-            new Pill("Not checked yet", Status.TODO),
-            new Pill("Checking…", Status.TODO),
-            new Pill("! 1 problem", Status.PROBLEM),
-            new Pill("! 4 problems", Status.PROBLEM),
-            new Pill("✓ No problems", Status.DONE));
+            Optional.empty(),
+            Optional.empty(),
+            Optional.of(new Pill("! 1 problem", Status.PROBLEM)),
+            Optional.of(new Pill("! 4 problems", Status.PROBLEM)),
+            Optional.of(new Pill("✓ No problems", Status.DONE)));
   }
 
-  @DisplayName("One primary in the header: Save while there are changes, else Play")
+  @DisplayName("Beside the save state: not checked, checking, or nothing once the pill says it")
   @Test
-  void savePrimaryWhenChangedElsePlay() {
-    final MapProject project = MapProject.newEmpty();
-    final JButton save = new JButton("Save");
-    final JButton play = new JButton("Play");
+  void checkNoteBesideTheSaveState() {
+    final List<String> notes =
+        List.of(
+            MapMakerWindow.checkNote(0, Check.NOT_YET),
+            MapMakerWindow.checkNote(2, Check.NOT_YET),
+            MapMakerWindow.checkNote(2, Check.RUNNING),
+            MapMakerWindow.checkNote(0, Check.DONE));
 
-    MapMakerWindow.showSaveAndPlay(project, save, play);
-    final boolean saveShownClean = save.isVisible();
-    final boolean playPrimaryClean = Theme.isPrimary(play);
-    givenChange(project);
-    MapMakerWindow.showSaveAndPlay(project, save, play);
+    assertThat(notes)
+        .as("problems known already show in the pill")
+        .containsExactly("not checked", "", "checking…", "");
+  }
 
-    assertThat(saveShownClean).as("all saved: no Save button").isFalse();
-    assertThat(playPrimaryClean).as("all saved: Play is the primary").isTrue();
-    assertThat(save.isVisible()).as("changed: Save shows").isTrue();
-    assertThat(Theme.isPrimary(save)).as("changed: Save is the primary").isTrue();
-    assertThat(Theme.isPrimary(play)).as("changed: Play is secondary").isFalse();
+  @DisplayName("One primary in the header: Save with changes, then Check, then Play")
+  @Test
+  void primaryIsWhatComesNext() {
+    // given
+    final MapProject saved = MapProject.newEmpty();
+    final MapProject changed = MapProject.newEmpty();
+    givenChange(changed);
+
+    // when
+    final List<Primary> primaries =
+        List.of(
+            MapMakerWindow.primary(changed, 0, Check.DONE),
+            MapMakerWindow.primary(saved, 0, Check.NOT_YET),
+            MapMakerWindow.primary(saved, 0, Check.RUNNING),
+            MapMakerWindow.primary(saved, 3, Check.DONE),
+            MapMakerWindow.primary(saved, 0, Check.DONE));
+
+    // then
+    assertThat(primaries)
+        .as("changes first; Check until it ran and found nothing; only then Play")
+        .containsExactly(
+            Primary.SAVE, Primary.CHECK, Primary.CHECK, Primary.CHECK, Primary.PLAY);
+  }
+
+  @DisplayName("The header of an unchecked map: Check primary, Play a click away, no pill, no Save")
+  @Test
+  void headerOfAnUncheckedMap() throws Exception {
+    assumeFalse(GraphicsEnvironment.isHeadless(), "the window needs a screen");
+    // given
+    final MapProject project = givenMinimapWithoutItalianLand();
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapMakerWindow window = new MapMakerWindow();
+          try {
+            window.showProject(project);
+            final List<AbstractButton> header = buttons(window.getContentPane()).toList();
+            for (final String name : List.of("Check", "Play", "Save")) {
+              final AbstractButton button =
+                  header.stream().filter(b -> name.equals(b.getText())).findFirst().orElseThrow();
+              seen.add(name + " " + button.isVisible() + " " + Theme.isPrimary(button));
+            }
+            seen.add(header.stream().anyMatch(b -> "File ▾".equals(b.getText())));
+            seen.add(
+                header.stream()
+                    .filter(AbstractButton::isVisible)
+                    .anyMatch(b -> String.valueOf(b.getText()).contains("problem")));
+          } finally {
+            window.dispose();
+          }
+        });
+
+    // then
+    assertThat(seen)
+        .as("Check is the one primary; Play shows as secondary; Save is hidden; File; no pill")
+        .containsExactly("Check true true", "Play true false", "Save false false", true, false);
+  }
+
+  @DisplayName("The File menu: open, new, recent, new game, export, publish, folder, close")
+  @Test
+  void fileMenuHoldsTheMapsActions() throws Exception {
+    assumeFalse(GraphicsEnvironment.isHeadless(), "the window needs a screen");
+    // given
+    final MapProject project = givenMinimapWithoutItalianLand();
+    final List<String> items = new ArrayList<>();
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapMakerWindow window = new MapMakerWindow();
+          try {
+            window.showProject(project);
+            final List<JMenuItem> menu =
+                Stream.of(window.fileMenu().getComponents())
+                    .filter(JMenuItem.class::isInstance)
+                    .map(JMenuItem.class::cast)
+                    .toList();
+            menu.forEach(
+                item ->
+                    items.add(
+                        item.getText()
+                            + Optional.ofNullable(item.getAccelerator())
+                                .map(key -> " " + key.getKeyCode())
+                                .orElse("")));
+            menu.stream()
+                .filter(item -> "Publish…".equals(item.getText()))
+                .findFirst()
+                .orElseThrow()
+                .doClick();
+            seen.add(
+                buttons(window.getContentPane())
+                    .anyMatch(
+                        b ->
+                            "Publish".equals(b.getAccessibleContext().getAccessibleName())
+                                && b.isSelected()));
+          } finally {
+            window.dispose();
+          }
+        });
+
+    // then
+    assertThat(items.stream().map(item -> item.replaceFirst("^Play with.*", "Play with…")))
+        .as("each with its key; the folder by the system's name")
+        .containsExactly(
+            "Open a map… " + KeyEvent.VK_O,
+            "New map… " + KeyEvent.VK_N,
+            "Recent maps",
+            "New game from this one…",
+            "Export as zip… " + KeyEvent.VK_F8,
+            "Publish…",
+            "Play with…",
+            System.getProperty("os.name").toLowerCase(Locale.ROOT).startsWith("mac")
+                ? "Show in Finder"
+                : "Show in Explorer",
+            "Close map " + KeyEvent.VK_W);
+    assertThat(seen).as("Publish… opens the Publish tool").containsExactly(true);
+  }
+
+  @DisplayName("The panel beside the map is 24 % of the window, at least 340 and at most 480 px")
+  @Test
+  void inspectorWidthFollowsTheWindow() {
+    final List<Integer> widths =
+        Stream.of(1000, 1280, 1600, 1920, 2560).map(MapMakerWindow::inspectorWidth).toList();
+
+    assertThat(widths).as("clamped at both ends").containsExactly(340, 340, 384, 460, 480);
+  }
+
+  @DisplayName("A resize fits the panel beside the map again, unless its divider was dragged")
+  @Test
+  void draggedDividerIsKept() throws Exception {
+    // given: a map and a panel as the window lays them out
+    final List<Integer> widths = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final JSplitPane split =
+              new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, new JPanel(), new JPanel());
+          split.setBorder(null);
+          MapMakerWindow.keepDragged(split);
+          split.setSize(1600, 600);
+          MapMakerWindow.fitInspector(split, 1280);
+          split.doLayout();
+          widths.add(split.getRightComponent().getWidth());
+          MapMakerWindow.fitInspector(split, 1920);
+          split.doLayout();
+          widths.add(split.getRightComponent().getWidth());
+          // the map maker drags the divider
+          final Component divider = ((BasicSplitPaneUI) split.getUI()).getDivider();
+          divider.dispatchEvent(
+              new MouseEvent(divider, MouseEvent.MOUSE_PRESSED, 0, 0, 2, 2, 1, false));
+          split.setDividerLocation(1600 - split.getDividerSize() - 600);
+          split.doLayout();
+          MapMakerWindow.fitInspector(split, 1280);
+          split.doLayout();
+          widths.add(split.getRightComponent().getWidth());
+        });
+
+    // then
+    assertThat(widths)
+        .as("fitted at 1280, again at 1920, then the dragged 600 px kept")
+        .containsExactly(340, 460, 600);
   }
 
   @DisplayName("The header names the game only when it is named apart from the map")

@@ -3,7 +3,9 @@ package eddies.mapeditor;
 import static java.util.Map.entry;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.experimental.UtilityClass;
@@ -67,8 +69,15 @@ class UnitOptions {
                       "Bonus when landing from sea",
                       0,
                       "Added to its attack in a landing from a transport, eg 1."),
-                  units("canNotTarget", "Cannot hit", "Unit types its hits never go to."),
-                  units("canNotBeTargetedBy", "Cannot be hit by", "Unit types whose hits miss it."),
+                  units(
+                      "canNotTarget",
+                      "Cannot hit",
+                      "Unit types its hits never go to, also with a destroyer beside it."),
+                  units(
+                      "canNotBeTargetedBy",
+                      "Cannot be hit by",
+                      "Unit types whose hits miss it, eg planes for a submarine, unless their side"
+                          + " has a destroyer in the battle."),
                   flag("isSuicideOnAttack", "Dies after it attacks", ""),
                   flag("isSuicideOnDefense", "Dies after it defends", ""),
                   flag("isSuicideOnHit", "Dies when it hits", ""))),
@@ -116,7 +125,11 @@ class UnitOptions {
               "Sea",
               List.of(
                   flag("isSea", "Sails", ""),
-                  flag("isDestroyer", "Destroyer: cancels the first strike of subs", ""),
+                  flag(
+                      "isDestroyer",
+                      "Destroyer: cancels the first strike of subs",
+                      "With one in the battle its side also hits units that 'cannot be hit by'"
+                          + " them, eg planes hit submarines."),
                   flag("canBombard", "Can bombard a shore", ""),
                   number(
                       "bombard",
@@ -149,8 +162,13 @@ class UnitOptions {
                   number("attackAA", "Anti-air defense", 1, "Hits planes on this or less."),
                   number(
                       "offensiveAttackAA", "Anti-air attack", 0, "Hits planes on this or less."),
-                  number("maxAAattacks", "Anti-air shots", -1, "Shots per round, -1 for one each."),
-                  number("maxRoundsAA", "Anti-air rounds", 1, -1, "Rounds it fires, -1 for all."),
+                  number(
+                      "maxAAattacks",
+                      "Anti-air shots",
+                      -1,
+                      "Shots per round; empty for one at each plane."),
+                  number(
+                      "maxRoundsAA", "Anti-air rounds", 1, -1, "Rounds it fires; empty for all."),
                   text(
                       "typeAA",
                       "Kind of anti-air",
@@ -179,7 +197,8 @@ class UnitOptions {
                       "maxOperationalDamage",
                       "Damage until it stops working",
                       -1,
-                      "-1: it works with any damage."),
+                      "With more damage it is disabled (produces nothing, no air base or repair);"
+                          + " empty: never disabled."),
                   flag("canDieFromReachingMaxDamage", "Is destroyed at its most damage", ""),
                   flag("isConstruction", "Construction: placed like a factory", ""),
                   text(
@@ -275,6 +294,21 @@ class UnitOptions {
           "isStrategicBomber",
           "tuv");
 
+  /**
+   * The word an empty number field shows instead of -1, which TripleA takes as "none" or "all";
+   * "default" for a number that starts at -1 and has no word here.
+   */
+  static Optional<String> blankWord(final UnitOption option) {
+    return Optional.ofNullable(BLANK_WORDS.get(option.name()))
+        .or(() -> Optional.of("default").filter(word -> "-1".equals(option.defaultValue())));
+  }
+
+  /** Whether a search finds the option: by its label or by TripleA's name for it. */
+  static boolean matches(final UnitOption option, final String lowerCaseSearch) {
+    return option.label().toLowerCase(Locale.ROOT).contains(lowerCaseSearch)
+        || option.name().toLowerCase(Locale.ROOT).contains(lowerCaseSearch);
+  }
+
   /** The word an empty number field shows for -1, TripleA's default "none" or "all". */
   static final Map<String, String> BLANK_WORDS =
       Map.ofEntries(
@@ -284,6 +318,11 @@ class UnitOptions {
           entry("carrierCapacity", "none"),
           entry("carrierCost", "none"),
           entry("maxScrambleDistance", "none"),
+          entry("maxScrambleCount", "no limit"),
+          entry("maxInterceptCount", "no limit"),
+          entry("maxAAattacks", "no limit"),
+          entry("maxRoundsAA", "all rounds"),
+          entry("maxOperationalDamage", "never"),
           entry("maxBuiltPerPlayer", "no limit"),
           entry("constructionsPerTerrPerTypePerTurn", "no limit"),
           entry("maxConstructionsPerTypePerTerr", "no limit"),

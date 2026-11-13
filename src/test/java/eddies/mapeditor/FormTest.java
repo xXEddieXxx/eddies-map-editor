@@ -97,6 +97,30 @@ final class FormTest {
     assertThat(field.getParent().isVisible()).as("found by its label, in a hidden part").isFalse();
   }
 
+  @DisplayName("A fold of nothing is not shown; one counting its fields says how many are set")
+  @Test
+  void foldHiddenWhenEmpty() {
+    final Form form = new Form(300);
+
+    form.more(givenId(), 0, inner -> {});
+    form.fold(givenId(), "Rules", 0, inner -> {});
+    form.fold(
+        givenId(),
+        "Terrain",
+        2,
+        inner -> inner.field("Forest", new JTextField()).row(new JLabel("Hills")).number(
+            "Moves", Form.newNumber(1, 9, value -> {})));
+    form.fold(givenId(), "Sea zone", 0, inner -> inner.field("Blockade", new JTextField()));
+
+    assertThat(
+            Stream.of(form.getComponents())
+                .flatMap(c -> c instanceof Container inner ? Stream.of(inner.getComponents()) : Stream.empty())
+                .filter(AbstractButton.class::isInstance)
+                .map(c -> ((AbstractButton) c).getText()))
+        .as("no '▸ More options (0)' and no '▸ Rules (0)'; the count, and what is set, behind it")
+        .containsExactly("▸ Terrain (3) · 2 set", "▸ Sea zone (1)");
+  }
+
   @DisplayName("More options with a label of its own shows that label")
   @Test
   void moreWithLabel() {

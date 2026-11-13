@@ -6,20 +6,26 @@ import games.strategy.engine.data.GameData;
 import games.strategy.engine.data.GamePlayer;
 import games.strategy.engine.data.TechnologyFrontier;
 import games.strategy.triplea.Constants;
+import games.strategy.triplea.attachments.TechAbilityAttachment;
+import games.strategy.triplea.attachments.TechAttachment;
 import games.strategy.triplea.delegate.TechAdvance;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import lombok.experimental.ExtensionMethod;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.triplea.map.data.elements.AttachmentList.Attachment;
+import org.triplea.map.data.elements.AttachmentList.Attachment.Option;
 import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.PropertyList;
 import org.triplea.map.data.elements.PropertyList.Property;
 import org.triplea.map.data.elements.PropertyList.Property.Value;
+import eddies.mapeditor.TechXml.UnitNumber;
 
 @ExtensionMethod(Builders.class)
 final class TechXmlTest {
@@ -37,6 +43,200 @@ final class TechXmlTest {
             TechXml.withTechIn(withTechs, "Russians", JETS, AIR), "Russians", "Radio", AIR),
         "Italians",
         TechAdvance.TECH_PROPERTY_PARATROOPERS);
+  }
+
+  /**
+   * The minimap with what real maps give technologies, eg 41 Oztea: bonuses per unit type, rockets,
+   * airborne forces, a gained ability, and an option no TripleA knows yet.
+   */
+  private Game givenAbilities() {
+    final Game withRadar =
+        TechXml.withAbilityOptions(
+            minimap,
+            "longRangeAir",
+            options ->
+                List.of(
+                    Option.builder().name("radarBonus").value("1:aaGun").build(),
+                    Option.builder().name("radarBonus").value("factory").count("2").build()));
+    return TechXml.withAbilityOptions(
+        withRadar,
+        "rocket",
+        options ->
+            List.of(
+                Option.builder().name("rocketDiceNumber").value("1:aaGun").build(),
+                Option.builder().name("rocketDistance").value("4").build(),
+                Option.builder().name("futureBonus").value("7:infantry").build(),
+                Option.builder().name("airborneTypes").value("infantry").build(),
+                Option.builder().name("airborneTypes").value("armour").build(),
+                Option.builder().name("airborneTargettedByAA").value("AA:infantry").build(),
+                Option.builder().name("unitAbilitiesGained").value("armour:canBlitz").build()));
+  }
+
+  @DisplayName("What a technology gives reads in plain parts: numbers per unit type, lists, numbers")
+  @Test
+  void readsWhatATechnologyGives() {
+    final Game game = givenAbilities();
+
+    assertThat(TechXml.abilityOptions(game, "longRangeAir").stream().map(TechXml::unitNumber))
+        .as("a bonus per unit type, also one written with a count as TripleA joins it")
+        .containsExactly(
+            Optional.of(new UnitNumber("radarBonus", 1, "aaGun")),
+            Optional.of(new UnitNumber("radarBonus", 2, "factory")));
+    assertThat(TechXml.abilityNumber(game, "rocket", TechXml.ROCKET_DISTANCE))
+        .as("a number that is set")
+        .isEqualTo(4);
+    assertThat(TechXml.abilityNumber(game, "rocket", TechXml.ROCKETS_PER_TERRITORY))
+        .as("one that is not: TripleA's own, 1")
+        .isEqualTo(1);
+    assertThat(TechXml.abilityNumber(game, "rocket", TechXml.REPAIR_DISCOUNT))
+        .as("no discount is -1, shown as a blank word")
+        .isEqualTo(-1);
+    assertThat(TechXml.abilityUnits(game, "rocket", TechXml.AIRBORNE_TYPES))
+        .as("a list over its entries")
+        .containsExactly("infantry", "armour");
+    assertThat(TechXml.gaining(game, "rocket", TechXml.CAN_BLITZ))
+        .as("who gains blitz")
+        .containsExactly("armour");
+    assertThat(TechXml.shotAtBy(game, "rocket"))
+        .as("anti-air by its kind")
+        .containsExactly(Map.entry("AA", List.of("infantry")));
+    assertThat(TechXml.otherAbilityOptions(game, "rocket"))
+        .as("the one option the editor has no words for")
+        .extracting(Option::getName)
+        .containsExactly("futureBonus");
+    assertThat(TechXml.ability(game, "superSub")).as("a technology without any").isEmpty();
+    assertThat(
+            TechXml.abilityOptions(
+                AttachmentsXml.withAttachments(
+                    minimap,
+                    List.of(
+                        Builders.toBuilder(
+                                AttachmentsXml.newAttachment(
+                                    "TechAbilityAttachment", "techAbilityAttachment", "Super subs"))
+                            .options(
+                                List.of(
+                                    Option.builder().name("attackBonus").value("1:submarine").build()))
+                            .build())),
+                "superSub"))
+        .as("attached to the name the game shows, as eg Operation Dandelion does: TripleA finds it")
+        .hasSize(1);
+    assertThat(game.getTechnology())
+        .as("no list is written with it: TripleA attaches to its standard technologies too")
+        .isNull();
+  }
+
+  @DisplayName("A changed value changes only its option; the others, also unknown ones, stay")
+  @Test
+  void changesOneValue(@TempDir final Path folder) {
+    final Game game = givenAbilities();
+    final List<Option> before = TechXml.abilityOptions(game, "rocket");
+
+    final Game farther = TechXml.withAbilityNumber(game, "rocket", TechXml.ROCKET_DISTANCE, 5);
+    final Game moreDice =
+        TechXml.withUnitNumberAt(farther, "rocket", 0, new UnitNumber("rocketDiceNumber", 2, "aaGun"));
+    final Game bombard =
+        TechXml.withGaining(moreDice, "rocket", TechXml.CAN_BOMBARD, List.of("armour", "battleship"));
+    final Game unset = TechXml.withAbilityNumber(bombard, "rocket", TechXml.ROCKET_DISTANCE, 0);
+
+    final List<Option> after = TechXml.abilityOptions(farther, "rocket");
+    assertThat(after).as("as many options, in their places").hasSameSizeAs(before);
+    assertThat(after.get(1).getValue()).as("the distance").isEqualTo("5");
+    for (final int kept : List.of(0, 2, 3, 4, 5, 6)) {
+      assertThat(after.get(kept)).as("option %s is untouched", kept).isSameAs(before.get(kept));
+    }
+    assertThat(TechXml.withAbilityNumber(game, "rocket", TechXml.ROCKET_DISTANCE, 4))
+        .as("the value it has is no change, so no step")
+        .isSameAs(game);
+    assertThat(TechXml.withAbilityNumber(game, "rocket", TechXml.REPAIR_DISCOUNT, 150))
+        .as("more than TripleA takes, 100 %, is not written: the game would not load")
+        .isSameAs(game);
+    assertThat(TechXml.withAbilityNumber(game, "rocket", TechXml.ROCKET_DISTANCE, -1))
+        .as("nor a number below 0 where none is TripleA's own")
+        .isSameAs(game);
+    assertThat(
+            TechXml.abilityNumber(
+                TechXml.withAbilityNumber(game, "rocket", TechXml.REPAIR_DISCOUNT, 100),
+                "rocket",
+                TechXml.REPAIR_DISCOUNT))
+        .as("the most it takes is written")
+        .isEqualTo(100);
+    assertThat(
+            TechXml.withUnitNumberAt(game, "rocket", 1, new UnitNumber("rocketDiceNumber", 2, "aaGun")))
+        .as("a row that is not this number, eg after an undo, changes nothing")
+        .isSameAs(game);
+    assertThat(TechXml.abilityOptions(moreDice, "rocket").getFirst().getValue())
+        .as("the number for the unit type")
+        .isEqualTo("2:aaGun");
+    assertThat(TechXml.abilityOptions(bombard, "rocket").stream().map(TechXml::read))
+        .as("blitz kept, bombard added, a unit an entry, where the entry was")
+        .endsWith("armour:canBlitz:canBombard", "battleship:canBombard");
+    assertThat(TechXml.abilityOptions(unset, "rocket"))
+        .as("TripleA's own number takes the option out")
+        .extracting(Option::getName)
+        .doesNotContain("rocketDistance")
+        .contains("futureBonus");
+    assertThat(TechXml.abilityOptions(unset, "longRangeAir"))
+        .as("another technology's options are the same objects")
+        .containsExactlyElementsOf(TechXml.abilityOptions(game, "longRangeAir"));
+    // futureBonus is made up; without it TripleA takes all the rest
+    RulesXmlTest.givenLoaded(
+        TechXml.withAbilityOptions(
+            unset,
+            "rocket",
+            options -> options.stream().filter(o -> !"futureBonus".equals(o.getName())).toList()),
+        folder);
+  }
+
+  @DisplayName("The first value makes the attachment TripleA reads; research costs per nation")
+  @Test
+  void makesTheAttachment(@TempDir final Path folder) {
+    final Game subs =
+        TechXml.withUnitNumberAdded(minimap, "superSub", new UnitNumber("attackBonus", 2, "submarine"));
+    final Game airborne =
+        TechXml.withShotAtBy(
+            TechXml.withAbilityUnits(
+                TechXml.withAbilityFlag(subs, "jetPower", TechXml.AIRBORNE_FORCES),
+                "jetPower",
+                TechXml.AIRBORNE_BASES,
+                List.of("factory")),
+            "jetPower",
+            "AA",
+            List.of("infantry", "armour"));
+    final Game costly = TechXml.withTechCost(airborne, "Russians", 7);
+
+    final Attachment made = TechXml.ability(subs, "superSub").orElseThrow().getValue();
+    assertThat(List.of(made.getName(), made.getType(), made.getJavaClass()))
+        .as("name, type and class as TripleA reads a technology's abilities")
+        .containsExactly(
+            "techAbilityAttachment",
+            "technology",
+            "games.strategy.triplea.attachments.TechAbilityAttachment");
+    assertThat(TechXml.abilityOptions(airborne, "jetPower").stream().map(TechXml::read))
+        .as("a flag, a list and the anti-air's targets as TripleA writes them")
+        .containsExactly("true", "factory", "AA:infantry:armour");
+    assertThat(TechXml.withoutAbilityFlag(airborne, "superSub", TechXml.AIRBORNE_FORCES))
+        .as("a flag that is not set is not taken out")
+        .isSameAs(airborne);
+    assertThat(TechXml.techCost(minimap, "Russians")).as("TripleA's 5 when not set").isEqualTo(5);
+    assertThat(TechXml.withTechCost(minimap, "Russians", 5)).as("5 again: no step").isSameAs(minimap);
+    assertThat(TechXml.ability(TechXml.withoutAbility(subs, "superSub"), "superSub"))
+        .as("removed: TripleA's standard effect counts again")
+        .isEmpty();
+    final GameData loaded = RulesXmlTest.givenLoaded(costly, folder);
+    assertThat(
+            ((TechAttachment)
+                    loaded
+                        .getPlayerList()
+                        .getPlayerId("Russians")
+                        .getAttachment(Constants.TECH_ATTACHMENT_NAME))
+                .getTechCost())
+        .as("TripleA charges the Russians 7 PUs a roll")
+        .isEqualTo(7);
+    assertThat(
+            TechAbilityAttachment.getAllowAirborneForces(
+                List.of(loaded.getTechnologyFrontier().getAdvanceByProperty("jetPower"))))
+        .as("TripleA finds the attachment on the technology, also in a game without a list")
+        .isTrue();
   }
 
   @DisplayName("Technologies, the categories nations research them in, and starting ones change")

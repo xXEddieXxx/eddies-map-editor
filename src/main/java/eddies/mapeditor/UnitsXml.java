@@ -52,8 +52,13 @@ class UnitsXml {
    * is changed among the unit's other options, row by row.
    */
   static boolean isPlain(final Game game, final String unit, final String option) {
+    return isPlain(options(game, unit), option);
+  }
+
+  /** As {@link #isPlain(Game, String, String)}, among the unit's options read once for many. */
+  static boolean isPlain(final List<Option> options, final String option) {
     final List<Option> named =
-        options(game, unit).stream().filter(o -> AttachmentsXml.isOption(o, option)).toList();
+        options.stream().filter(o -> AttachmentsXml.isOption(o, option)).toList();
     return named.isEmpty() || (named.size() == 1 && named.getFirst().getCount() == null);
   }
 
@@ -153,6 +158,55 @@ class UnitsXml {
         .filter(o -> AttachmentsXml.isOption(o, name))
         .skip(occurrence)
         .findFirst();
+  }
+
+  /**
+   * The unit type's limit of this name ({@link RulesXml#STACKING_LIMITS}); empty when it has none,
+   * or one the Stacking limits section cannot show: given twice, or not as TripleA reads it.
+   */
+  static Optional<RulesXml.StackingLimit> stackingLimit(
+      final Game game, final String unit, final String name) {
+    final List<Option> named =
+        options(game, unit).stream().filter(o -> AttachmentsXml.isOption(o, name)).toList();
+    return named.size() == 1
+        ? RulesXml.StackingLimit.read(named.getFirst()).filter(limit -> limit.units().isEmpty())
+        : Optional.empty();
+  }
+
+  /** Whether the unit type has an option of this name at all. */
+  static boolean hasOption(final Game game, final String unit, final String name) {
+    return options(game, unit).stream().anyMatch(o -> AttachmentsXml.isOption(o, name));
+  }
+
+  /**
+   * The game with the unit type's limit of this name set where it is, under the name it has, else
+   * after its other options; none takes it out. Unchanged while the unit type has an option of the
+   * name that {@link #stackingLimit} does not read: that one is changed among its other options.
+   */
+  static Game withStackingLimit(
+      final Game game,
+      final String unit,
+      final String name,
+      final Optional<RulesXml.StackingLimit> limit) {
+    final Optional<Option> had = optionAt(game, unit, name, 0);
+    final Optional<RulesXml.StackingLimit> now = stackingLimit(game, unit, name);
+    if (now.equals(limit) || (had.isPresent() && now.isEmpty())) {
+      return game;
+    }
+    if (limit.isEmpty()) {
+      return withoutOptionAt(game, unit, name, 0);
+    }
+    // as the map writes it: many have the number as the option's count, eg count="3" value="allied"
+    final boolean counted = had.map(Option::getCount).filter(c -> !c.isEmpty()).isPresent();
+    final Option written =
+        Option.builder()
+            .name(had.map(Option::getName).orElse(name))
+            .count(counted ? String.valueOf(limit.get().most()) : null)
+            .value(counted ? limit.get().counting() : limit.get().written())
+            .build();
+    return had.isPresent()
+        ? withOptionAt(game, unit, name, 0, written)
+        : withNewOption(game, unit, written);
   }
 
   private static OptionalInt rowOf(

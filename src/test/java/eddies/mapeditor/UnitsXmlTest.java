@@ -267,13 +267,15 @@ final class UnitsXmlTest {
   @Test
   void listsNameSectionOptions() {
     assertThat(UnitOptions.BLANK_WORDS.keySet())
-        .as("blank words only for numbers whose default is -1")
+        .as("blank words only for numbers that may be -1: by default, or as their least")
         .allSatisfy(
             name ->
                 assertThat(givenOption(name))
                     .as(name)
-                    .extracting(UnitOptions.UnitOption::kind, UnitOptions.UnitOption::defaultValue)
-                    .containsExactly(UnitOptions.Kind.NUMBER, "-1"));
+                    .matches(
+                        o ->
+                            o.kind() == UnitOptions.Kind.NUMBER
+                                && ("-1".equals(o.defaultValue()) || o.minimum() == -1)));
     assertThat(UnitOptions.NAMES)
         .as("the common options, the essentials and the kind flags are section options")
         .containsAll(UnitOptions.COMMON)

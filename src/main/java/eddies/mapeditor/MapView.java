@@ -73,6 +73,7 @@ final class MapView extends JPanel {
   private static final int BANNER_HEIGHT = 32;
   // taller in an edit mode, so the map maker notices each click changes the map
   private static final int EDIT_BANNER_HEIGHT = 40;
+  private static final String EDIT_MODE = "Edit mode";
   // the veil over a picture without territories yet: the map's background at 70 %
   private static final Color VEIL =
       new Color(
@@ -216,25 +217,24 @@ final class MapView extends JPanel {
 
   /**
    * The toolbar's layout: the views, a line, the editor's tools, the map's tools at the right, all
-   * in one row as long as it fits; shorter of room first fewer views by name, then the editor's
-   * named tools as their glyphs ({@link Theme#setNamedMapToolStyle}). If even that does not fit,
-   * it wraps: the editor's tools, then the map's, on lines of their own, so nothing is cut or lies
-   * over another.
+   * in one row as long as it fits; shorter of room first the views as one button with a menu, so
+   * the editor's tools keep their names, then those named tools as their glyphs ({@link
+   * Theme#setNamedMapToolStyle}). If even that does not fit, it wraps: the editor's tools, then
+   * the map's, on lines of their own, so nothing is cut or lies over another.
    */
   private final class ToolbarLayout implements LayoutManager {
     private static final List<Stage> STAGES =
         List.of(
-            new Stage(MapViewsBar.Names.ALL, true),
-            new Stage(MapViewsBar.Names.CHOSEN, true),
-            new Stage(MapViewsBar.Names.NONE, true),
-            new Stage(MapViewsBar.Names.NONE, false));
+            new Stage(MapViewsBar.Shape.TOGGLES, true),
+            new Stage(MapViewsBar.Shape.DROPDOWN, true),
+            new Stage(MapViewsBar.Shape.DROPDOWN, false));
 
     private final JPanel row;
     private final JComponent mapTools;
     // the lines laid out last, for the row's height
     private int lines = 1;
 
-    private record Stage(MapViewsBar.Names views, boolean toolNames) {}
+    private record Stage(MapViewsBar.Shape views, boolean toolNames) {}
 
     ToolbarLayout(final JPanel row, final JComponent mapTools) {
       this.row = row;
@@ -341,7 +341,10 @@ final class MapView extends JPanel {
 
     private static int toolWidth(final AbstractButton tool, final boolean byName) {
       return byName
-          ? Theme.mapToolWidth(tool, Optional.empty(), Theme.mapToolName(tool).orElseThrow())
+          ? Theme.mapToolWidth(
+              tool,
+              Theme.mapToolGlyph(tool).filter(glyph -> Theme.mapToolKeepsGlyph(tool)),
+              Theme.mapToolName(tool).orElseThrow())
           : Theme.mapToolWidth(tool, Theme.mapToolGlyph(tool), glyphText(tool));
     }
 
@@ -357,7 +360,10 @@ final class MapView extends JPanel {
       final String text = byName ? Theme.mapToolName(tool).orElseThrow() : glyphText(tool);
       if (!text.equals(tool.getText())) {
         tool.setText(text);
-        tool.setIcon(byName ? null : Theme.mapToolGlyph(tool).orElseThrow());
+        tool.setIcon(
+            byName && !Theme.mapToolKeepsGlyph(tool)
+                ? null
+                : Theme.mapToolGlyph(tool).orElseThrow());
         Theme.fitMapTool(tool);
       }
     }
@@ -392,14 +398,19 @@ final class MapView extends JPanel {
     redraw.addActionListener(e -> redrawBorders.run());
     findAgain.addActionListener(e -> findTerritories.run());
     pictureMenu.add(findAgain);
+    final JMenuItem resize = pictureMenu.add("Resize map…");
+    resize.setToolTipText(
+        "Makes the whole map bigger or smaller: picture, borders and places. Units keep their"
+            + " size, so a bigger map gives them more room");
+    resize.addActionListener(e -> MapMakerWindow.resizeMap(this));
     final JMenuItem saveAs = pictureMenu.add("Save the map's picture as a file…");
     saveAs.setToolTipText(
         "The whole picture, without the relief, put together from its tiles in baseTiles: to"
             + " change it in a paint program, then Load another picture or Redraw borders");
     saveAs.addActionListener(e -> savePicture());
-    final JButton picture = Theme.newIconButton(Glyph.GAME_VIEW, "Map picture", () -> {});
+    final JButton picture = Theme.newIconButton(Glyph.PICTURE, "Map picture", () -> {});
     picture.setText("▾");
-    picture.setIcon(new MakerIcon(Glyph.GAME_VIEW, Theme.MAP_TOOL_ICON));
+    picture.setIcon(new MakerIcon(Glyph.PICTURE, Theme.MAP_TOOL_ICON));
     // icon and arrow: wider than an icon button's square
     Theme.fitMapTool(picture);
     // also on a right-click and Shift+F10
@@ -453,7 +464,7 @@ final class MapView extends JPanel {
 
   /** "Edit mode" in white on red, the danger color, as the lines being edited are. */
   private static JLabel newEditBadge() {
-    final JLabel badge = new JLabel("Edit mode");
+    final JLabel badge = new JLabel(EDIT_MODE);
     badge.setOpaque(true);
     badge.setBackground(Theme.getDangerColor());
     badge.setForeground(Color.WHITE);
@@ -570,14 +581,14 @@ final class MapView extends JPanel {
     final int territories = Integer.parseInt(state);
     return territories == 0
         ? Panels.empty(
-            Glyph.GAME_VIEW,
+            Glyph.PICTURE,
             "No map picture yet",
             "Load a picture of your map: dark lines between territories, seas in blue. The editor"
                 + " then makes the territories from it.",
             "Load map picture…",
             choosePicture)
         : Panels.empty(
-            Glyph.GAME_VIEW,
+            Glyph.PICTURE,
             territories
                 + (territories == 1 ? " territory" : " territories")
                 + ", but no map picture",
@@ -676,7 +687,18 @@ final class MapView extends JPanel {
    * Connections' connecting: a taller banner that starts with an "Edit mode" badge.
    */
   void showEditBanner(final String text, final Runnable done) {
+    editBadge.setText(EDIT_MODE);
     showBanner(text, Optional.empty(), "Done", done, true);
+  }
+
+  /**
+   * Like {@link #showEditBanner(String, Runnable)}, with the badge saying what the mode changes,
+   * eg "Edits the picture", so that stays readable when the text is cut, and extra after the text.
+   */
+  void showEditBanner(
+      final String badge, final String text, final JComponent extra, final Runnable done) {
+    editBadge.setText(badge);
+    showBanner(text, Optional.of(extra), "Done", done, true);
   }
 
   private void showBanner(

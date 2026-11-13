@@ -49,7 +49,7 @@ final class CanalsEditor implements Editor {
     list =
         new SearchList("canal", "canals", this::names, n -> n, this::detail, this::chooseInList)
             .withAdd(
-                "New canal",
+                "Add canal…",
                 "A new canal: name it, then click its sea zones and land on the map",
                 this::addCanal)
             .withEmpty(
@@ -58,7 +58,7 @@ final class CanalsEditor implements Editor {
                     "No canals yet",
                     "A canal lets ships pass between two sea zones while their side holds the"
                         + " land, eg Suez.",
-                    "New canal…",
+                    "Add canal…",
                     this::addCanal));
     // the fields start where the tool's title does: the panel has its margin already
     inspector.setBorder(

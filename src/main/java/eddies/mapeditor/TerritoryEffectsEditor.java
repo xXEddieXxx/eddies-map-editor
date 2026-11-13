@@ -101,7 +101,7 @@ final class TerritoryEffectsEditor implements Editor {
                 e -> e,
                 this::detail,
                 this::choose)
-            .withAdd("Add", "A new effect, eg forest", this::addEffect);
+            .withAdd("Add effect…", "A new effect, eg forest", this::addEffect);
     page.add(
         Panels.empty(
             Glyph.EFFECTS,
@@ -245,8 +245,8 @@ final class TerritoryEffectsEditor implements Editor {
             Theme.newAddButton(
                 "Add unit type", "A row for a unit type, to give it values", this::addUnitType)));
     sections.note(
-        "Added to the unit's strength in a battle here; moves to enter: how many more moves it"
-            + " costs.");
+        "Added to the unit's strength in a battle here. Extra moves to enter come on top of the 1"
+            + " move every territory costs: +1 means 2 moves to enter, -1 means none.");
     sections.section("Who may enter");
     sections.field(
         "Units that may not enter",
@@ -401,7 +401,7 @@ final class TerritoryEffectsEditor implements Editor {
     if (units.isEmpty()) {
       return table;
     }
-    final List<String> headings = List.of("Unit", "Attack", "Defence", "Moves to enter");
+    final List<String> headings = List.of("Unit", "Attack", "Defence", "Extra moves to enter");
     for (int column = 0; column < headings.size(); column++) {
       table.add(Theme.newSecondaryLabel(headings.get(column)), cell(column, 0));
     }
@@ -529,7 +529,8 @@ final class TerritoryEffectsEditor implements Editor {
               unit,
               changed.signum() == 0 ? null : changed.toPlainString());
         });
-    spinner.setToolTipText("How many more moves entering costs " + unit);
+    spinner.setToolTipText(
+        "Added to the 1 move entering costs " + unit + ": +1 means 2 moves, -1 means none");
     spinner.getAccessibleContext().setAccessibleName("Moves to enter of " + unit);
     return spinner;
   }

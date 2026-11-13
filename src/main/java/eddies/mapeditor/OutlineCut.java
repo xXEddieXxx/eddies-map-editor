@@ -11,8 +11,10 @@ import java.awt.geom.PathIterator;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import lombok.experimental.UtilityClass;
+import eddies.mapeditor.MapPicture.Neighbours;
 
 /** Cuts a territory's outlines in two along a line drawn on the map, for a split territory. */
 @UtilityClass
@@ -20,6 +22,8 @@ class OutlineCut {
   // found outlines are 4 px apart across a 3 px border line: 5 px on each side reaches over it
   private static final Stroke NEAR = new BasicStroke(10);
   private static final double SLIVER = 4;
+  // where outlines meet only at a corner, they overlap in a square of NEAR's reach at most
+  private static final int CORNER = 5;
 
   /** The outlines the territory keeps, the larger part and those the line missed, and the cut off. */
   record Cut(List<Polygon> kept, List<Polygon> split) {}
@@ -123,8 +127,47 @@ class OutlineCut {
     return polygon;
   }
 
+  /**
+   * The pairs of territories whose outlines touch ({@link #touches}) along more than a corner, as
+   * four territories meeting in a point are no neighbours across it; each pair once, in the order
+   * of the names given. Territories whose boxes are apart are not compared, so a big map takes
+   * seconds, not minutes.
+   */
+  static List<Neighbours> touching(final Map<String, List<Polygon>> outlines) {
+    final List<String> names = List.copyOf(outlines.keySet());
+    final List<Rectangle> boxes =
+        names.stream()
+            .map(
+                name -> {
+                  final Rectangle box = new Rectangle(-1, -1);
+                  outlines.get(name).forEach(polygon -> box.add(polygon.getBounds()));
+                  // as far as touches looks beyond an outline
+                  box.grow(5, 5);
+                  return box;
+                })
+            .toList();
+    final List<Neighbours> touching = new ArrayList<>();
+    for (int i = 0; i < names.size(); i++) {
+      for (int j = i + 1; j < names.size(); j++) {
+        if (boxes.get(i).intersects(boxes.get(j))
+            && touches(outlines.get(names.get(i)), outlines.get(names.get(j)), CORNER)) {
+          touching.add(new Neighbours(names.get(i), names.get(j)));
+        }
+      }
+    }
+    return touching;
+  }
+
   /** Whether the outlines lie at or a border line's width from the others. */
   static boolean touches(final List<Polygon> outlines, final List<Polygon> others) {
+    return touches(outlines, others, 0);
+  }
+
+  /**
+   * @param longerThan how long, in pixels, the stretch where they meet must at least be
+   */
+  private static boolean touches(
+      final List<Polygon> outlines, final List<Polygon> others, final int longerThan) {
     for (final Polygon outline : outlines) {
       final Rectangle near = outline.getBounds();
       near.grow(5, 5);
@@ -138,7 +181,9 @@ class OutlineCut {
           }
           final Area overlap = new Area(other);
           overlap.intersect(grown.get());
-          if (!overlap.isEmpty()) {
+          final Rectangle met = overlap.getBounds();
+          if (!overlap.isEmpty()
+              && (longerThan == 0 || Math.max(met.width, met.height) > longerThan)) {
             return true;
           }
         }

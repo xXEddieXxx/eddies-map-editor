@@ -7,6 +7,7 @@ import java.awt.Container;
 import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.Rectangle;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.List;
@@ -14,9 +15,11 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import javax.swing.Action;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JTextField;
+import javax.swing.KeyStroke;
 import javax.swing.UIManager;
 import javax.swing.plaf.FontUIResource;
 import org.junit.jupiter.api.DisplayName;
@@ -200,6 +203,119 @@ final class SearchListTest {
         .as("each title asked for the width once and for the search once, not per key")
         .hasValueLessThan(3 * MANY);
     assertThat(listIn(searchList).getModel().getSize()).as("all found by name").isEqualTo(MANY);
+  }
+
+  private static SearchList givenGrouped(final List<String> chosen) {
+    final SearchList searchList =
+        new SearchList(
+                "trigger",
+                "triggers",
+                () -> List.of("Blitz", "Convoy", "Lend lease", "Winter"),
+                n -> n,
+                n -> "Gives PUs",
+                chosen::add)
+            .withIds(n -> "triggerAttachment_" + n.replace(' ', '_'));
+    searchList.groupBy(Optional.of(n -> n.startsWith("W") ? "Russians" : "Germans"));
+    return searchList;
+  }
+
+  private static void click(final JList<?> list, final int row) {
+    final Rectangle cell = list.getCellBounds(row, row);
+    list.setSelectedIndex(row);
+    final MouseEvent click =
+        new MouseEvent(
+            list, MouseEvent.MOUSE_CLICKED, 0, 0, cell.x + 5, cell.y + 5, 1, false, MouseEvent.BUTTON1);
+    Stream.of(list.getMouseListeners()).forEach(listener -> listener.mouseClicked(click));
+  }
+
+  @DisplayName("Groups show under header rows, ▾ Group (n); a click folds one, a search opens all")
+  @Test
+  void groupsUnderFoldableHeaders() {
+    final List<String> chosen = new ArrayList<>();
+    final SearchList searchList = givenGrouped(chosen);
+    searchList.setSize(300, 400);
+    final JList<?> list = listIn(searchList);
+    list.setSize(300, 400);
+    final List<String> open = searchList.rows();
+
+    click(list, 0);
+    final List<String> folded = searchList.rows();
+    textFieldIn(searchList).setText("convoy");
+    final List<String> searched = searchList.rows();
+    textFieldIn(searchList).setText("");
+    searchList.choose("Blitz");
+
+    assertThat(open)
+        .as("each group's names under its header, in the order the groups first come")
+        .containsExactly("▾ Germans (3)", "Blitz", "Convoy", "Lend lease", "▾ Russians (1)", "Winter");
+    assertThat(folded)
+        .as("a click on a header folds its group; the count stays")
+        .containsExactly("▸ Germans (3)", "▾ Russians (1)", "Winter");
+    assertThat(searched)
+        .as("a search shows what it finds, also in a folded group")
+        .containsExactly("▾ Germans (1)", "Convoy");
+    assertThat(searchList.rows())
+        .as("choosing a name of a folded group opens the group")
+        .startsWith("▾ Germans (3)", "Blitz");
+    assertThat(chosen).as("a header is no name: the editor is told of none").isEmpty();
+  }
+
+  @DisplayName("Space folds the header chosen with the keys; it shows as chosen, reads as its"
+      + " group, and stays folded when the names are read again")
+  @Test
+  void foldsWithTheKeyboard() {
+    final SearchList searchList = givenGrouped(new ArrayList<>());
+    @SuppressWarnings("unchecked")
+    final JList<String> list = (JList<String>) listIn(searchList);
+
+    list.setSelectedIndex(0);
+    list.getActionMap()
+        .get(list.getInputMap().get(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0)))
+        .actionPerformed(null);
+    searchList.refresh();
+    final Component header =
+        list.getCellRenderer()
+            .getListCellRendererComponent(list, list.getModel().getElementAt(0), 0, true, true);
+
+    assertThat(searchList.rows())
+        .as("folded by the key, and still after a refresh")
+        .containsExactly("▸ Germans (3)", "▾ Russians (1)", "Winter");
+    assertThat(list.getInputMap().get(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0)))
+        .as("Enter does the same")
+        .isEqualTo(list.getInputMap().get(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0)));
+    assertThat(list.getSelectedIndex()).as("the header stays chosen, for the next key").isZero();
+    final Action fold =
+        list.getActionMap().get(list.getInputMap().get(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0)));
+    assertThat(fold.accept(list)).as("on a header the key folds").isTrue();
+    list.setSelectedIndex(2);
+    assertThat(fold.accept(list))
+        .as("on a name Enter is not taken: it goes on, eg to a dialog's verb")
+        .isFalse();
+    list.setSelectedIndex(0);
+    assertThat(header.getBackground()).as("drawn as chosen").isEqualTo(Theme.getSelectionColor());
+    assertThat(header.getAccessibleContext().getAccessibleName())
+        .as("read as the group and its state, not the model's value")
+        .isEqualTo("Germans, 3, collapsed");
+  }
+
+  @DisplayName("A name is found by its id in the map's files, which its tool tip tells")
+  @Test
+  void foundByIdAndToldInToolTip() {
+    final SearchList searchList = givenGrouped(new ArrayList<>());
+    searchList.setSize(300, 400);
+    final JList<?> list = listIn(searchList);
+    list.setSize(300, 400);
+    final Rectangle row = list.getCellBounds(3, 3);
+
+    final String tip =
+        list.getToolTipText(
+            new MouseEvent(list, MouseEvent.MOUSE_MOVED, 0, 0, row.x + 5, row.y + 5, 0, false));
+    textFieldIn(searchList).setText("attachment_lend");
+
+    assertThat(tip).as("the plain name, then its id").contains("Lend lease", "id triggerAttachment_Lend_lease");
+    assertThat(searchList.rows())
+        .as("found by the id, which no line of the row shows")
+        .containsExactly("▾ Germans (1)", "Lend lease");
   }
 
   @DisplayName("Typing asks each row's lines once per refresh, not on every key")

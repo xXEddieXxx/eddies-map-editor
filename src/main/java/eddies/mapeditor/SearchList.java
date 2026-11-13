@@ -9,28 +9,37 @@ import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.GridBagLayout;
+import java.awt.event.ActionEvent;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.io.Serial;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import javax.annotation.Nullable;
+import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
 import javax.swing.DefaultListModel;
+import javax.swing.Icon;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JTextField;
+import javax.swing.KeyStroke;
 import javax.swing.ListCellRenderer;
 import javax.swing.ListSelectionModel;
 import javax.swing.ToolTipManager;
@@ -53,6 +62,8 @@ final class SearchList extends JPanel {
   private static final String LIST = "list";
   private static final String NO_MATCH = "noMatch";
   private static final String EMPTY = "empty";
+  // before a group's title in the model: no name starts with it
+  private static final String GROUP = "\u0001";
 
   private final JTextField search = new JTextField();
   private DefaultListModel<String> shown = new DefaultListModel<>();
@@ -61,6 +72,14 @@ final class SearchList extends JPanel {
   private final transient Supplier<List<String>> names;
   private final transient Function<String, String> title;
   private final transient Optional<Function<String, String>> detail;
+  // a small picture before a row's lines, eg a nation's color
+  private transient Optional<Function<String, Icon>> icons = Optional.empty();
+  // the group a name is listed under, behind a header row that folds it
+  private transient Optional<Function<String, String>> groups = Optional.empty();
+  private final Set<String> folded = new HashSet<>();
+  private final Map<String, Integer> groupSizes = new HashMap<>();
+  // what a name is called in the map's files, found by the search and told by the tool tip
+  private transient Optional<Function<String, String>> ids = Optional.empty();
   private final Optional<String> noun;
   private final Optional<String> nounPlural;
   private final JLabel count = Theme.newSecondaryLabel("");
@@ -133,10 +152,49 @@ final class SearchList extends JPanel {
     list.setCellRenderer(row);
     list.addListSelectionListener(
         e -> {
-          if (!e.getValueIsAdjusting() && !refilling && list.getSelectedValue() != null) {
-            onChoose.accept(list.getSelectedValue());
+          final String value = list.getSelectedValue();
+          // a header is no name: it is chosen only to fold its group
+          if (!e.getValueIsAdjusting() && !refilling && value != null && !isGroup(value)) {
+            onChoose.accept(value);
           }
         });
+    list.addMouseListener(
+        new MouseAdapter() {
+          @Override
+          public void mouseClicked(final MouseEvent e) {
+            final int index = list.locationToIndex(e.getPoint());
+            if (index >= 0
+                && list.getCellBounds(index, index).contains(e.getPoint())
+                && isGroup(shown.get(index))) {
+              toggle(shown.get(index).substring(GROUP.length()));
+            }
+          }
+        });
+    // a header chosen with the keys folds as with a click
+    for (final int key : List.of(KeyEvent.VK_SPACE, KeyEvent.VK_ENTER)) {
+      list.getInputMap().put(KeyStroke.getKeyStroke(key, 0), "foldGroup");
+    }
+    list.getActionMap()
+        .put(
+            "foldGroup",
+            new AbstractAction() {
+              @Serial private static final long serialVersionUID = 1L;
+
+              // only on a header: on a name Enter goes on, eg to a dialog's verb
+              @Override
+              public boolean accept(final Object sender) {
+                return Optional.ofNullable(list.getSelectedValue())
+                    .filter(SearchList::isGroup)
+                    .isPresent();
+              }
+
+              @Override
+              public void actionPerformed(final ActionEvent e) {
+                Optional.ofNullable(list.getSelectedValue())
+                    .filter(SearchList::isGroup)
+                    .ifPresent(value -> toggle(value.substring(GROUP.length())));
+              }
+            });
     final HoverTracker hover = new HoverTracker();
     list.addMouseListener(hover);
     list.addMouseMotionListener(hover);
@@ -183,6 +241,47 @@ final class SearchList extends JPanel {
   SearchList stripSharedPrefix() {
     stripping = true;
     refresh();
+    return this;
+  }
+
+  /** A small icon before each row's lines, eg a nation's color. */
+  SearchList withIcons(final Function<String, Icon> icon) {
+    icons = Optional.of(icon);
+    return this;
+  }
+
+  /**
+   * Lists the names under header rows, "▸ Group (n)", in the order the groups first come; a click
+   * on a header folds its group, a search shows what it finds in all of them. None lists the names
+   * as they are.
+   */
+  void groupBy(final Optional<Function<String, String>> group) {
+    groups = group;
+    folded.clear();
+    refill();
+  }
+
+  private void toggle(final String group) {
+    if (!folded.remove(group)) {
+      folded.add(group);
+    }
+    refill();
+  }
+
+  private static boolean isGroup(final String value) {
+    return value.startsWith(GROUP);
+  }
+
+  /** The rows as shown, a header as "▸ Group (n)" or "▾ Group (n)"; for tests. */
+  List<String> rows() {
+    return Collections.list(shown.elements()).stream()
+        .map(value -> isGroup(value) ? row.header(value) : value)
+        .toList();
+  }
+
+  /** The names' ids in the map's files: a search finds a name by it, its tool tip tells it. */
+  SearchList withIds(final Function<String, String> id) {
+    ids = Optional.of(id);
     return this;
   }
 
@@ -237,14 +336,15 @@ final class SearchList extends JPanel {
         filter.isEmpty() ? all : all.stream().filter(name -> matches(name, filter)).toList();
     showCount(filtered.size(), all.size());
     showCard(filter, all.isEmpty(), filtered.isEmpty());
-    if (filtered.equals(Collections.list(shown.elements()))) {
+    final List<String> rows = grouped(filtered, !filter.isEmpty());
+    if (rows.equals(Collections.list(shown.elements()))) {
       // the names are the same, but their lines may not be
       list.repaint();
       return;
     }
     final String chosen = list.getSelectedValue();
     final DefaultListModel<String> refilled = new DefaultListModel<>();
-    refilled.addAll(filtered);
+    refilled.addAll(rows);
     refilling = true;
     if (!filtered.isEmpty()) {
       list.setPrototypeCellValue(filtered.getFirst());
@@ -259,6 +359,28 @@ final class SearchList extends JPanel {
     refilling = false;
   }
 
+  /** The names with a header row before each group, a folded group's names left out. */
+  private List<String> grouped(final List<String> names, final boolean searching) {
+    if (groups.isEmpty()) {
+      return names;
+    }
+    final Map<String, List<String>> byGroup = new LinkedHashMap<>();
+    names.forEach(
+        name ->
+            byGroup.computeIfAbsent(groups.get().apply(name), g -> new ArrayList<>()).add(name));
+    groupSizes.clear();
+    final List<String> rows = new ArrayList<>();
+    byGroup.forEach(
+        (group, members) -> {
+          groupSizes.put(group, members.size());
+          rows.add(GROUP + group);
+          if (searching || !folded.contains(group)) {
+            rows.addAll(members);
+          }
+        });
+    return rows;
+  }
+
   private boolean matches(final String name, final String filter) {
     if (name.toLowerCase(Locale.ROOT).contains(filter)) {
       return true;
@@ -268,7 +390,11 @@ final class SearchList extends JPanel {
 
   private String searchText(final String name) {
     // a line break, which no search has, so a search never spans both lines
-    return (title.apply(name) + "\n" + detail.map(d -> d.apply(name)).orElse(""))
+    return (title.apply(name)
+            + "\n"
+            + detail.map(d -> d.apply(name)).orElse("")
+            + "\n"
+            + ids.map(i -> i.apply(name)).orElse(""))
         .toLowerCase(Locale.ROOT);
   }
 
@@ -320,10 +446,14 @@ final class SearchList extends JPanel {
 
   /** Marks the name as chosen without telling the editor, eg after a click on the map. */
   void choose(@Nullable final String name) {
-    refilling = true;
     if (name != null && !shown.contains(name)) {
       search.setText("");
+      // in a folded group: opened
+      if (groups.isPresent() && folded.remove(groups.get().apply(name))) {
+        refill();
+      }
     }
+    refilling = true;
     list.setSelectedValue(name, true);
     refilling = false;
   }
@@ -406,13 +536,18 @@ final class SearchList extends JPanel {
         return null;
       }
       final String name = getModel().getElementAt(index);
+      if (isGroup(name)) {
+        return null;
+      }
+      final String id = ids.map(i -> i.apply(name)).orElse("");
       final String first = title.apply(name);
       final String line = detail.map(d -> d.apply(name)).orElse("");
       return "<html><b>"
           + escape(first)
           + "</b>"
           + (line.isEmpty() ? "" : "<br>" + escape(line))
-          + (first.equals(name) || line.equals(name) ? "" : "<br>" + escape(name))
+          + (first.equals(name) || line.equals(name) || !id.isEmpty() ? "" : "<br>" + escape(name))
+          + (id.isEmpty() ? "" : "<br>id " + escape(id))
           + "</html>";
     }
 
@@ -461,6 +596,7 @@ final class SearchList extends JPanel {
     private final transient Map<Cut, String> cuts = new HashMap<>();
     private final JLabel first = new JLabel();
     private final JLabel second = new JLabel();
+    private final JLabel icon = new JLabel();
     // made once, as the renderer runs for every row painted
     private final Border plain = BorderFactory.createEmptyBorder(PAD_Y, PAD_X, PAD_Y, PAD_X);
     // the bar takes the place of padding, so the text stays where it is
@@ -469,14 +605,36 @@ final class SearchList extends JPanel {
             BorderFactory.createMatteBorder(0, BAR, 0, 0, Theme.getAccentColor()),
             BorderFactory.createEmptyBorder(PAD_Y, PAD_X - BAR, PAD_Y, PAD_X));
 
+    // a header's borders, the later ones with a line above; made once per row height
+    private int headerSpare = -1;
+    private Border firstHeader = plain;
+    private Border laterHeader = plain;
+
     private record Cut(String text, Font font, int width) {}
 
     Row() {
-      setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
+      setLayout(new BorderLayout(Theme.GAP_S, 0));
       first.putClientProperty(FlatClientProperties.STYLE_CLASS, "semibold");
       second.putClientProperty(FlatClientProperties.STYLE_CLASS, "small");
-      add(first);
-      add(second);
+      final JPanel lines = new JPanel();
+      lines.setLayout(new BoxLayout(lines, BoxLayout.Y_AXIS));
+      lines.setOpaque(false);
+      lines.add(first);
+      lines.add(second);
+      add(lines, BorderLayout.CENTER);
+      add(icon, BorderLayout.WEST);
+    }
+
+    /** A group's header row as its text: "▸ Group (n)" folded, else "▾ Group (n)". */
+    String header(final String value) {
+      final String group = value.substring(GROUP.length());
+      // a search shows what it finds in folded groups too
+      final boolean open = !folded.contains(group) || !search.getText().isBlank();
+      return (open ? "▾ " : "▸ ") + group + " (" + groupSizes.getOrDefault(group, 0) + ")";
+    }
+
+    private int height(final JLabel line) {
+      return getFontMetrics(line.getFont()).getHeight();
     }
 
     /** The height of its lines in their fonts, with the padding. */
@@ -494,7 +652,46 @@ final class SearchList extends JPanel {
         final int index,
         final boolean isSelected,
         final boolean cellHasFocus) {
-      final int room = owner.getWidth() - 2 * PAD_X;
+      if (isGroup(name)) {
+        icon.setVisible(false);
+        second.setVisible(false);
+        first.setText(header(name));
+        final String group = name.substring(GROUP.length());
+        // to screen readers the group and its state, not the model's value
+        getAccessibleContext()
+            .setAccessibleName(
+                group
+                    + ", "
+                    + groupSizes.getOrDefault(group, 0)
+                    + (first.getText().startsWith("▾") ? ", expanded" : ", collapsed"));
+        first.setForeground(
+            isSelected ? owner.getSelectionForeground() : Theme.getSecondaryTextColor());
+        setBackground(
+            isSelected
+                ? Theme.getSelectionColor()
+                : ((WideList) owner).hovered == index
+                    ? Theme.getHoverColor()
+                    : owner.getBackground());
+        // in the middle of a row as high as the names' two lines
+        final int spare = Math.max(0, owner.getFixedCellHeight() - height(first)) / 2;
+        if (spare != headerSpare) {
+          headerSpare = spare;
+          firstHeader = BorderFactory.createEmptyBorder(spare, PAD_X, 0, PAD_X);
+          laterHeader =
+              BorderFactory.createCompoundBorder(
+                  BorderFactory.createMatteBorder(1, 0, 0, 0, Theme.getSeparatorColor()),
+                  firstHeader);
+        }
+        setBorder(index == 0 ? firstHeader : laterHeader);
+        return this;
+      }
+      getAccessibleContext().setAccessibleName(title.apply(name));
+      icon.setVisible(icons.isPresent());
+      icons.ifPresent(i -> icon.setIcon(i.apply(name)));
+      final int room =
+          owner.getWidth()
+              - 2 * PAD_X
+              - icons.map(i -> icon.getIcon().getIconWidth() + Theme.GAP_S).orElse(0);
       first.setText(fitted(lineOf(title, name), first.getFont(), room));
       second.setVisible(detail.isPresent());
       detail.ifPresent(d -> second.setText(fitted(lineOf(d, name), second.getFont(), room)));

@@ -277,9 +277,22 @@ class MapFolder {
 
   /**
    * The picture cut into the game's base tiles, and shrunk as the game's small map; tiles of a
-   * bigger picture before it are deleted.
+   * bigger picture before it are removed. Each tile there was keeps its first version as ".bak",
+   * as a new or resized picture replaces one that may be drawn by hand.
    */
   static void writePicture(final Path folder, final BufferedImage image) throws IOException {
+    writeTiles(folder, image);
+    // the game needs a small map to show the whole map at once
+    writeSmallMap(folder, image);
+    // the map browser and the game chooser show the map by its preview
+    ImageIO.write(shrunk(image, PREVIEW_WIDTH), "png", folder.resolve("preview.png").toFile());
+  }
+
+  /**
+   * The base tiles of {@link #writePicture} alone, eg for the map's picture resized: the small
+   * map and the preview, maybe made by hand or with the relief, stay as they are.
+   */
+  static void writeTiles(final Path folder, final BufferedImage image) throws IOException {
     final int size = MapFiles.tileSize();
     final Path tiles = Files.createDirectories(folder.resolve("baseTiles"));
     final Set<Path> written = new HashSet<>();
@@ -290,19 +303,19 @@ class MapFolder {
         g.drawImage(image, -column * size, -row * size, null);
         g.dispose();
         final Path file = tiles.resolve(column + "_" + row + ".png");
-        ImageIO.write(tile, "png", file.toFile());
+        replace(file, to -> ImageIO.write(tile, "png", to.toFile()));
         written.add(file);
       }
     }
     try (Stream<Path> before = Files.list(tiles)) {
-      for (final Path stale : before.filter(f -> !written.contains(f)).toList()) {
-        Files.delete(stale);
+      for (final Path stale :
+          before
+              .filter(f -> f.getFileName().toString().endsWith(".png"))
+              .filter(f -> !written.contains(f))
+              .toList()) {
+        remove(stale);
       }
     }
-    // the game needs a small map to show the whole map at once
-    writeSmallMap(folder, image);
-    // the map browser and the game chooser show the map by its preview
-    ImageIO.write(shrunk(image, PREVIEW_WIDTH), "png", folder.resolve("preview.png").toFile());
   }
 
   /**
@@ -398,11 +411,16 @@ class MapFolder {
     writeFlag(flags, nation + "_fade", faded);
   }
 
-  /** The flag as a png; a gif of its name goes (its .bak stays), as the game takes a gif first. */
+  /**
+   * The flag as a png; a gif of its name goes (its .bak stays), as the game takes a gif first. Not
+   * the large one's: the game reads a large flag only as png, so its gif hides nothing.
+   */
   private static void writeFlag(final Path flags, final String name, final BufferedImage flag)
       throws IOException {
     replace(flags.resolve(name + ".png"), to -> ImageIO.write(flag, "png", to.toFile()));
-    remove(flags.resolve(name + ".gif"));
+    if (!name.endsWith("_large")) {
+      remove(flags.resolve(name + ".gif"));
+    }
   }
 
   /** The picture at this height, keeping its shape and its see-through parts. */

@@ -145,7 +145,7 @@ final class TextsEditor implements Editor {
                 key -> detail(kind, key),
                 this::choose)
             .stripSharedPrefix()
-            .withAdd("Add", add, () -> addEntry(kind))
+            .withAdd("Add text…", add, () -> addEntry(kind))
             .withEmpty(Panels.empty(Glyph.TEXTS, "No " + plural + " yet", kind.getHelp()));
     lists.put(kind, list);
     final JPanel column = new JPanel(new BorderLayout(0, Theme.GAP_S));

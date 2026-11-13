@@ -41,6 +41,8 @@ import org.triplea.map.data.elements.PropertyList.Property;
 class TriggerXml {
   static final String TRIGGER = "TriggerAttachment";
   static final String CONDITION = "RulesAttachment";
+  // how much of a message's text says which message it is
+  private static final int MESSAGE_LENGTH = 40;
   static final String USE_TRIGGERS = Constants.USE_TRIGGERS;
   static final String TRIGGER_PREFIX = Constants.TRIGGER_ATTACHMENT_PREFIX;
   static final String CONDITION_PREFIX = Constants.RULES_CONDITION_PREFIX;
@@ -182,10 +184,10 @@ class TriggerXml {
               0, POLITICS, one(Part.NATION, "Nation"), one(Part.NATION, "Other nation"),
               one(Part.RELATION, "Was", "any", "anyAllied", "anyNeutral", "anyWar"),
               one(Part.RELATION, "Becomes")),
-          effect("productionRule", "Change a production frontier", "in {0}: {1}", 0, PURCHASE,
-              one(Part.FRONTIER, "Frontier"), one(Part.RULE, "Rule (- to take away)")),
-          effect("frontier", "Switch production frontier", "buy from {0}", 0, PURCHASE,
-              one(Part.FRONTIER, "Frontier")),
+          effect("productionRule", "Change a purchase list", "in {0}: {1}", 0, PURCHASE,
+              one(Part.FRONTIER, "Purchase list"), one(Part.RULE, "Rule (- to take away)")),
+          effect("frontier", "Switch purchase list", "buy from {0}", 0, PURCHASE,
+              one(Part.FRONTIER, "Purchase list")),
           effect("tech", "Give technology", "give technology {0}", 0, TECH_ACTIVATION,
               many(Part.TECH, "Technologies")),
           effect("availableTech", "Change researchable technology", "research in {0}: {1}", 0,
@@ -868,7 +870,7 @@ class TriggerXml {
     }
     if (AttachmentsXml.options(trigger.attachment()).stream()
         .noneMatch(o -> spec(o.getName()).filter(s -> s.group() == Group.EFFECT).isPresent())) {
-      warnings.add("The trigger does nothing yet: add what happens.");
+      warnings.add("The trigger does nothing yet: add an effect.");
     }
     // the game gives a resource only with an amount other than 0 (TriggerAttachment)
     if (value(trigger.attachment(), "resource").isPresent()
@@ -1005,19 +1007,99 @@ class TriggerXml {
    * @param effects what happens, one phrase each
    * @param when its steps, else its effects' moments; may be empty
    * @param often in how many rounds, and its chance
+   * @param thenIds what the effects show in plain words as the map's files name it, eg the keys
+   *     of messages and the ids of purchase lists, for a tool tip
+   * @param whenSteps its steps as the game's XML names them, for a tool tip
    */
   record Clauses(
-      String nation, String conditions, List<String> effects, String when, String often) {
+      String nation,
+      String conditions,
+      List<String> effects,
+      String when,
+      String often,
+      String thenIds,
+      String whenSteps) {
     Clauses {
       effects = List.copyOf(effects);
+    }
+
+    /** Clauses that show no internal names in plain words, so have none for a tool tip. */
+    Clauses(
+        final String nation,
+        final String conditions,
+        final List<String> effects,
+        final String when,
+        final String often) {
+      this(nation, conditions, effects, when, often, "", "");
     }
   }
 
   static Clauses clauses(final Game game, final Trigger trigger) {
+    return clauses(game, trigger, names(game));
+  }
+
+  /**
+   * What a trigger's internal names mean, looked up once for many triggers: a message's text by
+   * its key in notifications.properties, a step in plain words by its name.
+   */
+  record Names(
+      Map<String, String> messages,
+      Map<String, String> steps,
+      Map<String, String> lists,
+      Map<String, String> rules) {}
+
+  private static Names names(
+      final Game game, final Map<String, String> messages, final Map<String, String> steps) {
+    final Map<String, String> rules = new HashMap<>();
+    ProductionXml.rules(game)
+        .forEach(
+            rule ->
+                ProductionXml.result(rule)
+                    .ifPresent(r -> rules.put(rule.getName(), r.getResourceOrUnit())));
+    return new Names(messages, steps, ProductionXml.listTitles(game), rules);
+  }
+
+  /** The steps in plain words; messages stay their keys. */
+  static Names names(final Game game) {
+    return names(game, Map.of(), stepWords(game));
+  }
+
+  static Names names(final Game game, final MapTexts texts) {
+    final Map<String, String> messages = new HashMap<>();
+    texts.entries(MapTexts.Kind.NOTIFICATIONS).forEach(e -> messages.put(e.key(), e.value()));
+    return names(game, messages, stepWords(game));
+  }
+
+  /** The steps by what happens in them only, eg "Roll for technology", whoever's they are. */
+  static Names stepKinds(final Game game) {
+    return names(game, Map.of(), stepWords(game, step -> ""));
+  }
+
+  /** Each step by its name as Turn order shows it, eg "Roll for technology · Chinese". */
+  private static Map<String, String> stepWords(final Game game) {
+    return stepWords(
+        game, step -> Optional.ofNullable(step.getPlayer()).map(p -> " · " + p).orElse(""));
+  }
+
+  private static Map<String, String> stepWords(
+      final Game game, final Function<Step, String> whose) {
+    final Map<String, String> words = new HashMap<>();
+    for (final Step step : RulesXml.steps(game)) {
+      GameRulesXml.kindOf(game, step)
+          .ifPresent(
+              kind ->
+                  words.put(
+                      Objects.toString(step.getName(), ""), kind.what() + whose.apply(step)));
+    }
+    return words;
+  }
+
+  /** As {@link #clauses(Game, Trigger)}, a message shown by its text instead of its key. */
+  static Clauses clauses(final Game game, final Trigger trigger, final Names names) {
     final Attachment attachment = trigger.attachment();
-    final List<String> names = trigger.conditionNames();
+    final List<String> conditionNames = trigger.conditionNames();
     final List<String> conditions =
-        names.stream()
+        conditionNames.stream()
             .map(n -> trigger.conditions().stream().filter(c -> n.equals(c.getName()))
                 .findFirst()
                 .map(TriggerXml::conditionSentence)
@@ -1038,13 +1120,51 @@ class TriggerXml {
     return new Clauses(
         trigger.nation(),
         conditions.isEmpty() ? "" : (inverted ? "unless " : "if ") + combined,
-        phrases(attachment, Group.EFFECT),
-        when(attachment),
-        often(attachment));
+        phrases(attachment, Group.EFFECT, names),
+        when(attachment, names),
+        often(attachment),
+        Stream.concat(
+                values(attachment, "notification").stream()
+                    .filter(key -> messageText(names, key).isPresent()),
+                Stream.of("productionRule", "frontier")
+                    .flatMap(option -> values(attachment, option).stream())
+                    .filter(value -> !plainProduction(names, value).equals(value)))
+            .collect(Collectors.joining(", ")),
+        String.join(", ", values(attachment, "when")));
   }
 
-  /** When the trigger fires: its steps, else the moments of its effects. */
-  static String when(final Attachment attachment) {
+  /**
+   * "Japanese:nighthawk" for productionJapanese:buynighthawk: the purchase list as Production
+   * calls it, each rule by what it sells; a "-" that takes a rule away stays.
+   */
+  private static String plainProduction(final Names names, final String joined) {
+    final String[] pieces = joined.split(":", -1);
+    pieces[0] = names.lists().getOrDefault(pieces[0], pieces[0]);
+    for (int i = 1; i < pieces.length; i++) {
+      final String rule = pieces[i].startsWith("-") ? pieces[i].substring(1) : pieces[i];
+      pieces[i] =
+          (pieces[i].startsWith("-") ? "-" : "") + names.rules().getOrDefault(rule, rule);
+    }
+    return String.join(":", pieces);
+  }
+
+  /** The start of the message's text without its HTML, eg for "show message “…”". */
+  private static Optional<String> messageText(final Names names, final String key) {
+    return Optional.ofNullable(names.messages().get(key))
+        .map(text -> text.replaceAll("<[^>]*>", " ").replaceAll("\\s+", " ").strip())
+        .filter(text -> !text.isEmpty())
+        .map(
+            text ->
+                text.length() <= MESSAGE_LENGTH
+                    ? text
+                    : text.substring(0, MESSAGE_LENGTH).strip() + "…");
+  }
+
+  /**
+   * When the trigger fires: its steps in plain words, eg "before Roll for technology · Chinese",
+   * else the moments of its effects.
+   */
+  static String when(final Attachment attachment, final Names names) {
     final List<String> when = values(attachment, "when");
     return String.join(" and ", when.isEmpty()
         ? AttachmentsXml.options(attachment).stream()
@@ -1052,7 +1172,15 @@ class TriggerXml {
             .filter(m -> !m.isEmpty())
             .distinct()
             .toList()
-        : when.stream().map(w -> w.replaceFirst(":", " ")).toList());
+        : when.stream()
+            .map(
+                w -> {
+                  final String[] parts = w.split(":", 2);
+                  return parts.length < 2
+                      ? w
+                      : parts[0] + " " + names.steps().getOrDefault(parts[1], parts[1]);
+                })
+            .toList());
   }
 
   /**
@@ -1099,7 +1227,8 @@ class TriggerXml {
   }
 
   /** The options in plain words; a resource and its amount as one, at the first of the two. */
-  private static List<String> phrases(final Attachment attachment, final Group group) {
+  private static List<String> phrases(
+      final Attachment attachment, final Group group, final Names names) {
     final Optional<String> resource = value(attachment, "resource");
     final Optional<String> amount = value(attachment, "resourceCount");
     final boolean paired = group == Group.EFFECT && resource.isPresent() && amount.isPresent();
@@ -1118,7 +1247,19 @@ class TriggerXml {
         }
         continue;
       }
-      phrases.add(phrase(spec.get(), joined(option)));
+      phrases.add(
+          Optional.of(option)
+              .filter(o -> AttachmentsXml.isOption(o, "notification"))
+              .flatMap(o -> messageText(names, joined(o)))
+              .map(text -> "show message “" + text + "”")
+              .orElseGet(
+                  () ->
+                      phrase(
+                          spec.get(),
+                          Stream.of("productionRule", "frontier")
+                                  .anyMatch(name -> AttachmentsXml.isOption(option, name))
+                              ? plainProduction(names, joined(option))
+                              : joined(option))));
     }
     return phrases;
   }

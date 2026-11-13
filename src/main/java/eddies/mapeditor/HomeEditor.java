@@ -17,6 +17,7 @@ import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import javax.accessibility.AccessibleContext;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.JButton;
@@ -52,6 +53,8 @@ final class HomeEditor implements Editor {
   private static final int RIGHT_MAX_WIDTH = 720;
   private static final int GUTTER = Theme.GAP_XL;
   private static final int TILE_COLUMNS = 3;
+  // the tiles' column right of the overview, from about 1500 px
+  private static final int TILES_WIDTH = 440;
   // the tiles shown before "More tools": the ones most maps need
   private static final int MAIN_TILES = 8;
   // a tile's text at the narrowest overview: a third, less the margins and the glyph
@@ -71,6 +74,8 @@ final class HomeEditor implements Editor {
   private final JScrollPane page = SwingComponents.newJScrollPane(form);
   private final Form left = column(LEFT_WIDTH);
   private final Form right = column(RIGHT_MAX_WIDTH);
+  // the tools' tiles: below the overview, or right of it in a column of their own
+  private final Form tools = column(TILES_WIDTH);
   private int rightWidth = RIGHT_MIN_WIDTH;
   private final MiniMap miniMap;
   private final List<String> welcome = new ArrayList<>();
@@ -78,6 +83,9 @@ final class HomeEditor implements Editor {
   // worth a look, but no problems: never red, not counted
   private List<Problem> notes;
   private List<Problem> pictureNotes = List.of();
+  // whether the units are big for the map, and what that was worked out for
+  private Optional<Problem> unitRoom = Optional.empty();
+  private List<Object> unitRoomState = List.of();
   private boolean checked;
   private boolean allProblemsShown;
   private boolean allNotesShown;
@@ -185,7 +193,27 @@ final class HomeEditor implements Editor {
   /** What is worth a look: territories apart, and the pictures last found missing. */
   private void withNotes() {
     notes =
-        Stream.concat(MapChecks.notes(project.game()).stream(), pictureNotes.stream()).toList();
+        Stream.of(
+                unitRoomNote().stream(),
+                MapChecks.notes(project.game()).stream(),
+                pictureNotes.stream())
+            .flatMap(s -> s)
+            .toList();
+  }
+
+  /** {@link MapChecks#unitRoomNote}, looked for again only when what it reads changed. */
+  private Optional<Problem> unitRoomNote() {
+    final Game game = project.game();
+    final MapFiles files = project.getFiles();
+    final List<Object> state =
+        List.of(
+            files.polygons(), files.centers(), files.unitSize(), MapXml.seaZones(game),
+            MapXml.territories(game));
+    if (!state.equals(unitRoomState)) {
+      unitRoomState = state;
+      unitRoom = MapChecks.unitRoomNote(game, files);
+    }
+    return unitRoom;
   }
 
   /** The problems of Check, including the engine's. */
@@ -257,6 +285,7 @@ final class HomeEditor implements Editor {
     columns.setOpaque(false);
     columns.add(left);
     columns.add(right);
+    columns.add(tools);
     form.row(columns);
     form.end();
   }
@@ -278,13 +307,18 @@ final class HomeEditor implements Editor {
     left.row(card());
     left.row((JComponent) Box.createVerticalStrut(Theme.GAP_M));
     final long done = steps.stream().filter(Step::done).count();
-    if (done == steps.size() && !finishedStepsShown) {
-      left.row(stepsToggle("▸ Steps to a playable map · all done", true));
-    } else {
+    if (built(steps)) {
+      // a map that is built: the done steps in one row, a step still open below it
       left.row(
-          done == steps.size()
-              ? stepsToggle("▾ Steps to a playable map", false)
-              : heading("Steps to a playable map", done + " of " + steps.size()));
+          fold(
+              "Steps to a playable map · " + done + " of " + steps.size() + " done",
+              finishedStepsShown,
+              () -> finishedStepsShown = !finishedStepsShown));
+      steps.stream()
+          .filter(step -> finishedStepsShown || !step.done())
+          .forEach(step -> left.row(stepRow(step)));
+    } else {
+      left.row(heading("Steps to a playable map", done + " of " + steps.size()));
       steps.forEach(step -> left.row(stepRow(step)));
     }
     fillProblems();
@@ -323,24 +357,31 @@ final class HomeEditor implements Editor {
     Theme.setPrimaryButtonStyle(go);
     card.row(leftAligned(go, Theme.GAP_S));
     if (next.kind() == Next.Kind.PLAY) {
-      card.row(note("Share it: Map ▾ › Export as zip (F8)", textWidth));
+      card.row(note("Share it: File ▾ › Export as zip (F8)", textWidth));
     }
     return card;
   }
 
-  private JButton stepsToggle(final String text, final boolean open) {
-    final JButton toggle =
-        tertiary(
-            text,
-            () -> {
-              finishedStepsShown = open;
-              fill();
-            });
-    toggle.setHorizontalAlignment(SwingConstants.LEADING);
-    toggle
-        .getAccessibleContext()
-        .setAccessibleName(text.substring(2) + (open ? ", collapsed" : ", expanded"));
-    return toggle;
+  /** Whether the map is built: every step before Check is done. */
+  private static boolean built(final List<Step> steps) {
+    return steps.stream().filter(step -> step.id() != Step.Id.CHECK).allMatch(Step::done);
+  }
+
+  /** The editor's fold row, "▸ label" or "▾ label"; a click toggles and shows Home again. */
+  private JComponent fold(final String label, final boolean open, final Runnable toggle) {
+    final JButton fold = Theme.newFoldButton();
+    Theme.showFold(fold, label, open);
+    fold.addActionListener(
+        e -> {
+          toggle.run();
+          fill();
+        });
+    // its text starts where the rows' do; the hover background reaches out to the left
+    final JPanel line = new JPanel(new BorderLayout());
+    line.setOpaque(false);
+    line.setBorder(BorderFactory.createEmptyBorder(Theme.GAP_XS, -fold.getInsets().left, 0, 0));
+    line.add(fold, BorderLayout.CENTER);
+    return line;
   }
 
   private JComponent stepRow(final Step step) {
@@ -452,7 +493,8 @@ final class HomeEditor implements Editor {
     } else {
       right.row(noTerritories());
     }
-    right.row((JComponent) Box.createVerticalStrut(Theme.GAP_S));
+    tools.clear();
+    tools.row(Theme.newSectionLabel("Tools"));
     final Map<String, Long> problemsByTool =
         problems.stream()
             .flatMap(p -> p.territory().map(t -> "Territories").or(p::tool).stream())
@@ -460,34 +502,35 @@ final class HomeEditor implements Editor {
     final List<Tile> tiles = tiles();
     final JPanel grid = new JPanel(new GridLayout(0, TILE_COLUMNS, Theme.GAP_S, Theme.GAP_S));
     grid.setOpaque(false);
-    final List<Tile> main = mainTiles(tiles, steps);
+    // a built map shows every tool; a new one those it needs first, the rest behind "More tools"
+    final List<Tile> main = built(steps) ? tiles : mainTiles(tiles, steps);
     for (final Tile tile : allTilesShown ? tiles : main) {
       grid.add(tileButton(tile, problemsByTool.getOrDefault(tile.tool(), 0L), steps));
     }
-    right.row(grid);
+    tools.row(grid);
+    if (main.size() == tiles.size()) {
+      return;
+    }
     // the folded tiles' problems, else they would not show
     final long foldedProblems =
         tiles.stream()
             .filter(tile -> !main.contains(tile))
             .mapToLong(tile -> problemsByTool.getOrDefault(tile.tool(), 0L))
             .sum();
-    final JButton more =
-        tertiary(
-            allTilesShown
-                ? "Fewer tools ▴"
-                : "More tools ▾" + (foldedProblems == 0 ? "" : " · ! " + foldedProblems),
-            () -> {
-              allTilesShown = !allTilesShown;
-              fill();
-            });
-    more.getAccessibleContext()
-        .setAccessibleName(
-            "More tools"
-                + (allTilesShown ? ", expanded" : ", collapsed")
-                + (allTilesShown || foldedProblems == 0
-                    ? ""
-                    : ", " + problemCount(foldedProblems)));
-    right.row(leftAligned(more, Theme.GAP_XS));
+    final JComponent more =
+        fold(
+            "More tools ("
+                + (tiles.size() - main.size())
+                + ")"
+                + (allTilesShown || foldedProblems == 0 ? "" : " · ! " + foldedProblems),
+            allTilesShown,
+            () -> allTilesShown = !allTilesShown);
+    if (!allTilesShown && foldedProblems > 0) {
+      final AccessibleContext spoken = more.getComponent(0).getAccessibleContext();
+      spoken.setAccessibleName(
+          spoken.getAccessibleName() + ", " + problemCount(foldedProblems));
+    }
+    tools.row(more);
   }
 
   /**
@@ -665,7 +708,7 @@ final class HomeEditor implements Editor {
             ProductionXml.rules(game).size(),
             "rule",
             "rules",
-            SearchList.count(frontiers, frontiers, "frontier", "frontiers")),
+            SearchList.count(frontiers, frontiers, "list", "lists")),
         tile(
             "Nations",
             Glyph.NATIONS,
@@ -957,12 +1000,20 @@ final class HomeEditor implements Editor {
       return form.getWidth() - insets.left - insets.right - LEFT_WIDTH - GUTTER;
     }
 
+    // room for the tiles in a third column, the overview keeping its least width
+    private boolean three() {
+      return room() - GUTTER - TILES_WIDTH >= RIGHT_MIN_WIDTH;
+    }
+
     /** The overview's width for the room there is; the parts sized to it are made again. */
     private void fitOverview() {
       if (form.getWidth() <= 0) {
         return;
       }
-      final int width = wide() ? Math.min(room(), RIGHT_MAX_WIDTH) : LEFT_WIDTH;
+      final int width =
+          three()
+              ? Math.min(room() - GUTTER - TILES_WIDTH, RIGHT_MAX_WIDTH)
+              : wide() ? Math.min(room(), RIGHT_MAX_WIDTH) : LEFT_WIDTH;
       // narrower at once; wider not for a scroll bar's width, which a new height may bring and
       // take again
       final boolean stackChanged = (width == LEFT_WIDTH) != (rightWidth == LEFT_WIDTH);
@@ -986,9 +1037,16 @@ final class HomeEditor implements Editor {
       fitOverview();
       final int leftHeight = left.getPreferredSize().height;
       final int rightHeight = right.getPreferredSize().height;
+      final int toolsHeight = tools.getPreferredSize().height;
+      if (three()) {
+        return new Dimension(
+            LEFT_WIDTH + GUTTER + rightWidth + GUTTER + TILES_WIDTH,
+            Math.max(leftHeight, Math.max(rightHeight, toolsHeight)));
+      }
+      final int overview = rightHeight + Theme.GAP_M + toolsHeight;
       return wide()
-          ? new Dimension(LEFT_WIDTH + GUTTER + rightWidth, Math.max(leftHeight, rightHeight))
-          : new Dimension(LEFT_WIDTH, leftHeight + Theme.GAP_XL + rightHeight);
+          ? new Dimension(LEFT_WIDTH + GUTTER + rightWidth, Math.max(leftHeight, overview))
+          : new Dimension(LEFT_WIDTH, leftHeight + Theme.GAP_XL + overview);
     }
 
     @Override
@@ -1002,10 +1060,14 @@ final class HomeEditor implements Editor {
       final int leftHeight = left.getPreferredSize().height;
       left.setBounds(0, 0, LEFT_WIDTH, leftHeight);
       final int rightHeight = right.getPreferredSize().height;
-      if (wide()) {
-        right.setBounds(LEFT_WIDTH + GUTTER, 0, rightWidth, rightHeight);
+      final int toolsHeight = tools.getPreferredSize().height;
+      final int x = wide() ? LEFT_WIDTH + GUTTER : 0;
+      final int y = wide() ? 0 : leftHeight + Theme.GAP_XL;
+      right.setBounds(x, y, rightWidth, rightHeight);
+      if (three()) {
+        tools.setBounds(x + rightWidth + GUTTER, 0, TILES_WIDTH, toolsHeight);
       } else {
-        right.setBounds(0, leftHeight + Theme.GAP_XL, rightWidth, rightHeight);
+        tools.setBounds(x, y + rightHeight + Theme.GAP_M, rightWidth, toolsHeight);
       }
     }
 

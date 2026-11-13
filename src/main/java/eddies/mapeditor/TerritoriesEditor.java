@@ -2,6 +2,7 @@ package eddies.mapeditor;
 
 import games.strategy.triplea.Constants;
 import com.formdev.flatlaf.FlatClientProperties;
+import com.formdev.flatlaf.util.UIScale;
 import eddies.mapeditor.MapCanvas.PlaceKind;
 import eddies.mapeditor.MapCanvas.ShownPlaces;
 import eddies.mapeditor.MapFiles.Marker;
@@ -14,6 +15,8 @@ import java.awt.Dimension;
 import java.awt.FileDialog;
 import java.awt.FlowLayout;
 import java.awt.Frame;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
 import java.awt.GridLayout;
 import java.awt.Point;
 import java.awt.Polygon;
@@ -66,11 +69,13 @@ import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JRadioButton;
 import javax.swing.JScrollPane;
+import javax.swing.JSeparator;
 import javax.swing.JSpinner;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.JTextField;
 import javax.swing.JToggleButton;
 import javax.swing.KeyStroke;
+import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 import javax.swing.text.DefaultFormatter;
@@ -91,7 +96,11 @@ final class TerritoriesEditor implements Editor {
   // first in the owner boxes; told by its place, as a map may have a nation called "No owner"
   private static final String NO_OWNER = "No owner";
   private static final String OWNER_AT_START = "(its owner at the start)";
-  private static final List<Integer> VALUES = List.of(0, 1, 2, 3, 4, 5, 6, 8, 10, 12);
+  private static final List<Integer> VALUES =
+      List.of(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20);
+  private static final int MAX_PUS = 999;
+  private static final String PUS_BRUSH = "PUs per turn";
+  private static final int TILE_COLUMNS = 4;
   // the width of the decoration box: G40's misc folder holds dozens of long names
   private static final String DECORATION_WIDTH = "a_decoration_name.png";
   private static final String LIST = "list";
@@ -168,8 +177,7 @@ final class TerritoriesEditor implements Editor {
   private final JScrollPane inspectorScroll = SwingComponents.newJScrollPane(inspector);
   private final Form splitForm = new Form(280);
   private final JToggleButton select = new JToggleButton("Select");
-  private final JToggleButton paint =
-      new JToggleButton("▾", new MakerIcon(Glyph.BRUSH, Theme.MAP_TOOL_ICON));
+  private final JToggleButton paint = new JToggleButton("Paint ▾");
   // not shown: the Decorations mode starts from the Places menu, but its button is in the group
   private final JToggleButton decorations = new JToggleButton();
   private final JToggleButton drawBorders = new JToggleButton("Draw borders");
@@ -186,6 +194,15 @@ final class TerritoriesEditor implements Editor {
   // the chosen texture's offset, in the banner while its brush is chosen
   private final JSpinner textureX = new JSpinner(new SpinnerNumberModel(0, -9999, 9999, 1));
   private final JSpinner textureY = new JSpinner(new SpinnerNumberModel(0, -9999, 9999, 1));
+  // what the PU brush paints, in the banner while it is chosen; read when a stroke is painted
+  private final JSpinner paintedPus = Form.newNumber(1, MAX_PUS, value -> {});
+  private final transient Brush pusBrush =
+      new Brush(
+          PUS_BRUSH,
+          "Painting PUs per turn: click or drag across territories to give them",
+          Optional.empty(),
+          // the field's value when painted
+          (g, t) -> MapXml.withProduction(g, t, (Integer) paintedPus.getValue()));
   private Mode mode = Mode.SELECT;
   private Optional<Brush> brush = Optional.empty();
   // the territory whose units the copy brush copies, taken when the brush is chosen
@@ -253,10 +270,9 @@ final class TerritoriesEditor implements Editor {
     page.add(newTerritoryCard(), TERRITORY);
     page.add(SwingComponents.newJScrollPane(splitForm), SPLIT);
     buildModes();
-    // a number typed counts without Enter: a click on Squeeze closes the menu before focus-lost
-    ((DefaultFormatter)
-            ((JSpinner.DefaultEditor) mostPlaces.getEditor()).getTextField().getFormatter())
-        .setCommitsOnValidEdit(true);
+    // a number typed counts without Enter: a click on Squeeze closes the menu before focus-lost,
+    // and a press on the map takes no focus, so a stroke would paint the value before
+    List.of(mostPlaces, paintedPus, textureX, textureY).forEach(TerritoriesEditor::takeAsTyped);
     project.onChange(
         () -> {
           list.refresh();
@@ -384,16 +400,20 @@ final class TerritoriesEditor implements Editor {
     return territoryCard;
   }
 
-  /** Select, Paint (a brush with ▾), Draw borders and Places (with ▾) above the map. */
+  /**
+   * Select, Paint (a brush with ▾) and Places (with ▾) above the map; behind a line of its own
+   * Draw borders, which changes the map's picture.
+   */
   private void buildModes() {
     final ButtonGroup group = new ButtonGroup();
     Theme.setNamedMapToolStyle(select, Glyph.SELECT);
-    Theme.setMapToolStyle(paint);
-    Theme.setNamedMapToolStyle(drawBorders, Glyph.PENCIL);
+    // their glyphs also beside their names: the brush and the pencil are how they are known
+    Theme.setGlyphAndNameMapToolStyle(paint, Glyph.BRUSH);
+    Theme.setGlyphAndNameMapToolStyle(drawBorders, Glyph.PENCIL);
     for (final JToggleButton button : List.of(select, paint, decorations, drawBorders)) {
       group.add(button);
     }
-    List.of(select, paint, drawBorders).forEach(modes::add);
+    List.of(select, paint).forEach(modes::add);
     select.setSelected(true);
     // with the name, as only the glyph shows when the toolbar is short of room
     select.setToolTipText("Select: a click on the map chooses the territory");
@@ -409,8 +429,8 @@ final class TerritoriesEditor implements Editor {
           paintMenu().show(paint, 0, paint.getHeight());
         });
     drawBorders.setToolTipText(
-        "Draw borders: draw border lines into the map's picture by hand, then make territories"
-            + " of them");
+        "Draw borders: changes the map's picture. Draw border lines into it by hand, then make"
+            + " territories of them");
     drawBorders.addActionListener(e -> startMode(Mode.DRAW));
     // by its name; short of room the pin alone
     Theme.setNamedMapToolStyle(places, Glyph.PLACES);
@@ -425,6 +445,10 @@ final class TerritoriesEditor implements Editor {
           placesMenu().show(places, 0, places.getHeight());
         });
     modes.add(places);
+    final JSeparator line = new JSeparator(SwingConstants.VERTICAL);
+    line.setPreferredSize(new Dimension(line.getPreferredSize().width, UIScale.scale(24)));
+    modes.add(line);
+    modes.add(drawBorders);
   }
 
   /**
@@ -731,6 +755,12 @@ final class TerritoriesEditor implements Editor {
     typing.ifPresent(Runnable::run);
   }
 
+  /** Makes the spinner take each valid number as it is typed, not only on Enter or focus-lost. */
+  private static void takeAsTyped(final JSpinner spinner) {
+    final JSpinner.DefaultEditor editor = (JSpinner.DefaultEditor) spinner.getEditor();
+    ((DefaultFormatter) editor.getTextField().getFormatter()).setCommitsOnValidEdit(true);
+  }
+
   /** A click on the map: paints the brush, if any, and chooses the territory. */
   void clickOnMap(final String territory) {
     if (mode == Mode.SPLIT || mode == Mode.DRAW) {
@@ -864,7 +894,9 @@ final class TerritoriesEditor implements Editor {
             map.goalStep()
                 .filter(Step.Id.LAND::equals)
                 .map(step -> (JComponent) nationBox())
-                .or(() -> brush.flatMap(Brush::texture).map(this::offsetBox)),
+                .or(() -> brush.flatMap(Brush::texture).map(this::offsetBox))
+                // by identity: a nation or effect may have its title
+                .or(() -> brush.filter(b -> b == pusBrush).map(b -> pusBox())),
             "Done",
             this::endMode);
         paintedEffect.ifPresent(
@@ -920,16 +952,17 @@ final class TerritoriesEditor implements Editor {
                     case CIRCLE -> map.drawCircle(this::borderDrawn);
                     case ERASER -> map.eraseLine(this::bordersErased, eraserWidth());
                   }
-                  map.showBanner(
-                      // short, or the brushes and the line's tools no longer fit at 1280 px
+                  // an edit mode: each line changes the map's picture, which the badge says, as
+                  // the text is cut where the brushes and the line's tools need the room
+                  map.showEditBanner(
+                      "Edits the picture",
                       switch (drawBrush) {
-                        case FREEHAND -> "Drag to draw a border line.";
+                        case FREEHAND -> "Drag a border line.";
                         case LINE -> "Click points; double-click ends.";
-                        case CIRCLE -> "Drag corner to corner for a circle.";
+                        case CIRCLE -> "Drag a circle, corner to corner.";
                         case ERASER -> "Drag over border lines to erase them.";
                       },
-                      Optional.of(drawingTools(style)),
-                      "Done",
+                      drawingTools(style),
                       this::endMode);
                 },
                 () -> {
@@ -1038,54 +1071,73 @@ final class TerritoriesEditor implements Editor {
     }
   }
 
-  /** The Paint menu: owners, values, units, rules and terrain effects, built for each click. */
+  /**
+   * The Paint menu, built for each click: a menu each for owners, PUs, units, passable, terrain
+   * effects and textures, so the whole stays short; Capital, one brush, at the top level.
+   */
   JPopupMenu paintMenu() {
     final JPopupMenu menu = new JPopupMenu();
     final Game game = project.game();
-    menu.add(header("Owner"));
+    final JMenu owners = new JMenu("Owner");
     for (final String nation : MapXml.nations(game)) {
-      add(menu, ownerBrush(nation));
+      owners.add(item(ownerBrush(nation)));
     }
-    add(
-        menu,
-        new Brush(
-            NO_OWNER,
-            "Painting no owner: click or drag across land to take its owner away.",
-            Optional.empty(),
-            (g, t) -> MapXml.isWater(g, t) ? g : MapXml.withOwner(g, t, null)));
-    add(menu, CAPITAL);
-    menu.add(header("PUs per turn"));
-    final JPanel values = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 2));
-    values.setOpaque(false);
-    values.setAlignmentX(Component.LEFT_ALIGNMENT);
-    values.setBorder(BorderFactory.createEmptyBorder(0, Theme.GAP_S, 0, Theme.GAP_S));
+    owners.addSeparator();
+    owners.add(
+        item(
+            new Brush(
+                NO_OWNER,
+                "Painting no owner: click or drag across land to take its owner away.",
+                Optional.empty(),
+                (g, t) -> MapXml.isWater(g, t) ? g : MapXml.withOwner(g, t, null))));
+    menu.add(owners);
+    menu.add(item(CAPITAL));
+    final JMenu values = new JMenu(PUS_BRUSH);
     for (final int value : VALUES) {
-      final Brush valueBrush =
-          new Brush(
-              pus(value),
-              "Painting "
-                  + pus(value)
-                  + " per turn: click or drag across territories to set their value.",
-              Optional.empty(),
-              (g, t) -> MapXml.withProduction(g, t, value));
-      final JToggleButton button = new JToggleButton(String.valueOf(value));
-      button.putClientProperty(
-          FlatClientProperties.BUTTON_TYPE, FlatClientProperties.BUTTON_TYPE_TOOLBAR_BUTTON);
-      button.setSelected(
-          mode == Mode.PAINT && brush.map(Brush::title).equals(Optional.of(valueBrush.title())));
-      button.addActionListener(
-          e -> {
-            menu.setVisible(false);
-            paintWith(valueBrush);
-          });
-      values.add(button);
+      values.add(String.valueOf(value)).addActionListener(e -> paintPus(value));
     }
+    values.addSeparator();
+    final JMenuItem other = values.add("Other…");
+    other.setToolTipText("Any other value; the banner's field changes it while painting, too");
+    other.addActionListener(e -> askPus());
     menu.add(values);
-    menu.add(header("Units"));
+    menu.add(unitsMenu(game));
+    final JMenu passable = new JMenu("Passable");
+    passable.add(
+        item(
+            new Brush(
+                "Impassable",
+                "Painting impassable: click or drag across territories no unit may enter.",
+                Optional.empty(),
+                (g, t) -> TerritoryXml.withFlag(g, t, TerritoryXml.IMPASSABLE))));
+    passable.add(
+        item(
+            new Brush(
+                "Passable",
+                "Painting passable: click or drag across territories units may enter again.",
+                Optional.empty(),
+                (g, t) -> TerritoryXml.withoutFlag(g, t, TerritoryXml.IMPASSABLE))));
+    menu.add(passable);
+    final JMenu effects = new JMenu("Terrain effects");
+    TerritoryEffectsXml.effects(game).forEach(effect -> effects.add(item(effectBrush(effect))));
+    if (effects.getItemCount() == 0) {
+      effects.setEnabled(false);
+      effects.setToolTipText("The game has none yet: the Terrain effects tool makes them");
+    } else {
+      effects.addSeparator();
+      effects.add(item(NO_EFFECTS));
+    }
+    menu.add(effects);
+    menu.add(texturesMenu(game));
+    return menu;
+  }
+
+  private JMenu unitsMenu(final Game game) {
+    final JMenu units = new JMenu("Units");
     final Optional<String> source =
         Optional.ofNullable(selected).filter(MapXml.territories(game)::contains);
     final JMenuItem copy =
-        menu.add(source.map(s -> "Copy units of " + s).orElse("Copy units of the chosen one"));
+        units.add(source.map(s -> "Copy units of " + s).orElse("Copy units of the chosen one"));
     copy.setEnabled(source.isPresent());
     if (source.isEmpty()) {
       copy.setToolTipText("Choose a territory first");
@@ -1108,47 +1160,71 @@ final class TerritoriesEditor implements Editor {
                                   : g));
                   copySource = Optional.of(from);
                 }));
-    add(
-        menu,
-        new Brush(
-            "Clear units",
-            "Clearing units: click or drag across territories to take their starting units away.",
-            Optional.empty(),
-            (g, t) -> MapXml.withTerritoryUnits(g, t, List.of())));
-    menu.add(header("Rules"));
-    add(
-        menu,
-        new Brush(
-            "Impassable",
-            "Painting impassable: click or drag across territories no unit may enter.",
-            Optional.empty(),
-            (g, t) -> TerritoryXml.withFlag(g, t, TerritoryXml.IMPASSABLE)));
-    add(
-        menu,
-        new Brush(
-            "Passable",
-            "Painting passable: click or drag across territories units may enter again.",
-            Optional.empty(),
-            (g, t) -> TerritoryXml.withoutFlag(g, t, TerritoryXml.IMPASSABLE)));
-    final List<String> effects = TerritoryEffectsXml.effects(game);
-    if (!effects.isEmpty()) {
-      menu.add(header("Terrain effects"));
-      effects.forEach(effect -> add(menu, effectBrush(effect)));
-      add(menu, NO_EFFECTS);
+    units.add(
+        item(
+            new Brush(
+                "Clear units",
+                "Clearing units: click or drag across territories to take their starting units"
+                    + " away.",
+                Optional.empty(),
+                (g, t) -> MapXml.withTerritoryUnits(g, t, List.of()))));
+    return units;
+  }
+
+  /**
+   * The textures as tiles in a grid, each on the color it lies on; then clearing and adding. The
+   * tiles are items of the menu itself, laid out in its grid, so the arrow keys reach them.
+   */
+  private JMenu texturesMenu(final Game game) {
+    final JMenu textures = new JMenu("Textures");
+    final MapFiles files = project.getFiles();
+    final List<String> names = Textures.names(files);
+    final Set<String> onWater =
+        files.textures().entrySet().stream()
+            .filter(e -> MapXml.isWater(game, e.getKey()))
+            .map(Map.Entry::getValue)
+            .collect(Collectors.toUnmodifiableSet());
+    // many textures, eg found ones, in a wider grid, so the menu stays short
+    final int columns = names.size() > 3 * TILE_COLUMNS ? 2 * TILE_COLUMNS : TILE_COLUMNS;
+    final JPopupMenu popup = textures.getPopupMenu();
+    popup.setLayout(new GridBagLayout());
+    final GridBagConstraints cell = new GridBagConstraints();
+    for (int i = 0; i < names.size(); i++) {
+      final String texture = names.get(i);
+      final boolean water = texture.endsWith(" sea") || onWater.contains(texture);
+      final Optional<Icon> picture =
+          Textures.icon(files, texture, water ? MapCanvas.SEA : MapCanvas.NEUTRAL)
+              .map(ImageIcon::new);
+      // a picture that does not read: its name instead
+      final JMenuItem tile = new JMenuItem(picture.isPresent() ? "" : texture);
+      picture.ifPresent(tile::setIcon);
+      tile.setToolTipText(texture);
+      tile.getAccessibleContext().setAccessibleName(texture);
+      tile.addActionListener(e -> paintWith(textureBrush(texture)));
+      cell.gridx = i % columns;
+      cell.gridy = i / columns;
+      popup.add(tile, cell);
     }
-    menu.add(header("Textures"));
-    Textures.names(project.getFiles()).forEach(texture -> add(menu, textureBrush(texture)));
-    add(menu, NO_TEXTURE);
-    final Optional<Path> folder = project.getFiles().folder();
-    final JMenuItem own = menu.add("Import texture…");
+    // the rows below span the grid
+    final GridBagConstraints row = new GridBagConstraints();
+    row.gridx = 0;
+    row.gridwidth = GridBagConstraints.REMAINDER;
+    row.fill = GridBagConstraints.HORIZONTAL;
+    row.weightx = 1;
+    popup.add(new JPopupMenu.Separator(), row);
+    popup.add(item(NO_TEXTURE), row);
+    final Optional<Path> folder = files.folder();
+    final JMenuItem own = new JMenuItem("Import texture…");
+    popup.add(own, row);
     own.setEnabled(folder.isPresent());
     own.setToolTipText(
         folder.isPresent()
             ? "Copies a picture into the map's textures folder; it is repeated over the territory"
             : "Save the map first: the picture goes into its folder.");
     folder.ifPresent(f -> own.addActionListener(e -> importTexture(f)));
-    final JMenuItem find = menu.add("Find textures in the map…");
-    final boolean canFind = folder.isPresent() && project.getFiles().hasPictureOrRelief();
+    final JMenuItem find = new JMenuItem("Find textures in the map…");
+    popup.add(find, row);
+    final boolean canFind = folder.isPresent() && files.hasPictureOrRelief();
     find.setEnabled(canFind);
     find.setToolTipText(
         canFind
@@ -1157,7 +1233,37 @@ final class TerritoriesEditor implements Editor {
                 ? "Save the map first: the textures go into its folder."
                 : "The map has no picture or relief to find textures in.");
     folder.ifPresent(f -> find.addActionListener(e -> findTextures(f)));
-    return menu;
+    return textures;
+  }
+
+  /** Paints the value; the banner's field changes it while painting. */
+  void paintPus(final int value) {
+    paintedPus.setValue(value);
+    paintWith(pusBrush);
+  }
+
+  /** Asks for a value the menu does not list, eg 25, and paints it. */
+  private void askPus() {
+    Dialogs.askName(
+            page,
+            "Paint PUs per turn",
+            PUS_BRUSH,
+            String.valueOf(paintedPus.getValue()),
+            "Paint",
+            typed ->
+                typed.matches("\\d{1,3}")
+                    ? Optional.empty()
+                    : Optional.of("A whole number from 0 to " + MAX_PUS + "."))
+        .ifPresent(typed -> paintPus(Integer.parseInt(typed)));
+  }
+
+  /** The value a PU brush paints, to change it without the Paint menu. */
+  private JComponent pusBox() {
+    final JPanel box = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_XS, 0));
+    box.setOpaque(false);
+    box.add(paintedPus);
+    box.add(new JLabel("PUs"));
+    return box;
   }
 
   /**
@@ -1221,7 +1327,7 @@ final class TerritoriesEditor implements Editor {
         "Painting "
             + texture
             + ": click or drag across territories. Map look's Create relief bakes it in.",
-        Textures.icon(project.getFiles(), texture).map(p -> (Icon) new ImageIcon(p)),
+        Optional.empty(),
         (g, t) -> g,
         Optional.empty(),
         (f, t) -> f.withTexture(t, Optional.of(texture)),
@@ -1271,19 +1377,11 @@ final class TerritoriesEditor implements Editor {
         (g, t) -> MapXml.isWater(g, t) ? g : MapXml.withOwner(g, t, nation));
   }
 
-  private static JLabel header(final String text) {
-    final JLabel header = Theme.newSectionLabel(text);
-    header.setBorder(
-        BorderFactory.createEmptyBorder(Theme.GAP_S, Theme.GAP_M, Theme.GAP_XS, Theme.GAP_M));
-    // at the left like the items
-    header.setAlignmentX(Component.LEFT_ALIGNMENT);
-    return header;
-  }
-
-  private void add(final JPopupMenu menu, final Brush chosen) {
-    final JMenuItem item = menu.add(chosen.title());
+  private JMenuItem item(final Brush chosen) {
+    final JMenuItem item = new JMenuItem(chosen.title());
     chosen.icon().ifPresent(item::setIcon);
     item.addActionListener(e -> paintWith(chosen));
+    return item;
   }
 
   private static Brush effectBrush(final String effect) {
@@ -1657,6 +1755,7 @@ final class TerritoriesEditor implements Editor {
   /** The eraser's width, kept for the session as changed. */
   private JPanel eraserFields() {
     final JSpinner width = new JSpinner(new SpinnerNumberModel(eraserWidth(), 1, 99, 1));
+    takeAsTyped(width);
     width.setToolTipText(
         "Pixels wide; at first three times as wide as most of the picture's lines");
     width.getAccessibleContext().setAccessibleName("Eraser width in pixels");
@@ -1687,6 +1786,7 @@ final class TerritoriesEditor implements Editor {
                     ? Optional.empty()
                     : Optional.of(LINE_COLORS.get(color.getSelectedIndex())));
     final JSpinner width = new JSpinner(new SpinnerNumberModel(style.width(), 0, 20, 1));
+    takeAsTyped(width);
     width.setToolTipText(
         "Pixels wide; at first as wide as most of the picture's lines. 0 draws nothing: a"
             + " split's border then shows on the map only while chosen.");
@@ -1789,17 +1889,17 @@ final class TerritoriesEditor implements Editor {
     inspector.row(addRow);
 
     final boolean water = MapXml.isWater(game, territory);
-    inspector.more("territory.rules", "Rules", f -> fillRules(f, game, territory, water));
+    inspector.fold("territory.rules", "Rules", 0, f -> fillRules(f, game, territory, water));
     final List<String> effects = TerritoryEffectsXml.effects(game);
     if (!effects.isEmpty()) {
       final List<String> has = MapXml.territoryEffects(game, territory);
       inspector.more(
           "territory.effects",
-          "Terrain effects (" + has.size() + " checked)",
+          Theme.foldLabel("Terrain effects", effects.size(), has.size()),
           f -> f.row(effectBoxes(territory, effects, has)));
     }
-    inspector.more(
-        "territory.map", "On the map: places, outline", f -> fillOnTheMap(f, territory));
+    inspector.fold(
+        "territory.map", "On the map: name, places, outline", 0, f -> fillOnTheMap(f, territory));
     inspector.more("territory.more", 5, f -> fillMore(f, game, territory));
 
     final Set<String> neighbours = MapXml.neighbors(game, territory);
@@ -1941,6 +2041,7 @@ final class TerritoriesEditor implements Editor {
     split.setToolTipText(
         outlines.isEmpty() ? territory + " has no outline on the map to cut." : null);
     split.addActionListener(e -> startMode(Mode.SPLIT));
+    onTheMap.row(nameCheck(territory));
     final JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_S, 0));
     actions.setOpaque(false);
     actions.add(movePlaces);
@@ -1967,6 +2068,25 @@ final class TerritoriesEditor implements Editor {
     onTheMap.row(again);
     onTheMap.note(
         "Where the game draws " + SearchList.escape(territory) + "'s units, name and markers.");
+  }
+
+  /** Whether the game draws the territory's name, map.properties dont_draw_territory_names. */
+  private JCheckBox nameCheck(final String territory) {
+    final JCheckBox named =
+        new JCheckBox(
+            "Show its name on the map",
+            !project.getFiles().listed(MapFiles.HIDDEN_NAMES).contains(territory));
+    named.setOpaque(false);
+    named.setToolTipText(
+        "Off: the game draws no name here, eg where the map's picture has it already.");
+    named.addActionListener(
+        e ->
+            project.editFiles(
+                f ->
+                    named.isSelected()
+                        ? f.withoutListed(MapFiles.HIDDEN_NAMES, territory)
+                        : f.withListed(MapFiles.HIDDEN_NAMES, territory)));
+    return named;
   }
 
   private void fillMore(final Form more, final Game game, final String territory) {

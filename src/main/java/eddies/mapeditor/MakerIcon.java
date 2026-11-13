@@ -37,7 +37,7 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
     OPTIONS,
     TURN_ORDER,
     UNITS,
-    GAME_VIEW,
+    PICTURE,
     OWNERS,
     POLITICAL,
     VALUES,
@@ -73,6 +73,7 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
     PLACES,
     ERASER,
     PUBLISH,
+    DIE,
     FIT
   }
 
@@ -150,7 +151,7 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
         g.fillOval(5, 1, 6, 6);
         g.fillPolygon(new Polygon(new int[] {3, 13, 15, 1}, new int[] {8, 8, 15, 15}, 4));
       }
-      case GAME_VIEW -> {
+      case PICTURE -> {
         g.setColor(SEA);
         g.fillRoundRect(0, 1, 16, 14, 3, 3);
         g.setColor(LAND);
@@ -361,6 +362,13 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
         g.drawPolygon(new Polygon(new int[] {9, 14, 7, 2}, new int[] {2, 7, 14, 9}, 4));
         g.fillPolygon(new Polygon(new int[] {5, 10, 7, 2}, new int[] {6, 11, 14, 9}, 4));
         g.drawLine(9, 14, 15, 14);
+      }
+      case DIE -> {
+        // a die showing three: the map as it plays
+        g.drawRoundRect(2, 2, 12, 12, 4, 4);
+        g.fillOval(4, 4, 2, 2);
+        g.fillOval(7, 7, 2, 2);
+        g.fillOval(10, 10, 2, 2);
       }
       case FIT -> {
         // four corners pointing out

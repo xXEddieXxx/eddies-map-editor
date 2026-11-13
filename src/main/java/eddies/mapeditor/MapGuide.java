@@ -260,7 +260,11 @@ class MapGuide {
     return steps(project, false);
   }
 
-  /** The steps after a Check that found no problem, the game engine's included. */
+  /**
+   * The steps after a Check that found no problem, the game engine's included: TripleA loads the
+   * game, so a nation left without land or a capital while others have theirs is meant so, eg a
+   * neutral one of a published map, and both steps count as done.
+   */
   static List<Step> stepsAfterCleanCheck(final MapProject project) {
     return steps(project, true);
   }
@@ -277,7 +281,9 @@ class MapGuide {
 
   private static Next next(
       final MapProject project, final List<Problem> problems, final boolean checked) {
-    final Optional<Step> todo = firstOpen(steps(project)).filter(s -> !s.tool().equals(CHECK));
+    final Optional<Step> todo =
+        firstOpen(steps(project, checked && problems.isEmpty()))
+            .filter(s -> !s.tool().equals(CHECK));
     if (todo.isPresent()) {
       return new Next(
           Kind.GO_TO_TOOL,
@@ -368,7 +374,8 @@ class MapGuide {
         new Step(
             Id.LAND,
             "Give every nation its land",
-            !nations.isEmpty() && withoutLand.isEmpty()
+            !nations.isEmpty()
+                    && (withoutLand.isEmpty() || (checked && withoutLand.size() < playing.size()))
                 ? State.DONE
                 : nationsAndLand ? State.FAILING : State.TODO,
             "Territories",
@@ -385,7 +392,7 @@ class MapGuide {
         new Step(
             Id.CAPITALS,
             "Mark each nation's capital",
-            !landed.isEmpty() && capitals == landed.size()
+            !landed.isEmpty() && (capitals == landed.size() || (checked && capitals > 0))
                 ? State.DONE
                 : landed.isEmpty() ? State.TODO : State.FAILING,
             "Territories",

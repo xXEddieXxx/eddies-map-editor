@@ -12,6 +12,8 @@ import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
@@ -19,9 +21,12 @@ import java.io.Serial;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.text.ParseException;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.function.IntConsumer;
 import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
@@ -43,12 +48,12 @@ import javax.swing.JScrollPane;
 import javax.swing.JSpinner;
 import javax.swing.JTabbedPane;
 import javax.swing.JTable;
+import javax.swing.JTextField;
 import javax.swing.JViewport;
 import javax.swing.ListSelectionModel;
 import javax.swing.SwingConstants;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.table.AbstractTableModel;
-import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.JTableHeader;
 import javax.swing.table.TableCellRenderer;
 import javax.swing.table.TableColumn;
@@ -56,17 +61,19 @@ import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.Production.ProductionRule;
 import org.triplea.map.data.elements.Production.Rule.Result;
 import org.triplea.swing.SwingComponents;
+import eddies.mapeditor.ProductionTabs.Tab;
 
 /**
- * What nations can buy and repair, and the resources they pay with. Buying and repairing each have
- * frontiers, lists of rules, with the nations that use them, and the rules with what they give and
- * cost.
+ * What nations can buy and repair, the resources they pay with, and the tabs of the buy window.
+ * Buying and repairing each have frontiers, lists of rules, with the nations that use them, and
+ * the rules with what they give and cost.
  */
 final class ProductionEditor implements Editor {
   private final JTabbedPane page = new JTabbedPane();
   private final FrontiersPage buy;
   private final FrontiersPage repair;
   private final ResourcesPage resources;
+  private final TabsPage tabs;
 
   ProductionEditor(final MapProject project) {
     buy = new FrontiersPage(project, Trade.BUY);
@@ -75,6 +82,8 @@ final class ProductionEditor implements Editor {
     page.addTab("Buy", buy.page);
     page.addTab("Repair", repair.page);
     page.addTab("Resources", resources.page);
+    tabs = new TabsPage(project);
+    page.addTab("Buy window tabs", tabs.page);
   }
 
   @Override
@@ -89,8 +98,8 @@ final class ProductionEditor implements Editor {
 
   @Override
   public String hint() {
-    return "Each nation buys from one frontier: a list of rules like '1 infantry for 3 PUs'."
-        + " Pick a frontier, choose who uses it, and tick what it sells.";
+    return "Each nation buys from one purchase list: rules like '1 infantry for 3 PUs'. Pick a"
+        + " list, choose who uses it, and tick what it sells.";
   }
 
   @Override
@@ -103,6 +112,7 @@ final class ProductionEditor implements Editor {
     buy.commit();
     repair.commit();
     resources.commit();
+    tabs.commit();
   }
 
   /** Buying or repairing: both are rules sold in frontiers, repairs in lists of their own. */
@@ -159,6 +169,9 @@ final class ProductionEditor implements Editor {
     private final Form head = new Form(480);
     private @Nullable String selected;
     private boolean allRules;
+    // the lists' names in plain words, of the game they were worked out for
+    private @Nullable Game titledIn;
+    private Map<String, String> titles = Map.of();
     private Optional<JTable> rulesShown = Optional.empty();
 
     FrontiersPage(final MapProject project, final Trade trade) {
@@ -166,14 +179,14 @@ final class ProductionEditor implements Editor {
       this.trade = trade;
       list =
           new SearchList(
-                  "frontier",
-                  "frontiers",
+                  trade == Trade.BUY ? "purchase list" : "repair list",
+                  trade == Trade.BUY ? "purchase lists" : "repair lists",
                   () -> ProductionXml.frontiers(view()),
-                  f -> f,
+                  this::title,
                   this::detail,
                   this::choose)
-              .stripSharedPrefix()
-              .withAdd("Add", "Add a frontier", this::addFrontier);
+              .withIds(frontier -> frontier)
+              .withAdd("Add list…", "Add a list of what nations may buy", this::addFrontier);
       // room below the tabs; at the left the list starts where the other tools' lists do
       list.setBorder(BorderFactory.createEmptyBorder(Theme.GAP_M, 0, 0, Theme.GAP_S));
       page.add(Panels.sideBySide(list, details), BorderLayout.CENTER);
@@ -201,19 +214,31 @@ final class ProductionEditor implements Editor {
       rulesShown.filter(JTable::isEditing).ifPresent(t -> t.getCellEditor().stopCellEditing());
     }
 
-    private List<String> users(final Game game, final String frontier) {
+    private static List<String> users(final Game game, final String frontier) {
       return MapXml.nations(game).stream()
           .filter(n -> ProductionXml.frontierOf(game, n).filter(frontier::equals).isPresent())
           .toList();
     }
 
+    /** The list in plain words, as {@link ProductionXml#listTitles}, once per change. */
+    private String title(final String frontier) {
+      if (titledIn != project.game()) {
+        titledIn = project.game();
+        titles = ProductionXml.listTitles(view());
+      }
+      return titles.getOrDefault(frontier, frontier);
+    }
+
     private String detail(final String frontier) {
       final Game game = view();
       final int rules = ProductionXml.rulesIn(game, frontier).size();
-      final int nations = users(game, frontier).size();
+      final List<String> users = users(game, frontier);
       return rules
-          + (rules == 1 ? " rule · " : " rules · ")
-          + (nations == 0 ? "no nation" : nations + (nations == 1 ? " nation" : " nations"));
+          + (rules == 1 ? " rule" : " rules")
+          // one nation's list is called by the nation already
+          + (users.isEmpty()
+              ? " · no nation"
+              : users.size() == 1 ? "" : " · " + nationsText(users));
     }
 
     private void choose(final String frontier) {
@@ -225,11 +250,11 @@ final class ProductionEditor implements Editor {
       final List<String> taken = ProductionXml.frontiers(view());
       Dialogs.askName(
               page,
-              "Add frontier",
+              "Add list",
               "Name",
               "",
               "Add",
-              name -> taken.contains(name) ? Optional.of("Already a frontier") : Optional.empty())
+              name -> taken.contains(name) ? Optional.of("Already a list") : Optional.empty())
           .ifPresent(
               frontier -> {
                 edit(g -> ProductionXml.withFrontier(g, frontier));
@@ -248,11 +273,11 @@ final class ProductionEditor implements Editor {
         details.add(
             Panels.empty(
                 Glyph.PRODUCTION,
-                "No frontiers yet",
+                trade == Trade.BUY ? "No purchase lists yet" : "No repair lists yet",
                 trade == Trade.BUY
                     ? "Without one, nations can buy nothing."
                     : "Without one, nations can repair nothing.",
-                "Add frontier",
+                "Add list…",
                 this::addFrontier),
             BorderLayout.CENTER);
         details.revalidate();
@@ -304,7 +329,8 @@ final class ProductionEditor implements Editor {
     private void showHead(final String frontier, final RulesTable model) {
       final Game game = view();
       head.clear();
-      head.title(frontier);
+      head.row(Theme.newTitle(title(frontier)));
+      head.subtitle("id " + frontier);
       final List<String> users = users(game, frontier);
       final JLabel usedBy =
           new JLabel(users.isEmpty() ? "Used by no nation" : "Used by " + nationsText(users));
@@ -342,9 +368,9 @@ final class ProductionEditor implements Editor {
             allRules = true;
             model.showAllRules();
           });
-      final JButton addRule = new JButton("+ Add rule…");
-      Theme.setTertiaryButtonStyle(addRule);
-      addRule.addActionListener(e -> addRule(frontier));
+      final JButton addRule =
+          Theme.newAddButton(
+              "Add rule…", "A unit or resource the list sells", () -> addRule(frontier));
       final JPanel toggle = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_S, 0));
       toggle.add(new JLabel("Show"));
       toggle.add(here);
@@ -382,6 +408,13 @@ final class ProductionEditor implements Editor {
               return getParent() instanceof JViewport viewport
                   && viewport.getWidth() >= leastWidth(this);
             }
+
+            // the rule's name in the game's XML, which the table has no column for
+            @Override
+            public @Nullable String getToolTipText(final MouseEvent e) {
+              final int row = rowAtPoint(e.getPoint());
+              return row < 0 ? null : "id " + model.ruleName(row);
+            }
           };
       table.setTableHeader(
           new JTableHeader(table.getColumnModel()) {
@@ -405,13 +438,12 @@ final class ProductionEditor implements Editor {
       return table;
     }
 
-    /** The widths, the combo of what a rule gives and the rule's name in the secondary color. */
+    /** The widths, and the combo of what a rule gives. */
     private void setUpColumns(final JTable table) {
       final FontMetrics header = table.getFontMetrics(table.getTableHeader().getFont());
-      final int last = table.getColumnCount() - 1;
-      for (int i = 0; i <= last; i++) {
+      for (int i = 0; i < table.getColumnCount(); i++) {
         final TableColumn column = table.getColumnModel().getColumn(i);
-        if (i == 1 || i == last) {
+        if (i == 1) {
           column.setMinWidth(120);
           column.setPreferredWidth(200);
         } else {
@@ -425,9 +457,6 @@ final class ProductionEditor implements Editor {
       final JComboBox<String> gives = new JComboBox<>();
       things(view()).forEach(gives::addItem);
       Details.comboColumn(table, 1, gives);
-      final DefaultTableCellRenderer ruleName = new DefaultTableCellRenderer();
-      ruleName.setForeground(Theme.getSecondaryTextColor());
-      table.getColumnModel().getColumn(last).setCellRenderer(ruleName);
     }
 
     /** The width of the table's columns at their least. */
@@ -439,7 +468,7 @@ final class ProductionEditor implements Editor {
       return width;
     }
 
-    /** "Remove rule" while a row is chosen; "Remove frontier" below it, apart. */
+    /** "Remove rule" while a row is chosen; "Remove list" below it, apart. */
     private JComponent newRemoveRow(
         final String frontier, final RulesTable model, final JTable table) {
       final JButton removeRule = new JButton("Remove rule");
@@ -454,7 +483,7 @@ final class ProductionEditor implements Editor {
       table
           .getSelectionModel()
           .addListSelectionListener(e -> removeRule.setVisible(table.getSelectedRow() >= 0));
-      final JButton removeFrontier = new JButton("Remove frontier");
+      final JButton removeFrontier = new JButton("Remove list");
       Theme.setDestructiveButtonStyle(removeFrontier);
       removeFrontier.addActionListener(e -> removeFrontier(frontier));
       // one row, its height that of Remove frontier: the table keeps its size while Remove rule
@@ -552,11 +581,10 @@ final class ProductionEditor implements Editor {
       if (Dialogs.confirmRemove(
           page,
           "Remove rule",
-          "Remove "
-              + rule
-              + "?\nIt is taken out of every frontier that uses it ("
+          "Remove this rule?\nIt is taken out of every list that uses it ("
               + frontiers
-              + ").",
+              + "). Its id: "
+              + rule,
           List.of(),
           "Remove")) {
         edit(g -> ProductionXml.withoutRule(g, rule));
@@ -567,7 +595,7 @@ final class ProductionEditor implements Editor {
       if (RulesXml.isNamedInAttachments(project.game(), frontier)) {
         Dialogs.warn(
             page,
-            "Remove frontier",
+            "Remove list",
             frontier + " is named in an attachment, eg a trigger; it stays.");
         return;
       }
@@ -578,7 +606,11 @@ final class ProductionEditor implements Editor {
               : String.join(", ", users)
                   + (trade == Trade.BUY ? " then buy nothing." : " then repair nothing.");
       if (Dialogs.confirmRemove(
-          page, "Remove frontier", "Remove " + frontier + "?\n" + after, List.of(), "Remove")) {
+          page,
+          "Remove list",
+          "Remove " + title(frontier) + " (id " + frontier + ")?\n" + after,
+          List.of(),
+          "Remove")) {
         edit(g -> ProductionXml.withoutFrontier(g, frontier));
       }
     }
@@ -587,7 +619,7 @@ final class ProductionEditor implements Editor {
   /**
    * The rules of a frontier, or every rule of the game: sold there, what it gives, a cost per
    * resource and its name. The rows are an index of rule names, set by {@link #refilter}, so a rule
-   * unticked under "Sold here" stays until the frontier, the filter or the rules change.
+   * unticked under "Sold here" stays until the list, the filter or the rules change.
    */
   static final class RulesTable extends AbstractTableModel {
     @Serial private static final long serialVersionUID = 1L;
@@ -703,7 +735,7 @@ final class ProductionEditor implements Editor {
 
     @Override
     public int getColumnCount() {
-      return FIXED + costColumns.size() + 1;
+      return FIXED + costColumns.size();
     }
 
     @Override
@@ -711,13 +743,11 @@ final class ProductionEditor implements Editor {
       if (isCostColumn(column)) {
         return costColumns.get(column - FIXED);
       }
-      return column < FIXED
-          ? List.of(
-                  trade == Trade.BUY ? "Sold" : "Used",
-                  trade == Trade.BUY ? "Unit or resource" : "Repairs",
-                  trade == Trade.BUY ? "Amount" : "Damage repaired")
-              .get(column)
-          : "Rule";
+      return List.of(
+              trade == Trade.BUY ? "Sold" : "Used",
+              trade == Trade.BUY ? "Unit or resource" : "Repairs",
+              trade == Trade.BUY ? "Amount" : "Damage repaired")
+          .get(column);
     }
 
     @Override
@@ -735,8 +765,7 @@ final class ProductionEditor implements Editor {
     @Override
     public boolean isCellEditable(final int row, final int column) {
       // what a rule without a result gives is not in the box: it would take the last one chosen
-      return column != getColumnCount() - 1
-          && (column != 1 || ProductionXml.result(rule(row)).isPresent());
+      return column != 1 || ProductionXml.result(rule(row)).isPresent();
     }
 
     @Override
@@ -749,8 +778,7 @@ final class ProductionEditor implements Editor {
       return switch (column) {
         case 0 -> ProductionXml.rulesIn(view(), frontier).contains(rule.getName());
         case 1 -> result.map(Result::getResourceOrUnit).orElse("");
-        case 2 -> result.map(Result::getQuantity).orElse(0);
-        default -> rule.getName();
+        default -> result.map(Result::getQuantity).orElse(0);
       };
     }
 
@@ -785,7 +813,7 @@ final class ProductionEditor implements Editor {
                             ProductionXml.withResult(
                                 g, name, r.getResourceOrUnit(), Math.max(1, (Integer) value))));
         default -> {
-          // the rule's name is not edited here
+          // the columns after these are costs, set above
         }
       }
     }
@@ -829,7 +857,7 @@ final class ProductionEditor implements Editor {
       form.clear();
       final Game game = project.game();
       final JPanel top = new JPanel(new BorderLayout());
-      top.add(Theme.newAddButton("Add", "Add a resource", this::add), BorderLayout.EAST);
+      top.add(Theme.newAddButton("Add resource…", "Add a resource", this::add), BorderLayout.EAST);
       form.row(top);
       final JPanel card = new JPanel();
       card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
@@ -1047,6 +1075,322 @@ final class ProductionEditor implements Editor {
         Dialogs.warn(page, "Icon of " + resource, "Could not write the icon: " + e.getMessage());
       }
       show();
+    }
+  }
+
+  /**
+   * The tabs of the buy window, for all nations or one: TripleA's own, or the map's with a name
+   * and what each sells. Saved in a production_tabs file, a step per change.
+   */
+  private static final class TabsPage {
+    private static final String ALL = "All nations";
+    private static final int MAX_WIDTH = 760;
+    private static final int NAME_WIDTH = 200;
+    private final MapProject project;
+    private final Form form = new Form(520);
+    private final JComponent page = SwingComponents.newJScrollPane(form);
+    // "" for the file for all nations
+    private String nation = "";
+    // a tab's name being typed, taken before anything else changes
+    private Optional<Runnable> typing = Optional.empty();
+    private boolean editingHere;
+
+    TabsPage(final MapProject project) {
+      this.project = project;
+      form.addComponentListener(
+          new ComponentAdapter() {
+            @Override
+            public void componentResized(final ComponentEvent e) {
+              // at most 760 px, at the left, as Resources
+              form.setBorder(
+                  BorderFactory.createEmptyBorder(
+                      Theme.GAP_XS,
+                      Theme.GAP_L,
+                      Theme.GAP_L,
+                      Math.max(Theme.GAP_L, form.getWidth() - Theme.GAP_L - MAX_WIDTH)));
+            }
+          });
+      project.onChange(
+          () -> {
+            if (!editingHere) {
+              show();
+            }
+          });
+      show();
+    }
+
+    void commit() {
+      typing.ifPresent(Runnable::run);
+    }
+
+    private String file() {
+      return nation.isEmpty() ? ProductionTabs.FILE : ProductionTabs.fileOf(nation);
+    }
+
+    private ProductionTabs tabs() {
+      return ProductionTabs.read(project.texts().buyTabs(file()));
+    }
+
+    /** Writes the changed tabs into the file's text, as one step. */
+    private void edit(final UnaryOperator<ProductionTabs> change) {
+      final String file = file();
+      project.edit(
+          g -> g,
+          t ->
+              t.withBuyTabs(
+                  file,
+                  change.apply(ProductionTabs.read(t.buyTabs(file))).writeInto(t.buyTabs(file))));
+    }
+
+    private void editHere(final UnaryOperator<ProductionTabs> change) {
+      editingHere = true;
+      try {
+        edit(change);
+      } finally {
+        editingHere = false;
+      }
+    }
+
+    private void show() {
+      typing = Optional.empty();
+      form.clear();
+      final Game game = project.game();
+      if (!nation.isEmpty() && !MapXml.nations(game).contains(nation)) {
+        nation = "";
+      }
+      final ProductionTabs tabs = tabs();
+      form.row(newNationRow(game));
+      if (!nation.isEmpty() && !project.texts().buyTabs(ProductionTabs.FILE).isBlank()) {
+        form.note(
+            "The map also has tabs for all nations: what they set counts before what is set"
+                + " here for "
+                + SearchList.escape(nation)
+                + ".");
+      }
+      final JRadioButton standard =
+          new JRadioButton("TripleA's own tabs: " + ProductionTabs.STANDARD_TABS, tabs.standard());
+      final JRadioButton own = new JRadioButton("Own tabs", !tabs.standard());
+      final ButtonGroup kinds = new ButtonGroup();
+      kinds.add(standard);
+      kinds.add(own);
+      standard.addActionListener(e -> edit(ProductionTabs::withStandardTabs));
+      own.addActionListener(e -> edit(this::withOwnTabs));
+      form.row(standard);
+      form.row(own);
+      if (tabs.standard()) {
+        if (!tabs.tabs().isEmpty()) {
+          form.note(tabs.tabs().size() + " own tabs are kept in the file, not shown in the game.");
+        }
+        form.end();
+        form.revalidate();
+        form.repaint();
+        return;
+      }
+      final List<String> missing = tabs.missing(ProductionTabs.sold(game));
+      if (!missing.isEmpty()) {
+        final JLabel warning =
+            Theme.newStatusLabel(
+                Theme.Status.WARNING,
+                "In no tab: " + NationsEditor.shortList(missing));
+        warning.setToolTipText(
+            "<html>"
+                + SearchList.escape(String.join(", ", missing))
+                + "<br>TripleA cannot open the buy window of a nation that can buy one of them."
+                + "</html>");
+        form.row(warning);
+      }
+      form.section("Tabs");
+      for (int i = 0; i < tabs.tabs().size(); i++) {
+        form.row(newTabRow(tabs, i));
+      }
+      final JPanel add = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+      add.setOpaque(false);
+      add.add(
+          Theme.newAddButton(
+              "Add tab",
+              "A new tab after the others",
+              () -> edit(t -> t.withTabs(with(t.tabs(), new Tab("New tab", List.of()))))));
+      form.row(add);
+      form.section(
+          "Units in a tab",
+          "How many rows and columns of units a tab shows. Empty: TripleA works it out, as it"
+              + " does when a tab sells more than rows × columns.");
+      form.number(
+          "Rows",
+          autoNumber(tabs.rows(), rows -> editHere(t -> t.withSize(rows, t.columns()))));
+      form.number(
+          "Columns",
+          autoNumber(tabs.columns(), columns -> editHere(t -> t.withSize(t.rows(), columns))));
+      form.end();
+      form.revalidate();
+      form.repaint();
+    }
+
+    /** "For [All nations ▾]" and the file's name, grey. */
+    private JComponent newNationRow(final Game game) {
+      final JComboBox<String> nations = new JComboBox<>();
+      nations.addItem(ALL);
+      MapXml.nations(game).forEach(nations::addItem);
+      nations.setSelectedItem(nation.isEmpty() ? ALL : nation);
+      nations.setToolTipText("A nation's tabs are for it alone, in a file of its own");
+      nations.addActionListener(
+          e -> {
+            commit();
+            final String chosen = (String) nations.getSelectedItem();
+            nation = chosen == null || ALL.equals(chosen) ? "" : chosen;
+            show();
+          });
+      final JLabel label = new JLabel("For");
+      label.setLabelFor(nations);
+      final JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_S, 0));
+      row.setOpaque(false);
+      row.setBorder(BorderFactory.createEmptyBorder(0, -Theme.GAP_S, 0, 0));
+      row.add(label);
+      row.add(nations);
+      row.add(Theme.newSecondaryLabel("· " + file()));
+      return row;
+    }
+
+    /** Own tabs; the first time one tab "All" that sells everything, so the buy window opens. */
+    private ProductionTabs withOwnTabs(final ProductionTabs tabs) {
+      return tabs.tabs().isEmpty()
+          ? tabs.withOwnTabs()
+              .withTabs(List.of(new Tab("All", ProductionTabs.sold(project.game()))))
+          : tabs.withOwnTabs();
+    }
+
+    private static <T> List<T> with(final List<T> list, final T added) {
+      return Stream.concat(list.stream(), Stream.of(added)).toList();
+    }
+
+    /** A number where 0 means TripleA works it out: shown empty, with "auto". */
+    private static JSpinner autoNumber(final int value, final IntConsumer onChange) {
+      // at most 99: the buy window lays out as many cells as it is told
+      return Form.newBlankNumber(
+          value == 0 ? -1 : value, -1, 99, "auto", chosen -> onChange.accept(Math.max(0, chosen)));
+    }
+
+    /** "1 [name] infantry, artillery and 5 more [Choose…] ▲ ▼ ×". */
+    private JComponent newTabRow(final ProductionTabs tabs, final int index) {
+      final Tab tab = tabs.tabs().get(index);
+      final JTextField name = new JTextField(tab.name());
+      final Dimension size = new Dimension(NAME_WIDTH, name.getPreferredSize().height);
+      name.setPreferredSize(size);
+      name.setMaximumSize(size);
+      name.getAccessibleContext().setAccessibleName("Name of tab " + (index + 1));
+      final Runnable take =
+          () -> {
+            typing = Optional.empty();
+            final String typed = name.getText().strip();
+            if (typed.isEmpty()) {
+              // a tab needs a name: the one it had shows again
+              name.setText(tab.name());
+              typing = Optional.empty();
+            } else if (!typed.equals(tab.name())) {
+              edit(t -> withTab(t, index, tab, new Tab(typed, tab.units())));
+            }
+          };
+      name.addActionListener(e -> take.run());
+      name.addFocusListener(
+          new FocusAdapter() {
+            @Override
+            public void focusLost(final FocusEvent e) {
+              take.run();
+            }
+          });
+      OnTyping.attach(name, () -> typing = Optional.of(take));
+      final JLabel units = new JLabel(NationsEditor.shortList(tab.units()));
+      units.setToolTipText(tab.units().isEmpty() ? null : String.join(", ", tab.units()));
+      final JButton choose = new JButton("Choose…");
+      Theme.setTertiaryButtonStyle(choose);
+      choose.getAccessibleContext().setAccessibleName("Choose what tab " + (index + 1) + " sells");
+      choose.addActionListener(e -> chooseUnits(index, tab));
+      final JPanel line = new JPanel();
+      line.setLayout(new BoxLayout(line, BoxLayout.X_AXIS));
+      line.setOpaque(false);
+      line.add(name);
+      line.add(Box.createHorizontalStrut(Theme.GAP_S));
+      line.add(units);
+      line.add(Box.createHorizontalStrut(Theme.GAP_S));
+      line.add(choose);
+      line.add(Box.createHorizontalGlue());
+      line.add(
+          Theme.newIconButton(
+              "▲", "Move the tab up: earlier in the buy window", () -> move(index, tab, -1)));
+      line.add(
+          Theme.newIconButton(
+              "▼", "Move the tab down: later in the buy window", () -> move(index, tab, 1)));
+      line.add(
+          Theme.newIconButton(
+              "×",
+              "Remove the tab " + tab.name(),
+              () ->
+                  edit(
+                      t -> {
+                        final List<Tab> rest = new ArrayList<>(t.tabs());
+                        return isTabAt(t, index, tab) && rest.remove(index) != null
+                            ? t.withTabs(rest)
+                            : t;
+                      })));
+      return line;
+    }
+
+    // a row of tabs changed since, eg by undo, changes nothing
+    private static boolean isTabAt(final ProductionTabs tabs, final int index, final Tab tab) {
+      return index < tabs.tabs().size() && tabs.tabs().get(index).equals(tab);
+    }
+
+    private static ProductionTabs withTab(
+        final ProductionTabs tabs, final int index, final Tab old, final Tab changed) {
+      if (!isTabAt(tabs, index, old)) {
+        return tabs;
+      }
+      final List<Tab> all = new ArrayList<>(tabs.tabs());
+      all.set(index, changed);
+      return tabs.withTabs(all);
+    }
+
+    private void move(final int index, final Tab tab, final int by) {
+      commit();
+      edit(
+          t -> {
+            final int to = index + by;
+            if (!isTabAt(t, index, tab) || to < 0 || to >= t.tabs().size()) {
+              return t;
+            }
+            final List<Tab> all = new ArrayList<>(t.tabs());
+            all.add(to, all.remove(index));
+            return t.withTabs(all);
+          });
+    }
+
+    private void chooseUnits(final int index, final Tab tab) {
+      commit();
+      Dialogs.pickMany(
+              page,
+              "What the tab " + tab.name() + " sells",
+              // a name no rule sells any more stays listed, to be unticked
+              Stream.concat(ProductionTabs.sold(project.game()).stream(), tab.units().stream())
+                  .distinct()
+                  .toList(),
+              tab.units(),
+              "Choose")
+          .ifPresent(
+              picked ->
+                  edit(
+                      t ->
+                          withTab(
+                              t,
+                              index,
+                              tab,
+                              // those it sold keep their order, new ones follow
+                              new Tab(
+                                  tab.name(),
+                                  Stream.concat(
+                                          tab.units().stream().filter(picked::contains),
+                                          picked.stream())
+                                      .distinct()
+                                      .toList()))));
     }
   }
 

@@ -4,97 +4,109 @@ import java.awt.FlowLayout;
 import java.io.Serial;
 import java.util.EnumMap;
 import java.util.Map;
-import java.util.Optional;
 import java.util.function.Consumer;
 import javax.swing.ButtonGroup;
+import javax.swing.JButton;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
+import javax.swing.JRadioButtonMenuItem;
 import javax.swing.JToggleButton;
 
 /**
- * The map's views as one row of toggles at the start of the map's toolbar, the shown one selected;
- * what a view shows is its tool tip. With room each has its icon and name, shorter of room only the
- * chosen one or none ({@link Names}). Only the player's choice reports a change; {@link
- * #showChosen} does not.
+ * The map's views at the start of the map's toolbar: with room a row of toggles, each with its icon
+ * and name, the shown one selected, what a view shows as its tool tip; short of room one button,
+ * "View: Game ▾", whose menu lists them with what they show ({@link Shape}). Only the player's
+ * choice reports a change; {@link #showChosen} does not.
  */
 final class MapViewsBar extends JPanel {
   @Serial private static final long serialVersionUID = 1L;
 
-  /** Which views show their name beside their icon. */
-  enum Names {
-    ALL,
-    CHOSEN,
-    NONE
+  /** How the views show: a toggle each, or one button with a menu. */
+  enum Shape {
+    TOGGLES,
+    DROPDOWN
   }
 
   private final Map<MapMode, JToggleButton> toggles = new EnumMap<>(MapMode.class);
-  private Names names = Names.ALL;
+  private final JButton chooser = new JButton();
+  private final transient Consumer<MapMode> chosen;
+  private MapMode shown;
 
   MapViewsBar(final MapMode shown, final Consumer<MapMode> chosen) {
     super(new FlowLayout(FlowLayout.LEFT, 0, 0));
+    this.chosen = chosen;
+    this.shown = shown;
     setOpaque(false);
     final ButtonGroup group = new ButtonGroup();
     for (final MapMode mode : MapMode.values()) {
       final JToggleButton toggle =
           new JToggleButton(mode.toString(), new MakerIcon(mode.getGlyph(), Theme.MAP_TOOL_ICON));
       Theme.setMapToolStyle(toggle);
-      // with the name, as only the icon shows when the toolbar is short of room
       final String tip = mode + ": " + mode.getDescription();
       toggle.setToolTipText(tip);
       toggle.getAccessibleContext().setAccessibleName(tip);
-      toggle.addActionListener(
-          e -> {
-            showTexts();
-            chosen.accept(mode);
-          });
+      toggle.addActionListener(e -> choose(mode));
       group.add(toggle);
       toggles.put(mode, toggle);
       add(toggle);
     }
+    Theme.setMapToolStyle(chooser);
+    chooser.addActionListener(e -> viewsMenu().show(chooser, 0, chooser.getHeight()));
+    chooser.setVisible(false);
+    add(chooser);
     showChosen(shown);
   }
 
   /** Shows the view as the chosen one, eg when an editor takes the map in its own view. */
   void showChosen(final MapMode mode) {
+    shown = mode;
     toggles.get(mode).setSelected(true);
-    showTexts();
+    chooser.setText("View: " + mode + " ▾");
+    chooser.setIcon(new MakerIcon(mode.getGlyph(), Theme.MAP_TOOL_ICON));
+    chooser.setToolTipText(
+        "View: " + mode + ". " + mode.getDescription() + ". Click for the other views");
+    chooser.getAccessibleContext().setAccessibleName("View: " + mode);
+    Theme.fitMapTool(chooser);
   }
 
-  /** Shows these names from now on. */
-  void show(final Names shown) {
-    names = shown;
-    showTexts();
+  /** Shows the views in this shape from now on. */
+  void show(final Shape shape) {
+    toggles.values().forEach(toggle -> toggle.setVisible(shape == Shape.TOGGLES));
+    chooser.setVisible(shape == Shape.DROPDOWN);
   }
 
-  /** How wide the views are with these names, measured without changing them. */
-  int width(final Names shown) {
-    int width = 0;
-    for (final Map.Entry<MapMode, JToggleButton> entry : toggles.entrySet()) {
-      final JToggleButton toggle = entry.getValue();
-      width +=
-          Theme.mapToolWidth(
-              toggle, Optional.of(toggle.getIcon()), text(entry.getKey(), toggle, shown));
+  /** How wide the views are in this shape, measured without changing them. */
+  int width(final Shape shape) {
+    return shape == Shape.DROPDOWN
+        ? chooser.getPreferredSize().width
+        : toggles.values().stream().mapToInt(toggle -> toggle.getPreferredSize().width).sum();
+  }
+
+  /** The views to choose from, each with its icon, name and what it shows. */
+  JPopupMenu viewsMenu() {
+    final JPopupMenu menu = new JPopupMenu();
+    final String grey = Theme.convertColorToHex(Theme.getSecondaryTextColor());
+    for (final MapMode mode : MapMode.values()) {
+      final JRadioButtonMenuItem item =
+          new JRadioButtonMenuItem(
+              "<html><b>"
+                  + mode
+                  + "</b><br><span style='color:"
+                  + grey
+                  + "'>"
+                  + mode.getDescription()
+                  + "</span></html>",
+              new MakerIcon(mode.getGlyph(), Theme.MAP_TOOL_ICON),
+              mode == shown);
+      item.getAccessibleContext().setAccessibleName(mode + ": " + mode.getDescription());
+      item.addActionListener(e -> choose(mode));
+      menu.add(item);
     }
-    return width;
+    return menu;
   }
 
-  private void showTexts() {
-    toggles.forEach(
-        (mode, toggle) -> {
-          final String text = text(mode, toggle, names);
-          if (!text.equals(toggle.getText())) {
-            toggle.setText(text);
-            Theme.fitMapTool(toggle);
-          }
-        });
-  }
-
-  private static String text(final MapMode mode, final JToggleButton toggle, final Names shown) {
-    final boolean named =
-        switch (shown) {
-          case ALL -> true;
-          case CHOSEN -> toggle.isSelected();
-          case NONE -> false;
-        };
-    return named ? mode.toString() : "";
+  private void choose(final MapMode mode) {
+    showChosen(mode);
+    chosen.accept(mode);
   }
 }

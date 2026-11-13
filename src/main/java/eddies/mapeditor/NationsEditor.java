@@ -2,6 +2,7 @@ package eddies.mapeditor;
 
 import com.formdev.flatlaf.FlatClientProperties;
 import java.awt.BorderLayout;
+import java.awt.CardLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Cursor;
@@ -12,6 +13,7 @@ import java.awt.Image;
 import java.awt.Window;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
@@ -25,6 +27,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiFunction;
+import java.util.function.IntFunction;
 import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
@@ -46,13 +49,14 @@ import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JSpinner;
-import javax.swing.JSplitPane;
 import javax.swing.JTextField;
+import javax.swing.KeyStroke;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import org.triplea.map.data.elements.AttachmentList.Attachment.Option;
 import org.triplea.map.data.elements.Game;
+import org.triplea.map.data.elements.Initialize.UnitInitialize.HeldUnits;
 import org.triplea.map.data.elements.PlayerList.Player;
 import org.triplea.swing.SwingComponents;
 import org.triplea.swing.WrapLayout;
@@ -114,9 +118,6 @@ final class NationsEditor implements Editor {
   // the rules the Add rule dialog offers first, in plain words
   private static final List<String> FIRST_RULES =
       List.of(
-          "placementLimit",
-          "movementLimit",
-          "attackingLimit",
           "suicideAttackTargets",
           "suicideAttackResources",
           "vps",
@@ -124,27 +125,33 @@ final class NationsEditor implements Editor {
           "captureUnitOnEnteringBy");
   private static final List<String> FIRST_RULE_LABELS =
       List.of(
-          "Limit units placed per territory",
-          "Limit units moving into a territory",
-          "Limit units attacking a territory",
           "Units its suicide attacks may target",
           "Resources its suicide attacks cost",
           "Victory points",
           "Victory points for capturing it",
           "Who captures its units by moving in");
-  // how a unit limit counts, as PlayerAttachment reads it
-  private static final List<String> COUNTING = List.of("owned", "allied", "total");
+  // how a stacking limit counts, as RulesXml.STACKING_COUNTS, and when, as STACKING_LIMITS
   private static final List<String> COUNTING_LABELS =
       List.of("its own units", "its and allied units", "all units");
+  private static final List<String> LIMIT_WHEN = List.of("placing", "moving in", "attacking");
+  private static final int LIMIT_NAMES_WIDTH = 170;
+  private static final String STACKING_HELP =
+      "At most so many units of a group of unit types, counted together, in one territory: when"
+          + " this nation places them, moves them in, or attacks with them. A limit holds in"
+          + " every territory; TripleA has none for one particular territory. What one"
+          + " territory's factories may place per turn is set in Territories (Units its factories"
+          + " place per turn), where this nation may place under More options, Placing units. One"
+          + " unit type's own limit for every nation is in Units.";
   private static final String ALL_UNITS = "All units";
   private static final int FIELD_WIDTH = 360;
-  private static final int LIST_HEIGHT = 220;
+  private static final String LIST = "list";
+  private static final String NATION = "nation";
   private static final Icon BLANK =
       new ImageIcon(new BufferedImage(48, 48, BufferedImage.TYPE_INT_ARGB));
 
   private final MapProject project;
   private final MapView map;
-  private final JPanel page = new JPanel(new BorderLayout(8, 0));
+  private final JPanel page = new JPanel(new CardLayout());
   private final SearchList list;
   private final Form inspector = new Form(280);
   // the first two sections, side by side when wide enough
@@ -170,14 +177,22 @@ final class NationsEditor implements Editor {
                 nation -> nation,
                 nation -> allianceLine(project.game(), nation),
                 this::choose)
-            .withAdd("Add", "Add a nation", this::addNation);
+            .withIcons(nation -> new MapLegend.Swatch(project.nationColor(nation)))
+            .withAdd("Add nation…", "Add a nation", this::addNation)
+            .withEmpty(
+                Panels.empty(
+                    Glyph.NATIONS,
+                    "No nations yet",
+                    "Nations are the sides that play. A game needs at least two.",
+                    "Add nation…",
+                    this::addNation));
     start.setBorder(BorderFactory.createEmptyBorder());
     start.setOpaque(false);
-    final JSplitPane stacked = Panels.stacked(list, SwingComponents.newJScrollPane(inspector));
-    // a game has a few nations: the inspector gets the room
-    stacked.setResizeWeight(0);
-    stacked.setDividerLocation(LIST_HEIGHT);
-    page.add(stacked, BorderLayout.CENTER);
+    // the fields start where the tool's title does: the panel has its margin already
+    inspector.setBorder(
+        BorderFactory.createEmptyBorder(Theme.GAP_XS, 0, Theme.GAP_L, Theme.GAP_L));
+    page.add(list, LIST);
+    page.add(newNationCard(), NATION);
     project.onChange(
         () -> {
           list.refresh();
@@ -189,6 +204,32 @@ final class NationsEditor implements Editor {
           showOnMap();
         });
     showInspector();
+  }
+
+  /** "← All nations" over the chosen nation's form; Esc goes back too. */
+  private JComponent newNationCard() {
+    final JButton back = new JButton("← All nations");
+    Theme.setTertiaryButtonStyle(back);
+    back.addActionListener(e -> showList());
+    final JPanel top = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+    // the link's text in line with the fields; its hover background reaches out to the left
+    top.setBorder(BorderFactory.createEmptyBorder(0, -back.getInsets().left, 0, 0));
+    top.add(back);
+    final JPanel card = new JPanel(new BorderLayout(0, Theme.GAP_XS));
+    card.add(top, BorderLayout.NORTH);
+    card.add(SwingComponents.newJScrollPane(inspector), BorderLayout.CENTER);
+    card.registerKeyboardAction(
+        e -> showList(),
+        KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0),
+        JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT);
+    return card;
+  }
+
+  /** Back to all nations, none chosen; a value typed and not yet taken is kept. */
+  private void showList() {
+    commit();
+    list.choose(null);
+    choose(null);
   }
 
   /** The nation's alliances for the list; "No alliance" when it plays alone, as in one of its name. */
@@ -269,7 +310,8 @@ final class NationsEditor implements Editor {
     }
   }
 
-  private void choose(final String nation) {
+  /** Opens the nation under "← All nations"; none shows the list. */
+  void choose(@Nullable final String nation) {
     selected = nation;
     showInspector();
     showOnMap();
@@ -291,22 +333,14 @@ final class NationsEditor implements Editor {
     inspector.clear();
     start.clear();
     final Game game = project.game();
-    final List<String> nations = MapXml.nations(game);
-    if (nations.isEmpty()) {
-      inspector.row(
-          Panels.empty(
-              Glyph.NATIONS,
-              "No nations yet",
-              "Nations are the sides that play. A game needs at least two.",
-              "Add nation",
-              this::addNation));
-      inspector.end();
+    if (selected == null || !MapXml.nations(game).contains(selected)) {
+      // none chosen, or the chosen one is gone, eg removed or by an undo
+      selected = null;
+      list.choose(null);
+      ((CardLayout) page.getLayout()).show(page, LIST);
       return;
     }
-    if (selected == null || !nations.contains(selected)) {
-      selected = nations.getFirst();
-      list.choose(selected);
-    }
+    ((CardLayout) page.getLayout()).show(page, NATION);
     final String nation = selected;
     showHeader(game, nation);
     start.columns();
@@ -315,7 +349,9 @@ final class NationsEditor implements Editor {
     start.end();
     inspector.row(start);
     showUnitPictures(nation);
-    inspector.more("nations.more", moreCount(game, nation), f -> showMore(f, game, nation));
+    showStackingLimits(game, nation);
+    inspector.fold(
+        "nations.more", "More options", moreCount(game, nation), f -> showMore(f, game, nation));
     inspector.remove("Remove nation", () -> removeNation(nation));
     inspector.end();
     // the header line wraps by its row's width, which the first layout only gives it
@@ -323,11 +359,16 @@ final class NationsEditor implements Editor {
   }
 
   /**
-   * How many options "More options" holds: all of the nation's playerAttachment and those of its
-   * rulesAttachment that it shows.
+   * How many options "More options" says are set: the nation's held units, those of its
+   * playerAttachment
+   * that Stacking limits does not show, and those of its rulesAttachment that it shows.
    */
   static int moreCount(final Game game, final String nation) {
-    return RulesXml.playerOptions(game, nation).size()
+    return (int) MapXml.heldUnits(game).stream().filter(h -> nation.equals(h.getPlayer())).count()
+        + (int)
+            RulesXml.playerOptions(game, nation).stream()
+                .filter(o -> !RulesXml.isGroupLimit(o))
+                .count()
         + (int)
             RulesXml.nationRules(game, nation).stream()
                 .filter(o -> NATION_RULES.stream().anyMatch(r -> AttachmentsXml.isOption(o, r)))
@@ -476,6 +517,11 @@ final class NationsEditor implements Editor {
     if (chosen) {
       project.setNationColor(nation, chooser.getColor());
     }
+  }
+
+  /** "+ label", as every add action. */
+  private static JButton newAdd(final String label, final Runnable action) {
+    return Theme.newAddButton(label, null, action);
   }
 
   private static JButton newLink(final String text, final Runnable action) {
@@ -807,8 +853,72 @@ final class NationsEditor implements Editor {
     f.field(
         "Helps pay its research",
         playerNations(nation, HELP_PAY_TECH_COST, "Helps pay its research"));
+    showHeldUnits(f, game, nation);
     showPlacingAndMoving(f, game, nation);
     showOtherRules(f, game, nation);
+  }
+
+  /** The units the nation has in its hand at the start, a row per entry of the game's list. */
+  private void showHeldUnits(final Form f, final Game game, final String nation) {
+    f.section(
+        "Units it holds at the start",
+        "Units that are not on the map yet: the nation has them in its hand, as if bought, and"
+            + " places them in its first Place step.");
+    final List<HeldUnits> all = MapXml.heldUnits(game);
+    for (int index = 0; index < all.size(); index++) {
+      if (nation.equals(all.get(index).getPlayer())) {
+        f.row(newHeldRow(index, all.get(index)));
+      }
+    }
+    final JPanel add = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+    add.setOpaque(false);
+    add.add(
+        newAdd(
+            "Add unit…",
+            () ->
+                Dialogs.pick(
+                        page,
+                        "Units " + nation + " holds at the start",
+                        "The unit type",
+                        MapXml.unitTypes(project.game()),
+                        unit -> unit,
+                        "Add")
+                    .ifPresent(
+                        unit ->
+                            project.edit(g -> MapXml.withHeldUnitsAdded(g, nation, unit, 1)))));
+    f.row(add);
+  }
+
+  private JComponent newHeldRow(final int index, final HeldUnits held) {
+    // a field of a form the game changed under, eg by undo, changes nothing
+    final IntFunction<UnaryOperator<Game>> to =
+        quantity ->
+            g ->
+                MapXml.heldUnits(g).stream()
+                        .skip(index)
+                        .findFirst()
+                        .filter(h -> Objects.equals(h.getPlayer(), held.getPlayer()))
+                        .filter(h -> Objects.equals(h.getUnitType(), held.getUnitType()))
+                        .isPresent()
+                    ? MapXml.withHeldUnitsAt(g, index, quantity)
+                    : g;
+    final JSpinner count =
+        Form.newNumber(held.getQuantity(), 1, 9999, quantity -> editHere(to.apply(quantity)));
+    count.setMaximumSize(count.getPreferredSize());
+    final JLabel unit = new JLabel(held.getUnitType());
+    unit.setLabelFor(count);
+    final JPanel line = new JPanel();
+    line.setLayout(new BoxLayout(line, BoxLayout.X_AXIS));
+    line.setOpaque(false);
+    line.add(count);
+    line.add(Box.createHorizontalStrut(Theme.GAP_S));
+    line.add(unit);
+    line.add(Box.createHorizontalStrut(Theme.GAP_XS));
+    line.add(
+        Theme.newIconButton(
+            "×", "Remove " + held.getUnitType(), () -> project.edit(to.apply(0))));
+    line.add(Box.createHorizontalGlue());
+    return line;
   }
 
   /** A number of the playerAttachment whose default is 1; 1 takes it out. */
@@ -1093,7 +1203,8 @@ final class NationsEditor implements Editor {
     final List<Option> options = RulesXml.playerOptions(game, nation);
     final List<JLabel> names = new ArrayList<>();
     for (int row = 0; row < options.size(); row++) {
-      if (!COMMON_RULES.contains(options.get(row).getName())) {
+      if (!COMMON_RULES.contains(options.get(row).getName())
+          && !RulesXml.isGroupLimit(options.get(row))) {
         f.row(newRuleRow(nation, row, options.get(row), names));
       }
     }
@@ -1106,7 +1217,7 @@ final class NationsEditor implements Editor {
     }
     final JPanel add = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
     add.setOpaque(false);
-    add.add(newLink("+ Add rule…", () -> addRule(nation)));
+    add.add(newAdd("Add rule…", () -> addRule(nation)));
     f.row(add);
   }
 
@@ -1185,16 +1296,171 @@ final class NationsEditor implements Editor {
 
   /** A unit limit as PlayerAttachment reads it, eg "2:owned:infantry:artillery"; "All units" is all. */
   static String unitLimit(final int count, final String counting, final List<String> units) {
-    return count
-        + ":"
-        + counting
-        + ":"
-        + (units.contains(ALL_UNITS) ? "all" : String.join(":", units));
+    return new RulesXml.StackingLimit(
+            count, counting, units.contains(ALL_UNITS) ? List.of("all") : units)
+        .written();
+  }
+
+  // ---- stacking limits: the playerAttachment's limits for groups of unit types
+
+  /**
+   * A row per limit of the nation: at most so many of these unit types per territory, when, and
+   * whose units count; "+ Add limit" asks for the unit types of a new one.
+   */
+  private void showStackingLimits(final Game game, final String nation) {
+    inspector.section("Stacking limits", STACKING_HELP);
+    inspector.note("A limit holds in every territory alike.");
+    final List<Option> options = RulesXml.playerOptions(game, nation);
+    for (int row = 0; row < options.size(); row++) {
+      if (RulesXml.isGroupLimit(options.get(row))) {
+        newLimitRows(nation, row, options.get(row)).forEach(inspector::row);
+      }
+    }
+    final JButton add =
+        newAdd(
+            "Add limit",
+            () ->
+                chooseLimitUnits(List.of())
+                    .ifPresent(
+                        units ->
+                            project.edit(
+                                g ->
+                                    RulesXml.withPlayerOptionAdded(
+                                        g,
+                                        nation,
+                                        RulesXml.STACKING_LIMITS.getFirst(),
+                                        unitLimit(
+                                            1, RulesXml.STACKING_COUNTS.getFirst(), units)))));
+    add.setToolTipText("A limit for unit types you choose, eg at most 1 factory or 3 planes");
+    final JPanel line = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+    line.setOpaque(false);
+    line.add(add);
+    inspector.row(line);
+  }
+
+  /** The unit types of a limit, "All units" for all; empty when cancelled or none is ticked. */
+  private Optional<List<String>> chooseLimitUnits(final List<String> chosen) {
+    return Dialogs.pickMany(
+            page,
+            "Units the limit counts together",
+            Stream.concat(Stream.of(ALL_UNITS), MapXml.unitTypes(project.game()).stream())
+                .toList(),
+            chosen,
+            "Choose")
+        .filter(picked -> !picked.isEmpty());
+  }
+
+  /** "At most [n] when [placing]", "of [units] Choose…" and "counting [its own units] ×". */
+  private List<JComponent> newLimitRows(final String nation, final int row, final Option option) {
+    final RulesXml.StackingLimit limit = RulesXml.StackingLimit.read(option).orElseThrow();
+    final String name = AttachmentsXml.optionName(option.getName());
+    final boolean all = limit.units().size() == 1 && "all".equalsIgnoreCase(limit.units().getFirst());
+    final List<String> units = all ? List.of(ALL_UNITS) : limit.units();
+    // a row of a form the game changed under, eg by undo, changes nothing
+    final BiFunction<String, RulesXml.StackingLimit, UnaryOperator<Game>> change =
+        (newName, changed) ->
+            g -> {
+              final List<Option> now = RulesXml.playerOptions(g, nation);
+              return row < now.size() && now.get(row).equals(option)
+                  ? RulesXml.withPlayerOptionAt(
+                      g,
+                      nation,
+                      row,
+                      // the name as the map writes it, while it stays the same limit
+                      newName.equals(name) ? option.getName() : newName,
+                      changed.written())
+                  : g;
+            };
+    final JSpinner most =
+        Form.newNumber(
+            limit.most(),
+            0,
+            9999,
+            value ->
+                project.edit(
+                    change.apply(
+                        name, new RulesXml.StackingLimit(value, limit.counting(), limit.units()))));
+    most.setPreferredSize(new Dimension(64, most.getPreferredSize().height));
+    most.setToolTipText("In the game's XML: " + option.getName() + " = " + TriggerXml.joined(option));
+    most.getAccessibleContext().setAccessibleName("At most");
+    final JLabel names = new JLabel(shortList(units));
+    names.setToolTipText(String.join(", ", units));
+    final JButton choose =
+        newLink(
+            "Choose…",
+            () ->
+                chooseLimitUnits(units)
+                    .ifPresent(
+                        picked ->
+                            project.edit(
+                                change.apply(
+                                    name,
+                                    new RulesXml.StackingLimit(
+                                        limit.most(),
+                                        limit.counting(),
+                                        picked.contains(ALL_UNITS) ? List.of("all") : picked)))));
+    final JComboBox<String> when = new JComboBox<>(LIMIT_WHEN.toArray(String[]::new));
+    when.setSelectedIndex(RulesXml.STACKING_LIMITS.indexOf(name));
+    when.getAccessibleContext().setAccessibleName("When");
+    when.addActionListener(
+        e ->
+            project.edit(
+                change.apply(RulesXml.STACKING_LIMITS.get(when.getSelectedIndex()), limit)));
+    final JComboBox<String> counting = new JComboBox<>(COUNTING_LABELS.toArray(String[]::new));
+    counting.setSelectedIndex(RulesXml.STACKING_COUNTS.indexOf(limit.counting()));
+    counting.getAccessibleContext().setAccessibleName("Counting");
+    counting.addActionListener(
+        e ->
+            project.edit(
+                change.apply(
+                    name,
+                    new RulesXml.StackingLimit(
+                        limit.most(),
+                        RulesXml.STACKING_COUNTS.get(counting.getSelectedIndex()),
+                        limit.units()))));
+    final JButton remove =
+        Theme.newIconButton(
+            "×",
+            "Remove this limit",
+            () ->
+                project.edit(
+                    g -> {
+                      final List<Option> now = RulesXml.playerOptions(g, nation);
+                      return row < now.size() && now.get(row).equals(option)
+                          ? RulesXml.withoutPlayerOptionAt(g, nation, row)
+                          : g;
+                    }));
+    // a long group is cut; the tool tip has it whole
+    names.setPreferredSize(
+        new Dimension(
+            Math.min(names.getPreferredSize().width, LIMIT_NAMES_WIDTH),
+            names.getPreferredSize().height));
+    // three short lines: the inspector beside the map is narrow
+    final JPanel last = limitLine(new JLabel("counting"), counting, remove);
+    last.setBorder(BorderFactory.createEmptyBorder(0, 0, Theme.GAP_S, 0));
+    return List.of(
+        limitLine(new JLabel("At most"), most, new JLabel("when"), when),
+        limitLine(new JLabel("of"), names, choose),
+        last);
+  }
+
+  private static JPanel limitLine(final JComponent... parts) {
+    final JPanel line = new JPanel();
+    line.setLayout(new BoxLayout(line, BoxLayout.X_AXIS));
+    line.setOpaque(false);
+    for (final JComponent part : parts) {
+      if (line.getComponentCount() > 0) {
+        line.add(Box.createHorizontalStrut(Theme.GAP_S));
+      }
+      part.setMaximumSize(part.getPreferredSize());
+      line.add(part);
+    }
+    line.add(Box.createHorizontalGlue());
+    return line;
   }
 
   /** How a rule's value is asked for. */
   private enum RuleForm {
-    UNIT_LIMIT,
     UNITS,
     NATIONS,
     NUMBER,
@@ -1202,7 +1468,6 @@ final class NationsEditor implements Editor {
 
     static RuleForm of(final String rule) {
       return switch (rule) {
-        case "placementLimit", "movementLimit", "attackingLimit" -> UNIT_LIMIT;
         case "suicideAttackTargets" -> UNITS;
         case "captureUnitOnEnteringBy" -> NATIONS;
         case "vps", "captureVps" -> NUMBER;
@@ -1222,8 +1487,6 @@ final class NationsEditor implements Editor {
     private final String nation;
     private @Nullable RuleForm form;
     private final JSpinner count = new JSpinner(new SpinnerNumberModel(1, 0, 999, 1));
-    private final JComboBox<String> counting =
-        new JComboBox<>(COUNTING_LABELS.toArray(String[]::new));
     private final JTextField text = new JTextField(24);
     private List<String> names = List.of();
 
@@ -1237,13 +1500,14 @@ final class NationsEditor implements Editor {
       Stream.concat(
               FIRST_RULES.stream(),
               AttachmentsXml.knownOptions(game, "PlayerAttachment").stream()
-                  .filter(o -> !COMMON_RULES.contains(o) && !FIRST_RULES.contains(o)))
+                  .filter(o -> !COMMON_RULES.contains(o) && !FIRST_RULES.contains(o))
+                  // these have their own section, Stacking limits
+                  .filter(o -> !RulesXml.STACKING_LIMITS.contains(o)))
           .forEach(rule::addItem);
       rule.setRenderer(new RuleRenderer());
       count.setEditor(new JSpinner.NumberEditor(count, "#"));
       text.putClientProperty(FlatClientProperties.PLACEHOLDER_TEXT, "Value as TripleA reads it");
       count.addChangeListener(e -> showWrites());
-      counting.addActionListener(e -> showWrites());
       OnTyping.attach(text, this::showWrites);
       OnTyping.attach((JTextField) rule.getEditor().getEditorComponent(), this::ruleChanged);
       for (final JComponent part : List.of(new JLabel("Rule"), rule, plain, parts, writes)) {
@@ -1265,14 +1529,6 @@ final class NationsEditor implements Editor {
         return Optional.empty();
       }
       return switch (form) {
-        case UNIT_LIMIT ->
-            names.isEmpty()
-                ? Optional.empty()
-                : Optional.of(
-                    unitLimit(
-                        (Integer) count.getValue(),
-                        COUNTING.get(counting.getSelectedIndex()),
-                        names));
         case UNITS, NATIONS ->
             names.isEmpty() ? Optional.empty() : Optional.of(String.join(":", names));
         case NUMBER -> Optional.of(String.valueOf(count.getValue()));
@@ -1295,10 +1551,6 @@ final class NationsEditor implements Editor {
     private void showParts() {
       parts.removeAll();
       switch (Objects.requireNonNull(form)) {
-        case UNIT_LIMIT -> {
-          parts.add(line(new JLabel("At most"), count, new JLabel("counting"), counting));
-          parts.add(namesLine("of", "Choose units…", unitChoices()));
-        }
         case UNITS -> parts.add(namesLine("Units", "Choose units…", MapXml.unitTypes(game)));
         case NATIONS ->
             parts.add(
@@ -1312,10 +1564,6 @@ final class NationsEditor implements Editor {
       parts.revalidate();
       parts.repaint();
       fitWindow();
-    }
-
-    private List<String> unitChoices() {
-      return Stream.concat(Stream.of(ALL_UNITS), MapXml.unitTypes(game).stream()).toList();
     }
 
     private JComponent namesLine(final String label, final String verb, final List<String> all) {

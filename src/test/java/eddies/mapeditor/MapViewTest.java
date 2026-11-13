@@ -17,8 +17,10 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import javax.swing.AbstractButton;
+import javax.swing.Icon;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
@@ -266,10 +268,49 @@ final class MapViewTest {
             "Units",
             "Neighbours",
             "Select",
-            "▾",
-            "Draw borders",
-            "Places ▾");
+            "Paint ▾",
+            "Places ▾",
+            "Draw borders");
     assertThat(inLegend).as("the legend has only keys").containsExactly(false);
+  }
+
+  @DisplayName("Every icon of the toolbar means one thing: no glyph shows twice")
+  @Test
+  void toolbarGlyphsAreUnique() throws Exception {
+    // given
+    final List<Icon> icons = new ArrayList<>();
+
+    // when: with room, where each view has its icon, and short of it, where the tools have theirs
+    SwingUtilities.invokeAndWait(
+        () ->
+            inEditorsTheme(
+                () -> {
+                  for (final int width : List.of(1400, 470)) {
+                    toolbarButtons(givenToolbar(width)).stream()
+                        .map(AbstractButton::getIcon)
+                        .filter(MakerIcon.class::isInstance)
+                        .forEach(icons::add);
+                  }
+                }));
+
+    // then: the Game view's die is on the dropdown too, so each glyph counts once
+    final List<Icon> glyphs = icons.stream().distinct().toList();
+    assertThat(glyphs)
+        .as("the views, Select, the brush, the pin, the pencil, Fit and the picture")
+        .hasSize(MapMode.values().length + 6);
+    assertThat(glyphs.stream().map(MapViewTest::painted))
+        .as("and no two are drawn alike, eg the Game view is not the picture")
+        .doesNotHaveDuplicates();
+  }
+
+  private static List<Integer> painted(final Icon icon) {
+    final BufferedImage image =
+        new BufferedImage(icon.getIconWidth(), icon.getIconHeight(), BufferedImage.TYPE_INT_ARGB);
+    icon.paintIcon(null, image.getGraphics(), 0, 0);
+    return IntStream.range(0, image.getWidth() * image.getHeight())
+        .map(i -> image.getRGB(i % image.getWidth(), i / image.getWidth()))
+        .boxed()
+        .toList();
   }
 
   @DisplayName("The map starts right under the toolbar's line, no gap between")
@@ -294,7 +335,7 @@ final class MapViewTest {
     assertThat(ys.get(1)).as("the map's top at the toolbar's bottom").isEqualTo(ys.get(0));
   }
 
-  @DisplayName("Short of room only the chosen view keeps its name, and nothing is cut")
+  @DisplayName("Short of room the views are one dropdown, the tools keep their names, none is cut")
   @Test
   void narrowToolbarCutsNothing() throws Exception {
     // given
@@ -319,11 +360,11 @@ final class MapViewTest {
         System.getProperty("os.name").startsWith("Windows"),
         "the width is the one of Windows' fonts");
     assertThat(toolbar)
-        .as("the chosen view by name, the others as icons")
-        .startsWith("Game", "", "", "", "", "");
+        .as("one button for the views, so Select, Paint, Places and Draw borders stay named")
+        .startsWith("View: Game ▾", "Select", "Paint ▾", "Places ▾", "Draw borders");
   }
 
-  @DisplayName("Shorter of room views and the tool's modes show only their glyphs, nothing is cut")
+  @DisplayName("Shorter of room the tool's modes show only their glyphs too, nothing is cut")
   @Test
   void shortToolbarShowsGlyphs() throws Exception {
     // given
@@ -336,8 +377,8 @@ final class MapViewTest {
         () ->
             inEditorsTheme(
                 () -> {
-                  // the map's width in a 1024 px window
-                  final MapView map = givenToolbar(615);
+                  // narrower than any window lets the map be beside a panel, eg a dragged divider
+                  final MapView map = givenToolbar(470);
                   toolbar.addAll(toolbarTexts(map));
                   final AbstractButton button = toolbarButton(map, "Select");
                   select.add(button.getIcon());
@@ -347,8 +388,8 @@ final class MapViewTest {
 
     // then
     assertThat(toolbar)
-        .as("glyphs only, Paint and Places with their arrows")
-        .startsWith("", "", "", "", "", "", "", "▾", "", "▾");
+        .as("the views' dropdown, then glyphs only, Paint and Places with their arrows")
+        .startsWith("View: Game ▾", "", "▾", "▾", "");
     assertThat(select)
         .as("Select as its glyph, named in its tool tip")
         .containsExactly(

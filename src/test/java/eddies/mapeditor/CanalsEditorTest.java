@@ -157,7 +157,7 @@ final class CanalsEditorTest {
     assertThat(names.get(1)).as("one undo takes it back").contains(SUEZ);
   }
 
-  @DisplayName("A map without canals shows the empty state with its one primary New canal")
+  @DisplayName("A map without canals shows the empty state with its one primary Add canal")
   @Test
   void noCanalsShowsTheEmptyState() throws Exception {
     final MapProject project = MapProject.newEmpty();
@@ -175,6 +175,6 @@ final class CanalsEditorTest {
               .forEach(b -> primaries.add(b.getText()));
         });
 
-    assertThat(primaries).as("one main action").containsExactly("New canal…");
+    assertThat(primaries).as("one main action").containsExactly("Add canal…");
   }
 }

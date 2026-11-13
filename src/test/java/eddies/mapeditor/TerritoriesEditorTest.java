@@ -12,6 +12,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -19,6 +20,7 @@ import java.util.Properties;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
 import javax.swing.AbstractButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JList;
@@ -36,6 +38,7 @@ import org.triplea.map.data.elements.Game;
 final class TerritoriesEditorTest {
   private static final String NORTH = "red north 1";
   private static final String SEA = "sea zone 1";
+  private static final String BADGE = "Edits the picture";
   @TempDir Path folder;
 
   private MapProject givenMinimap() throws Exception {
@@ -90,6 +93,36 @@ final class TerritoriesEditorTest {
         .containsExactly(after[0]);
   }
 
+  @DisplayName("Draw borders is an edit mode whose badge says it edits the map's picture")
+  @Test
+  void drawBordersSaysItEditsThePicture() throws Exception {
+    // given
+    final MapProject project = givenPictureMap();
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenMap(project);
+          final TerritoriesEditor editor = new TerritoriesEditor(project, map);
+          editor.showing();
+          seen.add(all(map).anyMatch(c -> c instanceof JLabel l && BADGE.equals(l.getText())));
+          final AbstractButton draw =
+              find(map, AbstractButton.class, b -> "Draw borders".equals(b.getText()));
+          seen.add(draw.getIcon());
+          seen.add(draw.getToolTipText().contains("changes the map's picture"));
+          draw.doClick();
+          seen.add(all(map).anyMatch(c -> c instanceof JLabel l && BADGE.equals(l.getText())));
+        });
+
+    // then
+    assertThat(seen)
+        .as("no badge before; the pencil beside the name and the warning in its tool tip; the"
+            + " badge once drawing")
+        .containsExactly(
+            false, new MakerIcon(MakerIcon.Glyph.PENCIL, Theme.MAP_TOOL_ICON), true, true);
+  }
+
   @DisplayName("Draw borders' Line brush, chosen in the banner, stays chosen when drawing again")
   @Test
   void lineBrushIsKept() throws Exception {
@@ -120,7 +153,7 @@ final class TerritoriesEditorTest {
     assertThat(seen.get(1)).as("its toggle on").isEqualTo(true);
     assertThat(seen.get(2))
         .as("freehand again")
-        .isEqualTo("Drag to draw a border line.");
+        .isEqualTo("Drag a border line.");
   }
 
   @DisplayName("A click on the chosen brush keeps it, and the banner with a half-set line")
@@ -158,6 +191,30 @@ final class TerritoriesEditorTest {
         b -> b.getToolTipText() != null && b.getToolTipText().startsWith(tip) && shows(b));
   }
 
+  @DisplayName("Show its name on the map, unticked, lists the territory as not drawn, one step")
+  @Test
+  void hidesNameOnMap() throws Exception {
+    final MapProject project = givenMinimap();
+    final TerritoriesEditor editor = new TerritoriesEditor(project, givenMap(project));
+    editor.show(NORTH);
+
+    find(editor.page(), JCheckBox.class, b -> "Show its name on the map".equals(b.getText()))
+        .doClick();
+
+    assertThat(project.getFiles().listed(MapFiles.HIDDEN_NAMES))
+        .as("the game draws no name on it")
+        .containsExactly(NORTH);
+    assertThat(
+            find(editor.page(), JCheckBox.class, b -> "Show its name on the map".equals(b.getText()))
+                .isSelected())
+        .as("the inspector shows it")
+        .isFalse();
+    project.undo();
+    assertThat(project.getFiles().properties().containsKey(MapFiles.HIDDEN_NAMES))
+        .as("one undo, and no empty key")
+        .isFalse();
+  }
+
   /** The editor showing red north 1 with its more options open. */
   private static TerritoriesEditor givenMoreOptions(final MapProject project) {
     final TerritoriesEditor editor = new TerritoriesEditor(project, givenMap(project));
@@ -192,8 +249,9 @@ final class TerritoriesEditorTest {
         .orElseThrow();
   }
 
+  /** Everything in it, also what a menu in it opens. */
   private static Stream<Component> all(final Container in) {
-    return Stream.of(in.getComponents())
+    return Stream.of(in instanceof JMenu menu ? menu.getMenuComponents() : in.getComponents())
         .flatMap(
             c ->
                 c instanceof Container inner
@@ -210,8 +268,118 @@ final class TerritoriesEditorTest {
     return true;
   }
 
-  private static JMenuItem menuItem(final TerritoriesEditor editor, final String text) {
-    return find(editor.paintMenu(), JMenuItem.class, i -> text.equals(i.getText()));
+  /** The Paint menu's entry of the text, in a menu of it too; a texture's tile by its name. */
+  private static AbstractButton menuItem(final TerritoriesEditor editor, final String text) {
+    return find(
+        editor.paintMenu(),
+        AbstractButton.class,
+        i -> text.equals(i.getText()) || text.equals(i.getToolTipText()));
+  }
+
+  @DisplayName("The Paint menu is short: a menu per kind of brush, Capital at the top level")
+  @Test
+  void paintMenuCascades() throws Exception {
+    // given
+    final MapProject project = givenMinimap();
+    final List<String> top = new ArrayList<>();
+    final Map<String, List<String>> inside = new LinkedHashMap<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final TerritoriesEditor editor = new TerritoriesEditor(project, givenMap(project));
+          for (final Component c : editor.paintMenu().getComponents()) {
+            final JMenuItem item = (JMenuItem) c;
+            top.add(item.getText() + (item instanceof JMenu ? " ›" : ""));
+            if (item instanceof JMenu menu) {
+              inside.put(
+                  menu.getText(),
+                  Stream.of(menu.getMenuComponents())
+                      .filter(JMenuItem.class::isInstance)
+                      .map(i -> ((JMenuItem) i).getText())
+                      // the textures' tiles, listed below, have no text
+                      .filter(text -> !text.isEmpty())
+                      .toList());
+            }
+          }
+          inside.put(
+              "tiles",
+              all(editor.paintMenu())
+                  .filter(c -> c instanceof AbstractButton b && b.getIcon() != null)
+                  .filter(c -> ((AbstractButton) c).getIcon().getIconWidth() == 48)
+                  .map(c -> ((AbstractButton) c).getToolTipText())
+                  .toList());
+        });
+
+    // then
+    assertThat(top)
+        .as("seven rows, so the menu fits a small window")
+        .containsExactly(
+            "Owner ›",
+            "Capital",
+            "PUs per turn ›",
+            "Units ›",
+            "Passable ›",
+            "Terrain effects ›",
+            "Textures ›");
+    assertThat(inside.get("Owner"))
+        .as("the nations, then No owner")
+        .containsExactly("Russians", "Italians", "No owner");
+    assertThat(inside.get("PUs per turn"))
+        .as("the usual values, then any other")
+        .containsExactly(
+            "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "12", "15", "20", "Other…");
+    assertThat(inside.get("Units"))
+        .as("copy and clear")
+        .containsExactly("Copy units of the chosen one", "Clear units");
+    assertThat(inside.get("Passable"))
+        .as("both ways")
+        .containsExactly("Impassable", "Passable");
+    assertThat(inside.get("Textures"))
+        .as("below the tiles")
+        .containsExactly("No texture", "Import texture…", "Find textures in the map…");
+    assertThat(inside.get("tiles"))
+        .as("a 48 px tile per texture, named in its tool tip")
+        .containsExactlyElementsOf(Textures.PREMADE);
+  }
+
+  @DisplayName("A PU brush paints the value typed into the banner's field, each stroke one step")
+  @Test
+  void puBrushPaintsTheBannersValue() throws Exception {
+    // given
+    final MapProject project = givenMinimap();
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenMap(project);
+          final TerritoriesEditor editor = new TerritoriesEditor(project, map);
+          editor.showing();
+          menuItem(editor, "7").doClick();
+          seen.add(map.bannerText().orElseThrow());
+          final JSpinner value = find(map, JSpinner.class, s -> s.getValue().equals(7));
+          editor.paintStroke(List.of(NORTH));
+          seen.add(MapXml.production(project.game(), NORTH));
+          // typed, without Enter: a press on the map takes no focus from the field
+          ((JSpinner.DefaultEditor) value.getEditor()).getTextField().setText("13");
+          final Game before = project.game();
+          editor.paintStroke(List.of(NORTH, SEA));
+          seen.add(MapXml.production(project.game(), NORTH));
+          seen.add(MapXml.production(project.game(), SEA));
+          project.undo();
+          seen.add(project.game() == before);
+        });
+
+    // then
+    assertThat(seen)
+        .as("the menu's 7, then the typed 13 on the whole stroke, which one undo takes back")
+        .containsExactly(
+            "Painting PUs per turn: click or drag across territories to give them",
+            7,
+            13,
+            13,
+            true);
   }
 
   @DisplayName("The inspector's link, title and fields start where the tool's title does")
@@ -346,7 +514,7 @@ final class TerritoriesEditorTest {
                     + " zones stay as they are."));
   }
 
-  @DisplayName("Paint is a brush icon with ▾, found by its name, also with a brush chosen")
+  @DisplayName("Paint is a brush with its name and ▾, found by its name, also with a brush chosen")
   @Test
   void paintIsAnIcon() throws Exception {
     // given
@@ -369,7 +537,7 @@ final class TerritoriesEditorTest {
 
     // then
     final AbstractButton button = paint.getFirst();
-    assertThat(button.getText()).as("only the arrow beside the icon").isEqualTo("▾");
+    assertThat(button.getText()).as("its name and the arrow beside the icon").isEqualTo("Paint ▾");
     assertThat(button.getIcon())
         .as("a brush")
         .isEqualTo(new MakerIcon(MakerIcon.Glyph.BRUSH, Theme.MAP_TOOL_ICON));
@@ -822,7 +990,7 @@ final class TerritoriesEditorTest {
     // then
     assertThat(seen)
         .as("the circle's banner")
-        .containsExactly("Drag corner to corner for a circle.");
+        .containsExactly("Drag a circle, corner to corner.");
     assertThat(after.getRGB(240, 165) & 0xFFFFFF).as("the ring in the lines' color").isZero();
     assertThat(after.getRGB(300, 165) & 0xFFFFFF).as("its inside as it was").isNotZero();
     assertThat(areasAfter).as("Make territories finds the inside").isEqualTo(areasBefore + 1);

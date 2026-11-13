@@ -21,6 +21,7 @@ import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -114,7 +115,7 @@ final class TriggerAssistant {
           + " own moment. A condition may be shared with other triggers: a change then changes"
           + " them too. A use is taken at the end of a round in which it fired; 0 uses: it"
           + " fires only when another trigger fires it.";
-  /** The effects of the "Add what happens" menu by group; the others go under Advanced. */
+  /** The effects of the "Add effect" menu by group; the others go under Advanced. */
   private static final List<Map.Entry<String, List<String>>> EFFECT_GROUPS = List.of(
       Map.entry("Money & units", List.of("resource", "purchase", "placement", "removeUnits")),
       Map.entry("Land & politics", List.of("changeOwnership", RELATIONSHIP_CHANGE)),
@@ -236,7 +237,7 @@ final class TriggerAssistant {
   private final List<ConditionBox> boxes = new ArrayList<>();
   private final JButton addCheck =
       Theme.newAddButton("Add a check", "Adds something that must be true", this::addCheck);
-  private final JButton addEffect = Theme.newAddButton("Add what happens",
+  private final JButton addEffect = Theme.newAddButton("Add effect",
       "Adds something the trigger does", this::showEffectMenu);
   // the condition boxes and the names kept as they are, in the trigger's order
   private final JPanel conditionsPanel = column();
@@ -1118,6 +1119,31 @@ final class TriggerAssistant {
     return changed;
   }
 
+  /** "Japanese hold territories (new)" for a new conditionAttachment_Japanese_hold_territories. */
+  private static String shownName(final ConditionBox box) {
+    return TriggersEditor.conditionTitle(box.name) + (box.existing.isPresent() ? "" : " (new)");
+  }
+
+  /** The problem with its conditions' names in plain words; the tool tip keeps them as they are. */
+  private String plain(final String problem) {
+    String plain = problem;
+    // the longest name first: a name that starts another must not cut into it
+    for (final ConditionBox box :
+        boxes.stream()
+            .filter(b -> !b.name.isEmpty())
+            .sorted(Comparator.comparingInt((ConditionBox b) -> b.name.length()).reversed())
+            .toList()) {
+      plain = plain.replace(box.name, shownName(box));
+    }
+    return plain;
+  }
+
+  /** What the trigger does, a message by its text, also one typed here and not saved yet. */
+  private Clauses clauses(final Trigger trigger) {
+    return TriggerXml.clauses(
+        game, trigger, TriggerXml.names(game, withMessages(project.texts())));
+  }
+
   /** Checks again once typing pauses. */
   private void typed() {
     if (!filling) {
@@ -1155,7 +1181,7 @@ final class TriggerAssistant {
     final Theme.Status worst = ahead ? Theme.Status.TODO
         : errors.contains(firstProblem) ? Theme.Status.PROBLEM : Theme.Status.WARNING;
     footerProblem.setText(firstProblem.isEmpty() ? ""
-        : ahead ? "Next: " + nextHint(firstProblem) : worst.mark() + " " + firstProblem);
+        : ahead ? "Next: " + nextHint(firstProblem) : worst.mark() + " " + plain(firstProblem));
     footerProblem.setForeground(worst.color());
     footerProblem.setVisible(!firstProblem.isEmpty());
     footerProblem.setToolTipText(firstProblem.isEmpty() ? null
@@ -1164,7 +1190,7 @@ final class TriggerAssistant {
     verb.setEnabled(errors.isEmpty());
     // a box adds checks itself; without one this makes the first
     addCheck.setVisible(boxes.isEmpty());
-    showRail(TriggerXml.clauses(game, trigger), errors, warnings);
+    showRail(clauses(trigger), errors, warnings);
     if (shown == Step.REVIEW) {
       showReview(trigger, errors, warnings);
     }
@@ -1229,10 +1255,10 @@ final class TriggerAssistant {
   private void showReview(final Trigger trigger, final List<String> errors,
       final List<String> warnings) {
     reviewCard.removeAll();
-    reviewCard.add(clauseCard(TriggerXml.clauses(game, trigger), 5), BorderLayout.CENTER);
+    reviewCard.add(clauseCard(clauses(trigger), 5), BorderLayout.CENTER);
     reviewProblems.removeAll();
-    errors.forEach(p -> reviewProblems.add(problemLabel(Theme.Status.PROBLEM, p)));
-    warnings.forEach(p -> reviewProblems.add(problemLabel(Theme.Status.WARNING, p)));
+    errors.forEach(p -> reviewProblems.add(problemLabel(Theme.Status.PROBLEM, plain(p))));
+    warnings.forEach(p -> reviewProblems.add(problemLabel(Theme.Status.WARNING, plain(p))));
     if (errors.isEmpty() && warnings.isEmpty()) {
       reviewProblems.add(problemLabel(Theme.Status.DONE, "No problems."));
     }
@@ -1764,8 +1790,10 @@ final class TriggerAssistant {
                   TriggerXml.joined(o)))));
       final JPanel head = new JPanel(new BorderLayout(6, 0));
       head.setOpaque(false);
-      head.add(Theme.newSecondaryLabel(existing.isPresent() ? name : name + " (new)"),
-          BorderLayout.CENTER);
+      // in plain words; the name the game's XML has is the tool tip
+      final JLabel title = Theme.newSecondaryLabel(shownName(this));
+      title.setToolTipText(name);
+      head.add(title, BorderLayout.CENTER);
       head.add(removeButton("condition", this), BorderLayout.EAST);
       final JPanel body = grid();
       addRow(body, "Of nation", owner);
@@ -1857,6 +1885,9 @@ final class TriggerAssistant {
     final List<String> effects = clauses.effects();
     final JTextArea then = wrapping(effects.isEmpty() ? "nothing yet"
         : String.join(", ", effects.subList(0, Math.min(maxEffects, effects.size()))));
+    if (!clauses.thenIds().isEmpty()) {
+      then.setToolTipText("In the map's files: " + clauses.thenIds());
+    }
     if (effects.size() > maxEffects) {
       final JButton more = new JButton("and " + (effects.size() - maxEffects) + " more");
       Theme.setTertiaryButtonStyle(more);
@@ -1875,7 +1906,11 @@ final class TriggerAssistant {
       addClause(card, "Then", then);
     }
     if (!clauses.when().isEmpty()) {
-      addClause(card, "When", wrapping(clauses.when()));
+      final JTextArea when = wrapping(clauses.when());
+      if (!clauses.whenSteps().isEmpty()) {
+        when.setToolTipText("In the game's XML: " + clauses.whenSteps());
+      }
+      addClause(card, "When", when);
     }
     addClause(card, "Often", wrapping(clauses.often()));
     return card;

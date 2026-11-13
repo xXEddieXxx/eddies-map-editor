@@ -128,6 +128,19 @@ class RulesXml {
     return withSteps(game, steps);
   }
 
+  /**
+   * The game with count steps from the index moved together, eg a nation's whole turn.
+   *
+   * @param to where the first of them goes, as an index among the other steps
+   */
+  static Game withStepsMoved(final Game game, final int from, final int count, final int to) {
+    final List<Step> steps = new ArrayList<>(steps(game));
+    final List<Step> moved = List.copyOf(steps.subList(from, from + count));
+    steps.subList(from, from + count).clear();
+    steps.addAll(to, moved);
+    return withSteps(game, steps);
+  }
+
   /** The game with the step at the index replaced, eg by one with another nation. */
   static Game withStep(final Game game, final int index, final Step step) {
     final List<Step> steps = new ArrayList<>(steps(game));
@@ -515,6 +528,66 @@ class RulesXml {
     return withPlayerAttachmentAt(game, nation, row, a -> AttachmentsXml.withoutOption(a, row));
   }
 
+  // ---- stacking limits, of a unit type or of a nation's group of unit types
+
+  /** TripleA's limits of units per territory: when placing, when moving in, when attacking. */
+  static final List<String> STACKING_LIMITS =
+      List.of("placementLimit", "movementLimit", "attackingLimit");
+
+  /** Whose units a limit counts, as TripleA reads it: the mover's, its allies' too, or all. */
+  static final List<String> STACKING_COUNTS = List.of("owned", "allied", "total");
+
+  /**
+   * At most so many units in a territory, as TripleA reads it (UnitAttachment.parseStackingLimit,
+   * PlayerAttachment.parseUnitLimit): "count:owned|allied|total" for a unit type, followed by
+   * ":unit:unit…" or ":all" for a nation's group of unit types, which count together.
+   *
+   * @param units the group's unit types, or "all"; none for a unit type's own limit
+   */
+  record StackingLimit(int most, String counting, List<String> units) {
+
+    /** The limit the option gives, its count and value joined; empty when TripleA would not read it. */
+    static Optional<StackingLimit> read(final Option option) {
+      final String[] parts = TriggerXml.joined(option).strip().split(":");
+      if (parts.length < 2 || !STACKING_COUNTS.contains(parts[1])) {
+        return Optional.empty();
+      }
+      try {
+        final int most = Integer.parseInt(parts[0]);
+        return most < 0
+            ? Optional.empty()
+            : Optional.of(
+                new StackingLimit(
+                    most, parts[1], List.of(parts).subList(2, parts.length)));
+      } catch (final NumberFormatException e) {
+        return Optional.empty();
+      }
+    }
+
+    String written() {
+      return most + ":" + counting + (units.isEmpty() ? "" : ":" + String.join(":", units));
+    }
+  }
+
+  /** Whether the nation's option is a limit for a group of unit types that reads. */
+  static boolean isGroupLimit(final Option option) {
+    return STACKING_LIMITS.stream().anyMatch(name -> AttachmentsXml.isOption(option, name))
+        && StackingLimit.read(option).filter(limit -> !limit.units().isEmpty()).isPresent();
+  }
+
+  /**
+   * The game with the nation's option at this row of {@link #playerOptions} replaced by this name
+   * and value, eg a placementLimit made a movementLimit; a count it had goes into the value.
+   */
+  static Game withPlayerOptionAt(
+      final Game game, final String nation, final int row, final String name, final String value) {
+    return withPlayerAttachmentAt(
+        game,
+        nation,
+        row,
+        a -> AttachmentsXml.withOption(a, row, Option.builder().name(name).value(value).build()));
+  }
+
   // the game unchanged when the nation has no option at the row
   private static Game withPlayerAttachmentAt(
       final Game game,
@@ -704,6 +777,30 @@ class RulesXml {
                   return changed;
                 })
             .toList());
+  }
+
+  /**
+   * What the game adds to its rounds' numbers, gamePlay's offset: with 65 the first round is round
+   * 66, in the history and for conditions that name rounds (GameSequence.getRound).
+   */
+  static int roundOffset(final Game game) {
+    return Optional.ofNullable(game.getGamePlay())
+        .map(GamePlay::getOffset)
+        .map(GamePlay.Offset::getRound)
+        .orElse(0);
+  }
+
+  /** The game with the offset; the same game when it counts its rounds so already. */
+  static Game withRoundOffset(final Game game, final int offset) {
+    if (offset == roundOffset(game)) {
+      return game;
+    }
+    final GamePlay gamePlay =
+        Optional.ofNullable(game.getGamePlay()).orElseGet(() -> GamePlay.builder().build());
+    return game.toBuilder()
+        .gamePlay(
+            gamePlay.toBuilder().offset(GamePlay.Offset.builder().round(offset).build()).build())
+        .build();
   }
 
   private static Game withSteps(final Game game, final List<Step> steps) {

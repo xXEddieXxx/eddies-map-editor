@@ -80,6 +80,90 @@ final class TriggersEditorTest {
     });
   }
 
+  /** G40 with a German trigger last that shows the message Germans_Win before their combat move. */
+  private static Game givenMessageTrigger(final Game game) {
+    final List<Attachment> attachments = new ArrayList<>(AttachmentsXml.attachments(game));
+    attachments.add(
+        TriggerXml.withOptions(
+            TriggerXml.newTrigger("triggerAttachment_Germans_Cheer", "Germans").attachment(),
+            List.of(
+                TriggerXml.option("notification", "Germans_Win"),
+                TriggerXml.option("when", "before:germansCombatMove"))));
+    return AttachmentsXml.withAttachments(game, attachments);
+  }
+
+  @Test
+  @DisplayName("A message shows by the start of its text, a step by what happens in it; the key and"
+      + " the step's name are for the tool tip and the search")
+  void showsMessagesAndStepsInPlainWords() throws Exception {
+    // given
+    final Game game = givenMessageTrigger(givenG40());
+    final MapTexts texts =
+        MapTexts.none()
+            .with(
+                MapTexts.Kind.NOTIFICATIONS,
+                "Germans_Win",
+                "<body>Germany has taken <b>Moscow</b> and the war in the East is over</body>");
+    final Trigger trigger = TriggerXml.triggers(game).getLast();
+
+    // when
+    final TriggerXml.Clauses clauses =
+        TriggerXml.clauses(game, trigger, TriggerXml.names(game, texts));
+    final TriggerXml.Clauses withoutText = TriggerXml.clauses(game, trigger);
+    final Listing listing = TriggersEditor.listing(game, TriggerXml.names(game, texts));
+
+    // then
+    assertThat(clauses.effects())
+        .as("the first 40 characters of the text, without its HTML")
+        .containsExactly("show message “Germany has taken Moscow and the war in…”");
+    assertThat(clauses.when())
+        .as("the step as Turn order calls it, and whose it is")
+        .isEqualTo("before Move to attack · Germans");
+    assertThat(List.of(clauses.thenIds(), clauses.whenSteps()))
+        .as("the names in the map's files, for the tool tips")
+        .containsExactly("Germans_Win", "before:germansCombatMove");
+    assertThat(withoutText.effects())
+        .as("a message without a text keeps its key")
+        .containsExactly("show message Germans_Win");
+    assertThat(listing.ids().get("Germans_Cheer"))
+        .as("the list's search finds the trigger by its id and its message's key")
+        .isEqualTo("triggerAttachment_Germans_Cheer Germans_Win");
+    assertThat(List.of(listing.does().get("Germans_Cheer"), listing.whens().get("Germans_Cheer")))
+        .as("what it is grouped by: what it does, and when")
+        .containsExactly("Show a message", "Before Move to attack");
+  }
+
+  @Test
+  @DisplayName("An effect on a purchase list names the list as Production does and the rule by"
+      + " what it sells; the ids stay for the tool tip")
+  void showsPurchaseListsInPlainWords() throws Exception {
+    // given: G40's Chinese buy from productionChinese_Burma_Road_Open
+    final Game game = givenG40();
+    final String rule = ProductionXml.rules(game).getFirst().getName();
+    final String sells =
+        ProductionXml.result(ProductionXml.rules(game).getFirst()).orElseThrow().getResourceOrUnit();
+    final Trigger trigger =
+        new Trigger(
+            -1,
+            TriggerXml.withOptions(
+                TriggerXml.newTrigger("triggerAttachment_Chinese_Buy", "Chinese").attachment(),
+                List.of(
+                    TriggerXml.option(
+                        "productionRule", "productionChinese_Burma_Road_Open:" + rule))),
+            List.of());
+
+    // when
+    final TriggerXml.Clauses clauses = TriggerXml.clauses(game, trigger);
+
+    // then
+    assertThat(clauses.effects())
+        .as("the list by its nation, the rule by its unit")
+        .containsExactly("in Chinese: " + sells);
+    assertThat(clauses.thenIds())
+        .as("as the game's XML has it")
+        .isEqualTo("productionChinese_Burma_Road_Open:" + rule);
+  }
+
   @Test
   @DisplayName("The nation filter counts each nation's triggers, in the game's order of nations")
   void countsPerNation() throws Exception {
@@ -171,7 +255,7 @@ final class TriggersEditorTest {
         });
 
     // then
-    assertThat(buttons).as("the way to a first trigger").contains("New trigger...");
+    assertThat(buttons).as("the way to a first trigger").contains("Add trigger…");
     assertThat(labels).as("no reading screen").noneMatch(text -> text != null && text.startsWith("Reading"));
   }
 
@@ -200,7 +284,7 @@ final class TriggersEditorTest {
   }
 
   @Test
-  @DisplayName("The list takes a quarter of a wide page for its second lines, from 320 to 420 px")
+  @DisplayName("With no trigger chosen the list takes half the page; with one, 40 %, 320 to 560 px")
   void listGrowsWithThePage() throws Exception {
     // given
     final MapProject project =
@@ -222,7 +306,14 @@ final class TriggersEditorTest {
     }
 
     // then
-    assertThat(widths).as("the usual width, then room for long lines").containsExactly(320, 420);
+    assertThat(widths).as("no trigger chosen: half of each page").containsExactly(540, 850);
+    assertThat(
+            List.of(
+                TriggersEditor.listWidth(700, true),
+                TriggersEditor.listWidth(1080, true),
+                TriggersEditor.listWidth(1700, true)))
+        .as("one chosen: two fifths, not under 320 nor over 560, the rest for what it does")
+        .containsExactly(320, 432, 560);
   }
 
   @DisplayName("A divider the map maker dragged stays where it was put when the page grows")
@@ -294,8 +385,8 @@ final class TriggersEditorTest {
         .as("any attachment prefix goes")
         .isEqualTo("Chinese 1 Burma Road");
     listing.details().forEach((key, line) -> assertThat(line)
-        .as("%s fits a row; a longer one is cut at its end", key)
-        .hasSizeLessThanOrEqualTo(46)
+        .as("%s fits a row of the widest list; a longer one is cut at its end", key)
+        .hasSizeLessThanOrEqualTo(90)
         .matches(l -> l.indexOf('…') < 0 || l.indexOf('…') == l.length() - 1,
             "cut at the end only"));
   }

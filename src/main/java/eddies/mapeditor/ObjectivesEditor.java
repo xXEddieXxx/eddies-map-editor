@@ -98,6 +98,13 @@ final class ObjectivesEditor implements Editor {
                 "objective", "objectives", this::shownKeys, this::rowTitle, this::rowLine,
                 this::choose)
             .withAdd(ADD, "Add an objective", this::add);
+    // under each nation's heading, which folds
+    list.groupBy(
+        Optional.of(
+            key ->
+                Optional.ofNullable(listing().objectives().get(key))
+                    .map(Objective::nation)
+                    .orElse("")));
     nationFilter.setToolTipText("Shows one nation's objectives");
     nationFilter.getAccessibleContext().setAccessibleName("Objectives of which nation");
     nationFilter.addActionListener(

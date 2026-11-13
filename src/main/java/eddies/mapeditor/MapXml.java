@@ -37,6 +37,7 @@ import org.triplea.map.data.elements.Initialize.OwnerInitialize.TerritoryOwner;
 import org.triplea.map.data.elements.Initialize.ResourceInitialize;
 import org.triplea.map.data.elements.Initialize.ResourceInitialize.ResourceGiven;
 import org.triplea.map.data.elements.Initialize.UnitInitialize;
+import org.triplea.map.data.elements.Initialize.UnitInitialize.HeldUnits;
 import org.triplea.map.data.elements.Initialize.UnitInitialize.UnitPlacement;
 import org.triplea.map.data.elements.Map;
 import org.triplea.map.data.elements.Map.Connection;
@@ -679,6 +680,73 @@ class MapXml {
               .build());
     }
     return withPlacements(game, placements);
+  }
+
+  /**
+   * The units nations hold at the start, in the XML's order: not on the map, but in the nation's
+   * hand as if bought, to place in its first place step (GameParser.parseHeldUnits).
+   */
+  static List<HeldUnits> heldUnits(final Game game) {
+    return Optional.ofNullable(game.getInitialize())
+        .map(Initialize::getUnitInitialize)
+        .map(UnitInitialize::getHeldUnits)
+        .map(List::copyOf)
+        .orElse(List.of());
+  }
+
+  /** The game with the nation holding this many more units of the type, after the others. */
+  static Game withHeldUnitsAdded(
+      final Game game, final String nation, final String unitType, final int quantity) {
+    return withHeldUnits(
+        game,
+        Stream.concat(
+                heldUnits(game).stream(),
+                Stream.of(
+                    HeldUnits.builder()
+                        .player(nation)
+                        .unitType(unitType)
+                        .quantity(quantity)
+                        .build()))
+            .toList());
+  }
+
+  /**
+   * The game with this many units in the entry at this place of {@link #heldUnits}; none removes
+   * it.
+   */
+  static Game withHeldUnitsAt(final Game game, final int index, final int quantity) {
+    final List<HeldUnits> held = new ArrayList<>(heldUnits(game));
+    final HeldUnits old = held.get(index);
+    if (quantity == old.getQuantity()) {
+      return game;
+    }
+    if (quantity <= 0) {
+      held.remove(index);
+    } else {
+      held.set(
+          index,
+          HeldUnits.builder()
+              .player(old.getPlayer())
+              .unitType(old.getUnitType())
+              .quantity(quantity)
+              .build());
+    }
+    return withHeldUnits(game, held);
+  }
+
+  private static Game withHeldUnits(final Game game, final List<HeldUnits> held) {
+    final Initialize initialize = initialize(game);
+    return game.toBuilder()
+        .initialize(
+            initialize.toBuilder()
+                .unitInitialize(
+                    Optional.ofNullable(initialize.getUnitInitialize())
+                        .orElseGet(() -> UnitInitialize.builder().build())
+                        .toBuilder()
+                        .heldUnits(List.copyOf(held))
+                        .build())
+                .build())
+        .build();
   }
 
   private static Game withPlacements(final Game game, final List<UnitPlacement> placements) {

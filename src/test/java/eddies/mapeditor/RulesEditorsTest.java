@@ -133,27 +133,60 @@ final class RulesEditorsTest {
         .isTrue();
     assertThat(
             givenAll(givenRow(editor, "Heavy Bomber Dice Rolls"), JButton.class)
-                .anyMatch(b -> b.isVisible() && !b.getText().isEmpty()))
+                .anyMatch(b -> b.isVisible() && !b.getText().isEmpty() && !isHelp(b)))
         .as("a fixed number has none in TripleA")
         .isFalse();
   }
 
-  @DisplayName("Open variables without any take only a line below the options")
+  @DisplayName("An option TripleA knows has a '?' saying what it does; a map's own has none")
+  @Test
+  void knownOptionsExplainThemselves(@TempDir final Path folder) {
+    final Editor editor = RulesEditors.newGameOptions(givenG40Project(folder));
+
+    assertThat(givenAll(givenRow(editor, LOW_LUCK), JButton.class).filter(RulesEditorsTest::isHelp))
+        .as("Low Luck is TripleA's: one '?'")
+        .hasSize(1)
+        .allMatch(help -> help.getAccessibleContext().getAccessibleName().contains(LOW_LUCK));
+    assertThat(
+            givenAll(givenRow(editor, "Axis Honorable Victory VCs"), JButton.class)
+                .filter(RulesEditorsTest::isHelp))
+        .as("an option the map's own triggers read gets none")
+        .isEmpty();
+    assertThat(GameRulesXml.optionHelp("Low Luck"))
+        .as("one line, in plain words")
+        .hasValueSatisfying(text -> assertThat(text).contains("sure hit").doesNotContain("\n"));
+    assertThat(givenAll(givenRow(editor, "Germans bid"), JButton.class).filter(RulesEditorsTest::isHelp))
+        .as("the bids are explained once, at their section's title, not per nation")
+        .isEmpty();
+    assertThat(
+            givenAll(editor.page(), JButton.class)
+                .filter(RulesEditorsTest::isHelp)
+                .map(help -> help.getAccessibleContext().getAccessibleName()))
+        .as("the '?' of the Bids section")
+        .anyMatch(name -> name.contains("Bids"));
+    assertThat(GameRulesXml.optionHelp("My Own Rule")).as("unknown: nothing made up").isEmpty();
+  }
+
+  private static boolean isHelp(final JButton button) {
+    return "?".equals(button.getText());
+  }
+
+  @DisplayName("Without variables there is no fold of nothing: the way to add one, in one line")
   @Test
   void emptyVariablesStaySmall(@TempDir final Path folder) {
     final MapProject project = givenG40Project(folder);
     final Editor editor = RulesEditors.newGameOptions(project);
-    final JButton toggle =
-        givenAll(editor.page(), JButton.class)
-            .filter(b -> b.getText().startsWith("▸ Variables"))
-            .findFirst()
-            .orElseThrow();
 
-    toggle.doClick();
+    final List<String> shown =
+        givenAll(editor.page(), JButton.class)
+            .filter(JButton::isVisible)
+            .map(JButton::getText)
+            .toList();
 
     final Component bar =
         ((BorderLayout) editor.page().getLayout()).getLayoutComponent(BorderLayout.SOUTH);
-    assertThat(toggle.getText()).as("open").startsWith("▾ Variables (0)");
+    assertThat(shown).as("the add action alone, as its button").contains("+ Add variable…");
+    assertThat(shown).as("no '▸ Variables (0)'").noneMatch(text -> text.contains("Variables ("));
     assertThat(bar.getPreferredSize().height)
         .as("the bar and one line: the options above keep the height")
         .isLessThan(100);

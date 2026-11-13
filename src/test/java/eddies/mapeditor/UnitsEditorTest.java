@@ -11,12 +11,16 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
+import java.util.HashMap;
+import java.util.Locale;
+import java.util.Map;
 import javax.swing.AbstractButton;
 import javax.swing.JFormattedTextField;
+import com.formdev.flatlaf.FlatClientProperties;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JSpinner;
+import javax.swing.JCheckBox;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.DisplayName;
@@ -35,17 +39,24 @@ final class UnitsEditorTest {
     return MapProject.open(xml);
   }
 
-  /** The editor showing the unit with the section open. */
-  @SuppressWarnings("unchecked")
+  /**
+   * The editor showing the unit, of its folds only the section's "More … options" open: folds
+   * stay as they are for the session, so each test sets them.
+   */
   private static UnitsEditor givenEditor(
       final MapProject project, final String unit, final String section) throws Exception {
     final UnitsEditor editor = new UnitsEditor(project);
-    final Field open = UnitsEditor.class.getDeclaredField("open");
-    open.setAccessible(true);
-    ((Set<String>) open.get(editor)).add(section);
     final Method choose = UnitsEditor.class.getDeclaredMethod("choose", String.class);
     choose.setAccessible(true);
     choose.invoke(editor, unit);
+    final String wanted = "More " + section.toLowerCase(Locale.ROOT) + " options";
+    for (final AbstractButton fold : collect(editor.page(), AbstractButton.class)) {
+      final String text = fold.getText();
+      if ((text.startsWith("▸ ") || text.startsWith("▾ "))
+          && text.startsWith("▾ ") != text.contains(wanted)) {
+        fold.doClick();
+      }
+    }
     return editor;
   }
 
@@ -64,6 +75,10 @@ final class UnitsEditorTest {
 
   private static <T> void collect(
       final Component component, final Class<T> type, final List<T> found) {
+    // what a closed fold holds is in the form, but not shown
+    if (!component.isVisible()) {
+      return;
+    }
     if (type.isInstance(component)) {
       found.add(type.cast(component));
     }
@@ -156,7 +171,7 @@ final class UnitsEditorTest {
         .isEqualTo("+1 attack to 1 allied tactical_bomber when attacking");
   }
 
-  @DisplayName("Combat shows its common options and those set; the rest after Show all")
+  @DisplayName("Combat shows its common options and those set; the rest behind a fold row")
   @Test
   void combatShowsCommonUntilShowAll() throws Exception {
     final MapProject project = givenG40();
@@ -173,15 +188,139 @@ final class UnitsEditorTest {
         });
 
     assertThat(buttons.getFirst())
-        .as("infantry: a common option, one set, the link, not a rare option")
+        .as("infantry: a common option, one set, the fold with the rest, not a rare option")
         .contains(
             "Fires first: its hits take no shot back",
             "Gets the support of artillery",
-            "Show all 14 combat options ›")
+            "▸ More combat options (9)")
         .doesNotContain("Dies when it hits");
     assertThat(buttons.get(1))
-        .as("after Show all: every combat option, and the link back")
-        .contains("Dies when it hits", "Show fewer ‹");
+        .as("the fold open: every combat option")
+        .contains("Dies when it hits", "▾ More combat options (9)");
+  }
+
+  private static List<String> givenLabels(final Component in) {
+    return collect(in, JLabel.class).stream().map(JLabel::getText).toList();
+  }
+
+  @DisplayName("The sections not for a land unit fold into one row; the add actions are buttons")
+  @Test
+  void otherKindsFoldIntoOneRow() throws Exception {
+    final MapProject project = givenG40();
+    final List<String> buttons = new ArrayList<>();
+    final List<String> labels = new ArrayList<>();
+
+    SwingUtilities.invokeAndWait(
+        () -> {
+          try {
+            final Component page = givenEditor(project, "infantry", "none").page();
+            buttons.addAll(givenButtonTexts(page));
+            labels.addAll(givenLabels(page));
+          } catch (final Exception e) {
+            throw new IllegalStateException(e);
+          }
+        });
+
+    assertThat(buttons)
+        .as("one fold for the sections of other kinds, not a row of links")
+        .filteredOn(text -> text.startsWith("▸ Not for"))
+        .hasSize(1)
+        .allMatch(text -> text.matches("▸ Not for land units \\(\\d+\\)"));
+    assertThat(labels)
+        .as("its sections are folded away")
+        .contains("Combat", "Movement")
+        .doesNotContain("Sea", "Bombing");
+    assertThat(buttons)
+        .as("every add action is a '+ Add …' button, '…' where a dialog follows; the list's too")
+        .contains("+ Add support", "+ Add option…", "+ Add unit…")
+        .noneMatch(text -> text.startsWith("Show all"));
+  }
+
+  @DisplayName("Search options shows only the options it finds, by label or TripleA's name,"
+      + " under their sections, also from folds")
+  @Test
+  void searchFindsOptionsInFolds() throws Exception {
+    final MapProject project = givenG40();
+    final List<List<String>> found = new ArrayList<>();
+    final List<List<String>> sections = new ArrayList<>();
+
+    SwingUtilities.invokeAndWait(
+        () -> {
+          try {
+            final Component page = givenEditor(project, "infantry", "none").page();
+            final JTextField search =
+                collect(page, JTextField.class).stream()
+                    .filter(
+                        f -> "Search options".equals(f.getAccessibleContext().getAccessibleName()))
+                    .findFirst()
+                    .orElseThrow();
+            for (final String typed : List.of("bombard", "isSuicideOnHit", "no such option", "")) {
+              search.setText(typed);
+              found.add(givenButtonTexts(page));
+              sections.add(givenLabels(page));
+            }
+          } catch (final Exception e) {
+            throw new IllegalStateException(e);
+          }
+        });
+
+    assertThat(found.get(0))
+        .as("by its label, from the folded Sea section of a land unit")
+        .contains("Can bombard a shore")
+        .doesNotContain("Fires first: its hits take no shot back")
+        .noneMatch(text -> text.startsWith("▸"));
+    assertThat(sections.get(0)).as("under its section's title").contains("Sea", "Bombard strength");
+    assertThat(found.get(1))
+        .as("by TripleA's name, from Combat's fold")
+        .contains("Dies when it hits")
+        .doesNotContain("Can bombard a shore");
+    assertThat(sections.get(2)).as("nothing found says so").contains("<html>No option matches.</html>");
+    assertThat(found.get(3))
+        .as("emptied, the sections and folds are back")
+        .contains("Fires first: its hits take no shot back")
+        .anyMatch(text -> text.startsWith("▸ Not for land units"));
+  }
+
+  @DisplayName("A number whose -1 means none or all shows a grey word, never -1")
+  @Test
+  void minusOneShowsAsWord() throws Exception {
+    final MapProject project = givenG40();
+    final Map<String, List<String>> shown = new HashMap<>();
+
+    SwingUtilities.invokeAndWait(
+        () -> {
+          try {
+            final Component page = givenEditor(project, "infantry", "none").page();
+            collect(page, JTextField.class).stream()
+                .filter(f -> "Search options".equals(f.getAccessibleContext().getAccessibleName()))
+                .findFirst()
+                .orElseThrow()
+                .setText("a");
+            for (final JLabel label : collect(page, JLabel.class)) {
+              if (label.getLabelFor() instanceof JSpinner spinner) {
+                final JTextField text = ((JSpinner.DefaultEditor) spinner.getEditor()).getTextField();
+                shown.put(
+                    label.getText(),
+                    List.of(
+                        text.getText(),
+                        String.valueOf(
+                            text.getClientProperty(FlatClientProperties.PLACEHOLDER_TEXT))));
+              }
+            }
+          } catch (final Exception e) {
+            throw new IllegalStateException(e);
+          }
+        });
+
+    assertThat(shown.values()).as("no field shows a raw -1").noneMatch(v -> v.getFirst().equals("-1"));
+    assertThat(shown)
+        .as("empty with the word for what TripleA takes -1 as")
+        .containsEntry("Planes it lets intercept", List.of("", "no limit"))
+        .containsEntry("Anti-air shots", List.of("", "no limit"))
+        .containsEntry("Damage until it stops working", List.of("", "never"));
+    assertThat(UnitOptions.blankWord(UnitOptions.named("maxScrambleCount")))
+        .as("the word of another number TripleA starts at -1")
+        .contains("no limit");
   }
 
   @DisplayName("The list shows a row for each unit, its name as the row's title")
@@ -210,6 +349,34 @@ final class UnitsEditorTest {
         .as("every G40 unit, by name, in the game's order")
         .hasSize(19)
         .containsExactlyElementsOf(MapXml.unitTypes(project.game()));
+  }
+
+  @DisplayName("Draw it on the map, unticked, lists the unit type in dont_draw_units, one step")
+  @Test
+  void hidesUnitOnMap() throws Exception {
+    final MapProject project = givenG40();
+    project.setMapProperty(MapFiles.UNDRAWN_UNITS, "factory");
+
+    SwingUtilities.invokeAndWait(
+        () -> {
+          try {
+            collect(givenEditor(project, "infantry", "").page(), JCheckBox.class).stream()
+                .filter(box -> "Draw it on the map".equals(box.getText()))
+                .findFirst()
+                .orElseThrow()
+                .doClick();
+          } catch (final Exception e) {
+            throw new IllegalStateException(e);
+          }
+        });
+
+    assertThat(project.getFiles().properties().getProperty(MapFiles.UNDRAWN_UNITS))
+        .as("after the one there, at commas without spaces, as the game splits them")
+        .isEqualTo("factory,infantry");
+    project.undo();
+    assertThat(project.getFiles().listed(MapFiles.UNDRAWN_UNITS))
+        .as("one undo draws it again")
+        .containsExactly("factory");
   }
 
   @DisplayName("Under In each nation's color, a link to Nations, where the colors are set")

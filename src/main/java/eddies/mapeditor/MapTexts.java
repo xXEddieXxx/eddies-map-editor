@@ -2,11 +2,15 @@ package eddies.mapeditor;
 
 import java.io.IOException;
 import java.io.StringReader;
+import java.io.StringWriter;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.EnumMap;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -33,9 +37,11 @@ import org.triplea.util.FileNameUtils;
  *
  * @param unreadable the files that are there but could not be read: shown without entries, not
  *     changed and never written
+ * @param buyTabs the buy window's tabs, {@link ProductionTabs}: each production_tabs file's text
+ *     by its name, as a nation may have one of its own
  */
 @Slf4j
-record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable) {
+record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable, Map<String, String> buyTabs) {
   private static final String GROUP = "TABLEGROUP.";
   private static final String PANEL_NAME = "Objectives.Panel.Name";
   private static final String SOUNDS = "_sounds";
@@ -151,10 +157,11 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable) {
   MapTexts {
     texts = Map.copyOf(texts);
     unreadable = Set.copyOf(unreadable);
+    buyTabs = Map.copyOf(buyTabs);
   }
 
   MapTexts(final Map<Kind, String> texts) {
-    this(texts, Set.of());
+    this(texts, Set.of(), Map.of());
   }
 
   static MapTexts none() {
@@ -178,7 +185,36 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable) {
         unreadable.add(kind);
       }
     }
-    return new MapTexts(texts, unreadable);
+    return new MapTexts(texts, unreadable, readBuyTabs(folder));
+  }
+
+  private static Map<String, String> readBuyTabs(final Path folder) {
+    final Map<String, String> tabs = new LinkedHashMap<>();
+    try (DirectoryStream<Path> files =
+        Files.newDirectoryStream(folder, ProductionTabs.FILES)) {
+      for (final Path file : files) {
+        tabs.put(file.getFileName().toString(), MapFolder.readText(file));
+      }
+    } catch (final IOException e) {
+      // the map opens without them; one not read is not written either, unless changed here
+      log.warn("Could not read the buy window's tabs in {}", folder, e);
+    }
+    return tabs;
+  }
+
+  /** The text of a production_tabs file, empty when the map has none of the name. */
+  String buyTabs(final String file) {
+    return buyTabs.getOrDefault(file, "");
+  }
+
+  /** With the production_tabs file's text; a blank one removes the file on saving. */
+  MapTexts withBuyTabs(final String file, final String text) {
+    if (text.equals(buyTabs(file))) {
+      return this;
+    }
+    final Map<String, String> changed = new LinkedHashMap<>(buyTabs);
+    changed.put(file, text);
+    return new MapTexts(texts, unreadable, changed);
   }
 
   String text(final Kind kind) {
@@ -187,8 +223,13 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable) {
 
   /** The entries in the order of the file; a key given twice once, with the text the game reads. */
   List<Entry> entries(final Kind kind) {
+    return entries(text(kind));
+  }
+
+  /** The entries of a .properties text, as {@link #entries(Kind)}. */
+  static List<Entry> entries(final String text) {
     final Map<String, String> entries = new LinkedHashMap<>();
-    for (final String chunk : logicalLines(text(kind))) {
+    for (final String chunk : logicalLines(text)) {
       parse(chunk).ifPresent(e -> entries.put(e.key(), e.value()));
     }
     return entries.entrySet().stream().map(e -> new Entry(e.getKey(), e.getValue())).toList();
@@ -206,25 +247,104 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable) {
     if (unreadable.contains(kind) || value(kind, key).filter(value::equals).isPresent()) {
       return this;
     }
-    final List<String> chunks = new ArrayList<>(logicalLines(text(kind)));
-    final String newline = text(kind).contains("\r\n") ? "\r\n" : "\n";
-    final String line = escape(key, true) + "=" + escape(value, false);
-    int last = -1;
-    for (int i = 0; i < chunks.size(); i++) {
-      if (parse(chunks.get(i)).filter(e -> e.key().equals(key)).isPresent()) {
-        last = i;
+    return withText(kind, withEntry(text(kind), key, value));
+  }
+
+  /**
+   * A .properties text with the entry's value in place of the one the game reads, else added at
+   * the end; every other line stays as it is.
+   */
+  static String withEntry(final String text, final String key, final String value) {
+    return withEntries(text, Map.of(key, value), List.of());
+  }
+
+  /**
+   * A .properties text with these entries set, each in the line the game reads it from, else
+   * added at the end in the order given, and without the removed keys' lines (all of them, where
+   * a key is given more than once); every other line stays as it is. The text is gone through
+   * once, however many entries change. Should the result not read as meant, eg for a form of
+   * line this does not know, the entries are written anew instead, without the comments, rather
+   * than lose one: {@link #orRewritten}.
+   */
+  static String withEntries(
+      final String text, final Map<String, String> set, final Collection<String> removed) {
+    final List<String> chunks = new ArrayList<>(logicalLines(text));
+    final List<Optional<String>> keys =
+        chunks.stream().map(c -> parse(c).map(Entry::key)).toList();
+    final String newline =
+        text.contains("\r\n") ? "\r\n" : text.contains("\n") || !text.contains("\r") ? "\n" : "\r";
+    final Set<String> placed = new HashSet<>();
+    // from the end: of a key given twice, the game reads the last
+    for (int i = chunks.size() - 1; i >= 0; i--) {
+      final Optional<String> key = keys.get(i);
+      if (key.filter(removed::contains).isPresent()) {
+        chunks.set(i, "");
+      } else if (key.filter(set::containsKey).isPresent() && placed.add(key.get())) {
+        chunks.set(i, line(key.get(), set.get(key.get())) + lineEnd(chunks.get(i)));
       }
     }
-    if (last >= 0) {
-      final String old = chunks.get(last);
-      chunks.set(last, line + (old.endsWith("\n") ? newline : ""));
-    } else {
-      if (!chunks.isEmpty() && !chunks.getLast().endsWith("\n")) {
-        chunks.add(newline);
+    final StringBuilder edited = new StringBuilder(String.join("", chunks));
+    for (final Map.Entry<String, String> added : set.entrySet()) {
+      if (!placed.contains(added.getKey())) {
+        if (!edited.isEmpty() && lineEnd(edited.toString()).isEmpty()) {
+          edited.append(newline);
+        }
+        edited.append(line(added.getKey(), added.getValue())).append(newline);
       }
-      chunks.add(line + newline);
     }
-    return withText(kind, String.join("", chunks));
+    return orRewritten(text, edited.toString(), set, removed);
+  }
+
+  private static String line(final String key, final String value) {
+    return escape(key, true) + "=" + escape(value, false);
+  }
+
+  /** The line end the text ends with: "\r\n", "\n", "\r" or none. */
+  private static String lineEnd(final String text) {
+    return text.endsWith("\r\n")
+        ? "\r\n"
+        : text.endsWith("\n") ? "\n" : text.endsWith("\r") ? "\r" : "";
+  }
+
+  /**
+   * The edited text, if {@link Properties} reads from it what the text before held with the
+   * changes; else all the entries written anew, comments lost but no entry: the net under an edit
+   * of lines. A text before that does not load at all, eg for a broken unicode escape, is not
+   * checked, as the game cannot read it either.
+   */
+  static String orRewritten(
+      final String before,
+      final String edited,
+      final Map<String, String> set,
+      final Collection<String> removed) {
+    final Optional<Properties> meant = loaded(before);
+    if (meant.isEmpty()) {
+      return edited;
+    }
+    meant.get().putAll(set);
+    removed.forEach(meant.get()::remove);
+    if (loaded(edited).filter(meant.get()::equals).isPresent()) {
+      return edited;
+    }
+    log.warn("A properties text did not read as meant after a change; its entries written anew");
+    final StringWriter written = new StringWriter();
+    try {
+      meant.get().store(written, null);
+    } catch (final IOException e) {
+      throw new IllegalStateException(e);
+    }
+    // without the date Properties puts first
+    return written.toString().replaceFirst("^#[^\r\n]*\\R", "");
+  }
+
+  private static Optional<Properties> loaded(final String text) {
+    final Properties properties = new Properties();
+    try {
+      properties.load(new StringReader(text));
+      return Optional.of(properties);
+    } catch (final IOException | IllegalArgumentException e) {
+      return Optional.empty();
+    }
   }
 
   /** Without the entry, also where the file gives its key more than once. */
@@ -232,12 +352,13 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable) {
     if (unreadable.contains(kind)) {
       return this;
     }
-    final List<String> kept =
-        logicalLines(text(kind)).stream()
-            .filter(c -> parse(c).filter(e -> e.key().equals(key)).isEmpty())
-            .toList();
-    final String text = String.join("", kept);
+    final String text = withoutEntry(text(kind), key);
     return text.equals(text(kind)) ? this : withText(kind, text);
+  }
+
+  /** A .properties text without the entry, also where it gives the key more than once. */
+  static String withoutEntry(final String text, final String key) {
+    return withEntries(text, Map.of(), List.of(key));
   }
 
   /**
@@ -286,7 +407,7 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable) {
     final Map<Kind, String> changed = new EnumMap<>(Kind.class);
     changed.putAll(texts);
     changed.put(kind, text);
-    return new MapTexts(changed, unreadable);
+    return new MapTexts(changed, unreadable, buyTabs);
   }
 
   /**
@@ -306,25 +427,36 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable) {
         MapFolder.replaceText(file, text);
       }
     }
+    for (final Map.Entry<String, String> tabs : buyTabs.entrySet()) {
+      if (tabs.getValue().equals(saved.buyTabs(tabs.getKey()))) {
+        continue;
+      }
+      if (tabs.getValue().isBlank()) {
+        MapFolder.remove(folder.resolve(tabs.getKey()));
+      } else {
+        MapFolder.replaceText(folder.resolve(tabs.getKey()), tabs.getValue());
+      }
+    }
   }
 
   // ---- the file's lines as the game reads them
 
   /**
    * The text in logical lines as {@link Properties} reads them, each with its line ends, so that
-   * joined they give the text again: a line ending in an odd number of backslashes goes on in the
-   * next. shortcut: a lone "\r" as line end is taken as part of the line; no map seen uses it.
+   * joined they give the text again: a line ends at "\n", "\r\n" or a lone "\r", and one ending
+   * in an odd number of backslashes right before its line end goes on in the next. Blanks at a
+   * line's end are part of it: "a=b\ " ends in an escaped space, not in a line to go on.
    */
   private static List<String> logicalLines(final String text) {
     final List<String> chunks = new ArrayList<>();
     final StringBuilder chunk = new StringBuilder();
     boolean continues = false;
-    for (final String line : text.split("(?<=\n)")) {
+    for (final String line : text.split("(?<=\n)|(?<=\r)(?!\n)")) {
       if (line.isEmpty()) {
         continue;
       }
       chunk.append(line);
-      final String content = line.stripTrailing();
+      final String content = line.substring(0, line.length() - lineEnd(line).length());
       final String start = content.stripLeading();
       final boolean comment = !continues && (start.startsWith("#") || start.startsWith("!"));
       continues = !comment && !start.isEmpty() && endsInOddBackslashes(content);
@@ -501,6 +633,23 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable) {
     final int semicolon = key.indexOf(';');
     final int dot = semicolon < 0 ? -1 : key.lastIndexOf('.', semicolon);
     return key.substring(0, dot + 1);
+  }
+
+  /**
+   * An internal name in plain words: without the prefix its kind gives it, its camelCase and
+   * underscores as spaces, eg "Japanese hold territories" for
+   * conditionAttachment_Japanese_hold_territories, "Chinese" for productionChinese; the name when
+   * nothing is left.
+   */
+  static String plainName(final String id) {
+    final String words =
+        id.replaceFirst(
+                "^(?:[a-z]*[aA]ttach?ment|(?i:production|repair|frontier))(?=[_A-Z0-9]|$)", "")
+            .replaceAll("(?<=[a-z0-9])(?=[A-Z])", " ")
+            .replace('_', ' ')
+            .replaceAll("\\s+", " ")
+            .strip();
+    return words.isEmpty() ? id : words;
   }
 
   /** The key in plain words, as the list's row shows it; the key when nothing is left. */

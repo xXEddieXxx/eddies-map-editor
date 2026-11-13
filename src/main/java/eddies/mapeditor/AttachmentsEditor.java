@@ -92,7 +92,8 @@ final class AttachmentsEditor implements Editor {
                 this::titleOf,
                 this::detailOf,
                 this::choose)
-            .withAdd("Add...", "Adds an attachment of a kind you choose", this::addAttachment);
+            .withAdd(
+                "Add attachment…", "Adds an attachment of a kind you choose", this::addAttachment);
     kinds.setToolTipText("Which kind of attachments are listed");
     kinds.setRenderer(new KindRenderer());
     kinds.addActionListener(
@@ -159,7 +160,7 @@ final class AttachmentsEditor implements Editor {
     optionsHeader.add(optionsTitle, BorderLayout.WEST);
     optionsHeader.add(
         Theme.newAddButton(
-            "Add option...",
+            "Add option…",
             "Adds an option to the attachment, its name chosen from TripleA's",
             this::addOption),
         BorderLayout.EAST);

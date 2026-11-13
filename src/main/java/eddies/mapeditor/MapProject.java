@@ -81,6 +81,9 @@ final class MapProject {
   // a picture with lines drawn into it: the picture it came from, so a save writes changed tiles;
   // that first one stays in memory while a later one is used, outside the undo pictures' limit
   private final Map<BufferedImage, BufferedImage> drawnOn = new WeakHashMap<>();
+  // a resized picture: the picture it was made from, so a save writes its tiles and leaves the
+  // small map and the preview, which show the same map, as they are
+  private final Map<BufferedImage, BufferedImage> resizedFrom = new WeakHashMap<>();
   private final Deque<State> redos = new ArrayDeque<>();
   private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
   private @Nullable Path xmlFile;
@@ -106,6 +109,11 @@ final class MapProject {
 
     State(final Game game, final MapFiles files, final MapTexts texts) {
       this(game, files, texts, Optional.empty());
+    }
+
+    /** The pictures the step holds in memory: the map's and its relief, as far as held. */
+    List<BufferedImage> pictures() {
+      return Stream.concat(files.picture().stream(), files.relief().stream()).toList();
     }
   }
 
@@ -304,32 +312,32 @@ final class MapProject {
   private void forgetOldPictures() {
     final int kept =
         keptSteps(
-            undos.stream().map(state -> state.files().picture()).toList(),
-            current.files().picture(),
-            UNDO_PICTURE_BYTES);
+            undos.stream().map(State::pictures).toList(), current.pictures(), UNDO_PICTURE_BYTES);
     while (undos.size() > kept) {
       undos.removeLast();
     }
   }
 
   /**
-   * How many of the undo steps, newest first, to keep so the distinct pictures they hold, besides
-   * the current one, take at most this many bytes.
+   * How many of the undo steps, newest first, to keep so the distinct pictures they hold (each
+   * step's picture and relief), besides the current ones, take at most this many bytes.
    */
   static int keptSteps(
-      final List<Optional<BufferedImage>> pictures,
-      final Optional<BufferedImage> current,
+      final List<List<BufferedImage>> pictures,
+      final List<BufferedImage> current,
       final long limitBytes) {
     final Set<BufferedImage> seen = Collections.newSetFromMap(new IdentityHashMap<>());
-    current.ifPresent(seen::add);
+    seen.addAll(current);
     long bytes = 0;
     int kept = 0;
-    for (final Optional<BufferedImage> picture : pictures) {
-      if (picture.isPresent() && seen.add(picture.get())) {
-        bytes += 4L * picture.get().getWidth() * picture.get().getHeight();
-        if (bytes > limitBytes) {
-          break;
+    for (final List<BufferedImage> held : pictures) {
+      for (final BufferedImage picture : held) {
+        if (seen.add(picture)) {
+          bytes += 4L * picture.getWidth() * picture.getHeight();
         }
+      }
+      if (bytes > limitBytes) {
+        break;
       }
       kept++;
     }
@@ -651,19 +659,34 @@ final class MapProject {
    * save see the same; no step, nobody told, as it is the picture as it is.
    */
   void holdPicture(final BufferedImage whole) {
-    if (current.files().picture().isPresent()) {
-      return;
+    if (current.files().picture().isEmpty()) {
+      hold(files -> files.picture().isEmpty() ? files.withPicture(whole) : files);
     }
+  }
+
+  /**
+   * As {@link #holdPicture} for the relief put together from its tiles ({@link
+   * MapFiles#reliefTilesPicture}), so a resize can scale it and undo and save see the same.
+   */
+  void holdRelief(final BufferedImage whole) {
+    if (current.files().relief().isEmpty()) {
+      hold(files -> files.relief().isEmpty() ? files.withRelief(whole) : files);
+    }
+  }
+
+  private void hold(final UnaryOperator<MapFiles> held) {
     // a state is the same state after it, so current == saved stays
     final Map<State, State> holding = new IdentityHashMap<>();
     final UnaryOperator<State> hold =
         state ->
             holding.computeIfAbsent(
                 state,
-                s ->
-                    s.files().picture().isEmpty()
-                        ? new State(s.game(), s.files().withPicture(whole), s.texts(), s.drawn())
-                        : s);
+                s -> {
+                  final MapFiles files = held.apply(s.files());
+                  return files == s.files()
+                      ? s
+                      : new State(s.game(), files, s.texts(), s.drawn());
+                });
     final List<State> undone = undos.stream().map(hold).toList();
     final List<State> redone = redos.stream().map(hold).toList();
     undos.clear();
@@ -672,6 +695,49 @@ final class MapProject {
     redos.addAll(redone);
     saved = hold.apply(saved);
     current = hold.apply(current);
+  }
+
+  /**
+   * Takes the map resized by the factor ({@link MapFiles#resized}, made in the background) as one
+   * step, the region borders were drawn in with it; false, changing nothing, when the files it
+   * was made from are no longer the map's.
+   */
+  boolean takeResized(final MapFiles from, final MapFiles resized, final double factor) {
+    if (current.files() != from) {
+      return false;
+    }
+    if (from.picture().isPresent() && resized.picture().isPresent()) {
+      // the first of a chain of resizes: each one held the one before it, past the undo cap
+      resizedFrom.put(resized.picture().get(), sourceOf(from.picture().get()));
+    }
+    step(
+        new State(
+            game(),
+            resized,
+            current.texts(),
+            current
+                .drawn()
+                .map(
+                    r -> {
+                      // both corners outward, so the region still holds every line drawn
+                      final int left = (int) Math.floor(r.x * factor);
+                      final int top = (int) Math.floor(r.y * factor);
+                      return new Rectangle(
+                          left,
+                          top,
+                          (int) Math.ceil((r.x + r.width) * factor) - left,
+                          (int) Math.ceil((r.y + r.height) * factor) - top);
+                    })));
+    return true;
+  }
+
+  /** The picture this one shows resized or with lines drawn into it, at the start of both. */
+  private BufferedImage sourceOf(final BufferedImage picture) {
+    BufferedImage source = firstOf(picture);
+    while (resizedFrom.containsKey(source)) {
+      source = firstOf(resizedFrom.get(source));
+    }
+    return source;
   }
 
   /**
@@ -1200,8 +1266,11 @@ final class MapProject {
       problems =
           Stream.concat(
                   MapChecks.quick(game(), getFiles()).stream(),
-                  MapTexts.foreignObjectivesProblem(texts(), game()).stream()
-                      .map(t -> Problem.in("Texts", t)))
+                  Stream.concat(
+                      MapTexts.foreignObjectivesProblem(texts(), game()).stream()
+                          .map(t -> Problem.in("Texts", t)),
+                      ProductionTabs.problems(texts(), game()).stream()
+                          .map(t -> Problem.in("Production", t))))
               .toList();
       problemsOf = current;
     }
@@ -1410,8 +1479,10 @@ final class MapProject {
     }
     files.writePlaces(saving.game(), saved.files(), saved.game());
     if (firstSave || !saving.files().properties().equals(saved.files().properties())) {
-      files.writeProperties();
+      files.writeProperties(firstSave ? new Properties() : saved.files().properties());
     }
+    // asked before a new picture writes one: a map without gets its small map with the relief
+    final boolean hadSmallMap = MapFolder.hasSmallMap(mapFolder);
     if (files.picture().isPresent()
         && (firstSave || !files.picture().equals(saved.files().picture()))) {
       final BufferedImage picture = files.picture().get();
@@ -1423,6 +1494,14 @@ final class MapProject {
       // the small map and the preview
       if (before.isPresent()) {
         MapFolder.writeChangedTiles(mapFolder, picture, before.get());
+      } else if (!firstSave
+          && saved.files().picture().filter(b -> sourceOf(b) == sourceOf(picture)).isPresent()) {
+        // the same map resized, or back at its size: its tiles; a small map there stays, maybe
+        // made with the relief
+        MapFolder.writeTiles(mapFolder, picture);
+        if (!hadSmallMap) {
+          MapFolder.writeSmallMap(mapFolder, files.shownPicture().orElse(picture));
+        }
       } else {
         MapFolder.writePicture(mapFolder, picture);
       }
@@ -1432,7 +1511,7 @@ final class MapProject {
       // a map without a small map gets one with the relief; one there may be made by hand and
       // stays, until Map look's Update the small map
       final Optional<BufferedImage> shown =
-          MapFolder.hasSmallMap(mapFolder) ? Optional.empty() : files.shownPicture();
+          hadSmallMap ? Optional.empty() : files.shownPicture();
       if (shown.isPresent()) {
         MapFolder.writeSmallMap(mapFolder, shown.get());
       }

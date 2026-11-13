@@ -32,20 +32,8 @@ import lombok.experimental.UtilityClass;
 class Panels {
   private static final int LIST_WIDTH = 320;
   private static final int LIST_MAX_WIDTH = 420;
-  private static final int LIST_MIN_HEIGHT = 220;
   private static final int EMPTY_GLYPH = 32;
   private static final int EMPTY_LINE_WIDTH = 260;
-
-  /** A list above the inspector of the chosen entry, the line between them movable. */
-  static JSplitPane stacked(final JComponent list, final JComponent inspector) {
-    // a long inspector scrolls instead of squashing the list to a row
-    list.setMinimumSize(new Dimension(0, LIST_MIN_HEIGHT));
-    inspector.setMinimumSize(new Dimension(0, 0));
-    final JSplitPane stacked = new JSplitPane(JSplitPane.VERTICAL_SPLIT, list, inspector);
-    stacked.setResizeWeight(0.35);
-    stacked.setBorder(null);
-    return stacked;
-  }
 
   /**
    * The list left of the inspector of the chosen entry, for a tool that has the whole room; the

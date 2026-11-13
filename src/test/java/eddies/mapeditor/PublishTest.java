@@ -607,6 +607,39 @@ final class PublishTest {
         .isEqualTo(Color.CYAN.getRGB() & 0xFFFFFF);
   }
 
+  @DisplayName("A new picture saved with a new relief: a missing small map gets the relief")
+  @Test
+  void newPictureAndReliefMakeSmallMapWithRelief() throws Exception {
+    final MapProject project = givenSavedMap();
+    final Path smallMap = givenRoot().resolve("smallMap.png");
+    final BufferedImage first = MapPictureTest.givenPicture();
+    Files.delete(smallMap);
+
+    project.loadPicture(givenPicture(first.getWidth(), first.getHeight(), Color.YELLOW));
+    project.setRelief(givenPicture(first.getWidth(), first.getHeight(), Color.CYAN));
+    project.save();
+
+    assertThat(ImageIO.read(smallMap.toFile()).getRGB(180, 160) & 0xFFFFFF)
+        .as("the new picture's small map would hide that the map had none: the relief is on it")
+        .isEqualTo(Color.CYAN.getRGB() & 0xFFFFFF);
+  }
+
+  @DisplayName("An imported flag takes the place of the nation's gif flags, but a large gif stays")
+  @Test
+  void importedFlagKeepsLargeGif() throws Exception {
+    givenSavedMap();
+    final Path flags = givenRoot().resolve("flags");
+    Files.writeString(flags.resolve("Red.gif"), "gif");
+    Files.writeString(flags.resolve("Red_large.gif"), "gif");
+
+    MapFolder.importFlag(givenRoot(), "Red", givenPicture(300, 200, Color.GREEN));
+
+    assertThat(flags.resolve("Red.gif")).as("the game would take it before the png").doesNotExist();
+    assertThat(flags.resolve("Red_large.gif"))
+        .as("the game reads a large flag only as png: the gif hides nothing and stays")
+        .exists();
+  }
+
   @DisplayName("Update the small map makes it from the picture with the relief, the old as .bak")
   @Test
   void updatesSmallMapWithRelief() throws Exception {

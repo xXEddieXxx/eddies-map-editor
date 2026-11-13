@@ -1061,7 +1061,7 @@ final class FilesEditor implements Editor {
           Status.PROBLEM,
           problems.size()
               + (problems.size() == 1 ? " problem " : " problems ")
-              + (problemScroll.isVisible() ? "▴" : "▾"));
+              + (problemScroll.isVisible() ? "▾" : "▸"));
     }
   }
 

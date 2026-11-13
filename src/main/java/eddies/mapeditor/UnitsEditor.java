@@ -19,7 +19,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -35,6 +34,7 @@ import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
 import javax.imageio.ImageIO;
@@ -68,6 +68,20 @@ import eddies.mapeditor.UnitOptions.UnitKind;
 /** The unit types: what they cost and how they fight and move. */
 final class UnitsEditor implements Editor {
   private static final String SUPPORT = "Gives support";
+  // the rows of Stacking limits, as RulesXml.STACKING_LIMITS and STACKING_COUNTS
+  private static final List<String> STACKING_LABELS =
+      List.of("When placing", "When moving in", "When attacking");
+  private static final List<String> STACKING_COUNT_LABELS =
+      List.of("its owner's", "its owner's and allies'", "everyone's");
+  private static final String STACKING_HELP =
+      "How many of this unit type may stand in one territory: when it is placed, when it moves"
+          + " in, and when it attacks. A limit holds in every territory; TripleA has none for one"
+          + " particular territory. What one territory's factories may place per turn is set in"
+          + " Territories (Units its factories place per turn), where a nation may place in"
+          + " Nations (Placing units). A limit for several unit types together is in Nations,"
+          + " Stacking limits.";
+  private static final String TRIPLEA_NAME = "In the game's XML: ";
+  private static final int STACKING_LABEL_WIDTH = 110;
   private static final int PICTURE_SIZE = 48;
   private static final int NUMBER_WIDTH = 96;
   private static final int MORE_NAME_WIDTH = 220;
@@ -92,8 +106,9 @@ final class UnitsEditor implements Editor {
   private final Form inspector = new Form(280);
   // the sections, side by side when wide enough
   private final Form grid = new Form(280);
-  // the sections showing all their options, for the session
-  private final Set<String> open = new HashSet<>();
+  // what the sections leave for the whole width: the other kinds' sections, every other option
+  private final Form below = new Form(280);
+  private final JTextField optionSearch = new JTextField(22);
   private @Nullable String selected;
   private @Nullable String openSupport;
   private @Nullable JLabel headerLine;
@@ -113,16 +128,31 @@ final class UnitsEditor implements Editor {
                 unit -> unit,
                 this::detail,
                 this::choose)
-            .withAdd("Add", "Add a unit", this::addUnit)
+            .withAdd("Add unit…", "Add a unit", this::addUnit)
             .withEmpty(
                 Panels.empty(
                     Glyph.UNITS,
                     "No units yet",
                     "Units are what nations buy and fight with. Start from a copy of infantry.",
-                    "Add unit",
+                    "Add unit…",
                     this::addUnit));
     grid.setBorder(BorderFactory.createEmptyBorder());
     grid.setOpaque(false);
+    below.setBorder(BorderFactory.createEmptyBorder());
+    below.setOpaque(false);
+    optionSearch.putClientProperty(FlatClientProperties.PLACEHOLDER_TEXT, "Search options…");
+    optionSearch.putClientProperty(FlatClientProperties.TEXT_FIELD_SHOW_CLEAR_BUTTON, true);
+    optionSearch.setToolTipText("By an option's words here or its name in the game's XML");
+    optionSearch.getAccessibleContext().setAccessibleName("Search options");
+    // the sections only: the search keeps the focus
+    OnTyping.attach(
+        optionSearch,
+        () -> {
+          if (selected != null && MapXml.unitTypes(project.game()).contains(selected)) {
+            commit();
+            showOptions(project.game(), selected);
+          }
+        });
     // the grid's columns follow its own width, known only after a layout: lay out again then
     grid.addComponentListener(
         new ComponentAdapter() {
@@ -278,7 +308,13 @@ final class UnitsEditor implements Editor {
     final JPanel content = new JPanel();
     content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
     content.setOpaque(false);
-    final List<JComponent> parts = new ArrayList<>(List.of(new JLabel("Name"), name, error));
+    final List<JComponent> parts =
+        new ArrayList<>(
+            List.of(
+                new JLabel("Name"),
+                name,
+                Theme.newSecondaryLabel("Players see this name"),
+                error));
     if (!units.isEmpty()) {
       parts.addAll(List.of(new JLabel("Start from"), like));
     }
@@ -353,7 +389,6 @@ final class UnitsEditor implements Editor {
     typing = null;
     headerLine = null;
     inspector.clear();
-    grid.clear();
     final Game game = project.game();
     final List<String> units = MapXml.unitTypes(game);
     if (units.isEmpty()) {
@@ -369,11 +404,21 @@ final class UnitsEditor implements Editor {
     showHeader(game, unit);
     showEssentials(game, unit);
     showKind(game, unit);
-    showSections(game, unit);
-    final List<Option> more = moreOptions(game, unit);
-    inspector.more("units.more", more.size(), form -> showMoreOptions(form, game, unit, more));
+    inspector.row(leftAligned(optionSearch));
+    inspector.row(grid);
+    inspector.row(below);
+    showOptions(game, unit);
     inspector.remove("Remove unit", () -> removeUnit(unit));
     inspector.end();
+  }
+
+  /** The sections and what is below them, anew: for another unit, or what the search finds. */
+  private void showOptions(final Game game, final String unit) {
+    grid.clear();
+    below.clear();
+    showSections(game, unit);
+    inspector.revalidate();
+    inspector.repaint();
   }
 
   // ---- the top: picture, name, kind and the numbers of the list's line
@@ -405,6 +450,21 @@ final class UnitsEditor implements Editor {
     showMissingPictures(game, unit);
     // an uploaded picture's coloring says it too: one choice, not two
     uploaded.ifPresentOrElse(u -> showColoring(unit, u), () -> showNationTint(unit));
+    final JCheckBox drawn =
+        new JCheckBox(
+            "Draw it on the map",
+            !project.getFiles().listed(MapFiles.UNDRAWN_UNITS).contains(unit));
+    drawn.setToolTipText(
+        "Off: the game draws it nowhere on the map and leaves it out of its unit statistics, eg a"
+            + " unit that only marks something.");
+    drawn.addActionListener(
+        e ->
+            project.editFiles(
+                f ->
+                    drawn.isSelected()
+                        ? f.withoutListed(MapFiles.UNDRAWN_UNITS, unit)
+                        : f.withListed(MapFiles.UNDRAWN_UNITS, unit)));
+    inspector.row(leftAligned(drawn));
   }
 
   /**
@@ -592,11 +652,17 @@ final class UnitsEditor implements Editor {
 
   /**
    * The sections for the unit's kind, and those with an option set, each with its common options
-   * and those set, all of them once opened; the other sections closed below them.
+   * and those set, the rest behind "More … options (n)"; the other sections in one fold below
+   * them, then every other option. While the search has text: only the options it finds, under
+   * the titles of their sections, whatever is folded.
    */
   private void showSections(final Game game, final String unit) {
     final Optional<UnitKind> kind = UnitsXml.kind(game, unit);
-    final List<JComponent> closed = new ArrayList<>();
+    final String filter = optionSearch.getText().strip().toLowerCase(Locale.ROOT);
+    final Map<String, List<UnitOptions.UnitOption>> notForKind = new LinkedHashMap<>();
+    int found = 0;
+    // read once: every key typed into the search asks about each option
+    final List<Option> own = UnitsXml.options(game, unit);
     grid.columns();
     for (final UnitOptions.Section section : UnitOptions.SECTIONS) {
       final String title = section.title();
@@ -604,50 +670,159 @@ final class UnitsEditor implements Editor {
           section.options().stream()
               .filter(o -> !UnitOptions.ESSENTIALS.contains(o.name()))
               .filter(o -> kind.isEmpty() || !UnitOptions.KIND_FLAGS.contains(o.name()))
-              .filter(o -> UnitsXml.isPlain(game, unit, o.name()))
+              .filter(o -> UnitsXml.isPlain(own, o.name()))
               .toList();
+      if (!filter.isEmpty()) {
+        final List<UnitOptions.UnitOption> matching =
+            all.stream().filter(o -> UnitOptions.matches(o, filter)).toList();
+        if (!matching.isEmpty()) {
+          grid.section(title);
+          matching.forEach(o -> showOption(grid, game, unit, o));
+          found += matching.size();
+        }
+        continue;
+      }
       final Predicate<UnitOptions.UnitOption> isSet =
           o ->
               !UnitsXml.value(game, unit, o).equals(o.defaultValue())
                   || UnitsXml.setBy(game, unit, o.name()).isPresent();
-      final boolean relevant = isFor(title, kind) || all.stream().anyMatch(isSet);
-      final List<UnitOptions.UnitOption> few =
-          all.stream()
-              .filter(o -> isSet.test(o) || (relevant && UnitOptions.COMMON.contains(o.name())))
-              .toList();
-      final boolean isOpen = open.contains(title);
-      if (!relevant && !isOpen) {
-        closed.add(
-            newToggle(
-                "▸ " + title + " (" + all.size() + ")",
-                "Show the " + title.toLowerCase(Locale.ROOT) + " options",
-                title));
+      if (!isFor(title, kind) && all.stream().noneMatch(isSet)) {
+        notForKind.put(title, all);
         continue;
       }
+      final List<UnitOptions.UnitOption> few =
+          all.stream().filter(o -> isSet.test(o) || UnitOptions.COMMON.contains(o.name())).toList();
+      final List<UnitOptions.UnitOption> rest =
+          all.stream().filter(o -> !few.contains(o)).toList();
       grid.section(title);
-      final List<UnitOptions.UnitOption> shown = isOpen ? all : few;
-      if (shown.isEmpty()) {
+      if (few.isEmpty()) {
         grid.note("Nothing special.");
       }
-      shown.forEach(o -> showOption(grid, game, unit, o));
-      if (few.size() < all.size()) {
-        grid.row(
-            leftAligned(
-                isOpen
-                    ? newToggle("Show fewer ‹", "Show the common options and those set", title)
-                    : newToggle(
-                        "Show all " + all.size() + " " + title.toLowerCase(Locale.ROOT)
-                            + " options ›",
-                        "Show every option of " + title.toLowerCase(Locale.ROOT),
-                        title)));
+      few.forEach(o -> showOption(grid, game, unit, o));
+      if (!rest.isEmpty()) {
+        grid.more(
+            "units.section." + title,
+            "More " + title.toLowerCase(Locale.ROOT) + " options (" + rest.size() + ")",
+            f -> rest.forEach(o -> showOption(f, game, unit, o)));
       }
     }
-    grid.section(SUPPORT);
-    showSupports(game, unit);
-    inspector.row(grid);
-    if (!closed.isEmpty()) {
-      inspector.row(leftAligned(closed.toArray(JComponent[]::new)));
+    found += showStackingLimits(game, unit, filter);
+    if (SUPPORT.toLowerCase(Locale.ROOT).contains(filter)) {
+      grid.section(SUPPORT);
+      showSupports(game, unit);
+      found++;
     }
+    final List<Option> more = moreOptions(game, unit);
+    if (!filter.isEmpty()) {
+      final List<Option> matching =
+          more.stream()
+              .filter(o -> o.getName().toLowerCase(Locale.ROOT).contains(filter))
+              .toList();
+      if (!matching.isEmpty()) {
+        below.section("More options");
+        showMoreOptions(below, game, unit, matching);
+      } else if (found == 0) {
+        below.note("No option matches.");
+      }
+      return;
+    }
+    if (!notForKind.isEmpty()) {
+      below.more(
+          "units.notForKind",
+          notForKindTitle(kind)
+              + " ("
+              + notForKind.values().stream().mapToInt(List::size).sum()
+              + ")",
+          f -> {
+            f.columns();
+            notForKind.forEach(
+                (title, options) -> {
+                  f.section(title);
+                  options.forEach(o -> showOption(f, game, unit, o));
+                });
+          });
+    }
+    // with no other option, the way to add one alone
+    below.more("units.more", more.size(), form -> showMoreOptions(form, game, unit, more));
+    below.row(leftAligned(newAddOption(unit)));
+  }
+
+  /** eg "Not for land units": the sections that are for other kinds of unit. */
+  private static String notForKindTitle(final Optional<UnitKind> kind) {
+    return kind.map(k -> "Not for " + k.name().toLowerCase(Locale.ROOT) + " units")
+        .orElse("Other options");
+  }
+
+  /**
+   * At most so many of the unit type in a territory when placing, moving in and attacking: a
+   * number, blank for no limit, and whose units count.
+   */
+  private int showStackingLimits(final Game game, final String unit, final String filter) {
+    final List<Integer> shown =
+        IntStream.range(0, RulesXml.STACKING_LIMITS.size())
+            .filter(
+                i ->
+                    (STACKING_LABELS.get(i) + "\n" + RulesXml.STACKING_LIMITS.get(i))
+                        .toLowerCase(Locale.ROOT)
+                        .contains(filter))
+            .boxed()
+            .toList();
+    if (shown.isEmpty()) {
+      return 0;
+    }
+    grid.section("Stacking limits", STACKING_HELP);
+    grid.note("A limit holds in every territory alike.");
+    for (final int i : shown) {
+      final String name = RulesXml.STACKING_LIMITS.get(i);
+      final String label = STACKING_LABELS.get(i);
+      final Optional<RulesXml.StackingLimit> limit = UnitsXml.stackingLimit(game, unit, name);
+      if (limit.isEmpty() && UnitsXml.hasOption(game, unit, name)) {
+        grid.field(label, Theme.newSecondaryLabel("In More options"));
+        continue;
+      }
+      final JComboBox<String> counting =
+          new JComboBox<>(STACKING_COUNT_LABELS.toArray(String[]::new));
+      counting.setSelectedIndex(
+          limit.map(l -> RulesXml.STACKING_COUNTS.indexOf(l.counting())).orElse(0));
+      counting.setEnabled(limit.isPresent());
+      counting.setToolTipText("Whose units of this type count towards the limit");
+      counting.getAccessibleContext().setAccessibleName(label + ", counting");
+      final int[] most = {limit.map(RulesXml.StackingLimit::most).orElse(-1)};
+      final Runnable write =
+          () ->
+              quietly(
+                  g ->
+                      UnitsXml.withStackingLimit(
+                          g,
+                          unit,
+                          name,
+                          most[0] < 0
+                              ? Optional.empty()
+                              : Optional.of(
+                                  new RulesXml.StackingLimit(
+                                      most[0],
+                                      RulesXml.STACKING_COUNTS.get(counting.getSelectedIndex()),
+                                      List.of()))));
+      final JSpinner number =
+          Form.newBlankNumber(
+              most[0],
+              -1,
+              "no limit",
+              value -> {
+                most[0] = value;
+                counting.setEnabled(value >= 0);
+                write.run();
+              });
+      number.setToolTipText(TRIPLEA_NAME + name);
+      number.setPreferredSize(new Dimension(NUMBER_WIDTH, number.getPreferredSize().height));
+      counting.addActionListener(e -> write.run());
+      final JLabel text = new JLabel(label);
+      text.setLabelFor(number);
+      text.setToolTipText(TRIPLEA_NAME + name);
+      text.setPreferredSize(new Dimension(STACKING_LABEL_WIDTH, text.getPreferredSize().height));
+      grid.row(leftAligned(text, number, new JLabel("counting"), counting));
+    }
+    return shown.size();
   }
 
   /** Whether the section is for every unit of the kind, set or not. */
@@ -658,22 +833,6 @@ final class UnitsEditor implements Editor {
       case "Air and anti-air" -> kind.equals(Optional.of(UnitKind.AIR));
       default -> false;
     };
-  }
-
-  /** A link that shows all of a section's options, or only the common ones again. */
-  private JButton newToggle(final String text, final String tip, final String section) {
-    final JButton toggle =
-        newLink(
-            text,
-            () -> {
-              commit();
-              if (!open.remove(section)) {
-                open.add(section);
-              }
-              showInspector();
-            });
-    toggle.setToolTipText(tip);
-    return toggle;
   }
 
   /**
@@ -705,11 +864,10 @@ final class UnitsEditor implements Editor {
       }
     } else if (option.kind() == Kind.NUMBER && number.isPresent()) {
       final IntConsumer setNumber = v -> set.accept(String.valueOf(v));
-      final String word = UnitOptions.BLANK_WORDS.get(option.name());
       final JSpinner spinner =
-          word == null
-              ? Form.newNumber(number.get(), option.minimum(), 9999, setNumber)
-              : Form.newBlankNumber(number.get(), option.minimum(), word, setNumber);
+          UnitOptions.blankWord(option)
+              .map(word -> Form.newBlankNumber(number.get(), option.minimum(), word, setNumber))
+              .orElseGet(() -> Form.newNumber(number.get(), option.minimum(), 9999, setNumber));
       form.number(option.label(), withTip(spinner, option.help()));
     } else {
       form.field(
@@ -885,11 +1043,13 @@ final class UnitsEditor implements Editor {
         showSupport(game, unit, support);
       }
     }
-    final JButton add = newLink("+ Add support", () -> addSupport(unit));
-    add.setToolTipText(
-        "Support like artillery gives: a bonus to other units in the same battle. It starts as +1"
-            + " attack to one allied infantry.");
-    grid.row(leftAligned(add));
+    grid.row(
+        leftAligned(
+            Theme.newAddButton(
+                "Add support",
+                "Support like artillery gives: a bonus to other units in the same battle. It"
+                    + " starts as +1 attack to one allied infantry.",
+                () -> addSupport(unit))));
   }
 
   /**
@@ -1065,6 +1225,15 @@ final class UnitsEditor implements Editor {
     return UnitsXml.options(game, unit).stream()
         .filter(
             o ->
+                // a limit that reads, also one with its number as count, shows under Stacking
+                // limits only
+                RulesXml.STACKING_LIMITS.stream()
+                    .noneMatch(
+                        limit ->
+                            AttachmentsXml.isOption(o, limit)
+                                && UnitsXml.stackingLimit(game, unit, limit).isPresent()))
+        .filter(
+            o ->
                 !UnitOptions.NAMES.contains(AttachmentsXml.optionName(o.getName()))
                     // an old name, eg isInfantry, stays here: the sections say "Set by" it
                     || !AttachmentsXml.optionName(o.getName()).equalsIgnoreCase(o.getName())
@@ -1072,7 +1241,7 @@ final class UnitsEditor implements Editor {
         .toList();
   }
 
-  /** Each of the options, by its raw name, with its value and ×; then "+ Add option…". */
+  /** Each of the options, by its raw name, with its value and ×. */
   private void showMoreOptions(
       final Form form, final Game game, final String unit, final List<Option> more) {
     final Map<String, Integer> seen = new HashMap<>();
@@ -1083,9 +1252,13 @@ final class UnitsEditor implements Editor {
         showMoreOption(form, unit, option, occurrence);
       }
     }
-    final JButton add = newLink("+ Add option…", () -> addOption(unit));
-    add.setToolTipText("Any option TripleA's unitAttachment takes, by its name in the game's XML");
-    form.row(leftAligned(add));
+  }
+
+  private JButton newAddOption(final String unit) {
+    return Theme.newAddButton(
+        "Add option…",
+        "Any option TripleA's unitAttachment takes, by its name in the game's XML",
+        () -> addOption(unit));
   }
 
   /**

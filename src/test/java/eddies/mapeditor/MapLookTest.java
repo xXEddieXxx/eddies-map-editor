@@ -9,12 +9,14 @@ import java.awt.Dimension;
 import java.awt.GridLayout;
 import java.awt.image.BufferedImage;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.swing.AbstractButton;
 import javax.swing.JButton;
@@ -48,6 +50,168 @@ final class MapLookTest {
     assertThat(project.getFiles().properties().getProperty("map.showSeaZoneNames"))
         .as("one undo takes it back")
         .isNull();
+  }
+
+  @DisplayName("The names not drawn show under Territory names; Show all removes the key, one step")
+  @Test
+  void showsAllNames() throws Exception {
+    final MapProject project = givenSavedMapWithRed();
+    project.setMapProperty(MapFiles.HIDDEN_NAMES, "Territory 1,Unit List");
+    final MapLookEditor look = new MapLookEditor(project);
+
+    button(look.page(), JButton.class, "Show all").doClick();
+
+    assertThat(project.getFiles().properties().containsKey(MapFiles.HIDDEN_NAMES))
+        .as("no name is hidden, and no empty key stays")
+        .isFalse();
+    assertThat(components(look.page()).filter(JButton.class::isInstance).map(JButton.class::cast))
+        .as("nothing left to show: the line is gone")
+        .noneMatch(b -> "Show all".equals(b.getText()));
+    project.undo();
+    assertThat(project.getFiles().listed(MapFiles.HIDDEN_NAMES))
+        .as("one undo hides both again")
+        .containsExactly("Territory 1", "Unit List");
+  }
+
+  @DisplayName("A changed setting changes its line of map.properties only; comments, order stay")
+  @Test
+  void savesMapPropertiesKeyByKey() throws Exception {
+    // given: a map.properties as map makers write it, with comments, odd spacing and old keys
+    final MapProject made = givenSavedMapWithRed();
+    final Path file = made.getFolder().orElseThrow().resolve("map.properties");
+    final String byHand =
+        "# My map, by me\r\n"
+            + "\r\n"
+            + "color.Red = FF0000\r\n"
+            + "   units.scale=1\r\n"
+            + "#map.mapBlends=false   forces the switch off\r\n"
+            + "map.mapBlends=true\r\n"
+            + "dont_draw_units=factory\r\n"
+            + "odd key\\ of mine : kept   \r\n"
+            + Files.readString(file, StandardCharsets.ISO_8859_1)
+                .lines()
+                .filter(line -> line.startsWith("map.width") || line.startsWith("map.height"))
+                .collect(Collectors.joining("\r\n"))
+            + "\r\n";
+    Files.writeString(file, byHand, StandardCharsets.ISO_8859_1);
+    final MapProject project = MapProject.open(made.getXmlFile().orElseThrow());
+
+    // when: one setting changed, one list emptied, one key new
+    project.setMapProperty("units.scale", "0.75");
+    project.editFiles(f -> f.withoutListed(MapFiles.UNDRAWN_UNITS, "factory"));
+    project.setMapProperty("map.showSeaZoneNames", "true");
+    project.save();
+
+    // then
+    assertThat(Files.readString(file, StandardCharsets.ISO_8859_1))
+        .as("the changed line, the removed key's line gone, the new key at the end; all else as"
+            + " written, byte for byte")
+        .isEqualTo(
+            byHand
+                    .replace("   units.scale=1\r\n", "units.scale=0.75\r\n")
+                    .replace("dont_draw_units=factory\r\n", "")
+                + "map.showSeaZoneNames=true\r\n");
+    assertThat(savedProperties(project).getProperty("map.mapBlends"))
+        .as("a key the editor has no control for stays")
+        .isEqualTo("true");
+  }
+
+  /** The saved map opened with this text as its map.properties, the map's size kept. */
+  private MapProject givenMapWithProperties(final String byHand) throws Exception {
+    final MapProject made = givenSavedMapWithRed();
+    Files.writeString(givenFile(made), givenSize(made) + byHand, StandardCharsets.ISO_8859_1);
+    return MapProject.open(made.getXmlFile().orElseThrow());
+  }
+
+  private static Path givenFile(final MapProject project) {
+    return project.getFolder().orElseThrow().resolve("map.properties");
+  }
+
+  private static String givenSize(final MapProject project) throws Exception {
+    return Files.readString(givenFile(project), StandardCharsets.ISO_8859_1)
+            .lines()
+            .filter(line -> line.startsWith("map.width") || line.startsWith("map.height"))
+            .collect(Collectors.joining("\n"))
+        + "\n";
+  }
+
+  @DisplayName("A new map's first save writes every entry of its map.properties")
+  @Test
+  void firstSaveWritesAllProperties() throws Exception {
+    final MapProject project = givenSavedMapWithRed();
+
+    assertThat(savedProperties(project))
+        .as("the file reads as the map holds it")
+        .isEqualTo(project.getFiles().properties())
+        .containsKey("color.Red");
+  }
+
+  @DisplayName("A key changed by hand in the file since opening stays; one changed here wins")
+  @Test
+  void keepsHandChangesOfOtherKeys() throws Exception {
+    // given: opened, then units.scale and map.showComments changed in the file by hand
+    final MapProject project = givenMapWithProperties("units.scale=1\nmap.showComments=true\n");
+    final String size = givenSize(project);
+    Files.writeString(
+        givenFile(project),
+        size + "# by hand\nunits.scale=2\nmap.showComments=false\nmine=1\n",
+        StandardCharsets.ISO_8859_1);
+
+    // when: the editor changes one of the two
+    project.setMapProperty("map.showComments", "true");
+    project.setMapProperty("map.showComments", "maybe");
+    project.save();
+
+    // then
+    assertThat(Files.readString(givenFile(project), StandardCharsets.ISO_8859_1))
+        .as("the scale and the key set by hand stay; the key changed here has the editor's value")
+        .isEqualTo(size + "# by hand\nunits.scale=2\nmap.showComments=maybe\nmine=1\n");
+  }
+
+  @DisplayName("A key with blanks and letters beyond ASCII is written as the game reads it")
+  @Test
+  void writesOddKeys() throws Exception {
+    final MapProject project = givenMapWithProperties("units.scale=1\n");
+
+    project.setMapProperty("relief.texture.Sea Zone 1", "Open sea");
+    project.setMapProperty("relief.texture.S\u00fcd: See", "W\u00e4lder \u4e2d");
+    project.save();
+
+    assertThat(savedProperties(project))
+        .as("read back by Properties, key and value whole")
+        .containsEntry("relief.texture.Sea Zone 1", "Open sea")
+        .containsEntry("relief.texture.S\u00fcd: See", "W\u00e4lder \u4e2d")
+        .containsEntry("units.scale", "1");
+    assertThat(Files.readString(givenFile(project), StandardCharsets.ISO_8859_1))
+        .as("the lines there stay, the new ones follow")
+        .startsWith(givenSize(project) + "units.scale=1\n")
+        .contains("relief.texture.Sea\\ Zone\\ 1=Open sea\n");
+  }
+
+  @DisplayName("Of a key given twice the last is changed; a continued line stays until changed")
+  @Test
+  void writesRepeatedAndContinuedKeys() throws Exception {
+    final String byHand =
+        "units.scale=1\nunits.scale=2\ndont_draw_units=factory,\\\n    bunker\n# end\n";
+    final MapProject project = givenMapWithProperties(byHand);
+    final String size = givenSize(project);
+
+    project.setMapProperty("units.scale", "3");
+    project.save();
+    final String scaled = Files.readString(givenFile(project), StandardCharsets.ISO_8859_1);
+    project.editFiles(f -> f.withoutListed(MapFiles.UNDRAWN_UNITS, "factory"));
+    project.save();
+
+    assertThat(project.getFiles().listed(MapFiles.UNDRAWN_UNITS))
+        .as("the continued line read as the game reads it, before its change")
+        .containsExactly("bunker");
+    assertThat(scaled)
+        .as("the entry the game reads, the last, changed; the continued line byte for byte")
+        .isEqualTo(size + byHand.replace("units.scale=2", "units.scale=3"));
+    assertThat(Files.readString(givenFile(project), StandardCharsets.ISO_8859_1))
+        .as("changed, the continued entry is one line")
+        .isEqualTo(
+            size + "units.scale=1\nunits.scale=3\ndont_draw_units=bunker\n# end\n");
   }
 
   private MapProject givenSavedMapWithRed() throws Exception {

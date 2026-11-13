@@ -261,23 +261,41 @@ final class MapProjectTest {
     final BufferedImage shared = new BufferedImage(10, 10, BufferedImage.TYPE_INT_ARGB);
     final BufferedImage older = new BufferedImage(10, 10, BufferedImage.TYPE_INT_ARGB);
     final BufferedImage oldest = new BufferedImage(10, 10, BufferedImage.TYPE_INT_ARGB);
-    final List<Optional<BufferedImage>> steps =
-        List.of(
-            Optional.of(shared),
-            Optional.of(shared),
-            Optional.empty(),
-            Optional.of(older),
-            Optional.of(oldest));
+    final List<List<BufferedImage>> steps =
+        List.of(List.of(shared), List.of(shared), List.of(), List.of(older), List.of(oldest));
 
     // when
-    final int kept = MapProject.keptSteps(steps, Optional.empty(), 800);
-    final int keptBesideCurrent = MapProject.keptSteps(steps, Optional.of(shared), 800);
+    final int kept = MapProject.keptSteps(steps, List.of(), 800);
+    final int keptBesideCurrent = MapProject.keptSteps(steps, List.of(shared), 800);
 
     // then
     assertThat(kept).as("shared counted once, then older: 800 bytes; oldest goes").isEqualTo(4);
     assertThat(keptBesideCurrent)
         .as("the current picture is not counted, so oldest fits too")
         .isEqualTo(5);
+  }
+
+  @DisplayName("A relief held with a step's picture counts for the undo limit too, once")
+  @Test
+  void undoCountsHeldReliefs() {
+    // given: 10x10 pictures of 400 bytes each; two steps share picture and relief
+    final BufferedImage picture = new BufferedImage(10, 10, BufferedImage.TYPE_INT_ARGB);
+    final BufferedImage relief = new BufferedImage(10, 10, BufferedImage.TYPE_INT_ARGB);
+    final BufferedImage olderPicture = new BufferedImage(10, 10, BufferedImage.TYPE_INT_ARGB);
+    final BufferedImage olderRelief = new BufferedImage(10, 10, BufferedImage.TYPE_INT_ARGB);
+    final List<List<BufferedImage>> steps =
+        List.of(
+            List.of(picture, relief),
+            List.of(picture, relief),
+            List.of(olderPicture, olderRelief));
+
+    // when
+    final int kept = MapProject.keptSteps(steps, List.of(), 1200);
+
+    // then
+    assertThat(kept)
+        .as("picture and relief take 800 bytes; the older step's two would make 1600")
+        .isEqualTo(2);
   }
 
   @DisplayName("A unit type kept in its own colors is not tinted; tinted again, the entry goes")
@@ -1137,5 +1155,32 @@ final class MapProjectTest {
     assertThat(project.getFiles().properties().getProperty("dont_draw_territory_names"))
         .as("renamed in place; the removed and the merged one dropped; the rest as it was")
         .isEqualTo("Alpha,Sea Zone 1");
+  }
+
+  @DisplayName("The names not drawn: a territory is added and taken out, the key gone with the last")
+  @Test
+  void hidesAndShowsNames() throws Exception {
+    // given: a list with an entry no territory has, as real maps hold
+    final MapProject project = givenSavedMapWithRed();
+    project.setMapProperty(MapFiles.HIDDEN_NAMES, "Unit List");
+
+    // when
+    project.editFiles(f -> f.withListed(MapFiles.HIDDEN_NAMES, TOP_LEFT));
+    final String both = project.getFiles().properties().getProperty(MapFiles.HIDDEN_NAMES);
+    project.editFiles(f -> f.withListed(MapFiles.HIDDEN_NAMES, TOP_LEFT));
+    project.undo();
+    final String undone = project.getFiles().properties().getProperty(MapFiles.HIDDEN_NAMES);
+    project.redo();
+    project.editFiles(f -> f.withoutListed(MapFiles.HIDDEN_NAMES, "Unit List"));
+    final String one = project.getFiles().properties().getProperty(MapFiles.HIDDEN_NAMES);
+    project.removeTerritory(TOP_LEFT);
+
+    // then
+    assertThat(both).as("added after the entry it does not know").isEqualTo("Unit List," + TOP_LEFT);
+    assertThat(undone).as("hiding it twice was one step").isEqualTo("Unit List");
+    assertThat(one).as("the other taken out").isEqualTo(TOP_LEFT);
+    assertThat(project.getFiles().properties().containsKey(MapFiles.HIDDEN_NAMES))
+        .as("its last territory removed: no empty key stays in map.properties")
+        .isFalse();
   }
 }

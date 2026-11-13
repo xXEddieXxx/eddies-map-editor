@@ -10,7 +10,7 @@ enum MapMode {
   GAME(
       "Game",
       "The map as it plays: its picture, the owners' colors and the units",
-      Glyph.GAME_VIEW),
+      Glyph.DIE),
   OWNERS("Owners", "Each territory in its owner's color", Glyph.OWNERS),
   POLITICAL("Political", "Each territory in its owner's alliance color", Glyph.POLITICAL),
   VALUES("Values", "What each territory gives per turn, capitals and victory cities", Glyph.VALUES),

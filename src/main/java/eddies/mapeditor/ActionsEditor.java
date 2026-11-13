@@ -75,7 +75,7 @@ final class ActionsEditor implements Editor {
     list =
         new SearchList("action", "actions", this::listedNames, this::rowTitle, this::rowDetail,
                 this::choose)
-            .withAdd("Add...", "Add an action", this::addAction);
+            .withAdd("Add action…", "Add an action", this::addAction);
     nationFilter.setRenderer(new NationRenderer());
     nationFilter.addActionListener(
         e -> {
@@ -98,7 +98,7 @@ final class ActionsEditor implements Editor {
             Glyph.ACTIONS,
             "No actions yet",
             "An action is a button a nation may press in its turn, eg to declare war.",
-            "Add action...",
+            "Add action…",
             this::addAction),
         EMPTY);
     page.add(Panels.sideBySide(listColumn, details), LIST);
@@ -520,7 +520,7 @@ final class ActionsEditor implements Editor {
       form.row(
           leftAligned(
               Theme.newAddButton(
-                  "Add condition...",
+                  "Add condition…",
                   "Add a condition it needs",
                   () ->
                       Dialogs.pick(
@@ -628,7 +628,7 @@ final class ActionsEditor implements Editor {
     form.row(
         leftAligned(
             Theme.newAddButton(
-                "Add trigger...",
+                "Add trigger…",
                 "Fire a trigger when it succeeds, once, without testing the trigger's conditions",
                 () ->
                     Dialogs.pick(

@@ -1,24 +1,49 @@
 package eddies.mapeditor;
 
+import com.formdev.flatlaf.FlatClientProperties;
 import java.awt.BorderLayout;
+import java.awt.Component;
+import java.awt.Dimension;
+import java.awt.FlowLayout;
+import java.awt.GridLayout;
+import java.awt.Polygon;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import javax.annotation.Nullable;
+import javax.swing.Box;
+import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.SwingWorker;
 import javax.swing.Timer;
+import org.triplea.map.data.elements.Game;
 import org.triplea.swing.SwingComponents;
 import eddies.mapeditor.MakerIcon.Glyph;
 import eddies.mapeditor.MapChecks.Problem;
+import eddies.mapeditor.MapPicture.Neighbours;
 
 /**
  * Which territories border each other: click one territory, then its neighbour to connect them or,
- * if they are, to part them.
+ * if they are, to part them. "Find neighbours again…" compares the connections with the outlines:
+ * pairs that touch without a connection, and connections between territories that do not touch.
  */
 final class ConnectionsEditor implements Editor {
   private static final int NEWS_MS = 3000;
+  private static final String FIND_AGAIN = "Find neighbours again";
+  private static final String TICK_ALL = "Tick all";
+  private static final String UNTICK_ALL = "Untick all";
+  private static final int DIALOG_WIDTH = 480;
+  private static final int LIST_HEIGHT = 220;
 
   private final MapProject project;
   private final MapView map;
@@ -154,6 +179,18 @@ final class ConnectionsEditor implements Editor {
                 Glyph.CONNECTIONS,
                 "Click a territory",
                 "Then click its neighbours to connect or part them."));
+    if (project.getFiles().hasOutlines()) {
+      final JButton find = new JButton("Find neighbours again…");
+      Theme.setSecondaryButtonStyle(find);
+      find.setToolTipText(
+          "Compares the connections with the territories' outlines: which touch without a"
+              + " connection, and which connections join territories that do not touch");
+      find.addActionListener(e -> findAgain());
+      final JPanel line = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
+      line.setOpaque(false);
+      line.add(find);
+      inspector.row(line);
+    }
     final List<Problem> problems =
         project.problems().stream()
             .filter(p -> p.tool().filter(title()::equals).isPresent())
@@ -169,6 +206,175 @@ final class ConnectionsEditor implements Editor {
       notes.forEach(p -> inspector.row(problemRow(p, Theme.Status.TODO)));
     }
     inspector.end();
+  }
+
+  // ---- find neighbours again: the connections against the outlines
+
+  /**
+   * What the outlines say against the game's connections.
+   *
+   * @param missing pairs whose outlines touch but that are not connected: likely forgotten
+   * @param apart connections between territories that do not touch: meant, eg a sea route or a
+   *     canal, or a mistake
+   */
+  record Found(List<Neighbours> missing, List<Neighbours> apart) {}
+
+  /**
+   * Compares the game's connections with the outlines; territories without outlines are left
+   * out.
+   */
+  static Found find(final Game game, final Map<String, List<Polygon>> polygons) {
+    final Map<String, List<Polygon>> outlines = new LinkedHashMap<>();
+    MapXml.territories(game).stream()
+        .filter(t -> !polygons.getOrDefault(t, List.of()).isEmpty())
+        .forEach(t -> outlines.put(t, polygons.get(t)));
+    final List<Neighbours> touching = OutlineCut.touching(outlines);
+    // seen: a pair touches, or its connection is listed; a game may write one both ways round
+    final Set<Set<String>> seen =
+        touching.stream().map(n -> Set.of(n.t1(), n.t2())).collect(Collectors.toSet());
+    return new Found(
+        touching.stream().filter(n -> !MapXml.neighbors(game, n.t1()).contains(n.t2())).toList(),
+        MapXml.connections(game).stream()
+            .filter(c -> outlines.containsKey(c.getT1()) && outlines.containsKey(c.getT2()))
+            .filter(c -> !c.getT1().equals(c.getT2()))
+            .filter(c -> seen.add(Set.of(c.getT1(), c.getT2())))
+            .map(c -> new Neighbours(c.getT1(), c.getT2()))
+            .toList());
+  }
+
+  /** The game with the pairs connected and the others parted. */
+  static Game applied(
+      final Game game, final List<Neighbours> connect, final List<Neighbours> part) {
+    Game changed = game;
+    for (final Neighbours pair : connect) {
+      changed = MapXml.withConnection(changed, pair.t1(), pair.t2());
+    }
+    for (final Neighbours pair : part) {
+      changed = MapXml.withoutConnection(changed, pair.t1(), pair.t2());
+    }
+    return changed;
+  }
+
+  /** Looks in the background, as a big map takes a while; applied only to the map looked at. */
+  private void findAgain() {
+    final Game game = project.game();
+    final MapFiles files = project.getFiles();
+    Dialogs.toast(page, "Looking for neighbours on the map…");
+    new SwingWorker<Found, Void>() {
+      @Override
+      protected Found doInBackground() {
+        return find(game, files.polygons());
+      }
+
+      @Override
+      protected void done() {
+        final Found found;
+        try {
+          found = get();
+        } catch (final InterruptedException e) {
+          Thread.currentThread().interrupt();
+          return;
+        } catch (final ExecutionException e) {
+          Dialogs.warn(page, FIND_AGAIN, String.valueOf(e.getCause().getMessage()));
+          return;
+        }
+        if (project.getFiles() != files || project.game() != game) {
+          Dialogs.toast(
+              page, "! The map changed while neighbours were looked for. Find them again.");
+          return;
+        }
+        if (found.missing().isEmpty() && found.apart().isEmpty()) {
+          Dialogs.toast(page, "✓ All territories that touch are connected, and no others");
+          return;
+        }
+        final Choices choices = newChoices(found);
+        if (Dialogs.ask(page, FIND_AGAIN, choices.content(), "Change connections")) {
+          // one step for all of them
+          project.edit(g -> applied(g, choices.connect().get(), choices.part().get()));
+        }
+      }
+    }.execute();
+  }
+
+  /** The dialog's inside, and what is ticked in it. */
+  record Choices(
+      JComponent content, Supplier<List<Neighbours>> connect, Supplier<List<Neighbours>> part) {}
+
+  /**
+   * The pairs to connect and the connections to review, none ticked: on a map drawn by hand many
+   * pairs only nearly touch or are apart on purpose, and a connection changes how the map plays.
+   */
+  static Choices newChoices(final Found found) {
+    final JPanel content = new JPanel();
+    content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
+    content.setOpaque(false);
+    final Supplier<List<Neighbours>> connect =
+        addList(
+            content,
+            found.missing(),
+            found.missing().size() == 1
+                ? "1 pair touches but is not connected"
+                : found.missing().size() + " pairs touch but are not connected",
+            "Tick the pairs that are truly neighbours: they get a connection. Leave one that"
+                + " should stay apart, eg sea that only meets a corner of the coast.");
+    final Supplier<List<Neighbours>> part =
+        addList(
+            content,
+            found.apart(),
+            found.apart().size() == 1
+                ? "1 connection joins territories that do not touch"
+                : found.apart().size() + " connections join territories that do not touch",
+            "Often meant so, eg a sea route or a canal. Tick only a mistake: ticked connections"
+                + " are removed.");
+    return new Choices(content, connect, part);
+  }
+
+  private static Supplier<List<Neighbours>> addList(
+      final JPanel content,
+      final List<Neighbours> pairs,
+      final String title,
+      final String line) {
+    if (pairs.isEmpty()) {
+      return List::of;
+    }
+    final JLabel heading = new JLabel(title);
+    heading.putClientProperty(FlatClientProperties.STYLE_CLASS, "semibold");
+    final JLabel note = Theme.newSecondaryLabel(line);
+    final JPanel ticks = new JPanel(new GridLayout(0, 1));
+    final List<JCheckBox> boxes =
+        pairs.stream()
+            .map(pair -> new JCheckBox(pair.t1() + "  —  " + pair.t2()))
+            .toList();
+    boxes.forEach(ticks::add);
+    final JButton all = new JButton(TICK_ALL);
+    Theme.setTertiaryButtonStyle(all);
+    all.addActionListener(
+        e -> {
+          final boolean tick = TICK_ALL.equals(all.getText());
+          boxes.forEach(box -> box.setSelected(tick));
+          all.setText(tick ? UNTICK_ALL : TICK_ALL);
+        });
+    final JPanel head = new JPanel(new BorderLayout());
+    head.setOpaque(false);
+    head.add(heading, BorderLayout.WEST);
+    head.add(all, BorderLayout.EAST);
+    head.setMaximumSize(new Dimension(DIALOG_WIDTH, head.getPreferredSize().height));
+    final JScrollPane scroll = SwingComponents.newJScrollPane(ticks);
+    scroll.setPreferredSize(
+        new Dimension(DIALOG_WIDTH, Math.min(LIST_HEIGHT, ticks.getPreferredSize().height + 8)));
+    if (content.getComponentCount() > 0) {
+      content.add(Box.createVerticalStrut(Theme.GAP_L));
+    }
+    for (final JComponent part : List.of(head, note, scroll)) {
+      part.setAlignmentX(Component.LEFT_ALIGNMENT);
+      content.add(part);
+      content.add(Box.createVerticalStrut(Theme.GAP_XS));
+    }
+    return () ->
+        IntStream.range(0, pairs.size())
+            .filter(i -> boxes.get(i).isSelected())
+            .mapToObj(pairs::get)
+            .toList();
   }
 
   private JPanel problemRow(final Problem problem, final Theme.Status status) {

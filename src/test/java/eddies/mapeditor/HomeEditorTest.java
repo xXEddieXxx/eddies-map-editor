@@ -161,14 +161,14 @@ final class HomeEditorTest {
     // then
     assertThat(givenAll(home.page(), JButton.class).map(JButton::getText))
         .as("Canals is folded, its problem counted on the toggle")
-        .contains("More tools ▾ · ! 1");
+        .anyMatch(text -> text.matches("▸ More tools \\(\\d+\\) · ! 1"));
     assertThat(givenAll(home.page(), JButton.class))
         .as("one problem, not one problems")
         .anyMatch(
             b ->
                 b.getAccessibleContext()
                     .getAccessibleName()
-                    .equals("More tools, collapsed, 1 problem"));
+                    .matches("More tools \\(\\d+\\) · ! 1, collapsed, 1 problem"));
   }
 
   @DisplayName("A tile's number is read with its noun")
@@ -246,7 +246,7 @@ final class HomeEditorTest {
     // given
     final HomeEditor home = givenHome(givenMinimapWithoutPicture());
     givenAll(home.page(), JButton.class)
-        .filter(b -> b.getText().startsWith("More tools ▾"))
+        .filter(b -> b.getText().startsWith("▸ More tools"))
         .findFirst()
         .orElseThrow()
         .doClick();
@@ -295,7 +295,7 @@ final class HomeEditorTest {
 
     // when
     givenAll(home.page(), JButton.class)
-        .filter(b -> b.getText().startsWith("More tools ▾"))
+        .filter(b -> b.getText().startsWith("▸ More tools"))
         .findFirst()
         .orElseThrow()
         .doClick();
@@ -367,14 +367,92 @@ final class HomeEditorTest {
     assertThat(home.problems())
         .as("Red without land is the next step, not also a problem")
         .isEmpty();
-    assertThat(MapMakerWindow.pill(home.problems().size(), MapMakerWindow.Check.NOT_YET).status())
-        .as("the header's pill is calm")
-        .isEqualTo(Theme.Status.TODO);
+    assertThat(MapMakerWindow.pill(home.problems().size(), MapMakerWindow.Check.NOT_YET))
+        .as("the header shows no pill")
+        .isEmpty();
     assertThat(
             Stream.of("Territories", "Nations", "Connections", "Turn order", "Production")
                 .filter(tool -> givenTile(home, tool).isPresent()))
         .as("no numbers the map maker never made, eg the template's 32 turn order steps")
         .containsExactly("Territories", "Nations", "Connections");
+  }
+
+  /** A map with its six building steps done: Red owns land with its capital and a unit. */
+  private MapProject givenBuiltMap() throws Exception {
+    final MapProject project =
+        MapProject.newMap("Island Wars", MapPictureTest.givenPicture(), List.of("Red"), maps)
+            .project();
+    final String land =
+        MapXml.territories(project.game()).stream()
+            .filter(t -> !MapXml.isWater(project.game(), t))
+            .findFirst()
+            .orElseThrow();
+    project.edit(g -> MapXml.withOwner(g, land, "Red"));
+    project.edit(g -> MapXml.withCapital(g, land, "Red"));
+    project.edit(g -> MapXml.withUnits(g, land, "Red", MapXml.unitTypes(g).getFirst(), 1));
+    return project;
+  }
+
+  @DisplayName("On a built map the done steps fold into one row, Check still shows; every tool"
+      + " has its tile and More tools is gone")
+  @Test
+  void builtMapFoldsItsSteps() throws Exception {
+    // given
+    final HomeEditor home = givenHome(givenBuiltMap());
+    final List<String> folded = givenAll(home.page(), JLabel.class).map(JLabel::getText).toList();
+    final JButton fold =
+        givenAll(home.page(), JButton.class)
+            .filter(b -> b.getText().startsWith("▸ Steps to a playable map"))
+            .findFirst()
+            .orElseThrow();
+
+    // when
+    fold.doClick();
+
+    // then
+    assertThat(fold.getText())
+        .as("the six building steps are done, Check is not")
+        .isEqualTo("▸ Steps to a playable map · 6 of 7 done");
+    assertThat(folded)
+        .as("the done steps are folded away, the open one always shows")
+        .contains("Check the map and play it")
+        .doesNotContain("Add the nations that play");
+    assertThat(givenAll(home.page(), JLabel.class).map(JLabel::getText))
+        .as("a click shows them again")
+        .contains("Add the nations that play", "Check the map and play it");
+    assertThat(givenAll(home.page(), JButton.class).map(JButton::getText))
+        .as("open, as every fold row")
+        .contains("▾ Steps to a playable map · 6 of 7 done")
+        .noneMatch(text -> text.contains("More tools"));
+    assertThat(Stream.of("Territories", "Canals", "Files").filter(t -> givenTile(home, t).isPresent()))
+        .as("every tool's tile, also the rarer ones")
+        .containsExactly("Territories", "Canals", "Files");
+  }
+
+  @DisplayName("From about 1500 px the tiles stand in a third column right of the mini map")
+  @Test
+  void tilesInThirdColumnWhenWide() throws Exception {
+    // given
+    final HomeEditor home = givenHome(givenBuiltMap());
+    final List<Point> at = new ArrayList<>();
+
+    // when
+    for (final int width : List.of(1200, 1700)) {
+      home.page().setSize(width, 900);
+      for (int i = 0; i < 3; i++) {
+        givenLaidOut(home.page());
+        SwingUtilities.invokeAndWait(() -> {});
+      }
+      at.add(
+          SwingUtilities.convertPoint(
+              givenTile(home, "Territories").orElseThrow(), 0, 0, home.page()));
+    }
+
+    // then
+    assertThat(at.get(0).x).as("at 1200 px below the mini map, in its column").isLessThan(700);
+    assertThat(at.get(0).y).as("below the mini map").isGreaterThan(200);
+    assertThat(at.get(1).x).as("at 1700 px right of the 540 px guide and the mini map").isGreaterThan(1100);
+    assertThat(at.get(1).y).as("at the top, beside the mini map").isLessThan(120);
   }
 
   @DisplayName("A territory without neighbours is worth a look: listed apart, not counted")

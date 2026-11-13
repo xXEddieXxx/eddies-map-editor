@@ -6,6 +6,7 @@ import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.GridBagLayout;
+import java.awt.GridLayout;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.io.Serial;
@@ -19,6 +20,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
 import javax.swing.BorderFactory;
@@ -59,13 +61,15 @@ final class TriggersEditor implements Editor {
   private static final String READING = "reading";
   private static final String LIST = "list";
   private static final int MAX_SHARING = 5;
+  // the group of the triggers that name no step
+  private static final String NO_STEP = "At no set step";
   private static final int CARD_WIDTH = 680;
-  // shortcut: about what a list row's second line fits at the list's 320 px; SearchList cuts by
-  // width in the middle, a cut here keeps the start readable
-  private static final int SUBTITLE_LENGTH = 46;
-  // the list takes a quarter of a wide page, for the rows' second lines
+  // shortcut: about what a list row's second line fits at the list's 560 px; in a narrower list
+  // SearchList cuts by width in the middle, a cut here keeps the start readable
+  private static final int SUBTITLE_LENGTH = 90;
+  // the list's least and most width beside a chosen trigger
   private static final int LIST_WIDTH = 320;
-  private static final int LIST_MAX_WIDTH = 420;
+  private static final int LIST_MAX_WIDTH = 560;
   // the words TriggerXml.clauses starts the conditions with, eg "unless none of"
   private static final Pattern COMBINING =
       Pattern.compile("(if|unless)( none of| exactly \\S+ of| from \\S+ to \\S+ of)?");
@@ -77,12 +81,21 @@ final class TriggersEditor implements Editor {
   private final JComboBox<String> nationFilter = new JComboBox<>();
   private final JComponent triggersOff =
       Help.link("Use Triggers is off: no trigger fires. Set in", "Game options");
+  private final JComboBox<String> groupBy =
+      new JComboBox<>(
+          new String[] {
+            "Group by: Nation", "Group by: What it does", "Group by: When", "No groups"
+          });
+  private final JSplitPane split;
+  // where fitList put the divider; one the map maker dragged elsewhere stays
+  private int dividerSet;
   private final SearchList list;
   private final JPanel details = new JPanel(new CardLayout());
   private final Form inspector = new Form(560);
   private @Nullable String selected;
-  private Listing listing = new Listing(Map.of(), Map.of(), Map.of());
+  private Listing listing = new Listing(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of());
   private @Nullable Game listed;
+  private @Nullable MapTexts listedTexts;
   private @Nullable Game loading;
   // a trigger to choose once it is listed, eg a copy just made
   private Optional<Attachment> wanted = Optional.empty();
@@ -93,7 +106,12 @@ final class TriggersEditor implements Editor {
    * many each nation has, in the game's order of nations.
    */
   record Listing(
-      Map<String, Trigger> triggers, Map<String, String> details, Map<String, Integer> nations) {}
+      Map<String, Trigger> triggers,
+      Map<String, String> details,
+      Map<String, Integer> nations,
+      Map<String, String> does,
+      Map<String, String> whens,
+      Map<String, String> ids) {}
 
   TriggersEditor(final MapProject project) {
     this.project = project;
@@ -105,7 +123,12 @@ final class TriggersEditor implements Editor {
                 key -> title(listing.triggers().get(key).name()),
                 key -> listing.details().getOrDefault(key, ""),
                 this::choose)
-            .withAdd("New...", "Make a trigger step by step", this::openNew);
+            .withIds(key -> listing.ids().getOrDefault(key, ""))
+            .withAdd("Add trigger…", "Make a trigger step by step", this::openNew);
+    groupBy.setToolTipText("Lists the triggers under headings that fold");
+    groupBy.getAccessibleContext().setAccessibleName("Group the triggers by");
+    groupBy.addActionListener(e -> showGroups());
+    showGroups();
     nationFilter.setRenderer(new NationRenderer());
     nationFilter.addActionListener(e -> {
       if (!filling) {
@@ -118,8 +141,11 @@ final class TriggersEditor implements Editor {
     final JPanel listColumn = new JPanel(new BorderLayout(0, Theme.GAP_S));
     // that no trigger fires goes first, where it is seen, not below a long list
     final JPanel top = new JPanel(new BorderLayout(0, Theme.GAP_S));
+    final JPanel choices = new JPanel(new GridLayout(1, 2, Theme.GAP_S, 0));
+    choices.add(nationFilter);
+    choices.add(groupBy);
     top.add(triggersOff, BorderLayout.NORTH);
-    top.add(nationFilter, BorderLayout.SOUTH);
+    top.add(choices, BorderLayout.SOUTH);
     listColumn.add(top, BorderLayout.NORTH);
     listColumn.add(list, BorderLayout.CENTER);
     page.add(emptyCard, EMPTY);
@@ -128,17 +154,13 @@ final class TriggersEditor implements Editor {
         "Choose a trigger to see what it does."), EMPTY);
     details.add(SwingComponents.newJScrollPane(inspector), LIST);
     final JSplitPane split = Panels.sideBySide(listColumn, details);
+    this.split = split;
+    dividerSet = split.getDividerLocation();
     split.addComponentListener(
         new ComponentAdapter() {
-          // where this listener put the divider; one the map maker dragged elsewhere stays
-          private int set = split.getDividerLocation();
-
           @Override
           public void componentResized(final ComponentEvent e) {
-            if (split.getDividerLocation() == set) {
-              set = Math.clamp(split.getWidth() / 4, LIST_WIDTH, LIST_MAX_WIDTH);
-              split.setDividerLocation(set);
-            }
+            fitList();
           }
         });
     page.add(split, LIST);
@@ -160,6 +182,38 @@ final class TriggersEditor implements Editor {
     final JPanel centred = new JPanel(new GridBagLayout());
     centred.add(lines);
     return centred;
+  }
+
+  /**
+   * The list's width: half the page while no trigger is chosen, as its rows say what each does;
+   * with one chosen two fifths, from 320 to 560 px. A divider the map maker dragged stays.
+   */
+  private void fitList() {
+    if (split.getWidth() > 0 && split.getDividerLocation() == dividerSet) {
+      dividerSet = listWidth(split.getWidth(), selected != null);
+      split.setDividerLocation(dividerSet);
+    }
+  }
+
+  static int listWidth(final int room, final boolean chosen) {
+    return chosen ? Math.clamp(room * 2 / 5, LIST_WIDTH, LIST_MAX_WIDTH) : room / 2;
+  }
+
+  /**
+   * The list under the headings of the grouping chosen, or plain. Only for a new choice, as it
+   * opens every group; the headings read the listing as it is, so a new listing keeps the folds.
+   */
+  private void showGroups() {
+    final int by = groupBy.getSelectedIndex();
+    list.groupBy(by > 2 ? Optional.empty() : Optional.of(key -> group(by, key)));
+  }
+
+  private String group(final int by, final String key) {
+    return switch (by) {
+      case 0 -> Optional.ofNullable(listing.triggers().get(key)).map(Trigger::nation).orElse("");
+      case 1 -> listing.does().getOrDefault(key, "");
+      default -> listing.whens().getOrDefault(key, "");
+    };
   }
 
   @Override
@@ -213,14 +267,17 @@ final class TriggersEditor implements Editor {
   /** Lists the game's triggers again, in the background, only while the tool shows. */
   private void refresh() {
     final Game game = project.game();
-    if (!page.isShowing() || game == listed || game == loading) {
+    final MapTexts texts = project.texts();
+    if (!page.isShowing() || (game == listed && texts == listedTexts) || game == loading) {
       return;
     }
     loading = game;
+    // read here, on the Swing thread, once for all triggers
+    final TriggerXml.Names names = TriggerXml.names(game, texts);
     new SwingWorker<Listing, Void>() {
       @Override
       protected Listing doInBackground() {
-        return listing(game);
+        return listing(game, names);
       }
 
       @Override
@@ -236,6 +293,7 @@ final class TriggersEditor implements Editor {
         try {
           listing = get();
           listed = game;
+          listedTexts = texts;
         } catch (final InterruptedException e) {
           Thread.currentThread().interrupt();
           return;
@@ -264,6 +322,16 @@ final class TriggersEditor implements Editor {
    * the same name on a nation the game keeps the last, so does the list.
    */
   static Listing listing(final Game game) {
+    return listing(game, TriggerXml.names(game));
+  }
+
+  /** As {@link #listing(Game)}, messages shown by their texts. */
+  static Listing listing(final Game game, final TriggerXml.Names names) {
+    final Map<String, String> does = new HashMap<>();
+    final Map<String, String> whens = new HashMap<>();
+    final Map<String, String> ids = new HashMap<>();
+    // for the groups, the step without whose it is: nations are a grouping of their own
+    final TriggerXml.Names kinds = TriggerXml.stepKinds(game);
     final Map<String, Trigger> byName = new LinkedHashMap<>();
     for (final Trigger trigger : TriggerXml.triggers(game)) {
       byName.put(trigger.name() + SEPARATOR + trigger.nation(), trigger);
@@ -280,22 +348,36 @@ final class TriggersEditor implements Editor {
           .findFirst()
           .orElse(trigger.name() + SEPARATOR + trigger.nation());
       byKey.put(key, trigger);
-      details.put(key, subtitle(game, trigger));
+      final TriggerXml.Clauses clauses = TriggerXml.clauses(game, trigger, names);
+      details.put(key, subtitle(clauses, trigger));
+      does.put(key, what(trigger));
+      final String when = TriggerXml.when(trigger.attachment(), kinds);
+      whens.put(key, when.isEmpty() ? NO_STEP : RulesXml.upperFirst(when));
+      ids.put(key, (trigger.name() + " " + clauses.thenIds()).strip());
       counts.merge(trigger.nation(), 1, Integer::sum);
     }
     final Map<String, Integer> nations = new LinkedHashMap<>();
     Stream.concat(MapXml.nations(game).stream(), counts.keySet().stream().sorted())
         .filter(counts::containsKey)
         .forEach(n -> nations.putIfAbsent(n, counts.get(n)));
-    return new Listing(byKey, details, nations);
+    return new Listing(byKey, details, nations, does, whens, ids);
+  }
+
+  /** The kind of thing the trigger does first, eg "Show a message": what it is grouped by. */
+  private static String what(final Trigger trigger) {
+    return AttachmentsXml.options(trigger.attachment()).stream()
+        .flatMap(o -> TriggerXml.spec(o.getName()).stream())
+        .filter(spec -> spec.group() == TriggerXml.Group.EFFECT)
+        .map(TriggerXml.Spec::label)
+        .findFirst()
+        .orElse("Nothing");
   }
 
   /**
    * What the trigger does first, then the names of its conditions, eg "Give 5 PUs · if Germans 4
    * Control Norway": short, for a list row; the inspector tells it whole.
    */
-  static String subtitle(final Game game, final Trigger trigger) {
-    final TriggerXml.Clauses clauses = TriggerXml.clauses(game, trigger);
+  static String subtitle(final TriggerXml.Clauses clauses, final Trigger trigger) {
     final List<String> effects = clauses.effects();
     final String does = effects.isEmpty() ? "nothing"
         : effects.getFirst() + (effects.size() > 1 ? " and " + (effects.size() - 1) + " more" : "");
@@ -345,7 +427,7 @@ final class TriggersEditor implements Editor {
               + (TriggerXml.usesTriggers(project.game()) ? ""
                   : " Triggers also need the game option Use triggers; the assistant turns it"
                       + " on."),
-          "New trigger...", this::openNew), BorderLayout.CENTER);
+          "Add trigger…", this::openNew), BorderLayout.CENTER);
       card = EMPTY;
     } else {
       card = LIST;
@@ -393,8 +475,10 @@ final class TriggersEditor implements Editor {
     ((CardLayout) details.getLayout()).show(details, chosen.isEmpty() ? EMPTY : LIST);
     if (chosen.isEmpty()) {
       selected = null;
+      fitList();
       return;
     }
+    fitList();
     final Trigger trigger = chosen.get();
     final boolean upToDate = listed == project.game();
     final JButton change = new JButton("Change...");
@@ -419,8 +503,15 @@ final class TriggersEditor implements Editor {
     header.add(buttons, BorderLayout.EAST);
     inspector
         .row(header)
-        .subtitle(trigger.nation() + SEPARATOR + trigger.name())
-        .row(capped(TriggerAssistant.clauseCard(TriggerXml.clauses(project.game(), trigger), 5)));
+        .subtitle(trigger.nation() + SEPARATOR + "id " + trigger.name())
+        .row(
+            capped(
+                TriggerAssistant.clauseCard(
+                    TriggerXml.clauses(
+                        project.game(),
+                        trigger,
+                        TriggerXml.names(project.game(), project.texts())),
+                    5)));
     final Problems problems = upToDate
         ? TriggerXml.problems(project.game(), project.texts(), trigger)
         : new Problems(List.of(), List.of());

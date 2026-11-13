@@ -14,11 +14,12 @@ import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.Polygon;
 import java.awt.Rectangle;
+import java.awt.RenderingHints;
 import java.awt.geom.Area;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
+import java.io.StringReader;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -42,6 +43,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -95,6 +98,13 @@ record MapFiles(
   static final String UNIT_TINT = "units.transform.color.";
   // the unit types never tinted, eg ones in the same colors for every nation
   static final String UNTINTED_UNITS = "units.transform.ignore";
+  /** The territories whose names the game does not draw, MapData.shouldDrawTerritoryName. */
+  static final String HIDDEN_NAMES = MapData.PROPERTY_DONT_DRAW_TERRITORY_NAMES;
+  /**
+   * The unit types the game draws nowhere on the map and leaves out of its unit statistics,
+   * MapData.shouldDrawUnit.
+   */
+  static final String UNDRAWN_UNITS = "dont_draw_units";
   // the textures the editor bakes into the relief it makes, which the game does not read: a
   // territory's, eg relief.texture.Mordor=Mountains, and where one starts, relief.textureOffset.
   static final String TEXTURE = "relief.texture.";
@@ -125,6 +135,10 @@ record MapFiles(
   private static final int SAME_BORDER_PIXELS = 3;
   // 50 million pixels, 200 MB: a picture in tiles bigger than this is not held to draw into
   private static final long MAX_HELD_PICTURE = 50_000_000L;
+  // a resized map's sides at least: below it territories fall together
+  private static final int MIN_RESIZED_SIDE = 200;
+  // a picture counts as drawn in flat colors when this share of its pixels equals its neighbour
+  private static final double FLAT_SHARE = 0.75;
 
   /** The files of the map that the game XML belongs to, found in the folders above it. */
   static MapFiles of(final Path gameXml) {
@@ -252,14 +266,18 @@ record MapFiles(
     if (texture != null) {
       renamed.ifPresent(r -> moved.put(TEXTURE + r, texture));
     }
-    final String unnamed = moved.getProperty(MapData.PROPERTY_DONT_DRAW_TERRITORY_NAMES);
+    final String unnamed = moved.getProperty(HIDDEN_NAMES);
     // the game reads the names between the commas as they are
     if (unnamed != null && List.of(unnamed.split(",")).contains(territory)) {
-      moved.setProperty(
-          MapData.PROPERTY_DONT_DRAW_TERRITORY_NAMES,
+      final String rest =
           Stream.of(unnamed.split(","))
               .flatMap(name -> name.equals(territory) ? renamed.stream() : Stream.of(name))
-              .collect(Collectors.joining(",")));
+              .collect(Collectors.joining(","));
+      if (rest.isEmpty()) {
+        moved.remove(HIDDEN_NAMES);
+      } else {
+        moved.setProperty(HIDDEN_NAMES, rest);
+      }
     }
     return moved;
   }
@@ -811,6 +829,244 @@ record MapFiles(
     final Properties copy = new Properties();
     copy.putAll(properties);
     return copy;
+  }
+
+  // ---- the whole map bigger or smaller
+
+  /**
+   * Why the map cannot be resized by the factor, in plain words; empty when it can. A place file
+   * that does not read would keep its places where they were, off the resized map.
+   */
+  Optional<String> whyNotResized(final double factor) {
+    if (!places.unread().isEmpty()) {
+      return Optional.of(
+          String.join(", ", new TreeSet<>(places.unread()))
+              + " does not read, so its places could not move with the map. Fix it in Files"
+              + " first.");
+    }
+    final Dimension size = size();
+    if (size.width <= 0 || size.height <= 0) {
+      return Optional.of("The map has no size yet: load its picture first.");
+    }
+    final long width = Math.round(size.width * factor);
+    final long height = Math.round(size.height * factor);
+    if (width * height > MAX_HELD_PICTURE) {
+      final int most =
+          (int) (100 * Math.sqrt(MAX_HELD_PICTURE / ((double) size.width * size.height)));
+      return Optional.of(
+          "Too big: "
+              + width
+              + " × "
+              + height
+              + " pixels. This map can grow to "
+              + most
+              + " % at most.");
+    }
+    if (Math.min(width, height) < MIN_RESIZED_SIDE) {
+      return Optional.of(
+          "Too small: " + width + " × " + height + " pixels leave no room for territories.");
+    }
+    return Optional.empty();
+  }
+
+  /** The relief put together from its tiles, as big as the map; empty without or if unread. */
+  Optional<BufferedImage> reliefTilesPicture() {
+    final Dimension size = size();
+    if (reliefTile(0, 0).isEmpty()
+        || size.width <= 0
+        || size.height <= 0
+        || (long) size.width * size.height > MAX_HELD_PICTURE) {
+      return Optional.empty();
+    }
+    final BufferedImage whole =
+        new BufferedImage(size.width, size.height, BufferedImage.TYPE_INT_ARGB);
+    final Graphics2D g = whole.createGraphics();
+    try {
+      drawTiles(g, size, this::reliefTile);
+    } catch (final IOException e) {
+      return Optional.empty();
+    } finally {
+      g.dispose();
+    }
+    return Optional.of(whole);
+  }
+
+  /**
+   * The whole map bigger or smaller by the factor: the picture and relief held here, every
+   * outline, center and place, map.width and height, the textures' offsets and the place of the
+   * exported picture's title. Units, flags and names keep their size, so a place moves with the
+   * middle of what the game draws there. The caller holds a picture or relief that is only in
+   * tiles first ({@link MapProject#holdPicture}); takes long for a big picture.
+   *
+   * <p>A picture made bigger keeps each pixel as it is (nearest neighbour) when it is drawn in
+   * flat colors, so its border lines stay crisp and one color, as Redraw borders needs them; a
+   * painted one, every relief and every picture made smaller are smoothed, as leaving pixels out
+   * would break thin lines.
+   */
+  MapFiles resized(final double factor) {
+    final Dimension size = size();
+    final int width = (int) Math.round(size.width * factor);
+    final int height = (int) Math.round(size.height * factor);
+    // by the sizes in whole pixels, so the coordinates end where the picture does
+    final double fx = width / (double) size.width;
+    final double fy = height / (double) size.height;
+    final BiFunction<Point, Dimension, Point> about =
+        (point, drawn) ->
+            new Point(
+                (int) Math.round((point.x + drawn.width / 2.0) * fx - drawn.width / 2.0),
+                (int) Math.round((point.y + drawn.height / 2.0) * fy - drawn.height / 2.0));
+    final Dimension none = new Dimension();
+    final Map<String, List<Polygon>> outlines = new LinkedHashMap<>();
+    polygons.forEach(
+        (territory, shapes) ->
+            outlines.put(
+                territory,
+                shapes.stream()
+                    .map(
+                        shape ->
+                            new Polygon(
+                                Arrays.stream(shape.xpoints)
+                                    .limit(shape.npoints)
+                                    .map(x -> (int) Math.round(x * fx))
+                                    .toArray(),
+                                Arrays.stream(shape.ypoints)
+                                    .limit(shape.npoints)
+                                    .map(y -> (int) Math.round(y * fy))
+                                    .toArray(),
+                                shape.npoints))
+                    .toList()));
+    final Map<String, Point> middles = new LinkedHashMap<>();
+    centers.forEach((territory, center) -> middles.put(territory, about.apply(center, none)));
+    final Dimension unit = unitSize();
+    final Map<String, Tuple<List<Point>, Boolean>> units = new LinkedHashMap<>();
+    places
+        .units()
+        .forEach(
+            (territory, placed) ->
+                units.put(
+                    territory,
+                    Tuple.of(
+                        placed.getFirst().stream().map(p -> about.apply(p, unit)).toList(),
+                        placed.getSecond())));
+    final FontMetrics font = fontMetrics();
+    final Map<Marker, Map<String, List<Point>>> markers = new EnumMap<>(Marker.class);
+    places
+        .markers()
+        .forEach(
+            (marker, byTerritory) -> {
+              final Map<String, List<Point>> moved = new LinkedHashMap<>();
+              byTerritory.forEach(
+                  (territory, points) -> {
+                    // what the game draws from the place: a flag or marker from its top left
+                    // corner, a name from its left end; the rest at the place
+                    final Dimension drawn =
+                        switch (marker) {
+                          case CAPITAL -> new Dimension(CAPITAL_FLAG_SIZE, CAPITAL_FLAG_SIZE);
+                          case VICTORY_CITY -> new Dimension(VICTORY_CITY_SIZE, VICTORY_CITY_SIZE);
+                          case NAME -> new Dimension(font.stringWidth(territory), 0);
+                          default -> none;
+                        };
+                    moved.put(
+                        territory, points.stream().map(p -> about.apply(p, drawn)).toList());
+                  });
+              markers.put(marker, Collections.unmodifiableMap(moved));
+            });
+    // shortcut: PU, blockade, convoy, kamikaze and territory effect markers (above) and
+    // decorations are drawn from a corner too but move by it, as their pictures' sizes are not
+    // read here, so they sit up to half a picture off; read the sizes from the map's PUs,
+    // misc, flags and territoryEffects folders if that shows, till then move them in Territories'
+    // Places
+    final Map<String, List<Point>> decorations = new LinkedHashMap<>();
+    places
+        .decorations()
+        .forEach(
+            (picture, points) ->
+                decorations.put(picture, points.stream().map(p -> about.apply(p, none)).toList()));
+    final Properties sized = copyOfProperties();
+    sized.setProperty(WIDTH, String.valueOf(width));
+    sized.setProperty(HEIGHT, String.valueOf(height));
+    for (final String key : properties.stringPropertyNames()) {
+      if (key.startsWith(TEXTURE_OFFSET)) {
+        final Point offset =
+            about.apply(textureOffset(key.substring(TEXTURE_OFFSET.length())), none);
+        sized.setProperty(key, offset.x + "," + offset.y);
+      }
+    }
+    intProperty(MapData.PROPERTY_SCREENSHOT_TITLE_X)
+        .ifPresent(
+            x ->
+                sized.setProperty(
+                    MapData.PROPERTY_SCREENSHOT_TITLE_X, String.valueOf(Math.round(x * fx))));
+    intProperty(MapData.PROPERTY_SCREENSHOT_TITLE_Y)
+        .ifPresent(
+            y ->
+                sized.setProperty(
+                    MapData.PROPERTY_SCREENSHOT_TITLE_Y, String.valueOf(Math.round(y * fy))));
+    // the title's letters grow with the picture they are drawn on
+    intProperty(MapData.PROPERTY_SCREENSHOT_TITLE_FONT_SIZE)
+        .ifPresent(
+            points ->
+                sized.setProperty(
+                    MapData.PROPERTY_SCREENSHOT_TITLE_FONT_SIZE,
+                    String.valueOf(Math.max(1, Math.round(points * factor)))));
+    return new MapFiles(
+        folder,
+        Collections.unmodifiableMap(outlines),
+        Collections.unmodifiableMap(middles),
+        sized,
+        picture.map(p -> scaled(p, width, height, factor > 1 && isFlat(p))),
+        unitPictures,
+        nationUnitPictures,
+        relief.map(r -> scaled(r, width, height, false)),
+        new Places(
+            Collections.unmodifiableMap(units),
+            markers.isEmpty() ? Map.of() : Map.copyOf(markers),
+            Collections.unmodifiableMap(decorations),
+            places.unread()));
+  }
+
+  /**
+   * Whether the picture is drawn in flat colors, as a map of lines and filled areas is: most of
+   * its pixels are the color of the one beside them, which a painted or photographed one's are not.
+   */
+  static boolean isFlat(final BufferedImage image) {
+    final int step = Math.max(1, Math.min(image.getWidth(), image.getHeight()) / 200);
+    long same = 0;
+    long all = 0;
+    for (int y = 0; y < image.getHeight(); y += step) {
+      for (int x = 0; x + 1 < image.getWidth(); x += step) {
+        all++;
+        if (image.getRGB(x, y) == image.getRGB(x + 1, y)) {
+          same++;
+        }
+      }
+    }
+    return all > 0 && same >= FLAT_SHARE * all;
+  }
+
+  /** The picture at this size: crisp, each pixel as it is, or smoothed, halved step by step. */
+  private static BufferedImage scaled(
+      final BufferedImage image, final int width, final int height, final boolean crisp) {
+    BufferedImage from = image;
+    // a smoothing step looks at 2 by 2 pixels only: halve until the last step is less than half
+    while (!crisp && from.getWidth() >= 2 * width && from.getHeight() >= 2 * height) {
+      from = drawnAt(from, from.getWidth() / 2, from.getHeight() / 2, false);
+    }
+    return drawnAt(from, width, height, crisp);
+  }
+
+  private static BufferedImage drawnAt(
+      final BufferedImage image, final int width, final int height, final boolean crisp) {
+    final BufferedImage drawn = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+    final Graphics2D g = drawn.createGraphics();
+    g.setRenderingHint(
+        RenderingHints.KEY_INTERPOLATION,
+        crisp
+            ? RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR
+            : RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+    g.drawImage(image, 0, 0, width, height, null);
+    g.dispose();
+    return drawn;
   }
 
   /** Writes the outlines and centers into the map's folder; without a folder or outlines, none. */
@@ -1780,6 +2036,26 @@ record MapFiles(
    */
   private static List<Point> placesInside(
       final List<Polygon> outlines, @Nullable final Point center, final Dimension unit) {
+    final List<Point> inside = squaresInside(outlines, center, unit);
+    if (!inside.isEmpty()) {
+      return inside;
+    }
+    final Rectangle bounds =
+        outlines.stream()
+            .map(Polygon::getBounds)
+            .reduce(Rectangle::union)
+            .orElseGet(Rectangle::new);
+    final Point middle =
+        Optional.ofNullable(center)
+            .orElseGet(() -> new Point((int) bounds.getCenterX(), (int) bounds.getCenterY()));
+    return List.of(
+        new Point(
+            middle.x - Math.max(1, unit.width) / 2, middle.y - Math.max(1, unit.height) / 2));
+  }
+
+  /** As {@link #placesInside}, none when no unit square fits. */
+  private static List<Point> squaresInside(
+      final List<Polygon> outlines, @Nullable final Point center, final Dimension unit) {
     // from the outlines' own bounds: an empty Rectangle would add the map's origin to them
     final Rectangle bounds =
         outlines.stream()
@@ -1808,21 +2084,65 @@ record MapFiles(
     places.sort(
         Comparator.comparingDouble(
             p -> p.distance(middle.x - width / 2.0, middle.y - height / 2.0)));
-    return places.isEmpty()
-        ? List.of(new Point(middle.x - width / 2, middle.y - height / 2))
-        : List.copyOf(places.subList(0, Math.min(places.size(), MAX_PLACES)));
+    return List.copyOf(places.subList(0, Math.min(places.size(), MAX_PLACES)));
   }
 
-  /** Writes map.properties into the map's folder, eg the map's size and the nations' colors. */
-  void writeProperties() throws IOException {
-    if (folder.isPresent()) {
-      MapFolder.replace(
-          folder.get().resolve(MAP_PROPERTIES),
-          file -> {
-            try (OutputStream out = Files.newOutputStream(file)) {
-              properties.store(out, "Written by the TripleA map maker");
-            }
-          });
+  /**
+   * How many unit stacks fit side by side wholly inside each of these territories at the units'
+   * size now, at most {@value #MAX_PLACES}; 0 where not even one does. Territories without
+   * outlines are left out.
+   */
+  Map<String, Integer> unitRoom(final Collection<String> territories) {
+    final Dimension unit = unitSize();
+    final Map<String, Integer> room = new HashMap<>();
+    for (final String territory : territories) {
+      final List<Polygon> outlines = polygons.get(territory);
+      if (outlines != null) {
+        room.put(territory, squaresInside(outlines, centers.get(territory), unit).size());
+      }
+    }
+    return Map.copyOf(room);
+  }
+
+  /**
+   * Writes map.properties into the map's folder key by key: an entry that differs from the last
+   * save gets its value in its line, a new one is added at the end, one that is gone loses its
+   * line. Comments, the order and every other line stay as they are in the file, also what was
+   * changed there by hand meanwhile ({@link MapTexts#withEntries}, which writes the entries anew
+   * rather than lose one, should the file not read as meant after the change).
+   *
+   * @param before the entries as last saved; none for a map saved for the first time
+   */
+  void writeProperties(final Properties before) throws IOException {
+    if (folder.isEmpty()) {
+      return;
+    }
+    final Path file = folder.get().resolve(MAP_PROPERTIES);
+    // a new file starts with a line, as a map without settings yet still gets its file
+    final String text =
+        Files.exists(file) ? MapFolder.readText(file) : "# Written by Eddie's Map Editor\n";
+    final Properties inFile = new Properties();
+    try {
+      inFile.load(new StringReader(text));
+    } catch (final IllegalArgumentException e) {
+      // a file the game cannot read either, eg a broken unicode escape: every change is written
+      inFile.clear();
+    }
+    // sorted, so new entries come in the same order each time
+    final Map<String, String> changed = new TreeMap<>();
+    for (final String key : properties.stringPropertyNames()) {
+      final String value = properties.getProperty(key);
+      if (!value.equals(before.getProperty(key)) && !value.equals(inFile.getProperty(key))) {
+        changed.put(key, value);
+      }
+    }
+    final String written =
+        MapTexts.withEntries(
+            text,
+            changed,
+            before.stringPropertyNames().stream().filter(k -> !properties.containsKey(k)).toList());
+    if (!written.equals(text) || !Files.exists(file)) {
+      MapFolder.replaceText(file, written);
     }
   }
 
@@ -1868,9 +2188,36 @@ record MapFiles(
    * units.transform.ignore, names split at commas as the game reads them).
    */
   List<String> untintedUnits() {
-    return Arrays.stream(properties.getProperty(UNTINTED_UNITS, "").split(","))
+    return listed(UNTINTED_UNITS);
+  }
+
+  /**
+   * The names a map.properties list holds, eg {@link #HIDDEN_NAMES}: split at commas and taken as
+   * they are, as the game reads them.
+   */
+  List<String> listed(final String property) {
+    return Arrays.stream(properties.getProperty(property, "").split(","))
         .filter(name -> !name.isEmpty())
         .toList();
+  }
+
+  /** With the name in the list, after the others; the same files when it is there. */
+  MapFiles withListed(final String property, final String name) {
+    final List<String> names = listed(property);
+    return names.contains(name)
+        ? this
+        : withProperty(
+            property,
+            Stream.concat(names.stream(), Stream.of(name)).collect(Collectors.joining(",")));
+  }
+
+  /** Without the name in the list, the others kept; a list left empty goes with its key. */
+  MapFiles withoutListed(final String property, final String name) {
+    final List<String> names = listed(property);
+    return names.contains(name)
+        ? withProperty(
+            property, names.stream().filter(n -> !n.equals(name)).collect(Collectors.joining(",")))
+        : this;
   }
 
   /** Each territory's texture, by territory, {@link Textures}. */

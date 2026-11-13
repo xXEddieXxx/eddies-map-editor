@@ -33,7 +33,6 @@ import javax.swing.JPanel;
 import javax.swing.JSpinner;
 import javax.swing.Scrollable;
 import javax.swing.SpinnerNumberModel;
-import javax.swing.SwingConstants;
 import javax.swing.plaf.basic.BasicHTML;
 import javax.swing.text.DefaultFormatterFactory;
 import javax.swing.text.JTextComponent;
@@ -57,6 +56,8 @@ final class Form extends JPanel implements Scrollable {
 
   private final int textWidth;
   private int row;
+  // the fields, numbers and rows added, which a fold counts
+  private int fields;
   // after columns(): the sections side by side, and the one that new rows go into
   private @Nullable JPanel columns;
   private @Nullable Form block;
@@ -86,6 +87,7 @@ final class Form extends JPanel implements Scrollable {
   void clear() {
     removeAll();
     row = 0;
+    fields = 0;
     columns = null;
     block = null;
   }
@@ -165,12 +167,14 @@ final class Form extends JPanel implements Scrollable {
 
   /** A field with its label above it; a number keeps its size instead of the form's width. */
   Form field(final String label, final JComponent field) {
+    fields++;
     add(labelFor(label, field), Theme.GAP_M, Theme.GAP_XS);
     return addField(field);
   }
 
   /** A field whose label has a "?" that explains what it means. */
   Form field(final String label, final String help, final JComponent field) {
+    fields++;
     add(Help.with(labelFor(label, field), help), Theme.GAP_M, Theme.GAP_XS);
     return addField(field);
   }
@@ -218,6 +222,7 @@ final class Form extends JPanel implements Scrollable {
   }
 
   private Form addNumber(final JComponent label, final JSpinner spinner) {
+    fields++;
     final Dimension size = label.getPreferredSize();
     label.setPreferredSize(new Dimension(Math.max(NUMBER_LABEL_WIDTH, size.width), size.height));
     // a long label in a narrow form, eg beside the map: the number goes below it, not out of sight
@@ -231,6 +236,7 @@ final class Form extends JPanel implements Scrollable {
 
   /** A component of its own, eg a check box or a list of rows. */
   Form row(final JComponent component) {
+    fields++;
     return add(component, 6, 0);
   }
 
@@ -255,30 +261,41 @@ final class Form extends JPanel implements Scrollable {
   }
 
   /**
-   * "More options (n)": options the game reads more rarely, behind a row that opens them. Whether
-   * it is open is kept by id for the session.
+   * "▸ More options (n)": options the game reads more rarely, behind a row that opens them. Whether
+   * it is open is kept by id for the session. With nothing in it, it is not shown.
    *
    * @param count how many fields fill adds
    */
   Form more(final String id, final int count, final Consumer<Form> fill) {
-    return more(id, "More options (" + count + ")", fill);
+    return count == 0 ? this : more(id, "More options (" + count + ")", fill);
+  }
+
+  /**
+   * "▸ Title (n) · k set": like {@link #more(String, int, Consumer)}, counting what fill adds
+   * (fields, numbers and rows) itself; not shown when fill adds nothing.
+   *
+   * @param set how many of them differ from their default, 0 to say nothing
+   */
+  Form fold(final String id, final String title, final int set, final Consumer<Form> fill) {
+    final Form inner = newBlock();
+    fill.accept(inner);
+    return inner.fields == 0 ? this : addFold(id, Theme.foldLabel(title, inner.fields, set), inner);
   }
 
   /** Like {@link #more(String, int, Consumer)}, the row showing the label instead. */
   Form more(final String id, final String label, final Consumer<Form> fill) {
     final Form inner = newBlock();
     fill.accept(inner);
-    final JButton toggle = new JButton();
-    Theme.setBorderlessButtonStyle(toggle);
-    toggle.setHorizontalAlignment(SwingConstants.LEADING);
+    return addFold(id, label, inner);
+  }
+
+  private Form addFold(final String id, final String label, final Form inner) {
+    final JButton toggle = Theme.newFoldButton();
     toggle.setToolTipText("Options the game reads more rarely");
     final Runnable show =
         () -> {
           final boolean open = OPEN.contains(id);
-          toggle.setText((open ? "▾ " : "▸ ") + label);
-          toggle
-              .getAccessibleContext()
-              .setAccessibleName(label + (open ? ", expanded" : ", collapsed"));
+          Theme.showFold(toggle, label, open);
           // closed, the fields stay in the form, only hidden
           inner.setVisible(open);
           revalidate();
@@ -481,7 +498,17 @@ final class Form extends JPanel implements Scrollable {
    */
   static JSpinner newBlankNumber(
       final int value, final int min, final String word, final IntConsumer onChange) {
-    final JSpinner spinner = newNumber(value, min, 9999, onChange);
+    return newBlankNumber(value, min, 9999, word, onChange);
+  }
+
+  /** As newBlankNumber, up to max, eg 100 for a number in percent. */
+  static JSpinner newBlankNumber(
+      final int value,
+      final int min,
+      final int max,
+      final String word,
+      final IntConsumer onChange) {
+    final JSpinner spinner = newNumber(value, min, max, onChange);
     final JFormattedTextField text = ((JSpinner.DefaultEditor) spinner.getEditor()).getTextField();
     text.setFormatterFactory(
         new DefaultFormatterFactory(new BlankFormatter((SpinnerNumberModel) spinner.getModel())));

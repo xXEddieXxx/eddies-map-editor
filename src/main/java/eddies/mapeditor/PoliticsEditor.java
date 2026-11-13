@@ -122,7 +122,7 @@ final class PoliticsEditor implements Editor {
                   chosenType = t;
                   showType();
                 })
-            .withAdd("Add", "Add a relationship type", this::addType);
+            .withAdd("Add type…", "Add a relationship type", this::addType);
     // room below the tabs, as Production's lists have
     types.setBorder(BorderFactory.createEmptyBorder(Theme.GAP_M, 0, 0, Theme.GAP_S));
     startPage.setBorder(BorderFactory.createEmptyBorder(Theme.GAP_M, 0, 0, 0));
@@ -495,7 +495,7 @@ final class PoliticsEditor implements Editor {
               Glyph.POLITICS,
               "No relationship types",
               "TripleA uses Allied and War by alliance until you add one, eg Neutrality.",
-              "Add type",
+              "Add type…",
               this::addType));
       typeForm.end();
       return;

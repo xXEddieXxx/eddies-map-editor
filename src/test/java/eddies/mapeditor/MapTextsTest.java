@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -19,6 +20,91 @@ import eddies.mapeditor.MapTexts.Entry;
 import eddies.mapeditor.MapTexts.Kind;
 
 final class MapTextsTest {
+  @DisplayName("An internal name reads in plain words: no prefix of its kind, words apart")
+  @Test
+  void plainNames() {
+    assertThat(
+            Stream.of(
+                    "conditionAttachment_Japanese_hold_territories",
+                    "triggerAttachmentGermansWin",
+                    "productionChinese",
+                    "production",
+                    "productions",
+                    "GermanAttachmentBonus",
+                    "Germans")
+                .map(MapTexts::plainName))
+        .as("underscores and camelCase as spaces; a name that is only the prefix stays")
+        .containsExactly(
+            "Japanese hold territories",
+            "Germans Win",
+            "Chinese",
+            "production",
+            "productions",
+            "German Attachment Bonus",
+            "Germans");
+  }
+  @DisplayName("Lines end as Properties ends them: a lone CR too; other keys stay in their lines")
+  @Test
+  void editsTextsWithLoneCarriageReturns() {
+    final String text = "aa=1\rbb=2\rcc=3\r";
+
+    assertThat(MapTexts.withEntry(text, "aa", "X"))
+        .as("only aa's line changes, its line end kept")
+        .isEqualTo("aa=X\rbb=2\rcc=3\r");
+    assertThat(MapTexts.withoutEntry(text, "bb")).as("only bb's line goes").isEqualTo("aa=1\rcc=3\r");
+    assertThat(MapTexts.withEntry(text, "dd", "4"))
+        .as("a new key is added with the text's line end")
+        .isEqualTo("aa=1\rbb=2\rcc=3\rdd=4\r");
+  }
+
+  @DisplayName("A value ending in an escaped space does not take the next line with it")
+  @Test
+  void escapedSpaceEndsItsLine() {
+    final String text = "aa=b\\ \ncc=d\n";
+
+    assertThat(MapTexts.entries(text))
+        .as("two entries, as Properties reads them")
+        .containsExactly(new Entry("aa", "b "), new Entry("cc", "d"));
+    assertThat(MapTexts.withEntry(text, "aa", "z")).as("cc stays").isEqualTo("aa=z\ncc=d\n");
+    assertThat(MapTexts.withoutEntry(text, "aa")).as("cc stays").isEqualTo("cc=d\n");
+  }
+
+  @DisplayName("A continued line is one entry; of a key given twice the last is the one changed")
+  @Test
+  void continuedAndRepeatedKeys() {
+    final String text = "aa=one \\\r\n   two\r\nbb=1\r\nbb=2\r\n# end\r\n";
+
+    assertThat(MapTexts.withEntry(text, "bb", "9"))
+        .as("the one the game reads; the continued line untouched")
+        .isEqualTo("aa=one \\\r\n   two\r\nbb=1\r\nbb=9\r\n# end\r\n");
+    assertThat(MapTexts.withEntry(text, "aa", "x"))
+        .as("both lines of the continued entry make way for the one")
+        .isEqualTo("aa=x\r\nbb=1\r\nbb=2\r\n# end\r\n");
+    assertThat(MapTexts.withoutEntry(text, "bb"))
+        .as("removed wherever it is given")
+        .isEqualTo("aa=one \\\r\n   two\r\n# end\r\n");
+    assertThat(MapTexts.withEntries(text, Map.of("bb", "9", "new key", "\u00e4"), List.of("aa")))
+        .as("several changes in one go: changed, removed, added with its escapes")
+        .isEqualTo("bb=1\r\nbb=9\r\n# end\r\nnew\\ key=\\u00E4\r\n");
+  }
+
+  @DisplayName("An edit that would lose an entry is not written: the entries are written anew")
+  @Test
+  void rewritesRatherThanLose() throws Exception {
+    final String before = "# mine\naa=1\nbb=2\n";
+
+    final String kept =
+        MapTexts.orRewritten(before, "# mine\naa=X\nbb=2\n", Map.of("aa", "X"), List.of());
+    final String saved = MapTexts.orRewritten(before, "aa=X\n", Map.of("aa", "X"), List.of());
+
+    final Properties read = new Properties();
+    read.load(new StringReader(saved));
+    assertThat(kept).as("an edit that reads as meant stays as it is").isEqualTo("# mine\naa=X\nbb=2\n");
+    assertThat(read)
+        .as("an edit that lost bb is replaced by all the entries meant")
+        .containsOnly(Map.entry("aa", "X"), Map.entry("bb", "2"));
+  }
+
   private static final String MESSAGES =
       """
       # messages of the triggers

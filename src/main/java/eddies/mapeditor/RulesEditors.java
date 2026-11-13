@@ -63,6 +63,8 @@ class RulesEditors {
   private static final int CONTROL_WIDTH = 420;
   private static final int LABEL_WIDTH = 220;
   private static final int NUMBER_WIDTH = 96;
+  // as wide as a "?" (Help.button)
+  private static final int HELP_WIDTH = 24;
   // the variables' list at most this high, so the options above stay in sight
   private static final int VARIABLES_HEIGHT = 240;
 
@@ -126,7 +128,8 @@ class RulesEditors {
     private final JCheckBox onlyChangeable = new JCheckBox("Only what players may change");
     private final Form form = new Form(TEXT_WIDTH);
     private final VariablesPage variables;
-    private final JButton variablesToggle = new JButton();
+    private final JButton variablesToggle = Theme.newFoldButton();
+    private final JButton addVariable;
     private boolean variablesOpen;
     // a change made by a control of this page: the page stays, so the focus does not jump
     private boolean editingHere;
@@ -136,6 +139,15 @@ class RulesEditors {
     OptionsPage(final MapProject project) {
       this.project = project;
       variables = new VariablesPage(project);
+      addVariable =
+          Theme.newAddButton(
+              "Add variable…",
+              "A new list of names",
+              () -> {
+                // the new variable shows at once
+                variablesOpen = true;
+                variables.add();
+              });
       // the sections start where the search does
       form.setBorder(BorderFactory.createEmptyBorder(0, 0, Theme.GAP_L, Theme.GAP_S));
       search.putClientProperty(FlatClientProperties.PLACEHOLDER_TEXT, "Search options");
@@ -151,7 +163,7 @@ class RulesEditors {
       top.add(filters, BorderLayout.CENTER);
       top.add(
           Theme.newAddButton(
-              "Add option...",
+              "Add option…",
               "An option TripleA knows, eg Low Luck, or one the map's triggers read",
               this::addOption),
           BorderLayout.EAST);
@@ -205,7 +217,12 @@ class RulesEditors {
       for (final String group : GROUPS) {
         final List<Property> rows = inGroup(shown, group);
         if (!rows.isEmpty()) {
-          sections.section(group);
+          if ("Bids".equals(group)) {
+            // one "?" for all of them, not one per nation
+            sections.section(group, GameRulesXml.BID_HELP);
+          } else {
+            sections.section(group);
+          }
           rows.forEach(o -> sections.row(newRow(o)));
         }
       }
@@ -224,7 +241,7 @@ class RulesEditors {
                 Glyph.OPTIONS,
                 "No options yet",
                 "Add an option TripleA knows, eg Low luck.",
-                "Add option...",
+                "Add option…",
                 this::addOption));
       } else if (shown.isEmpty() && !dice) {
         form.note("No option matches.");
@@ -326,7 +343,13 @@ class RulesEditors {
               "×",
               "Remove option from the game",
               () -> project.edit(g -> GameRulesXml.withoutOption(g, name)));
-      final JPanel row = newLine(control, lock, remove);
+      // a "?" for what TripleA's own options do; the others keep its place, so the "×" line up
+      final JComponent help =
+          GameRulesXml.optionHelp(name)
+              .<JComponent>map(text -> Help.button(name, text))
+              .orElseGet(() -> (JComponent) Box.createRigidArea(
+                          new Dimension(UIScale.scale(HELP_WIDTH), UIScale.scale(HELP_WIDTH))));
+      final JPanel row = newLine(control, lock, help, remove);
       row.setName(name);
       showNear(row, remove);
       return row;
@@ -533,9 +556,11 @@ class RulesEditors {
           });
     }
 
-    /** "▸ Variables (n)" with a line, opening the variables below it. */
+    /**
+     * "▸ Variables (n)" with a line, opening the variables below it; without variables the way to
+     * add the first instead.
+     */
     private JComponent newVariablesBar() {
-      Theme.setTertiaryButtonStyle(variablesToggle);
       variablesToggle.addActionListener(
           e -> {
             variablesOpen = !variablesOpen;
@@ -543,6 +568,7 @@ class RulesEditors {
           });
       final JPanel bar = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_S, 0));
       bar.add(variablesToggle);
+      bar.add(addVariable);
       bar.add(
           Theme.newSecondaryLabel(
               "Lists of names that attachments repeat for. Most maps need none."));
@@ -558,12 +584,12 @@ class RulesEditors {
     }
 
     private void showVariablesToggle() {
-      final String label = "Variables (" + GameRulesXml.variableNames(project.game()).size() + ")";
-      variablesToggle.setText((variablesOpen ? "▾ " : "▸ ") + label);
-      variablesToggle
-          .getAccessibleContext()
-          .setAccessibleName(label + (variablesOpen ? ", expanded" : ", collapsed"));
-      variables.page.setVisible(variablesOpen);
+      final int count = GameRulesXml.variableNames(project.game()).size();
+      Theme.showFold(variablesToggle, "Variables (" + count + ")", variablesOpen);
+      // a fold of nothing is not shown: the way to add the first variable instead
+      variablesToggle.setVisible(count > 0);
+      addVariable.setVisible(count == 0);
+      variables.page.setVisible(variablesOpen && count > 0);
       page.revalidate();
       page.repaint();
     }
@@ -600,13 +626,13 @@ class RulesEditors {
                           + " names · used by "
                           + uses(v),
                   this::choose)
-              .withAdd("Add variable...", "A new list of names", this::add);
+              .withAdd("Add variable…", "A new list of names", this::add);
       page.add(Panels.sideBySide(list, SwingComponents.newJScrollPane(inspector)), LIST);
       // one line in the strip below the options, which stay in sight; the bar above explains
       final JPanel noVariables =
           new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_S, Theme.GAP_S));
       noVariables.add(Theme.newSecondaryLabel("No variables."));
-      noVariables.add(Theme.newAddButton("Add variable...", "A new list of names", this::add));
+      noVariables.add(Theme.newAddButton("Add variable…", "A new list of names", this::add));
       none = noVariables;
       page.add(none, NONE);
       project.onChange(

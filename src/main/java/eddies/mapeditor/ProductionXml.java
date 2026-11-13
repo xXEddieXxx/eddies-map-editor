@@ -2,7 +2,9 @@ package eddies.mapeditor;
 
 import games.strategy.triplea.Constants;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Predicate;
@@ -96,6 +98,28 @@ class ProductionXml {
         .filter(p -> nation.equals(p.getPlayer()))
         .map(PlayerProduction::getFrontier)
         .findFirst();
+  }
+
+  /**
+   * Each frontier in plain words, as a purchase list called by who uses it: the nation's name for
+   * one nation, "Shared list n" for several, else its id's words, eg "Neutral" for
+   * productionNeutral.
+   */
+  static Map<String, String> listTitles(final Game game) {
+    final Map<String, String> titles = new HashMap<>();
+    int shared = 0;
+    for (final String frontier : frontiers(game)) {
+      final List<String> users =
+          MapXml.nations(game).stream()
+              .filter(n -> frontierOf(game, n).filter(frontier::equals).isPresent())
+              .toList();
+      titles.put(
+          frontier,
+          users.isEmpty()
+              ? MapTexts.plainName(frontier)
+              : users.size() == 1 ? users.getFirst() : "Shared list " + ++shared);
+    }
+    return titles;
   }
 
   /** The game with the nation buying from the frontier. */

@@ -4,12 +4,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.awt.Component;
 import java.awt.Container;
+import java.awt.event.ActionEvent;
+import java.awt.event.KeyEvent;
 import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import javax.swing.JButton;
@@ -18,7 +21,10 @@ import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
+import javax.swing.JList;
+import javax.swing.JSpinner;
 import javax.swing.JTextField;
+import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -68,7 +74,8 @@ final class NationsEditorTest {
     // given
     final MapProject project = givenMinimap();
     final NationsEditor editor = new NationsEditor(project);
-    final String nation = (String) givenChosen(editor);
+    final String nation = MapXml.nations(project.game()).getFirst();
+    editor.choose(nation);
     final JComboBox<String> box = givenAllianceBox(editor);
     final Game before = project.game();
 
@@ -99,6 +106,34 @@ final class NationsEditorTest {
     final Field selected = NationsEditor.class.getDeclaredField("selected");
     selected.setAccessible(true);
     return selected.get(editor);
+  }
+
+  @DisplayName("Esc on an opened nation keeps a rule value typed, not taken yet")
+  @Test
+  void escKeepsTyping() throws Exception {
+    // given: Japan opened, its first rule's text
+    final MapProject project = givenG40();
+    final NationsEditor editor = new NationsEditor(project);
+    editor.click("Japan");
+    final String value =
+        RulesXml.playerOptions(project.game(), "Japanese").getFirst().getValue();
+    final JTextField field =
+        find(editor.page(), JTextField.class)
+            .filter(f -> value.equals(f.getText()))
+            .findFirst()
+            .orElseThrow();
+
+    // when
+    field.setText("Germans:PUs");
+    final JComponent card = (JComponent) givenBack(editor).getParent().getParent();
+    card.getActionForKeyStroke(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0))
+        .actionPerformed(new ActionEvent(card, ActionEvent.ACTION_PERFORMED, ""));
+
+    // then
+    assertThat(givenChosen(editor)).as("back at the list").isNull();
+    assertThat(RulesXml.playerOptions(project.game(), "Japanese").getFirst().getValue())
+        .as("the typed value was taken before the form was cleared")
+        .isEqualTo("Germans:PUs");
   }
 
   @DisplayName("A click on the map chooses the owner and keeps a rule value typed, not taken yet")
@@ -164,23 +199,97 @@ final class NationsEditorTest {
     assertThat(all).as("All units ticked wins and writes all").isEqualTo("2:total:all");
   }
 
-  @DisplayName("A new Nations tool shows the first nation, and More options counts its rules")
+  @DisplayName("Nations starts with its list; a click on land opens the owner, back and Esc close")
   @Test
-  void firstNationIsChosenAndRulesCounted() throws Exception {
+  void nationOpensUnderTheListAndGoesBack() throws Exception {
+    // given
+    final NationsEditor editor = new NationsEditor(givenG40());
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    seen.add(givenChosen(editor));
+    seen.add(givenBack(editor).getParent().getParent().isVisible());
+    editor.click("Germany");
+    seen.add(givenChosen(editor));
+    seen.add(givenBack(editor).getParent().getParent().isVisible());
+    givenBack(editor).doClick();
+    seen.add(givenChosen(editor));
+    seen.add(givenBack(editor).getParent().getParent().isVisible());
+    editor.click("Japan");
+    final JComponent card = (JComponent) givenBack(editor).getParent().getParent();
+    card.getActionForKeyStroke(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0))
+        .actionPerformed(new ActionEvent(card, ActionEvent.ACTION_PERFORMED, ""));
+    seen.add(givenChosen(editor));
+
+    // then
+    assertThat(seen)
+        .as("none chosen and the list alone; the Germans under the back link; the list again,"
+            + " by the link and by Esc")
+        .containsExactly(null, false, "Germans", true, null, false, null);
+  }
+
+  /** The link back to the list, on the opened nation's card. */
+  private static JButton givenBack(final NationsEditor editor) {
+    return find(editor.page(), JButton.class)
+        .filter(b -> "← All nations".equals(b.getText()))
+        .findFirst()
+        .orElseThrow();
+  }
+
+  @DisplayName("The list shows each nation's color before its name")
+  @Test
+  void listShowsTheNationsColors() throws Exception {
+    // given
+    final MapProject project = givenMinimap();
+    final NationsEditor editor = new NationsEditor(project);
+    @SuppressWarnings("unchecked")
+    final JList<String> list = find(editor.page(), JList.class).findFirst().orElseThrow();
+
+    // when
+    final Component row =
+        list.getCellRenderer().getListCellRendererComponent(list, "Italians", 1, false, false);
+
+    // then
+    assertThat(find((Container) row, JLabel.class).map(JLabel::getIcon).filter(Objects::nonNull))
+        .as("the Italians' color as a swatch")
+        .containsExactly(new MapLegend.Swatch(project.nationColor("Italians")));
+  }
+
+  @DisplayName("More options always shows, with how many options it holds and how many are set;"
+      + " the add actions are buttons")
+  @Test
+  void moreOptionsSaysWhatIsSet() throws Exception {
+    final MapProject project = givenG40();
+    final NationsEditor editor = new NationsEditor(project);
+
+    editor.choose("Germans");
+    final List<String> germans = find(editor.page(), JButton.class).map(JButton::getText).toList();
+    editor.choose("Japanese");
+    final List<String> japanese = find(editor.page(), JButton.class).map(JButton::getText).toList();
+
+    assertThat(germans)
+        .as("nothing set: the fold stays, as its fields are how a rule gets set")
+        .anyMatch(text -> text.matches("▸ More options [(][0-9]+[)]"));
+    assertThat(japanese)
+        .as("Japan's suicideAttackResources is set")
+        .anyMatch(text -> text.matches("▸ More options [(][0-9]+[)] · 1 set"));
+    assertThat(germans)
+        .as("add actions as '+ Add …' buttons, '…' where a dialog follows")
+        .contains("+ Add nation…", "+ Add limit");
+  }
+
+  @DisplayName("More options counts a nation's rules")
+  @Test
+  void rulesCounted() throws Exception {
     final MapProject project = givenG40();
     final Game game = project.game();
-
-    final NationsEditor editor = new NationsEditor(project);
     final Game withLimit =
         RulesXml.withPlayerOptionAdded(game, "Japanese", "placementLimit", "1:owned:all");
 
-    assertThat(givenChosen(editor))
-        .as("no empty details on open")
-        .isEqualTo(MapXml.nations(game).getFirst());
     assertThat(NationsEditor.moreCount(game, "Germans")).as("Germans set none").isZero();
     assertThat(NationsEditor.moreCount(withLimit, "Japanese"))
-        .as("suicideAttackResources and the new placementLimit")
-        .isEqualTo(2);
+        .as("suicideAttackResources; the new placementLimit shows under Stacking limits")
+        .isEqualTo(1);
   }
 
   @DisplayName("A list of nations reads short, all of them up to three")
@@ -225,6 +334,7 @@ final class NationsEditorTest {
   void headerLineWraps() throws Exception {
     // given: the Germans' line, longer than a narrow inspector is wide
     final NationsEditor editor = new NationsEditor(givenG40());
+    editor.choose("Germans");
     final JComponent page = editor.page();
     page.setSize(320, 900);
 
@@ -236,7 +346,7 @@ final class NationsEditorTest {
     // then
     final JLabel start =
         find(page, JLabel.class)
-            .filter(l -> l.getText().contains("PUs at the start"))
+            .filter(l -> String.valueOf(l.getText()).contains("PUs at the start"))
             .findFirst()
             .orElseThrow();
     final Container line = start.getParent();
@@ -303,5 +413,43 @@ final class NationsEditorTest {
     assertThat(NationsEditor.moreCount(project.game(), "Chinese"))
         .as("More options counts the rules of the rulesAttachment too")
         .isEqualTo(7);
+  }
+
+  @DisplayName("The units the first nation holds show with their counts; each change is one step")
+  @Test
+  void showsHeldUnits() throws Exception {
+    // given: the first nation holds 2 infantry, another nation a tank
+    final MapProject project = givenMinimap();
+    final String first = MapXml.nations(project.game()).getFirst();
+    final String other = MapXml.nations(project.game()).getLast();
+    project.edit(g -> MapXml.withHeldUnitsAdded(g, first, "infantry", 2));
+    project.edit(g -> MapXml.withHeldUnitsAdded(g, other, "armour", 1));
+    final NationsEditor editor = new NationsEditor(project);
+    editor.choose(first);
+    final List<JSpinner> counts =
+        find(editor.page(), JSpinner.class).filter(s -> Integer.valueOf(2).equals(s.getValue())).toList();
+
+    // when: counted twice in the field, which stays as it is
+    counts.getFirst().setValue(3);
+    counts.getFirst().setValue(4);
+
+    // then
+    assertThat(
+            find(editor.page(), JLabel.class)
+                .filter(label -> label.getLabelFor() == counts.getFirst())
+                .map(JLabel::getText))
+        .as("the count's label is the unit type")
+        .containsExactly("infantry");
+    assertThat(counts).as("only the shown nation's units: no row of the other's").hasSize(1);
+    assertThat(MapXml.heldUnits(project.game()).getFirst().getQuantity())
+        .as("the second change of the same field counts too")
+        .isEqualTo(4);
+    assertThat(NationsEditor.moreCount(project.game(), first))
+        .as("More options counts the entry")
+        .isEqualTo(1);
+    project.undo();
+    assertThat(MapXml.heldUnits(project.game()).getFirst().getQuantity())
+        .as("each change one step")
+        .isEqualTo(3);
   }
 }

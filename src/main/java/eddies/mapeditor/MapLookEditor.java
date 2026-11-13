@@ -182,6 +182,23 @@ final class MapLookEditor implements Editor {
     cards.section("On the map");
     cards.row(check("Territory names", MapData.PROPERTY_MAP_SHOWTERRITORYNAMES, true));
     cards.row(check("Sea zone names", MapData.PROPERTY_MAP_SHOWSEAZONENAMES, false));
+    final List<String> unnamed = project.getFiles().listed(MapFiles.HIDDEN_NAMES);
+    if (!unnamed.isEmpty()) {
+      final JLabel hidden =
+          Theme.newSecondaryLabel("No name on " + NationsEditor.shortList(unnamed));
+      hidden.setToolTipText(
+          "<html>The game draws no name on: "
+              + SearchList.escape(String.join(", ", unnamed))
+              + "<br>Set per territory in Territories, On the map.</html>");
+      final JButton showAll = new JButton("Show all");
+      Theme.setTertiaryButtonStyle(showAll);
+      showAll.setToolTipText("The game draws every territory's name again");
+      // not through set: the line goes with the list, so the form is built again
+      showAll.addActionListener(e -> project.setMapProperty(MapFiles.HIDDEN_NAMES, ""));
+      final JPanel line = fitting(hidden, showAll);
+      line.setBorder(BorderFactory.createEmptyBorder(0, 20, 0, 0));
+      cards.row(line);
+    }
     cards.row(check("PUs (resources)", MapData.PROPERTY_MAP_SHOWRESOURCES, true));
     cards.row(check("Capital markers", MapData.PROPERTY_MAP_SHOWCAPITOLMARKERS, true));
     cards.row(
@@ -210,6 +227,23 @@ final class MapLookEditor implements Editor {
     final JLabel scale = Theme.newSecondaryLabel("scale " + size.getSelectedItem());
     size.addActionListener(e -> scale.setText("scale " + size.getSelectedItem()));
     cards.field("Size", fitting(size, scale));
+    cards.note("Smaller units: more fit into a territory. Or give them a bigger map:");
+    final MapFiles files = project.getFiles();
+    final JButton resize = new JButton("Resize map…");
+    Theme.setSecondaryButtonStyle(resize);
+    resize.setToolTipText(
+        "Makes the whole map bigger or smaller: picture, borders and places. Units keep their"
+            + " size");
+    resize.setEnabled(files.hasOutlines() || files.hasPictureOrRelief());
+    resize.addActionListener(e -> MapMakerWindow.resizeMap(page));
+    final Dimension mapSize = files.size();
+    cards.row(
+        fitting(
+            resize,
+            Theme.newSecondaryLabel(
+                resize.isEnabled()
+                    ? "now " + mapSize.width + " × " + mapSize.height + " pixels"
+                    : "once the map has a picture")));
     // label above, as Size's: both fields in one column
     cards.field(
         "Stack up to",

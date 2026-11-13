@@ -131,6 +131,38 @@ class MapChecks {
   }
 
   /**
+   * Worth a look: the units are big for the map, when half of its land territories cannot hold
+   * even one unit wholly inside at the units' size now ({@link MapFiles#unitRoom}); smaller units
+   * or a bigger map, both in Map look, give them room. Finished maps with tight land, eg Pacific
+   * or Domination, hold one or two in most and get no note. Looks at every land outline, so it is
+   * asked once per change of the files, not for each paint.
+   */
+  static Optional<Problem> unitRoomNote(final Game game, final MapFiles files) {
+    final Set<String> seas = MapXml.seaZones(game);
+    final List<Integer> room =
+        files
+            .unitRoom(MapXml.territories(game).stream().filter(t -> !seas.contains(t)).toList())
+            .values()
+            .stream()
+            .toList();
+    if (room.isEmpty()) {
+      return Optional.empty();
+    }
+    final long tooSmall = room.stream().filter(r -> r == 0).count();
+    return 2 * tooSmall <= room.size()
+        ? Optional.empty()
+        : Optional.of(
+            Problem.in(
+                "Map look",
+                "Units are big for this map: "
+                    + tooSmall
+                    + " of "
+                    + room.size()
+                    + " land territories are too small for even one. Make the units smaller or"
+                    + " the map bigger in Map look."));
+  }
+
+  /**
    * The unit types a nation can have: the ones it can buy (its purchase list) and the ones it
    * starts with on the map, in the game's order; not what only triggers give it.
    */

@@ -2,10 +2,13 @@ package eddies.mapeditor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.awt.Component;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
+import javax.swing.AbstractButton;
+import javax.swing.JMenuItem;
 import javax.swing.JToggleButton;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.DisplayName;
@@ -75,37 +78,55 @@ final class MapViewsBarTest {
         .containsExactly(List.of("Values"), List.of("Neighbours"));
   }
 
-  @DisplayName("Compact, the chosen view keeps its name and the others only their icons")
+  @DisplayName("Short of room the views are one button, \"View: Game ▾\"; its menu chooses a view")
   @Test
-  void compactKeepsTheChosenName() throws Exception {
+  void dropdownNamesTheViewAndChooses() throws Exception {
     // given
-    final List<List<String>> texts = new ArrayList<>();
+    final List<MapMode> reported = new ArrayList<>();
+    final List<Object> seen = new ArrayList<>();
 
     // when
     SwingUtilities.invokeAndWait(
         () -> {
-          final MapViewsBar bar = new MapViewsBar(MapMode.GAME, mode -> {});
-          bar.show(MapViewsBar.Names.CHOSEN);
-          texts.add(toggles(bar).stream().map(JToggleButton::getText).toList());
-          toggles(bar).get(MapMode.VALUES.ordinal()).doClick();
-          texts.add(toggles(bar).stream().map(JToggleButton::getText).toList());
-          bar.show(MapViewsBar.Names.ALL);
-          texts.add(toggles(bar).stream().map(JToggleButton::getText).toList());
+          final MapViewsBar bar = new MapViewsBar(MapMode.GAME, reported::add);
+          bar.show(MapViewsBar.Shape.DROPDOWN);
+          seen.add(shownTexts(bar));
+          final List<JMenuItem> entries =
+              Stream.of(bar.viewsMenu().getComponents()).map(JMenuItem.class::cast).toList();
+          seen.add(
+              entries.stream().map(e -> e.getAccessibleContext().getAccessibleName()).toList());
+          seen.add(entries.stream().allMatch(e -> e.getIcon() != null));
+          seen.add(entries.stream().filter(JMenuItem::isSelected).count());
+          entries.get(MapMode.VALUES.ordinal()).doClick();
+          seen.add(shownTexts(bar));
+          seen.add(selected(bar));
+          bar.show(MapViewsBar.Shape.TOGGLES);
+          seen.add(shownTexts(bar));
         });
 
     // then
-    assertThat(texts.get(0))
-        .as("compact: only the chosen view by name")
-        .containsExactly("Game", "", "", "", "", "");
-    assertThat(texts.get(1))
-        .as("the name follows the choice")
-        .containsExactly("", "", "", "Values", "", "");
-    assertThat(texts.get(2))
-        .as("with room every name again")
-        .containsExactly("Game", "Owners", "Political", "Values", "Units", "Neighbours");
+    assertThat(seen)
+        .as("one button naming the view; an entry per view with icon, name and what it shows, the"
+            + " shown one marked; the choice shows on the button and, with room, in the toggles")
+        .containsExactly(
+            List.of("View: Game ▾"),
+            Stream.of(MapMode.values()).map(mode -> mode + ": " + mode.getDescription()).toList(),
+            true,
+            1L,
+            List.of("View: Values ▾"),
+            List.of("Values"),
+            List.of("Game", "Owners", "Political", "Values", "Units", "Neighbours"));
+    assertThat(reported).as("the menu's choice reports").containsExactly(MapMode.VALUES);
   }
 
-  @DisplayName("A chosen view's glyph shows in the chosen text color, also as an icon alone")
+  private static List<String> shownTexts(final MapViewsBar bar) {
+    return Stream.of(bar.getComponents())
+        .filter(Component::isVisible)
+        .map(c -> ((AbstractButton) c).getText())
+        .toList();
+  }
+
+  @DisplayName("A chosen view's glyph shows in the chosen text color")
   @Test
   void chosenGlyphInChosenColor() throws Exception {
     // given
@@ -115,7 +136,6 @@ final class MapViewsBarTest {
     SwingUtilities.invokeAndWait(
         () -> {
           final MapViewsBar bar = new MapViewsBar(MapMode.UNITS, mode -> {});
-          bar.show(MapViewsBar.Names.NONE);
           for (final MapMode mode : List.of(MapMode.UNITS, MapMode.CONNECTIONS)) {
             final JToggleButton toggle = toggles(bar).get(mode.ordinal());
             final BufferedImage image = new BufferedImage(20, 20, BufferedImage.TYPE_INT_RGB);

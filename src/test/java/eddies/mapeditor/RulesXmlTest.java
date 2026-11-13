@@ -42,6 +42,22 @@ final class RulesXmlTest {
     return GameParser.parse(xml, false).orElseThrow();
   }
 
+  @DisplayName("The round offset is read and set; the game then starts in the round after it")
+  @Test
+  void setsRoundOffset(@TempDir final Path folder) {
+    final Game later = RulesXml.withRoundOffset(minimap, 65);
+
+    assertThat(RulesXml.roundOffset(minimap)).as("a game without an offset counts from 1").isZero();
+    assertThat(RulesXml.withRoundOffset(minimap, 0))
+        .as("the offset the game has already is no change, so no step")
+        .isSameAs(minimap);
+    assertThat(RulesXml.roundOffset(later)).as("read back").isEqualTo(65);
+    assertThat(stepNames(later)).as("the steps stay").isEqualTo(stepNames(minimap));
+    assertThat(givenLoaded(later, folder).getSequence().getRound())
+        .as("TripleA starts the game in round 66")
+        .isEqualTo(66);
+  }
+
   @DisplayName("Steps are added, moved, changed and removed, each a new game")
   @Test
   void changesTheTurnOrder() {

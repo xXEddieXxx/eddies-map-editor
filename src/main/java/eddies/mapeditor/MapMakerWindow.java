@@ -19,6 +19,8 @@ import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
@@ -60,6 +62,7 @@ import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 import javax.swing.WindowConstants;
+import javax.swing.plaf.basic.BasicSplitPaneUI;
 import lombok.extern.slf4j.Slf4j;
 import org.triplea.game.client.HeadedGameRunner;
 import org.triplea.map.data.elements.Game;
@@ -84,7 +87,10 @@ public final class MapMakerWindow extends JFrame {
   @Serial private static final long serialVersionUID = 1L;
 
   private static final int INSPECTOR_WIDTH = 340;
+  private static final int INSPECTOR_MAX_WIDTH = 480;
   private static final int INSPECTOR_MIN_WIDTH = 300;
+  // on a split whose divider the map maker dragged: its panel keeps that width
+  private static final String DRAGGED_KEY = "eddies.draggedDivider";
   private static final int NAME_MIN_WIDTH = 160;
   private static final String SAVE = "Save";
 
@@ -98,6 +104,13 @@ public final class MapMakerWindow extends JFrame {
   /** The header's problems pill: its words and how it looks. */
   record Pill(String text, Status status) {}
 
+  /** The header's one primary button. */
+  enum Primary {
+    SAVE,
+    CHECK,
+    PLAY
+  }
+
   // nothing to save or leave until a map is opened or created; set here, before the Files view
   // below asks for its folder
   private transient MapProject project = MapProject.newEmpty();
@@ -108,12 +121,17 @@ public final class MapMakerWindow extends JFrame {
   private final transient Map<String, Editor> editors = new LinkedHashMap<>();
   // the place of the shared map in each tool that works on it
   private final transient Map<Editor, JPanel> mapSlots = new HashMap<>();
+  private final JButton fileButton = new JButton("File ▾");
+  // the map's name: a menu of its games when it has several, else plain text
   private final JButton mapButton = new JButton();
+  private final JLabel mapName = new JLabel();
   private final JLabel saveState = new JLabel();
+  private final JLabel checkState = Theme.newSecondaryLabel("");
   private final JButton pill = new JButton();
   private final JPanel workspace = new JPanel(new CardLayout());
   private final JButton saveButton = new JButton(SAVE, MakerIcon.small(Glyph.SAVE));
   private final JButton playButton = new JButton("Play", MakerIcon.small(Glyph.PLAYTEST));
+  private final JButton checkButton = new JButton("Check", MakerIcon.small(Glyph.VALIDATE));
   private final JButton undoButton =
       Theme.newIconButton(Glyph.UNDO, "Undo (Ctrl+Z)", this::undo);
   private final JButton redoButton =
@@ -609,6 +627,90 @@ public final class MapMakerWindow extends JFrame {
         });
   }
 
+  /**
+   * Resize map, from the window the component is in, eg from Map look or the picture menu; outside
+   * the editor's window nothing happens.
+   */
+  static void resizeMap(final Component inWindow) {
+    if (SwingUtilities.getWindowAncestor(inWindow) instanceof MapMakerWindow window) {
+      window.resizeMap();
+    }
+  }
+
+  /**
+   * Asks by how much, then makes the whole map bigger or smaller as one step, in the background:
+   * first a picture and relief that are only in tiles are held, so undo and save have them too.
+   */
+  private void resizeMap() {
+    final MapProject resizing = project;
+    final MapFiles asked = resizing.getFiles();
+    if (!asked.hasOutlines() && !asked.hasPictureOrRelief()) {
+      Dialogs.toast(this, "! The map has no picture to resize yet");
+      return;
+    }
+    final Optional<Double> factor = ResizeDialog.ask(this, asked);
+    if (factor.isEmpty()) {
+      return;
+    }
+    inBackground(
+        "Could not read the map's picture.",
+        () ->
+            new HeldPictures(
+                asked.picture().or(asked::tilesPicture),
+                asked.relief().or(asked::reliefTilesPicture)),
+        held -> {
+          if (project != resizing || resizing.getFiles() != asked) {
+            tellMapChangedWhileResizing();
+            return;
+          }
+          if ((held.picture().isEmpty() && asked.tile(0, 0).isPresent())
+              || (held.relief().isEmpty() && asked.reliefTile(0, 0).isPresent())) {
+            Dialogs.warn(
+                this,
+                "Resize map",
+                "The map's picture is too big to resize here, or one of its tiles does not read.");
+            return;
+          }
+          held.picture().ifPresent(resizing::holdPicture);
+          held.relief().ifPresent(resizing::holdRelief);
+          final MapFiles from = resizing.getFiles();
+          inBackground(
+              "Could not resize the map.",
+              () -> from.resized(factor.get()),
+              resized -> {
+                if (project != resizing
+                    || !resizing.takeResized(from, resized, factor.get())) {
+                  tellMapChangedWhileResizing();
+                  return;
+                }
+                final Dimension size = resized.size();
+                Dialogs.toast(
+                    this,
+                    "✓ The map is "
+                        + size.width
+                        + " × "
+                        + size.height
+                        + " pixels now. Save writes its picture anew.",
+                    "Undo",
+                    () -> {
+                      if (resizing.getFiles() == resized) {
+                        resizing.undo();
+                      }
+                    });
+              });
+        });
+  }
+
+  /** The map's picture and relief as held to resize; empty where the map has none. */
+  private record HeldPictures(Optional<BufferedImage> picture, Optional<BufferedImage> relief) {}
+
+  private void tellMapChangedWhileResizing() {
+    Dialogs.warn(
+        this,
+        "Resize map",
+        "The map changed while it was resized, so it stays as it is.\nChoose Resize map again.");
+  }
+
   private void tellMapChangedWhileRedrawing() {
     Dialogs.warn(
         this,
@@ -722,7 +824,7 @@ public final class MapMakerWindow extends JFrame {
                     new NationsEditor(opened, shared),
                     new PoliticsEditor(opened, this::showTool),
                     new ObjectivesEditor(opened),
-                    new TechnologyEditor(opened, this::showTool))),
+                    new TechnologyEditor(opened))),
             new Sidebar.Group(
                 "Units & economy", List.of(new UnitsEditor(opened), new ProductionEditor(opened))),
             new Sidebar.Group(
@@ -877,11 +979,49 @@ public final class MapMakerWindow extends JFrame {
       final JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, mapSlot, inspector);
       split.setResizeWeight(1);
       split.setBorder(null);
+      keepDragged(split);
+      split.addComponentListener(
+          new ComponentAdapter() {
+            @Override
+            public void componentResized(final ComponentEvent e) {
+              fitInspector(split, getWidth());
+            }
+          });
       screen = split;
     } else {
       screen = titled(editor, editor.page());
     }
     workspace.add(screen, editor.title());
+  }
+
+  /** Notes a press on the split's divider, so {@link #fitInspector} leaves it where it is put. */
+  static void keepDragged(final JSplitPane split) {
+    if (split.getUI() instanceof BasicSplitPaneUI ui) {
+      ui.getDivider()
+          .addMouseListener(
+              new MouseAdapter() {
+                @Override
+                public void mousePressed(final MouseEvent e) {
+                  split.putClientProperty(DRAGGED_KEY, Boolean.TRUE);
+                }
+              });
+    }
+  }
+
+  /**
+   * Gives the split's panel its width for the window, eg after a resize; one whose divider the map
+   * maker dragged keeps its width.
+   */
+  static void fitInspector(final JSplitPane split, final int windowWidth) {
+    if (split.getWidth() > 0 && split.getClientProperty(DRAGGED_KEY) == null) {
+      split.setDividerLocation(
+          split.getWidth() - split.getDividerSize() - inspectorWidth(windowWidth));
+    }
+  }
+
+  /** A tool's panel beside the map: about a quarter of the window, never cramped or sprawling. */
+  static int inspectorWidth(final int windowWidth) {
+    return Math.clamp(windowWidth * 24L / 100, INSPECTOR_WIDTH, INSPECTOR_MAX_WIDTH);
   }
 
   /** The tool's title with its one "?", its first-visit line, then the content. */
@@ -949,11 +1089,19 @@ public final class MapMakerWindow extends JFrame {
   // ---- the header
 
   private void newHeaderButtons() {
+    Theme.setSecondaryButtonStyle(fileButton);
+    fileButton.getAccessibleContext().setAccessibleName("File");
+    fileButton.setToolTipText("Open, new, recent maps, export, publish, the map's folder, close");
+    fileButton.addActionListener(e -> fileMenu().show(fileButton, 0, fileButton.getHeight()));
     Theme.setBorderlessButtonStyle(mapButton);
     mapButton.putClientProperty(FlatClientProperties.STYLE_CLASS, "h3");
-    mapButton.setToolTipText("The map's games, open, new, export, close");
+    mapName.putClientProperty(FlatClientProperties.STYLE_CLASS, "h3");
+    mapButton.setToolTipText("The map's games");
     mapButton.setMinimumSize(new Dimension(NAME_MIN_WIDTH, 0));
-    mapButton.addActionListener(e -> mapMenu().show(mapButton, 0, mapButton.getHeight()));
+    mapName.setMinimumSize(new Dimension(NAME_MIN_WIDTH, 0));
+    mapButton.addActionListener(e -> gamesMenu().show(mapButton, 0, mapButton.getHeight()));
+    checkButton.setToolTipText("Looks for problems, also by loading the game (F6)");
+    checkButton.addActionListener(e -> validateMap());
     pill.setToolTipText("Shows the problems in Home");
     pill.addActionListener(e -> showProblems());
     saveButton.setToolTipText("Writes the map's files (Ctrl+S)");
@@ -963,8 +1111,8 @@ public final class MapMakerWindow extends JFrame {
   }
 
   /**
-   * The bar for the whole map: its name (the Map menu) and whether all is saved on the left; its
-   * problems, Undo, Redo, Check, Save and Play on the right.
+   * The bar for the whole map: File, its name (the menu of its games, if several), whether all is
+   * saved and checked on the left; its problems, Undo, Redo, Check, Save and Play on the right.
    */
   private JComponent newHeader() {
     final JPanel header = new JPanel(new BorderLayout(Theme.GAP_L, 0));
@@ -975,9 +1123,13 @@ public final class MapMakerWindow extends JFrame {
     // a long name gives way first, the save state stays
     final JPanel naming = new JPanel();
     naming.setLayout(new BoxLayout(naming, BoxLayout.X_AXIS));
+    naming.add(fileButton);
+    naming.add(Box.createHorizontalStrut(Theme.GAP_M));
     naming.add(mapButton);
+    naming.add(mapName);
     naming.add(Box.createHorizontalStrut(Theme.GAP_M));
     naming.add(saveState);
+    naming.add(checkState);
     naming.add(Box.createHorizontalGlue());
     header.add(naming, BorderLayout.CENTER);
     final JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, Theme.GAP_S, 0));
@@ -986,10 +1138,6 @@ public final class MapMakerWindow extends JFrame {
     buttons.add(undoButton);
     buttons.add(redoButton);
     buttons.add(Box.createHorizontalStrut(Theme.GAP_S));
-    final JButton checkButton = new JButton("Check", MakerIcon.small(Glyph.VALIDATE));
-    checkButton.setToolTipText("Looks for problems, also by loading the game (F6)");
-    Theme.setSecondaryButtonStyle(checkButton);
-    checkButton.addActionListener(e -> validateMap());
     buttons.add(checkButton);
     buttons.add(saveButton);
     buttons.add(playButton);
@@ -997,46 +1145,55 @@ public final class MapMakerWindow extends JFrame {
     return header;
   }
 
-  /**
-   * The map's games, this one chosen, and a new game from this one; open, new, recent maps;
-   * Publish, export, the TripleA for Play, the folder; close.
-   */
-  private JPopupMenu mapMenu() {
+  /** The map's games, this one chosen, and a new game from this one. */
+  private JPopupMenu gamesMenu() {
     final JPopupMenu menu = new JPopupMenu();
-    if (project.getXmlFile().isPresent()) {
-      final JMenuItem gamesTitle = new JMenuItem("Games of this map");
-      gamesTitle.setEnabled(false);
-      menu.add(gamesTitle);
-      final Optional<Path> open = project.getXmlFile().map(MapMakerWindow::normalized);
-      final ButtonGroup games = new ButtonGroup();
-      project
-          .getFolder()
-          .map(MapMakerWindow::gamesOf)
-          .orElse(Map.of())
-          .forEach(
-              (name, file) -> {
-                final boolean isOpen = open.equals(Optional.of(normalized(file)));
-                final JRadioButtonMenuItem item = new JRadioButtonMenuItem(name, isOpen);
-                games.add(item);
-                item.addActionListener(
-                    e -> {
-                      if (!isOpen && mayLeaveProject()) {
-                        openProject(file);
-                      }
-                    });
-                menu.add(item);
-              });
-      menu.add("New game from this one…").addActionListener(e -> newGame());
-      menu.addSeparator();
-    }
+    final Optional<Path> open = project.getXmlFile().map(MapMakerWindow::normalized);
+    final ButtonGroup games = new ButtonGroup();
+    project
+        .getFolder()
+        .map(MapMakerWindow::gamesOf)
+        .orElse(Map.of())
+        .forEach(
+            (name, file) -> {
+              final boolean isOpen = open.equals(Optional.of(normalized(file)));
+              final JRadioButtonMenuItem item = new JRadioButtonMenuItem(name, isOpen);
+              games.add(item);
+              item.addActionListener(
+                  e -> {
+                    if (!isOpen && mayLeaveProject()) {
+                      openProject(file);
+                    }
+                  });
+              menu.add(item);
+            });
+    menu.addSeparator();
+    menu.add("New game from this one…").addActionListener(e -> newGame());
+    return menu;
+  }
+
+  /**
+   * Open, new, recent maps; a new game from this one (the way to a map's second game, after which
+   * the map's name is the menu of its games); export, Publish, the TripleA for Play, the folder;
+   * close.
+   */
+  JPopupMenu fileMenu() {
+    final JPopupMenu menu = new JPopupMenu();
     menu.add(menuItem("Open a map…", KeyEvent.VK_O, InputEvent.CTRL_DOWN_MASK))
         .addActionListener(e -> chooseAndOpen());
     menu.add(menuItem("New map…", KeyEvent.VK_N, InputEvent.CTRL_DOWN_MASK))
         .addActionListener(e -> createMap());
     menu.add(recentMaps());
+    final JMenuItem newGame = menu.add("New game from this one…");
+    newGame.setEnabled(project.getXmlFile().isPresent());
+    newGame.setToolTipText(
+        newGame.isEnabled()
+            ? "Another game of this map, eg a shorter one, started as a copy of this one"
+            : "Save the map first");
+    newGame.addActionListener(e -> newGame());
     menu.addSeparator();
-    menu.add("Publish…").addActionListener(e -> showTool(PublishEditor.TITLE));
     menu.add(menuItem("Export as zip…", KeyEvent.VK_F8, 0)).addActionListener(e -> export());
+    menu.add("Publish…").addActionListener(e -> showTool(PublishEditor.TITLE));
     final String tripleA = PlayWith.describe();
     menu.add(tripleA.isEmpty() ? "Play with…" : "Play with: " + tripleA + "…")
         .addActionListener(e -> PlayWith.choose(this));
@@ -1104,41 +1261,70 @@ public final class MapMakerWindow extends JFrame {
     final boolean unsaved = project.hasUnsavedChanges();
     saveState.setText(unsaved ? "• Not saved" : "All saved");
     saveState.setForeground(unsaved ? Theme.getWarningColor() : Theme.getSecondaryTextColor());
-    mapButton.setText(headerTitle(project.name(), gameName) + " ▾");
+    // only a map with several games needs the name's menu
+    final String title = headerTitle(project.name(), gameName);
+    mapButton.setText(title + " ▾");
     mapButton.getAccessibleContext().setAccessibleName("Map: " + project.name());
-    showSaveAndPlay(project, saveButton, playButton);
+    mapButton.setVisible(gameName.isPresent());
+    mapName.setText(title);
+    mapName.setVisible(gameName.isEmpty());
     undoButton.setEnabled(project.canUndo());
     redoButton.setEnabled(project.canRedo());
-    final Pill shown =
-        pill(Optional.ofNullable(home).map(h -> h.problems().size()).orElse(0), check);
-    pill.setText(shown.text());
-    Theme.setPillStyle(pill, shown.status());
+    final int problems = Optional.ofNullable(home).map(h -> h.problems().size()).orElse(0);
+    final String note = checkNote(problems, check);
+    checkState.setText(note.isEmpty() ? "" : " · " + note);
+    saveButton.setVisible(unsaved);
+    final Primary primary = primary(project, problems, check);
+    style(saveButton, primary == Primary.SAVE);
+    style(checkButton, primary == Primary.CHECK);
+    style(playButton, primary == Primary.PLAY);
+    final Optional<Pill> shown = pill(problems, check);
+    pill.setVisible(shown.isPresent());
+    shown.ifPresent(
+        p -> {
+          pill.setText(p.text());
+          Theme.setPillStyle(pill, p.status());
+        });
     setTitle((unsaved ? "● " : "") + project.name() + " — Eddie's Map Editor");
   }
 
-  /** One primary in the header: Save while there are changes, else Play. */
-  static void showSaveAndPlay(final MapProject project, final JButton save, final JButton play) {
-    final boolean unsaved = project.hasUnsavedChanges();
-    save.setVisible(unsaved);
-    Theme.setPrimaryButtonStyle(save);
-    if (unsaved) {
-      Theme.setSecondaryButtonStyle(play);
+  private static void style(final JButton button, final boolean primary) {
+    if (primary) {
+      Theme.setPrimaryButtonStyle(button);
     } else {
-      Theme.setPrimaryButtonStyle(play);
+      Theme.setSecondaryButtonStyle(button);
     }
   }
 
-  /** The pill for the problems known and how far Check is. */
-  static Pill pill(final int problems, final Check check) {
-    if (check == Check.RUNNING) {
-      return new Pill("Checking…", Status.TODO);
+  /**
+   * The header's one primary button, what comes next: Save while there are changes, then Check
+   * while it has not run on the map as it is or problems are known, then Play.
+   */
+  static Primary primary(final MapProject project, final int problems, final Check check) {
+    if (project.hasUnsavedChanges()) {
+      return Primary.SAVE;
     }
+    return check == Check.DONE && problems == 0 ? Primary.PLAY : Primary.CHECK;
+  }
+
+  /** The pill, only with something to say: the problems known, or that Check found none. */
+  static Optional<Pill> pill(final int problems, final Check check) {
     if (problems > 0) {
-      return new Pill("! " + problems + (problems == 1 ? " problem" : " problems"), Status.PROBLEM);
+      return Optional.of(
+          new Pill("! " + problems + (problems == 1 ? " problem" : " problems"), Status.PROBLEM));
     }
     return check == Check.DONE
-        ? new Pill("✓ No problems", Status.DONE)
-        : new Pill("Not checked yet", Status.TODO);
+        ? Optional.of(new Pill("✓ No problems", Status.DONE))
+        : Optional.empty();
+  }
+
+  /** How far Check is, in grey beside the save state; nothing once the pill says it. */
+  static String checkNote(final int problems, final Check check) {
+    return switch (check) {
+      case RUNNING -> "checking…";
+      case NOT_YET -> problems == 0 ? "not checked" : "";
+      case DONE -> "";
+    };
   }
 
   // ---- actions on the whole map

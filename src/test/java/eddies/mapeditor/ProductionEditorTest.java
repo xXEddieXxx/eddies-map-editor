@@ -7,10 +7,15 @@ import eddies.mapeditor.ProductionEditor.Trade;
 import java.awt.Component;
 import java.awt.Container;
 import java.awt.Rectangle;
+import java.awt.event.MouseEvent;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
 import java.util.function.Predicate;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import javax.swing.JButton;
+import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTable;
@@ -68,7 +73,7 @@ final class ProductionEditorTest {
     return SwingUtilities.convertRectangle(part.getParent(), part.getBounds(), page);
   }
 
-  @DisplayName("Buy: the rules table reaches down to Remove frontier, no empty room between")
+  @DisplayName("Buy: the rules table reaches down to Remove list, no empty room between")
   @Test
   void rulesTableFillsTheHeight(@TempDir final Path folder) {
     final JTabbedPane page = (JTabbedPane) new ProductionEditor(givenMinimap(folder)).page();
@@ -79,11 +84,57 @@ final class ProductionEditorTest {
             page,
             find(page, JScrollPane.class, s -> s.getViewport().getView() instanceof JTable));
     final Rectangle remove =
-        boundsIn(page, find(page, JButton.class, b -> "Remove frontier".equals(b.getText())));
+        boundsIn(page, find(page, JButton.class, b -> "Remove list".equals(b.getText())));
 
     assertThat(remove.y - (table.y + table.height))
-        .as("only a small gap: Remove rule shares the row of Remove frontier")
+        .as("only a small gap: Remove rule shares the row of Remove list")
         .isLessThan(30);
+  }
+
+  @DisplayName("A purchase list is called by the nations that use it; its id stays for the tool"
+      + " tip, the search and the header")
+  @Test
+  void listsInPlainWords(@TempDir final Path folder) {
+    final MapProject project =
+        new MapProject(folder.resolve("g40.xml"), GameRulesXmlTest.givenG40(), MapFiles.none());
+
+    final Map<String, String> titles = ProductionXml.listTitles(project.game());
+    final JTabbedPane page = (JTabbedPane) new ProductionEditor(project).page();
+    givenLaidOut(page, 1200, 800);
+    final List<String> labels =
+        all(page).filter(JLabel.class::isInstance).map(c -> ((JLabel) c).getText()).toList();
+
+    assertThat(titles)
+        .as("one nation: its name; several: a shared list; none: the id's words")
+        .containsEntry("production", "Shared list 1")
+        .containsEntry("productionChinese_Burma_Road_Open", "Chinese")
+        .containsEntry("productionChinese_Burma_Road_Closed", "Chinese Burma Road Closed")
+        .containsEntry("productionShipyards", "Shipyards");
+    assertThat(labels)
+        .as("the count in plain words, the chosen list's title and its id in grey below")
+        .contains("4 purchase lists", "Shared list 1", "id production");
+    assertThat(all(page).filter(JButton.class::isInstance).map(c -> ((JButton) c).getText()))
+        .as("the add actions as buttons saying what they add")
+        .contains("+ Add list…", "+ Add rule…");
+  }
+
+  @DisplayName("The rules table has no column for a rule's id: the row's tool tip tells it")
+  @Test
+  void ruleIdInToolTip(@TempDir final Path folder) {
+    final JTabbedPane page = (JTabbedPane) new ProductionEditor(givenMinimap(folder)).page();
+    givenLaidOut(page, 1200, 800);
+    final JTable table = find(page, JTable.class, t -> true);
+    final Rectangle first = table.getCellRect(0, 1, true);
+
+    final String tip =
+        table.getToolTipText(
+            new MouseEvent(
+                table, MouseEvent.MOUSE_MOVED, 0, 0, first.x + 4, first.y + 4, 0, false));
+
+    assertThat(IntStream.range(0, table.getColumnCount()).mapToObj(table::getColumnName))
+        .as("what it sells, how many and for what; no Rule column")
+        .containsExactly("Sold", "Unit or resource", "Amount", "PUs");
+    assertThat(tip).as("the rule's name in the game's XML").isEqualTo("id buyInfantry");
   }
 
   @DisplayName("Resources: the card of resources and the table at the start are one width")

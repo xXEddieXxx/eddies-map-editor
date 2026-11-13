@@ -18,6 +18,7 @@ import javax.swing.Icon;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
+import javax.swing.SwingConstants;
 import javax.swing.UIManager;
 import javax.swing.border.Border;
 import javax.swing.plaf.ColorUIResource;
@@ -42,6 +43,7 @@ class Theme {
   private static final String MAP_TOOL_KEY = "Editor.mapTool";
   private static final String MAP_TOOL_NAME_KEY = "Editor.mapToolName";
   private static final String MAP_TOOL_GLYPH_KEY = "Editor.mapToolGlyph";
+  private static final String MAP_TOOL_KEEPS_GLYPH_KEY = "Editor.mapToolKeepsGlyph";
 
   // FlatLaf reads <theme class>.properties from here on top of its own, eg FlatDarkLaf.properties
   private static final String THEME_PACKAGE = "eddies.mapeditor.theme";
@@ -372,6 +374,21 @@ class Theme {
     setMapToolStyle(button);
   }
 
+  /**
+   * Like {@link #setNamedMapToolStyle} for a tool that shows its glyph beside its name too, eg
+   * Draw borders, so it stands apart from the modes before it.
+   */
+  static void setGlyphAndNameMapToolStyle(final AbstractButton button, final Glyph glyph) {
+    button.putClientProperty(MAP_TOOL_KEEPS_GLYPH_KEY, Boolean.TRUE);
+    button.setIcon(new MakerIcon(glyph, MAP_TOOL_ICON));
+    setNamedMapToolStyle(button, glyph);
+  }
+
+  /** Whether the tool was made with {@link #setGlyphAndNameMapToolStyle}. */
+  static boolean mapToolKeepsGlyph(final AbstractButton button) {
+    return button.getClientProperty(MAP_TOOL_KEEPS_GLYPH_KEY) != null;
+  }
+
   static boolean isMapTool(final Component component) {
     return component instanceof JComponent c && c.getClientProperty(MAP_TOOL_KEY) != null;
   }
@@ -408,7 +425,29 @@ class Theme {
         insets.left + insets.right + iconWidth + gap + textWidth, UIScale.scale(MAP_TOOL));
   }
 
-  /** "+ label", eg at the end of a list's header. */
+  /**
+   * The one fold row of the editor: "▸ label" closed, "▾ label" open, eg "▸ More options (4)";
+   * its text starts at the left.
+   */
+  static JButton newFoldButton() {
+    final JButton fold = new JButton();
+    setBorderlessButtonStyle(fold);
+    fold.setHorizontalAlignment(SwingConstants.LEADING);
+    return fold;
+  }
+
+  /** Shows the fold row as open or closed, also to screen readers. */
+  static void showFold(final AbstractButton fold, final String label, final boolean open) {
+    fold.setText((open ? "▾ " : "▸ ") + label);
+    fold.getAccessibleContext().setAccessibleName(label + (open ? ", expanded" : ", collapsed"));
+  }
+
+  /** "Title (n)", and "· k set" behind it when some of the n differ from their default. */
+  static String foldLabel(final String title, final int count, final int set) {
+    return title + " (" + count + ")" + (set > 0 ? " · " + set + " set" : "");
+  }
+
+  /** "+ label", eg at the end of a list's header; the label ends with "…" when a dialog follows. */
   static JButton newAddButton(final String label, final String toolTip, final Runnable action) {
     final JButton button = new JButton("+ " + label);
     button.putClientProperty(FlatClientProperties.STYLE, "margin: 2,8,2,8");
