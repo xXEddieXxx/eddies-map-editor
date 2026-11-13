@@ -26,6 +26,7 @@ import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -557,6 +558,82 @@ final class MapProject {
   }
 
   /**
+   * Removes the territories, each as {@link #removeTerritory}, all as one step; one that
+   * attachments still name stays.
+   *
+   * @return for each that stays, where it is still named; empty when all were removed
+   */
+  Map<String, List<String>> removeTerritories(final Collection<String> territories) {
+    Game game = game();
+    MapFiles files = current.files();
+    final Map<String, List<String>> named = new LinkedHashMap<>();
+    for (final String territory : territories) {
+      final Game without = MapXml.withoutTerritory(game, territory);
+      final List<String> where = RulesXml.whereNamed(without, territory);
+      if (where.isEmpty()) {
+        game = without;
+        files = files.withoutTerritory(territory);
+      } else {
+        named.put(territory, where);
+      }
+    }
+    if (game != game()) {
+      step(state(game, files));
+    }
+    return Collections.unmodifiableMap(named);
+  }
+
+  /**
+   * Why the two cannot be one territory, in plain words: land with sea, or the same one; empty
+   * when {@link #mergeTerritories} may merge them.
+   */
+  Optional<String> mergeRefusal(final String keeper, final String other) {
+    if (keeper.equals(other)) {
+      return Optional.of(keeper + " cannot be merged into itself.");
+    }
+    final boolean keeperIsSea = MapXml.isWater(game(), keeper);
+    return keeperIsSea == MapXml.isWater(game(), other)
+        ? Optional.empty()
+        : Optional.of(
+            keeperIsSea
+                ? keeper + " is a sea zone and " + other + " is land: land and sea stay apart."
+                : keeper + " is land and " + other + " is a sea zone: land and sea stay apart.");
+  }
+
+  /**
+   * Makes the other territory part of the keeper, as one step: its outlines become the keeper's
+   * too, as several islands may be one territory, and its connections the keeper's; the keeper
+   * keeps its owner, units, settings and places, the other's go with it, as {@link
+   * #removeTerritory} takes them.
+   *
+   * @return why it was not merged: {@link #mergeRefusal}, else where attachments, eg triggers,
+   *     still name the other; empty when it was merged
+   */
+  List<String> mergeTerritories(final String keeper, final String other) {
+    final Optional<String> refusal = mergeRefusal(keeper, other);
+    if (refusal.isPresent()) {
+      return List.of(refusal.get());
+    }
+    final Game merged = withMerged(game(), keeper, other);
+    final List<String> named = RulesXml.whereNamed(merged, other);
+    if (named.isEmpty()) {
+      step(state(merged, current.files().withMerged(keeper, other)));
+    }
+    return named;
+  }
+
+  /** The game without the member, its neighbours the keeper's too. */
+  private static Game withMerged(final Game game, final String keeper, final String member) {
+    Game merged = game;
+    for (final String neighbour : MapXml.neighbors(game, member)) {
+      if (!neighbour.equals(keeper) && !MapXml.neighbors(merged, keeper).contains(neighbour)) {
+        merged = MapXml.withConnection(merged, keeper, neighbour);
+      }
+    }
+    return MapXml.withoutTerritory(merged, member);
+  }
+
+  /**
    * Splits the territory along the cut, as one step: it keeps the kept outlines with all that
    * belongs to it; the split ones become a new territory, land or sea as it is, with its owner,
    * connected to it and to the neighbours it touches. A neighbour only the new part touches is no
@@ -612,6 +689,28 @@ final class MapProject {
             files.withPicture(drawn(files.picture().orElseThrow(), border, Optional.empty())),
             current.texts(),
             drawnWith(border)));
+    return true;
+  }
+
+  /**
+   * Takes the border lines under the stroke out of the map's picture ({@link
+   * MapPicture#withoutLines}), as one step, the stroke's region counting as drawn; false without a
+   * picture held ({@link #holdPicture}) or a line under the stroke.
+   */
+  boolean eraseBorders(final List<Point> stroke, final int width) {
+    final Optional<BufferedImage> picture = current.files().picture();
+    final Optional<BufferedImage> erased =
+        picture.flatMap(p -> MapPicture.withoutLines(p, stroke, width));
+    if (erased.isEmpty()) {
+      return false;
+    }
+    drawnOn.put(erased.get(), firstOf(picture.orElseThrow()));
+    step(
+        new State(
+            game(),
+            current.files().withPicture(erased.get()),
+            current.texts(),
+            drawnWith(new BorderLine(stroke, width, Color.BLACK))));
     return true;
   }
 
@@ -880,7 +979,22 @@ final class MapProject {
     step(state(game(), current.files().withNationUnitPictures(nation, byUnit)));
   }
 
-  /** Places the territory's units here, in this order, as one step; for none, nothing. */
+  /**
+   * Why places kept in this file (place.txt or a marker's) are not changed here: it is there but
+   * does not read, so its lines are not known and a save would replace them; empty when they
+   * are.
+   */
+  Optional<String> whyNoPlaces(final String fileName) {
+    return getFiles().placesUnread(fileName)
+        ? Optional.of(
+            "! " + fileName + " does not read, eg for a name twice: put it right in Files first")
+        : Optional.empty();
+  }
+
+  /**
+   * Places the territory's units here, in this order, as one step; for none, nothing, as while
+   * place.txt does not read ({@link #whyNoPlaces}).
+   */
   void setUnitPlaces(final String territory, final List<Point> places) {
     stepFiles(current.files().withUnitPlaces(territory, places));
   }
@@ -953,13 +1067,7 @@ final class MapProject {
         if (member.equals(keeper)) {
           continue;
         }
-        Game without = g;
-        for (final String neighbour : MapXml.neighbors(g, member)) {
-          if (!neighbour.equals(keeper) && !MapXml.neighbors(without, keeper).contains(neighbour)) {
-            without = MapXml.withConnection(without, keeper, neighbour);
-          }
-        }
-        without = MapXml.withoutTerritory(without, member);
+        final Game without = withMerged(g, keeper, member);
         final List<String> where = RulesXml.whereNamed(without, member);
         if (where.isEmpty()) {
           g = without;
@@ -1073,6 +1181,11 @@ final class MapProject {
 
   boolean hasUnsavedChanges() {
     return current != saved;
+  }
+
+  /** The game as last saved or opened, eg to tell what a save has written pictures for. */
+  Game savedGame() {
+    return saved.game();
   }
 
   /** Whether a relief picture was loaded since the last save, so the next one writes it. */
@@ -1316,6 +1429,13 @@ final class MapProject {
     }
     if (files.relief().isPresent() && !files.relief().equals(saved.files().relief())) {
       MapFolder.writeRelief(mapFolder, files.relief().get());
+      // a map without a small map gets one with the relief; one there may be made by hand and
+      // stays, until Map look's Update the small map
+      final Optional<BufferedImage> shown =
+          MapFolder.hasSmallMap(mapFolder) ? Optional.empty() : files.shownPicture();
+      if (shown.isPresent()) {
+        MapFolder.writeSmallMap(mapFolder, shown.get());
+      }
     }
     final Game before = firstSave ? Game.builder().build() : saved.game();
     writeNationPictures(saving.game(), files, before);

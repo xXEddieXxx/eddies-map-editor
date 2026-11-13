@@ -1,11 +1,15 @@
 package eddies.mapeditor;
 
+import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Dimension;
+import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.Polygon;
 import java.awt.Rectangle;
+import java.awt.geom.Path2D;
 import java.awt.image.BufferedImage;
+import java.awt.image.DataBufferByte;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -32,6 +36,12 @@ final class MapPicture {
   // across, down and both diagonals
   private static final int[] LINE_DX = {1, 0, 1, 1};
   private static final int[] LINE_DY = {0, 1, 1, -1};
+  // the four pixels beside a pixel
+  private static final int[] SIDE_DX = {1, -1, 0, 0};
+  private static final int[] SIDE_DY = {0, 0, 1, -1};
+  // the widest line the eraser finds the colors beside, as lineStyle measures lines up to it
+  private static final int MAX_ERASED_LINE = 12;
+  private static final int ERASE_PASSES = 4;
   // a line pixel's color channels differ less than this: it is grey
   private static final int GREY = 30;
   private static final int REACH = 4;
@@ -370,6 +380,133 @@ final class MapPicture {
 
   private static int luminance(final int argb) {
     return (((argb >> 16) & 0xFF) * 299 + ((argb >> 8) & 0xFF) * 587 + (argb & 0xFF) * 114) / 1000;
+  }
+
+  /**
+   * A copy of the picture without the border lines under a stroke of this width along the points:
+   * each line pixel there ({@link #lines}) gets the color of the nearest pixel that is no line, so
+   * the areas on both sides grow to the line's middle; no other pixel changes. Empty when there is
+   * no line under the stroke.
+   */
+  static Optional<BufferedImage> withoutLines(
+      final BufferedImage image, final List<Point> stroke, final int width) {
+    final Rectangle picture = new Rectangle(image.getWidth(), image.getHeight());
+    final Path2D path = new Path2D.Double();
+    path.moveTo(stroke.getFirst().x, stroke.getFirst().y);
+    // a click is a dot: a line to itself draws the round end
+    stroke.forEach(p -> path.lineTo(p.x, p.y));
+    final Rectangle box = path.getBounds();
+    // colors come from beside the line, also when it is wider than the brush
+    final int reach = width / 2 + MAX_ERASED_LINE;
+    box.grow(reach + 1, reach + 1);
+    final Rectangle within = box.intersection(picture);
+    if (within.isEmpty()) {
+      return Optional.empty();
+    }
+    final boolean[] under = strokeMask(path, width, within);
+    final boolean[] near = strokeMask(path, width + 2 * MAX_ERASED_LINE, within);
+    BufferedImage erased = image;
+    // a line's smoothed edge may be left as a thinner line: taken out too
+    for (int pass = 0; pass < ERASE_PASSES; pass++) {
+      final Optional<BufferedImage> next = erasedOnce(erased, erased == image, under, near, within);
+      if (next.isEmpty()) {
+        break;
+      }
+      erased = next.get();
+    }
+    return erased == image ? Optional.empty() : Optional.of(erased);
+  }
+
+  /** The box's pixels a stroke of this width along the path covers. */
+  private static boolean[] strokeMask(final Path2D path, final int width, final Rectangle box) {
+    final BufferedImage mask =
+        new BufferedImage(box.width, box.height, BufferedImage.TYPE_BYTE_GRAY);
+    final Graphics2D g = mask.createGraphics();
+    g.translate(-box.x, -box.y);
+    g.setColor(Color.WHITE);
+    g.setStroke(new BasicStroke(width, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+    g.draw(path);
+    g.dispose();
+    final byte[] gray = ((DataBufferByte) mask.getRaster().getDataBuffer()).getData();
+    final boolean[] covered = new boolean[gray.length];
+    for (int i = 0; i < gray.length; i++) {
+      covered[i] = gray[i] != 0;
+    }
+    return covered;
+  }
+
+  /**
+   * One pass of {@link #withoutLines}: colors spread from the pixels near the stroke that are no
+   * line into the line pixels, step by step, and stay on those under it; into a copy if asked.
+   * Empty when no line pixel under the stroke got a color.
+   */
+  private static Optional<BufferedImage> erasedOnce(
+      final BufferedImage image,
+      final boolean copy,
+      final boolean[] under,
+      final boolean[] near,
+      final Rectangle box) {
+    final int[] color = new int[near.length];
+    // 0: no line, or not near; 1: a line pixel waiting for its color
+    final byte[] waiting = new byte[near.length];
+    final int[] queue = new int[near.length];
+    int queued = 0;
+    boolean any = false;
+    for (int p = 0; p < near.length; p++) {
+      if (near[p]) {
+        final Point at = new Point(box.x + p % box.width, box.y + p / box.width);
+        if (isBorderAt(image, at)) {
+          waiting[p] = 1;
+          any |= under[p];
+        } else {
+          color[p] = image.getRGB(at.x, at.y);
+          queue[queued++] = p;
+        }
+      }
+    }
+    if (!any || queued == 0) {
+      return Optional.empty();
+    }
+    for (int next = 0; next < queued; next++) {
+      final int p = queue[next];
+      final int x = p % box.width;
+      final int y = p / box.width;
+      for (int d = 0; d < 4; d++) {
+        final int nx = x + SIDE_DX[d];
+        final int ny = y + SIDE_DY[d];
+        if (nx >= 0 && ny >= 0 && nx < box.width && ny < box.height) {
+          final int n = ny * box.width + nx;
+          if (waiting[n] == 1) {
+            waiting[n] = 0;
+            color[n] = color[p];
+            queue[queued++] = n;
+          }
+        }
+      }
+    }
+    final BufferedImage erased;
+    if (copy) {
+      erased =
+          new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_ARGB);
+      final Graphics2D g = erased.createGraphics();
+      g.drawImage(image, 0, 0, null);
+      g.dispose();
+    } else {
+      erased = image;
+    }
+    boolean changed = false;
+    for (int p = 0; p < near.length; p++) {
+      // a line pixel got a color unless no pixel beside its line is near
+      if (under[p] && color[p] != 0) {
+        final int x = box.x + p % box.width;
+        final int y = box.y + p / box.width;
+        if (erased.getRGB(x, y) != color[p]) {
+          erased.setRGB(x, y, color[p]);
+          changed = true;
+        }
+      }
+    }
+    return changed ? Optional.of(erased) : Optional.empty();
   }
 
   static DetectedMap detect(final BufferedImage image) {

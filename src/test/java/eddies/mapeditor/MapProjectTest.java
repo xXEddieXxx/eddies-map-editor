@@ -35,6 +35,7 @@ final class MapProjectTest {
   // the areas of MapPictureTest.givenPicture, as Make territories names them
   private static final String TOP_LEFT = "Territory 1";
   private static final String TOP_RIGHT = "Territory 2";
+  private static final String BOTTOM_RIGHT = "Territory 4";
 
   @TempDir Path folder;
 
@@ -961,5 +962,180 @@ final class MapProjectTest {
         .contains("Already used by a territory, nation or unit");
     assertThat(project.nameProblem("Atlantis")).as("a free name").isEmpty();
     assertThat(project.nameProblem("  ")).as("blank: the button is off, no message").isEmpty();
+  }
+
+  @DisplayName("Merging gives the keeper the other's outlines and connections, as one step")
+  @Test
+  void mergesTerritories() throws Exception {
+    // given: the top left land, Red's, a unit place and its name moved by hand, and the bottom
+    // right one, diagonal to it
+    final MapProject project = givenSavedMapWithRed();
+    project.edit(g -> MapXml.withOwner(g, TOP_LEFT, "Red"));
+    project.setUnitPlaces(TOP_LEFT, List.of(new Point(31, 17)));
+    project.setMarkerPlace(MapFiles.Marker.NAME, TOP_LEFT, 0, new Point(13, 29));
+    final Game game = project.game();
+    final MapFiles files = project.getFiles();
+
+    // when
+    final List<String> named = project.mergeTerritories(TOP_LEFT, BOTTOM_RIGHT);
+
+    // then
+    assertThat(named).as("merged").isEmpty();
+    assertThat(MapXml.territories(project.game()))
+        .as("the other is gone")
+        .doesNotContain(BOTTOM_RIGHT);
+    assertThat(project.getFiles().polygons().get(TOP_LEFT))
+        .as("the keeper's outline, then the other's")
+        .containsExactly(
+            files.polygons().get(TOP_LEFT).getFirst(),
+            files.polygons().get(BOTTOM_RIGHT).getFirst());
+    assertThat(project.getFiles().polygons())
+        .as("no outline of its own")
+        .doesNotContainKey(BOTTOM_RIGHT);
+    assertThat(MapXml.neighbors(project.game(), TOP_LEFT))
+        .as("its own neighbours and the other's, not itself")
+        .containsExactlyInAnyOrder(TOP_RIGHT, "Territory 3", "Sea Zone 1");
+    assertThat(
+            project.game().getMap().getConnections().stream()
+                .filter(c -> List.of(c.getT1(), c.getT2()).contains(TOP_LEFT))
+                .filter(c -> List.of(c.getT1(), c.getT2()).contains(TOP_RIGHT)))
+        .as("a neighbour of both is connected once")
+        .hasSize(1);
+    assertThat(MapXml.owner(project.game(), TOP_LEFT))
+        .as("the keeper's owner stays")
+        .contains("Red");
+    assertThat(project.getFiles().unitPlaces(TOP_LEFT))
+        .as("the keeper's unit place stays where it was moved, not found again")
+        .containsExactly(new Point(31, 17));
+    assertThat(project.getFiles().markerPlace(project.game(), MapFiles.Marker.NAME, TOP_LEFT))
+        .as("and its name")
+        .isEqualTo(new Point(13, 29));
+    assertThat(project.getFiles().centers().get(TOP_LEFT))
+        .as("and its center")
+        .isEqualTo(files.centers().get(TOP_LEFT));
+    project.undo();
+    assertThat(project.game()).as("one undo brings the game back").isSameAs(game);
+    assertThat(project.getFiles()).as("and the files").isSameAs(files);
+  }
+
+  @DisplayName("Land is not merged with sea, nor a territory attachments still name")
+  @Test
+  void refusesMerges() throws Exception {
+    // given: a rule of Red names the top right land
+    final MapProject project = givenSavedMapWithRed();
+    project.edit(
+        g ->
+            MapXml.withOption(
+                g,
+                new MapXml.AttachmentKey(
+                    "rulesAttachment", RulesAttachment.class.getName(), "player", "Red"),
+                "directPresenceTerritories",
+                TOP_RIGHT));
+    final Game game = project.game();
+
+    // when
+    final List<String> withSea = project.mergeTerritories(TOP_LEFT, "Sea Zone 1");
+    final List<String> named = project.mergeTerritories(TOP_LEFT, TOP_RIGHT);
+
+    // then
+    assertThat(project.mergeRefusal(TOP_LEFT, "Sea Zone 1"))
+        .as("land with sea, said plainly")
+        .contains("Territory 1 is land and Sea Zone 1 is a sea zone: land and sea stay apart.");
+    assertThat(withSea).as("not merged").isNotEmpty();
+    assertThat(project.mergeRefusal(TOP_LEFT, TOP_RIGHT)).as("land with land may merge").isEmpty();
+    assertThat(named)
+        .as("where the other is still named")
+        .singleElement()
+        .asString()
+        .contains("Red");
+    assertThat(project.game()).as("nothing changed").isSameAs(game);
+  }
+
+  @DisplayName("Many territories are removed as one step; one still named stays and is told")
+  @Test
+  void removesManyTerritories() throws Exception {
+    // given: a rule of Red names the top right land
+    final MapProject project = givenSavedMapWithRed();
+    project.edit(
+        g ->
+            MapXml.withOption(
+                g,
+                new MapXml.AttachmentKey(
+                    "rulesAttachment", RulesAttachment.class.getName(), "player", "Red"),
+                "directPresenceTerritories",
+                TOP_RIGHT));
+    final Game game = project.game();
+
+    // when
+    final Map<String, List<String>> named =
+        project.removeTerritories(List.of(TOP_LEFT, TOP_RIGHT, BOTTOM_RIGHT));
+
+    // then
+    assertThat(named).as("the one still named").containsOnlyKeys(TOP_RIGHT);
+    assertThat(MapXml.territories(project.game()))
+        .as("the others are gone")
+        .contains(TOP_RIGHT)
+        .doesNotContain(TOP_LEFT, BOTTOM_RIGHT);
+    assertThat(project.getFiles().polygons())
+        .as("with their outlines")
+        .doesNotContainKeys(TOP_LEFT, BOTTOM_RIGHT);
+    project.undo();
+    assertThat(project.game()).as("one undo brings both back").isSameAs(game);
+  }
+
+  @DisplayName("An erased border is one step, counts as drawn; Make territories joins the areas")
+  @Test
+  void erasedBorderJoinsTerritories() throws Exception {
+    // given: the line between the two top lands runs down x 199 to 201
+    final MapProject project = givenSavedMapWithRed();
+    final BufferedImage before = project.getFiles().picture().orElseThrow();
+
+    // when
+    final boolean erased =
+        project.eraseBorders(List.of(new Point(200, 20), new Point(200, 90)), 9);
+    final MapFiles from = project.getFiles();
+    final Optional<Rectangle> region = project.drawnRegion();
+    final Redrawn redrawn =
+        from.withBordersFrom(from.picture().orElseThrow(), region.orElseThrow());
+    final boolean offTheLines =
+        project.eraseBorders(List.of(new Point(50, 20), new Point(90, 20)), 9);
+
+    // then
+    assertThat(erased).as("a line was under the stroke").isTrue();
+    assertThat(MapPicture.isBorder(from.picture().orElseThrow().getRGB(200, 50)))
+        .as("the line is gone from the picture")
+        .isFalse();
+    assertThat(region.orElseThrow().contains(200, 50)).as("the stroke counts as drawn").isTrue();
+    assertThat(redrawn.merged().values())
+        .as("the two lands it parted are one area now, to choose the keeper of")
+        .singleElement()
+        .satisfies(
+            members -> assertThat(members).containsExactlyInAnyOrder(TOP_LEFT, TOP_RIGHT));
+    assertThat(offTheLines).as("a stroke over no line is no step").isFalse();
+    project.undo();
+    assertThat(project.getFiles().picture())
+        .as("one undo brings the line back")
+        .containsSame(before);
+    assertThat(project.drawnRegion()).as("and nothing counts as drawn").isEmpty();
+  }
+
+  @DisplayName("A renamed or removed territory's entry in the names not drawn follows it")
+  @Test
+  void namesNotDrawnFollowTerritories() throws Exception {
+    // given
+    final MapProject project = givenSavedMapWithRed();
+    project.setMapProperty(
+        "dont_draw_territory_names",
+        TOP_LEFT + "," + TOP_RIGHT + "," + BOTTOM_RIGHT + ",Sea Zone 1");
+
+    // when
+    project.rename(TOP_LEFT, "Alpha");
+    project.removeTerritory(TOP_RIGHT);
+    project.mergeTerritories("Alpha", BOTTOM_RIGHT);
+
+    // then
+    assertThat(project.getFiles().properties().getProperty("dont_draw_territory_names"))
+        .as("renamed in place; the removed and the merged one dropped; the rest as it was")
+        .isEqualTo("Alpha,Sea Zone 1");
   }
 }

@@ -567,6 +567,51 @@ final class MapLookEditor implements Editor {
     f.number(
         "Inside the frame, cover in %",
         tipped(percent(SMALL_MAP_FILL_ALPHA, 0), "0 leaves the map clear inside the frame."));
+    final JButton update = new JButton("Update the small map");
+    Theme.setSecondaryButtonStyle(update);
+    update.setToolTipText(
+        "Makes the small map's picture anew from the map's picture with its relief, written at"
+            + " once. The game fills the land in the owners' colors, so the relief shows in the"
+            + " sea and on the coasts. A save leaves a small map that is there as it is.");
+    update.setEnabled(project.getFolder().isPresent());
+    update.addActionListener(e -> updateSmallMap());
+    f.row(update);
+  }
+
+  /**
+   * Writes the small map from the map's picture and relief as they are now, in the background as
+   * the picture may be big.
+   */
+  void updateSmallMap() {
+    if (project.getFolder().isEmpty()) {
+      return;
+    }
+    final MapFiles files = project.getFiles();
+    final Path folder = project.getFolder().orElseThrow();
+    new SwingWorker<Boolean, Void>() {
+      @Override
+      protected Boolean doInBackground() throws IOException {
+        final Optional<BufferedImage> shown = files.shownPicture();
+        if (shown.isPresent()) {
+          MapFolder.writeSmallMap(folder, shown.get());
+        }
+        return shown.isPresent();
+      }
+
+      @Override
+      protected void done() {
+        try {
+          Dialogs.toast(
+              page,
+              get()
+                  ? "✓ The small map shows the map with its relief"
+                  : "! The map has no picture to make the small map from");
+        } catch (final InterruptedException | ExecutionException e) {
+          log.warn("Could not write the small map", e);
+          Dialogs.warn(page, "Update the small map", "Could not write it.\n" + e.getMessage());
+        }
+      }
+    }.execute();
   }
 
   /** The title of a picture of the map the game saves, eg "Big World Round 3". */

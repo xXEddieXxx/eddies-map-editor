@@ -77,6 +77,7 @@ final class HomeEditor implements Editor {
   private List<Problem> problems;
   // worth a look, but no problems: never red, not counted
   private List<Problem> notes;
+  private List<Problem> pictureNotes = List.of();
   private boolean checked;
   private boolean allProblemsShown;
   private boolean allNotesShown;
@@ -120,11 +121,17 @@ final class HomeEditor implements Editor {
     miniMap = new MiniMap(project, showTerritory, RIGHT_MIN_WIDTH);
     nationsRow.setOpaque(false);
     problems = project.problems();
-    notes = MapChecks.notes(project.game());
+    findPictureNotes();
     project.onChange(
         () -> {
           problems = project.problems();
-          notes = MapChecks.notes(project.game());
+          if (project.hasUnsavedChanges()) {
+            // not read from the folder for every change: when Home shows again
+            withNotes();
+          } else {
+            // just saved, which writes pictures for new nations and unit types
+            findPictureNotes();
+          }
           checked = false;
           if (page.isShowing()) {
             fill();
@@ -157,9 +164,28 @@ final class HomeEditor implements Editor {
 
   @Override
   public void showing() {
-    if (stale) {
+    // a picture imported in another tool is written at once, with no change to hear of
+    final List<Problem> before = notes;
+    findPictureNotes();
+    if (stale || !before.equals(notes)) {
       fill();
     }
+  }
+
+  /**
+   * Looks in the map's folder for pictures the game would miss, of the nations and unit types the
+   * saved game has, as a save writes plain ones for new ones.
+   */
+  private void findPictureNotes() {
+    pictureNotes =
+        MapChecks.pictureNotes(project.game(), project.savedGame(), project.getFiles());
+    withNotes();
+  }
+
+  /** What is worth a look: territories apart, and the pictures last found missing. */
+  private void withNotes() {
+    notes =
+        Stream.concat(MapChecks.notes(project.game()).stream(), pictureNotes.stream()).toList();
   }
 
   /** The problems of Check, including the engine's. */

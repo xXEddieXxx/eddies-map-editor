@@ -23,6 +23,7 @@ final class MapPlacesTest {
   private static final String TERRITORY = "Territory 1";
   private static final String SEA = "Sea Zone 1";
   private static final String UNKNOWN_LINE = "Atlantis (5,6) | overflowToLeft=true";
+  private static final String NAME_BY_HAND = "Territory 2 (1,2)\r\n";
   private static final String CAPITALS_BY_HAND = "Territory 1 (10, 20)\nTerritory 2   (30,40)\n";
 
   @TempDir Path folder;
@@ -567,5 +568,192 @@ final class MapPlacesTest {
   /** The sea zone as a convoy route, which the game comments on. */
   private static Game givenConvoyRoute(final Game game) {
     return MapXml.withOption(game, seaAttachment(), "convoyRoute", "true");
+  }
+
+  /** A saved map opened again whose place.txt lacks a territory and whose names have one place. */
+  private MapProject givenMapWithPlacesMissing() throws Exception {
+    final MapProject made =
+        MapProject.newMap(
+                "Island Wars",
+                MapPictureTest.givenPicture(),
+                List.of("Red"),
+                folder.resolve("maps"))
+            .project();
+    final Path places = placeTxt(made);
+    Files.write(
+        places,
+        Files.readAllLines(places).stream()
+            .filter(line -> !line.startsWith(TERRITORY + " "))
+            .toList());
+    Files.writeString(namePlaces(made), NAME_BY_HAND);
+    return MapProject.open(made.getXmlFile().orElseThrow());
+  }
+
+  private static Path namePlaces(final MapProject project) {
+    return project.getFolder().orElseThrow().resolve("name_place.txt");
+  }
+
+  @DisplayName("Missing places are created only where a territory has none, as one step")
+  @Test
+  void createsOnlyMissingPlaces() throws Exception {
+    // given
+    final MapProject project = givenMapWithPlacesMissing();
+    final MapFiles files = project.getFiles();
+    final Game game = project.game();
+    final List<String> withoutUnits = files.withoutUnitPlaces();
+    final List<String> withoutName = files.withoutMarkerPlace(game, Marker.NAME);
+
+    // when
+    project.editFiles(f -> f.withMissingUnitPlaces().withMissingMarkerPlaces(game, Marker.NAME));
+    final MapFiles created = project.getFiles();
+
+    // then
+    assertThat(withoutUnits).as("the territory left out of place.txt").containsExactly(TERRITORY);
+    assertThat(withoutName)
+        .as("every territory but the one name_place.txt has")
+        .containsExactly(TERRITORY, "Territory 3", "Territory 4", SEA);
+    assertThat(created.withoutUnitPlaces()).as("no unit places missing now").isEmpty();
+    assertThat(created.missingPlaces(game, "name_place.txt")).as("nor names").isZero();
+    assertThat(created.places().units().get(TERRITORY).getFirst())
+        .as("the places found for it")
+        .isEqualTo(files.unitPlaces(TERRITORY));
+    assertThat(created.places().markers(Marker.NAME).get("Territory 2"))
+        .as("a place there stays")
+        .containsExactly(new Point(1, 2));
+    assertThat(created.places().units().get(SEA))
+        .as("as do the unit places there")
+        .isSameAs(files.places().units().get(SEA));
+    project.undo();
+    assertThat(project.getFiles()).as("one undo takes all back").isSameAs(files);
+    assertThat(project.canUndo()).as("it was one step").isFalse();
+  }
+
+  @DisplayName("Created places are written by the save, into a new file where the map has none")
+  @Test
+  void savesCreatedPlaces() throws Exception {
+    // given: no pu_place.txt, and a land worth 3 PUs since before the map was opened
+    final MapProject made = givenMapWithPlacesMissing();
+    made.edit(g -> MapXml.withProduction(g, "Territory 3", 3));
+    made.save();
+    final Path values = made.getFolder().orElseThrow().resolve("pu_place.txt");
+    Files.deleteIfExists(values);
+    final MapProject project = MapProject.open(made.getXmlFile().orElseThrow());
+    final Game game = project.game();
+
+    // when
+    project.editFiles(
+        f ->
+            f.withMissingUnitPlaces()
+                .withMissingMarkerPlaces(game, Marker.NAME)
+                .withMissingMarkerPlaces(game, Marker.VALUE));
+    project.save();
+
+    // then
+    assertThat(PointFileReaderWriter.readOneToManyPlacements(placeTxt(project)))
+        .as("place.txt has the territory again")
+        .containsKey(TERRITORY);
+    assertThat(PointFileReaderWriter.readOneToOne(namePlaces(project)))
+        .as("name_place.txt has every territory, the one set by hand as it was")
+        .containsOnlyKeys(TERRITORY, "Territory 2", "Territory 3", "Territory 4", SEA)
+        .containsEntry("Territory 2", new Point(1, 2));
+    assertThat(PointFileReaderWriter.readOneToOne(values))
+        .as("pu_place.txt is new, with the one land that has a value")
+        .containsOnlyKeys("Territory 3");
+  }
+
+  @DisplayName("A place file that does not read misses nothing: created places leave it as it is")
+  @Test
+  void unreadPlaceFileStaysAsItIs() throws Exception {
+    // given: place.txt names a territory twice, so the game's reader refuses it
+    final MapProject made = givenMapWithPlacesMissing();
+    final Path places = placeTxt(made);
+    Files.writeString(
+        places, Files.readString(places) + "\r\n" + SEA + " (1,2)\r\n" + SEA + " (3,4)\r\n");
+    final byte[] before = Files.readAllBytes(places);
+    final MapProject project = MapProject.open(made.getXmlFile().orElseThrow());
+    final Game game = project.game();
+
+    // when
+    final List<String> withoutUnits = project.getFiles().withoutUnitPlaces();
+    project.editFiles(
+        f -> {
+          MapFiles filled = f.withMissingUnitPlaces();
+          for (final Marker marker : Marker.values()) {
+            filled = filled.withMissingMarkerPlaces(game, marker);
+          }
+          return filled;
+        });
+    project.save();
+
+    // then
+    assertThat(project.getFiles().placesUnread("place.txt")).as("it does not read").isTrue();
+    assertThat(withoutUnits)
+        .as("none counts as missing, though place.txt lacks a territory: its lines are not known")
+        .isEmpty();
+    assertThat(project.getFiles().places().units()).as("no unit place was set").isEmpty();
+    assertThat(Files.readAllBytes(places)).as("the save left every byte of it").isEqualTo(before);
+  }
+
+  @DisplayName("A place file that does not read is not rewritten by a moved place or a layout")
+  @Test
+  void unreadPlaceFileRefusesSinglePlaces() throws Exception {
+    // given: place.txt names a territory twice, so the game's reader refuses it
+    final MapProject made = givenMapWithPlacesMissing();
+    final Path places = placeTxt(made);
+    Files.writeString(
+        places, Files.readString(places) + "\r\n" + SEA + " (1,2)\r\n" + SEA + " (3,4)\r\n");
+    final byte[] before = Files.readAllBytes(places);
+    final MapProject project = MapProject.open(made.getXmlFile().orElseThrow());
+    final List<String> territories = List.copyOf(project.getFiles().polygons().keySet());
+
+    // when: a unit place set as a drag does, then Lay out unit places for every territory
+    project.setUnitPlaces(SEA, List.of(new Point(5, 5)));
+    project.layOutUnitPlaces(MapFiles.UnitLayout.GRID, 6, territories);
+    final boolean changed = project.hasUnsavedChanges();
+    project.save();
+
+    // then
+    assertThat(project.whyNoPlaces("place.txt"))
+        .as("said with the way out, in the words of the menu's \"file does not read\"")
+        .hasValueSatisfying(
+            why -> assertThat(why).contains("place.txt does not read", "in Files"));
+    assertThat(project.whyNoPlaces("name_place.txt")).as("a file that reads").isEmpty();
+    assertThat(changed).as("neither made a step").isFalse();
+    assertThat(Files.readAllBytes(places)).as("the save left every byte of it").isEqualTo(before);
+  }
+
+  @DisplayName("A save after a merge takes only the merged territory's lines from the place files")
+  @Test
+  void savesMergedTerritory() throws Exception {
+    // given: every territory with unit places and a name place set by hand
+    final MapProject made =
+        MapProject.newMap(
+                "Island Wars",
+                MapPictureTest.givenPicture(),
+                List.of("Red"),
+                folder.resolve("maps"))
+            .project();
+    Files.writeString(
+        namePlaces(made),
+        "Territory 1 (10,20)\r\nTerritory 2 (30, 40)\r\nTerritory 3   (5,6)\r\n"
+            + "Territory 4 (7,8)\r\nSea Zone 1 (9,9)\r\n");
+    final MapProject project = MapProject.open(made.getXmlFile().orElseThrow());
+    final List<String> unitLines = Files.readAllLines(placeTxt(project));
+    final List<String> nameLines = Files.readAllLines(namePlaces(project));
+
+    // when
+    final List<String> named = project.mergeTerritories(TERRITORY, "Territory 4");
+    project.save();
+
+    // then
+    assertThat(named).as("merged").isEmpty();
+    assertThat(Files.readAllLines(placeTxt(project)))
+        .as("place.txt without the merged one's line, every other line as it was")
+        .isEqualTo(unitLines.stream().filter(line -> !line.startsWith("Territory 4 ")).toList())
+        .hasSize(unitLines.size() - 1);
+    assertThat(Files.readAllLines(namePlaces(project)))
+        .as("name_place.txt likewise, the spacing typed by hand kept")
+        .isEqualTo(nameLines.stream().filter(line -> !line.startsWith("Territory 4 ")).toList())
+        .hasSize(nameLines.size() - 1);
   }
 }

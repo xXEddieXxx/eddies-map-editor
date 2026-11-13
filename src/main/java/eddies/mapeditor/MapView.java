@@ -7,8 +7,10 @@ import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
 import java.awt.Dimension;
+import java.awt.FileDialog;
 import java.awt.FlowLayout;
 import java.awt.Font;
+import java.awt.Frame;
 import java.awt.Graphics;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
@@ -23,10 +25,13 @@ import java.awt.event.ComponentEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.awt.image.BufferedImage;
+import java.io.IOException;
 import java.io.Serial;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
@@ -49,6 +54,8 @@ import javax.swing.KeyStroke;
 import javax.swing.OverlayLayout;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
+import javax.swing.SwingWorker;
+import org.triplea.swing.FileChooser;
 import org.triplea.swing.SwingComponents;
 
 /**
@@ -335,11 +342,19 @@ final class MapView extends JPanel {
     private static int toolWidth(final AbstractButton tool, final boolean byName) {
       return byName
           ? Theme.mapToolWidth(tool, Optional.empty(), Theme.mapToolName(tool).orElseThrow())
-          : Theme.mapToolWidth(tool, Theme.mapToolGlyph(tool), "");
+          : Theme.mapToolWidth(tool, Theme.mapToolGlyph(tool), glyphText(tool));
+    }
+
+    /** Beside its glyph a tool that opens a menu keeps the arrow of its name, eg Places. */
+    private static String glyphText(final AbstractButton tool) {
+      return Theme.mapToolName(tool)
+          .filter(name -> name.endsWith("▾"))
+          .map(name -> "▾")
+          .orElse("");
     }
 
     private static void showTool(final AbstractButton tool, final boolean byName) {
-      final String text = byName ? Theme.mapToolName(tool).orElseThrow() : "";
+      final String text = byName ? Theme.mapToolName(tool).orElseThrow() : glyphText(tool);
       if (!text.equals(tool.getText())) {
         tool.setText(text);
         tool.setIcon(byName ? null : Theme.mapToolGlyph(tool).orElseThrow());
@@ -377,6 +392,11 @@ final class MapView extends JPanel {
     redraw.addActionListener(e -> redrawBorders.run());
     findAgain.addActionListener(e -> findTerritories.run());
     pictureMenu.add(findAgain);
+    final JMenuItem saveAs = pictureMenu.add("Save the map's picture as a file…");
+    saveAs.setToolTipText(
+        "The whole picture, without the relief, put together from its tiles in baseTiles: to"
+            + " change it in a paint program, then Load another picture or Redraw borders");
+    saveAs.addActionListener(e -> savePicture());
     final JButton picture = Theme.newIconButton(Glyph.GAME_VIEW, "Map picture", () -> {});
     picture.setText("▾");
     picture.setIcon(new MakerIcon(Glyph.GAME_VIEW, Theme.MAP_TOOL_ICON));
@@ -386,6 +406,49 @@ final class MapView extends JPanel {
     picture.setComponentPopupMenu(pictureMenu);
     picture.addActionListener(e -> pictureMenu.show(picture, 0, picture.getHeight()));
     return picture;
+  }
+
+  /** Asks where to, then writes the map's picture there in the background, as it may be big. */
+  private void savePicture() {
+    final MapFiles files = project.getFiles();
+    if (files.picture().isEmpty() && files.folder().isEmpty()) {
+      Dialogs.toast(this, "! The map has no picture yet");
+      return;
+    }
+    final Optional<Path> chosen =
+        FileChooser.builder()
+            .parent((Frame) SwingUtilities.getAncestorOfClass(Frame.class, this))
+            .title("Save the map's picture")
+            .mode(FileDialog.SAVE)
+            .directory(Path.of(System.getProperty("user.home")))
+            .fileName(project.name().replaceAll("[^A-Za-z0-9_-]+", "_") + ".png")
+            .fileExtension(".png")
+            .build()
+            .chooseFile();
+    if (chosen.isEmpty()) {
+      return;
+    }
+    new SwingWorker<Void, Void>() {
+      @Override
+      protected Void doInBackground() throws IOException {
+        MapFolder.savePicture(files, chosen.get());
+        return null;
+      }
+
+      @Override
+      protected void done() {
+        try {
+          get();
+          Dialogs.toast(MapView.this, "✓ Saved the map's picture as " + chosen.get());
+        } catch (final InterruptedException | ExecutionException e) {
+          Dialogs.warn(
+              MapView.this,
+              "Save the map's picture",
+              "Could not save the picture.\n"
+                  + Optional.ofNullable(e.getCause()).orElse(e).getMessage());
+        }
+      }
+    }.execute();
   }
 
   /** "Edit mode" in white on red, the danger color, as the lines being edited are. */
@@ -806,6 +869,11 @@ final class MapView extends JPanel {
   /** An ellipse dragged from corner to corner goes to onLine, {@link MapCanvas#drawCircle}. */
   void drawCircle(final Consumer<List<Point>> onLine) {
     canvas.drawCircle(onLine);
+  }
+
+  /** A band dragged on the map goes to onLine, {@link MapCanvas#eraseLine}. */
+  void eraseLine(final Consumer<List<Point>> onLine, final int width) {
+    canvas.eraseLine(onLine, width);
   }
 
   /**

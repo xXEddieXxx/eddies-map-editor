@@ -180,6 +180,8 @@ final class MapCanvas extends JComponent {
   private boolean byPoints;
   // a drag from corner to corner draws an ellipse instead, given as a closed line
   private boolean byCircle;
+  // the eraser's width in the map's pixels while its band is dragged, else 0
+  private int eraserWidth;
   private transient Optional<Point> pointer = Optional.empty();
   // screen px a click may move between press and release and still set a point
   private static final int CLICK_SLOP = 4;
@@ -476,6 +478,15 @@ final class MapCanvas extends JComponent {
     byCircle = true;
   }
 
+  /**
+   * Like {@link #drawLine(Consumer)}, the drag shown as a band so many of the map's pixels wide:
+   * what an eraser takes away.
+   */
+  void eraseLine(final Consumer<List<Point>> onLine, final int width) {
+    drawLine(onLine);
+    eraserWidth = width;
+  }
+
   /** The line set point by point goes to onLine, if it has two points. */
   private void finishLine() {
     final List<Point> drawn = List.copyOf(line);
@@ -530,6 +541,7 @@ final class MapCanvas extends JComponent {
     line = new ArrayList<>();
     byPoints = false;
     byCircle = false;
+    eraserWidth = 0;
     pointer = Optional.empty();
     lineCheck = Optional.empty();
     lineCheckTimer.stop();
@@ -803,6 +815,17 @@ final class MapCanvas extends JComponent {
     final Color halo = new Color(0, 0, 0, 0xC0);
     // a dark halo under a white line shows on land, sea and the selected (accent) border alike
     g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+    if (eraserWidth > 0) {
+      // the band the eraser clears, see-through so the lines under it still show
+      final float band = (float) Math.max(2, eraserWidth * zoom);
+      g.setColor(halo);
+      g.setStroke(new BasicStroke(band + 2, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+      g.draw(path);
+      g.setColor(new Color(0xFF, 0xFF, 0xFF, 0xB0));
+      g.setStroke(new BasicStroke(band, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+      g.draw(path);
+      return;
+    }
     g.setColor(halo);
     g.setStroke(new BasicStroke(8, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
     g.draw(path);
@@ -1040,16 +1063,34 @@ final class MapCanvas extends JComponent {
     } else if (place.center()) {
       project.setCenter(territory, to);
     } else if (place.marker().isPresent()) {
-      project.setMarkerPlace(place.marker().get(), territory, place.index(), to);
-    } else {
+      if (!refusesPlaces(place.marker().get().getFile())) {
+        project.setMarkerPlace(place.marker().get(), territory, place.index(), to);
+      }
+    } else if (!refusesPlaces(MapFiles.PLACEMENTS)) {
       final List<Point> moved = new ArrayList<>(unitPlacesOf(territory));
       moved.set(place.index(), to);
       project.setUnitPlaces(territory, moved);
     }
   }
 
+  /**
+   * Whether places of this file stay as they are because the file does not read ({@link
+   * MapProject#whyNoPlaces}); says so then, with the way to Files.
+   */
+  private boolean refusesPlaces(final String fileName) {
+    final Optional<String> why = project.whyNoPlaces(fileName);
+    why.ifPresent(
+        text ->
+            Dialogs.toast(
+                this, text, "Files", () -> MapMakerWindow.openTool(this, "Files", null)));
+    return why.isPresent();
+  }
+
   /** A place for units after the others, centered at the point on the screen. */
   private void addUnitPlace(final Point point) {
+    if (refusesPlaces(MapFiles.PLACEMENTS)) {
+      return;
+    }
     final String territory = Objects.requireNonNull(selected);
     final List<Point> added = new ArrayList<>(unitPlacesOf(territory));
     added.add(
@@ -1087,6 +1128,9 @@ final class MapCanvas extends JComponent {
 
   /** Removes the place for units; the last one stays, as the game needs one. */
   private void removeUnitPlace(final String territory, final int index) {
+    if (refusesPlaces(MapFiles.PLACEMENTS)) {
+      return;
+    }
     final List<Point> removed = new ArrayList<>(unitPlacesOf(territory));
     removed.remove(index);
     project.setUnitPlaces(territory, removed);

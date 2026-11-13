@@ -11,6 +11,7 @@ import games.strategy.triplea.ResourceLoader;
 import games.strategy.triplea.image.UnitImageFactory;
 import games.strategy.triplea.ui.mapdata.MapData;
 import java.awt.Color;
+import java.awt.Dimension;
 import java.awt.Graphics2D;
 import java.awt.Image;
 import java.awt.Point;
@@ -498,7 +499,7 @@ final class NewMapTest {
   @Test
   void savesUploadedUnitPictures() throws Exception {
     final MapProject project = givenNewMapWithNations();
-    final BufferedImage grey = MapFolder.toUnitSize(givenGreyPicture());
+    final BufferedImage grey = MapFolder.toUnitSize(givenGreyPicture(), new Dimension(48, 48));
     project.setUnitPicture("Ranger", new UnitPicture(grey, Coloring.PER_NATION));
     project.setUnitPicture("infantry", new UnitPicture(grey, Coloring.AS_IS));
     project.setUnitPicture("armour", new UnitPicture(grey, Coloring.AS_IS));
@@ -529,7 +530,7 @@ final class NewMapTest {
   @Test
   void rewritesChangedUnitPictures() throws Exception {
     final MapProject project = givenNewMapWithNations();
-    final BufferedImage grey = MapFolder.toUnitSize(givenGreyPicture());
+    final BufferedImage grey = MapFolder.toUnitSize(givenGreyPicture(), new Dimension(48, 48));
     project.setUnitPicture("Ranger", new UnitPicture(grey, Coloring.PER_NATION));
     project.setUnitPicture("infantry", new UnitPicture(grey, Coloring.AS_IS));
     project.saveAsNewMap("Island Wars", maps);

@@ -1429,6 +1429,24 @@ class MapXml {
         .orElse(List.of());
   }
 
+  /**
+   * The game with only its territory attachments, to ask about every territory quickly: a big game
+   * has 35,000 others, read again for each answer.
+   */
+  static Game withTerritoryAttachmentsOnly(final Game game) {
+    return game.getAttachmentList() == null
+        ? game
+        : game.toBuilder()
+            .attachmentList(
+                game.getAttachmentList().toBuilder()
+                    .attachments(
+                        attachments(game).stream()
+                            .filter(a -> AttachmentsXml.isNamed(a, TERRITORY))
+                            .toList())
+                    .build())
+            .build();
+  }
+
   /** The option's value in the attachment of this name on the thing, eg its "production". */
   static Optional<String> option(
       final Game game, final String attachment, final String attachTo, final String option) {

@@ -19,6 +19,8 @@ import eddies.mapeditor.MapPicture.DetectedTerritory;
 import eddies.mapeditor.MapPicture.Neighbours;
 
 final class MapPictureTest {
+  private static final Color RED_AREA = new Color(230, 180, 180);
+  private static final Color GREEN_AREA = new Color(180, 230, 180);
 
   /**
    * A 400x300 map: four land areas in a 2x2 grid split by black lines, a blue sea below them, and
@@ -416,5 +418,86 @@ final class MapPictureTest {
         .as("the inside becomes an area of its own")
         .hasSize(MapPicture.detect(picture).territories().size() + 1);
     assertThat(open).as("an open line far from any border: nothing").isEmpty();
+  }
+
+  /** A red area and a green one of 100x100, a black line 3 px wide from x 100 between them. */
+  private static BufferedImage givenRedAndGreen() {
+    final BufferedImage image = new BufferedImage(203, 100, BufferedImage.TYPE_INT_RGB);
+    final Graphics2D g = image.createGraphics();
+    g.setColor(RED_AREA);
+    g.fillRect(0, 0, 100, 100);
+    g.setColor(Color.BLACK);
+    g.fillRect(100, 0, 3, 100);
+    g.setColor(GREEN_AREA);
+    g.fillRect(103, 0, 100, 100);
+    g.dispose();
+    return image;
+  }
+
+  @DisplayName("The eraser takes the line pixels under its stroke, each side's color growing in")
+  @Test
+  void eraserTakesLinesUnderTheStroke() {
+    // given
+    final BufferedImage image = givenRedAndGreen();
+
+    // when: a stroke 9 px wide down the line, from y 20 to 60
+    final BufferedImage erased =
+        MapPicture.withoutLines(image, List.of(new Point(101, 20), new Point(101, 60)), 9)
+            .orElseThrow();
+
+    // then
+    for (int y = 20; y <= 60; y++) {
+      assertThat(new Color(erased.getRGB(100, y)))
+          .as("the line's left pixel at y %d, in the color of the area left of it", y)
+          .isEqualTo(RED_AREA);
+      assertThat(new Color(erased.getRGB(102, y)))
+          .as("the line's right pixel at y %d, in the color of the area right of it", y)
+          .isEqualTo(GREEN_AREA);
+      assertThat(new Color(erased.getRGB(101, y)))
+          .as("the line's middle at y %d, in the color of a side", y)
+          .isIn(RED_AREA, GREEN_AREA);
+    }
+    for (int y = 0; y < 100; y++) {
+      for (int x = 0; x < 203; x++) {
+        if ((x < 100 || x > 102) || y < 10 || y > 70) {
+          assertThat(erased.getRGB(x, y))
+              .as("no pixel off the line or away from the stroke changes: %d, %d", x, y)
+              .isEqualTo(image.getRGB(x, y));
+        }
+      }
+    }
+    assertThat(new Color(image.getRGB(101, 40)))
+        .as("the picture given stays as it is: the erased one is a copy")
+        .isEqualTo(Color.BLACK);
+  }
+
+  @DisplayName("With a line erased the areas it parted are found as one")
+  @Test
+  void erasedLineJoinsAreas() {
+    // given
+    final BufferedImage image = givenRedAndGreen();
+
+    // when
+    final BufferedImage erased =
+        MapPicture.withoutLines(image, List.of(new Point(101, 20), new Point(101, 60)), 9)
+            .orElseThrow();
+
+    // then
+    assertThat(MapPicture.detect(image).territories()).as("two areas before").hasSize(2);
+    assertThat(MapPicture.detect(erased).territories()).as("one area through the gap").hasSize(1);
+  }
+
+  @DisplayName("An eraser stroke over no line changes nothing")
+  @Test
+  void eraserOffTheLinesErasesNothing() {
+    // given
+    final BufferedImage image = givenRedAndGreen();
+
+    // when
+    final Optional<BufferedImage> erased =
+        MapPicture.withoutLines(image, List.of(new Point(30, 20), new Point(60, 60)), 9);
+
+    // then
+    assertThat(erased).as("no line under the stroke").isEmpty();
   }
 }

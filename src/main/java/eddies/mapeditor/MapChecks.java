@@ -3,6 +3,7 @@ package eddies.mapeditor;
 import games.strategy.engine.data.gameparser.GameParser;
 import games.strategy.engine.data.gameparser.XmlGameElementMapper;
 import games.strategy.triplea.Constants;
+import games.strategy.triplea.ui.mapdata.MapData;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Constructor;
@@ -21,6 +22,7 @@ import lombok.experimental.UtilityClass;
 import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.Initialize.UnitInitialize.UnitPlacement;
 import org.triplea.map.xml.writer.GameXmlWriter;
+import eddies.mapeditor.MapFiles.NationUnit;
 
 /** The problems of a map, each with the territory to show for it if there is one. */
 @UtilityClass
@@ -126,6 +128,133 @@ class MapChecks {
                 new Problem(
                     territory + " is not connected to any territory", territory, "Connections"))
         .toList();
+  }
+
+  /**
+   * The unit types a nation can have: the ones it can buy (its purchase list) and the ones it
+   * starts with on the map, in the game's order; not what only triggers give it.
+   */
+  static List<String> unitsOf(final Game game, final String nation) {
+    final Set<String> rules =
+        ProductionXml.frontierOf(game, nation)
+            .map(frontier -> Set.copyOf(ProductionXml.rulesIn(game, frontier)))
+            .orElse(Set.of());
+    final Set<String> its = new HashSet<>();
+    ProductionXml.rules(game).stream()
+        .filter(rule -> rules.contains(rule.getName()))
+        .flatMap(rule -> Optional.ofNullable(rule.getResults()).orElse(List.of()).stream())
+        .forEach(result -> its.add(result.getResourceOrUnit()));
+    MapXml.placements(game).stream()
+        .filter(units -> nation.equals(units.getOwner()))
+        .forEach(units -> its.add(units.getUnitType()));
+    return MapXml.unitTypes(game).stream().filter(its::contains).toList();
+  }
+
+  /**
+   * Pictures the game would miss, worth a look as it then draws a placeholder (the map still
+   * loads): a nation's unit types without a picture, one note per nation, and its flags. Only of
+   * nations and unit types the saved game has: a save writes plain ones for new ones. Reads the
+   * map's folder, so not for every change.
+   */
+  static List<Problem> pictureNotes(final Game game, final Game saved, final MapFiles files) {
+    final Optional<Path> folder = files.folder();
+    if (folder.isEmpty()) {
+      return List.of();
+    }
+    final Set<String> forAll = MapFolder.names(folder.get().resolve("units"));
+    final Set<String> savedUnits = Set.copyOf(MapXml.unitTypes(saved));
+    final Set<String> savedNations = Set.copyOf(MapXml.nations(saved));
+    final List<String> flags = new ArrayList<>(List.of("", "_small", "_large"));
+    // the faded flag marks kamikaze zones, the convoy flag convoy zones on a map that asks for it
+    if (AttachmentsXml.attachments(game).stream()
+        .flatMap(a -> Optional.ofNullable(a.getOptions()).orElse(List.of()).stream())
+        .anyMatch(o -> "kamikazeZone".equals(o.getName()) && "true".equals(o.getValue()))) {
+      flags.add("_fade");
+    }
+    if (Boolean.parseBoolean(
+        files.properties().getProperty(MapData.PROPERTY_MAP_USENATION_CONVOYFLAGS))) {
+      flags.add("_convoy");
+    }
+    final List<Problem> notes = new ArrayList<>();
+    for (final String nation : MapXml.nations(game)) {
+      if (!savedNations.contains(nation)) {
+        continue;
+      }
+      final List<String> units =
+          withoutPicture(
+              files,
+              forAll,
+              nation,
+              unitsOf(game, nation).stream().filter(savedUnits::contains).toList());
+      if (!units.isEmpty()) {
+        notes.add(
+            Problem.in(
+                "Units",
+                nation
+                    + " has no picture for "
+                    + (units.size() == 1 ? "" : units.size() + " unit types: ")
+                    + String.join(", ", units.subList(0, Math.min(3, units.size())))
+                    + (units.size() > 3 ? ", …" : "")));
+      }
+      final List<String> missing =
+          flags.stream()
+              .filter(ending -> MapFolder.flag(folder.get(), nation, ending).isEmpty())
+              .map(ending -> nation + ending + ".png")
+              .toList();
+      if (!missing.isEmpty()) {
+        notes.add(
+            Problem.in(
+                "Nations", nation + " has no flag picture: " + String.join(", ", missing)));
+      }
+    }
+    return notes;
+  }
+
+  /**
+   * The nations that can have the unit type ({@link #unitsOf}) and have no picture of it; none for
+   * a map not saved yet, nor for a unit type or of nations the saved game does not have, as a
+   * save writes plain pictures for those. Reads the map's folder, so not for every change.
+   */
+  static List<String> nationsWithoutPicture(
+      final Game game, final Game saved, final MapFiles files, final String unit) {
+    if (files.folder().isEmpty() || !MapXml.unitTypes(saved).contains(unit)) {
+      return List.of();
+    }
+    final Set<String> forAll = MapFolder.names(files.folder().get().resolve("units"));
+    final Set<String> savedNations = Set.copyOf(MapXml.nations(saved));
+    return MapXml.nations(game).stream()
+        .filter(savedNations::contains)
+        .filter(nation -> unitsOf(game, nation).contains(unit))
+        .filter(nation -> !withoutPicture(files, forAll, nation, List.of(unit)).isEmpty())
+        .toList();
+  }
+
+  /**
+   * @param forAll the names of the pictures in the map's units folder, listed once for all nations
+   */
+  private static List<String> withoutPicture(
+      final MapFiles files,
+      final Set<String> forAll,
+      final String nation,
+      final List<String> units) {
+    return files
+        .folder()
+        .map(
+            folder ->
+                MapFolder.unitsWithoutPicture(
+                    folder,
+                    forAll,
+                    nation,
+                    units.stream()
+                        // uploaded or imported here: the next save writes it
+                        .filter(unit -> !files.unitPictures().containsKey(unit))
+                        .filter(
+                            unit ->
+                                !files
+                                    .nationUnitPictures()
+                                    .containsKey(new NationUnit(nation, unit)))
+                        .toList()))
+        .orElse(List.of());
   }
 
   /**

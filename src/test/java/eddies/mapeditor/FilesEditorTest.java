@@ -260,4 +260,73 @@ final class FilesEditorTest {
                     : c instanceof Container inner ? find(inner, wanted).stream() : Stream.empty())
         .findFirst();
   }
+
+  @DisplayName("A place file with territories missing links to Territories' Places to create them")
+  @Test
+  void anatomyLinksToCreatePlaces() throws Exception {
+    // given: a map from a picture, its name_place.txt gone
+    final MapProject made =
+        MapProject.newMap(
+                "Island Wars",
+                MapPictureTest.givenPicture(),
+                List.of("Red"),
+                folder.resolve("maps"))
+            .project();
+    Files.deleteIfExists(made.getFolder().orElseThrow().resolve("name_place.txt"));
+    final MapProject project = MapProject.open(made.getXmlFile().orElseThrow());
+
+    final List<String> opened = new ArrayList<>();
+
+    // when
+    final FilesEditor files =
+        new FilesEditor(
+            () -> project,
+            () -> true,
+            () -> {},
+            tool -> {},
+            Optional.of((tool, item) -> opened.addAll(List.of(tool, item))));
+    files.showing();
+    button(files, "Create in Territories › Places").doClick();
+
+    // then
+    assertThat(opened)
+        .as("name_place.txt lacks places: its link opens Territories with the file as the item")
+        .containsExactly("Territories", "name_place.txt");
+    assertThat(find(files.page(), labelled("Where the territories' names stand · 5 missing")))
+        .as("how many territories have no line in it")
+        .isPresent();
+    assertThat(find(files.page(), labelled("Where the units of each territory stand")))
+        .as("place.txt has them all: no count")
+        .isPresent();
+  }
+
+  @DisplayName("A place file that does not read says so and opens here, with no places to create")
+  @Test
+  void anatomyTellsUnreadPlaceFile() throws Exception {
+    // given: a map from a picture whose place.txt names a territory twice
+    final MapProject made =
+        MapProject.newMap(
+                "Island Wars",
+                MapPictureTest.givenPicture(),
+                List.of("Red"),
+                folder.resolve("maps"))
+            .project();
+    final Path places = made.getFolder().orElseThrow().resolve("place.txt");
+    Files.writeString(places, "Sea Zone 1 (1,2)\r\nSea Zone 1 (3,4)\r\n");
+    final MapProject project = MapProject.open(made.getXmlFile().orElseThrow());
+
+    // when
+    final FilesEditor files = new FilesEditor(() -> project, () -> true, () -> {}, tool -> {});
+    files.showing();
+
+    // then
+    assertThat(
+            find(
+                files.page(),
+                labelled(
+                    "Where the units of each territory stand · does not read, eg a name twice")))
+        .as("not counted as missing")
+        .isPresent();
+    assertThat(find(files.page(), labelled("Fix it here"))).as("opened in Files").isPresent();
+  }
 }

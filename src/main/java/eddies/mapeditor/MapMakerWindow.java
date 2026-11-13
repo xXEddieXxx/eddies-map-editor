@@ -104,6 +104,7 @@ public final class MapMakerWindow extends JFrame {
   // a map's own game file, kept as .bak on the first save; a map made here has no older version
   private boolean openedFromFile;
   private transient @Nullable HomeEditor home;
+  private transient @Nullable PublishEditor publish;
   private final transient Map<String, Editor> editors = new LinkedHashMap<>();
   // the place of the shared map in each tool that works on it
   private final transient Map<Editor, JPanel> mapSlots = new HashMap<>();
@@ -695,6 +696,8 @@ public final class MapMakerWindow extends JFrame {
             this::save,
             this::playtest);
     home = homeEditor;
+    final PublishEditor publishEditor = new PublishEditor(opened, this::validateMap, this::export);
+    publish = publishEditor;
     shared.onShowProblems(this::showProblems);
     shared.onFollowStep(this::followStep);
     final List<Sidebar.Group> groups =
@@ -734,7 +737,8 @@ public final class MapMakerWindow extends JFrame {
                 List.of(
                     new NotesEditor(opened),
                     new TextsEditor(opened, this::showTool),
-                    new SoundsEditor(opened))));
+                    new SoundsEditor(opened))),
+            new Sidebar.Group("Share", List.of(publishEditor)));
     final Sidebar.Group advanced =
         new Sidebar.Group("Advanced", List.of(new AttachmentsEditor(opened), files));
     final List<Editor> inOrder = new ArrayList<>();
@@ -994,8 +998,8 @@ public final class MapMakerWindow extends JFrame {
   }
 
   /**
-   * The map's games, this one chosen, and a new game from this one; open, new, recent maps; export,
-   * the TripleA for Play, the folder; close.
+   * The map's games, this one chosen, and a new game from this one; open, new, recent maps;
+   * Publish, export, the TripleA for Play, the folder; close.
    */
   private JPopupMenu mapMenu() {
     final JPopupMenu menu = new JPopupMenu();
@@ -1031,6 +1035,7 @@ public final class MapMakerWindow extends JFrame {
         .addActionListener(e -> createMap());
     menu.add(recentMaps());
     menu.addSeparator();
+    menu.add("Publish…").addActionListener(e -> showTool(PublishEditor.TITLE));
     menu.add(menuItem("Export as zip…", KeyEvent.VK_F8, 0)).addActionListener(e -> export());
     final String tripleA = PlayWith.describe();
     menu.add(tripleA.isEmpty() ? "Play with…" : "Play with: " + tripleA + "…")
@@ -1164,9 +1169,19 @@ public final class MapMakerWindow extends JFrame {
     final Path xml = project.getXmlFile().orElseThrow();
     final Path backup = xml.resolveSibling(xml.getFileName() + ".bak");
     final boolean firstBackup = !Files.exists(backup);
+    // a small map there, maybe made by hand, is not replaced by a save that writes a new relief
+    final boolean smallMapStays =
+        project.hasUnsavedRelief()
+            && project.getFolder().filter(MapFolder::hasSmallMap).isPresent();
     try {
       project.save();
-      if (openedFromFile && firstBackup && Files.exists(backup)) {
+      if (smallMapStays && editors.get("Map look") instanceof MapLookEditor look) {
+        Dialogs.toast(
+            this,
+            "✓ Saved. The small map still shows the map without the new relief",
+            "Update the small map",
+            look::updateSmallMap);
+      } else if (openedFromFile && firstBackup && Files.exists(backup)) {
         Dialogs.toast(
             this,
             "✓ Saved. The old file stays as " + backup.getFileName(),
@@ -1238,6 +1253,7 @@ public final class MapMakerWindow extends JFrame {
           return;
         }
         shownIn.setValidated(problems);
+        Optional.ofNullable(publish).ifPresent(tool -> tool.setChecked(problems));
         check = Check.DONE;
         updateState();
         then.accept(problems);

@@ -30,6 +30,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import java.util.function.BiConsumer;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -99,9 +100,12 @@ final class FilesEditor implements Editor {
   private final Supplier<Optional<Path>> mapFolder;
   private final Supplier<Game> game;
   private final Supplier<List<Part>> anatomy;
+  // for the place files: how many territories miss their line
+  private final Supplier<MapFiles> mapFiles;
   private final BooleanSupplier mayWriteMapFile;
   private final Runnable reloadMap;
   private final Consumer<String> openTool;
+  private final BiConsumer<String, String> openItem;
   private final List<Path> otherFolders = new ArrayList<>();
   // backups are left out of the tree, but for those revealed, eg by the toast after a first save
   private final Set<Path> revealedBackups = new HashSet<>();
@@ -160,28 +164,48 @@ final class FilesEditor implements Editor {
       final BooleanSupplier mayWriteMapFile,
       final Runnable reloadMap,
       final Consumer<String> openTool) {
+    this(project, mayWriteMapFile, reloadMap, openTool, Optional.empty());
+  }
+
+  /**
+   * As the other, with a way to open a tool showing an item, eg ("Territories",
+   * "name_place.txt"); without one the window the page is in opens it.
+   */
+  FilesEditor(
+      final Supplier<MapProject> project,
+      final BooleanSupplier mayWriteMapFile,
+      final Runnable reloadMap,
+      final Consumer<String> openTool,
+      final Optional<BiConsumer<String, String>> openItem) {
     this(
         () -> project.get().getFolder().map(MapFolder::rootOf),
         () -> project.get().game(),
         () -> MapGuide.anatomy(project.get()),
+        () -> project.get().getFiles(),
         mayWriteMapFile,
         reloadMap,
-        openTool);
+        openTool,
+        openItem);
   }
 
   private FilesEditor(
       final Supplier<Optional<Path>> mapFolder,
       final Supplier<Game> game,
       final Supplier<List<Part>> anatomy,
+      final Supplier<MapFiles> mapFiles,
       final BooleanSupplier mayWriteMapFile,
       final Runnable reloadMap,
-      final Consumer<String> openTool) {
+      final Consumer<String> openTool,
+      final Optional<BiConsumer<String, String>> openItemGiven) {
     this.mapFolder = mapFolder;
     this.game = game;
     this.anatomy = anatomy;
+    this.mapFiles = mapFiles;
     this.mayWriteMapFile = mayWriteMapFile;
     this.reloadMap = reloadMap;
     this.openTool = openTool;
+    openItem =
+        openItemGiven.orElse((tool, item) -> MapMakerWindow.openTool(page(), tool, item));
     tree = new JTree(folders);
     lintLater.setRepeats(false);
     searchLater.setRepeats(false);
@@ -837,12 +861,27 @@ final class FilesEditor implements Editor {
     final JPanel rows = new JPanel(new GridBagLayout());
     rows.setOpaque(false);
     int row = 0;
+    final MapFiles files = mapFiles.get();
+    // every territory is asked about, per place file
+    final Game territories = MapXml.withTerritoryAttachmentsOnly(game.get());
     for (final Part part : parts) {
+      // a place file without a line for every territory that needs one, or not there at all
+      final int missing = files.missingPlaces(territories, part.name());
+      final boolean unread = files.placesUnread(part.name());
       final Optional<JButton> link =
           part.name().equals(MapDescriptionYaml.MAP_YAML_FILE_NAME) && part.present()
               ? Optional.of(link("Games…", () -> showFile(part.file().getParent())))
-              : Optional.ofNullable(part.tool())
-                  .map(tool -> link(verb(part) + " in " + tool, () -> openTool.accept(tool)));
+              : unread
+                  ? Optional.of(link("Fix it here", () -> reveal(part.file())))
+                  : missing > 0
+                      ? Optional.of(
+                          link(
+                              "Create in Territories › Places",
+                              () -> openItem.accept("Territories", part.name())))
+                      : Optional.ofNullable(part.tool())
+                          .map(
+                              tool ->
+                                  link(verb(part) + " in " + tool, () -> openTool.accept(tool)));
       addAnatomyRow(
           rows,
           row++,
@@ -850,7 +889,9 @@ final class FilesEditor implements Editor {
           part.present() ? Status.DONE : part.required() ? Status.PROBLEM : Status.TODO,
           part.name(),
           part.present() ? Optional.of(part.file()) : Optional.empty(),
-          part.purpose(),
+          unread
+              ? part.purpose() + " · does not read, eg a name twice"
+              : missing > 0 ? part.purpose() + " · " + missing + " missing" : part.purpose(),
           link);
     }
     // the picture folders sit beside polygons.txt

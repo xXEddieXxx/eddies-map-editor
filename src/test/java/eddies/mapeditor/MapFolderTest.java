@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 
 import java.awt.Color;
+import java.awt.Dimension;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
@@ -223,14 +224,14 @@ games:
     final BufferedImage wide = new BufferedImage(96, 48, BufferedImage.TYPE_INT_RGB);
     final BufferedImage small = new BufferedImage(20, 30, BufferedImage.TYPE_INT_RGB);
 
-    final BufferedImage fitted = MapFolder.toUnitSize(wide);
+    final BufferedImage fitted = MapFolder.toUnitSize(wide, new Dimension(48, 48));
 
     assertThat(List.of(fitted.getWidth(), fitted.getHeight()))
         .as("a unit's size")
         .containsExactly(48, 48);
     assertThat(fitted.getRGB(24, 2) >>> 24).as("clear above the 48x24 picture").isZero();
     assertThat(fitted.getRGB(24, 24) >>> 24).as("the picture in the middle").isEqualTo(0xFF);
-    assertThat(MapFolder.toUnitSize(small)).as("not blown up").isSameAs(small);
+    assertThat(MapFolder.toUnitSize(small, new Dimension(48, 48))).as("not blown up").isSameAs(small);
   }
 
   @DisplayName("A map's unit picture stays as .bak when written over or taken back")

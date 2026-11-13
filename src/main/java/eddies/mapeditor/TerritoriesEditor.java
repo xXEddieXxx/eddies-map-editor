@@ -1,5 +1,6 @@
 package eddies.mapeditor;
 
+import games.strategy.triplea.Constants;
 import com.formdev.flatlaf.FlatClientProperties;
 import eddies.mapeditor.MapCanvas.PlaceKind;
 import eddies.mapeditor.MapCanvas.ShownPlaces;
@@ -27,6 +28,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -58,6 +60,7 @@ import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
+import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
@@ -133,11 +136,15 @@ final class TerritoriesEditor implements Editor {
           (f, t) -> f.withTexture(t, Optional.empty()),
           Optional.empty());
 
-  /** How Draw borders draws: a dragged line, clicked points, or an ellipse from corner to corner. */
+  /**
+   * How Draw borders draws: a dragged line, clicked points, an ellipse from corner to corner; or
+   * takes lines away under a dragged band.
+   */
   private enum DrawBrush {
     FREEHAND,
     LINE,
-    CIRCLE
+    CIRCLE,
+    ERASER
   }
 
   /** What a click on the map does besides choosing the territory. */
@@ -147,6 +154,7 @@ final class TerritoriesEditor implements Editor {
     DECORATE,
     MOVE_PLACES,
     SPLIT,
+    MERGE,
     DRAW
   }
 
@@ -166,8 +174,7 @@ final class TerritoriesEditor implements Editor {
   private final JToggleButton decorations = new JToggleButton();
   private final JToggleButton drawBorders = new JToggleButton("Draw borders");
   // not a mode: the places shown on every territory stay while modes change
-  private final JToggleButton places =
-      new JToggleButton("▾", new MakerIcon(Glyph.VALUES, Theme.MAP_TOOL_ICON));
+  private final JToggleButton places = new JToggleButton("Places ▾");
   private ShownPlaces shownPlaces = ShownPlaces.NONE;
   // the layouts' places per territory at most; huge sea zones rely on overflow
   private final JSpinner mostPlaces = new JSpinner(new SpinnerNumberModel(16, 1, 999, 1));
@@ -193,6 +200,8 @@ final class TerritoriesEditor implements Editor {
   private Optional<BufferedImage> styleOf = Optional.empty();
   private Optional<Integer> chosenWidth = Optional.empty();
   private Optional<Color> chosenColor = Optional.empty();
+  // the eraser's width as last chosen; at first three times the picture's line width
+  private Optional<Integer> eraserWidth = Optional.empty();
   // Draw borders' brush, kept for the session
   private DrawBrush drawBrush = DrawBrush.FREEHAND;
   // a picture only in tiles is put together in the background before lines go into it
@@ -253,8 +262,10 @@ final class TerritoriesEditor implements Editor {
           list.refresh();
           final boolean sourceGone =
               copySource.filter(s -> !MapXml.territories(project.game()).contains(s)).isPresent();
+          final boolean keeperGone =
+              mode == Mode.MERGE && !MapXml.territories(project.game()).contains(selected);
           // a cut of the outlines before the change, eg an undo, would split what is no more
-          if (sourceGone || pendingCut.isPresent()) {
+          if (sourceGone || keeperGone || pendingCut.isPresent()) {
             resetMode();
             refreshMap();
           } else if (mode == Mode.PAINT && paintedEffect.isPresent()) {
@@ -316,10 +327,16 @@ final class TerritoriesEditor implements Editor {
     exportPictures.setToolTipText(
         "A PNG of each territory chosen, to draw on in a paint program and lay over the map");
     exportPictures.addActionListener(e -> exportPictures());
+    namesMenu.addSeparator();
+    final JMenuItem removeMany = namesMenu.add("Remove territories…");
+    removeMany.setToolTipText(
+        "Tick the territories to remove, the smallest first, eg islands found by mistake");
+    removeMany.addActionListener(e -> removeTerritories());
     final JButton names = new JButton("⋯");
     Theme.setTertiaryButtonStyle(names);
-    names.setToolTipText("Names and pictures of many territories as files");
-    names.getAccessibleContext().setAccessibleName("Names and pictures of many territories as files");
+    final String manyTip = "Many territories at once: names and pictures as files, remove";
+    names.setToolTipText(manyTip);
+    names.getAccessibleContext().setAccessibleName(manyTip);
     names.addActionListener(e -> namesMenu.show(names, 0, names.getHeight()));
     // over the list's count line, which the list draws itself
     final JPanel listCard =
@@ -395,11 +412,12 @@ final class TerritoriesEditor implements Editor {
         "Draw borders: draw border lines into the map's picture by hand, then make territories"
             + " of them");
     drawBorders.addActionListener(e -> startMode(Mode.DRAW));
-    Theme.setMapToolStyle(places);
+    // by its name; short of room the pin alone
+    Theme.setNamedMapToolStyle(places, Glyph.PLACES);
     places.getAccessibleContext().setAccessibleName("Places");
     places.setToolTipText(
         "Places: show where the game draws units, names, flags and markers on every territory,"
-            + " drag one to move it; lay out units; place decorations");
+            + " drag one to move it; lay out units; create missing places; place decorations");
     places.addActionListener(
         e -> {
           // the click toggled it: the menu decides
@@ -409,20 +427,23 @@ final class TerritoriesEditor implements Editor {
     modes.add(places);
   }
 
-  /** A check per kind of place, several at once; the menu stays open to check more. */
-  private JPopupMenu placesMenu() {
+  /**
+   * A check per kind of place in plain words, several at once, the menu staying open to check
+   * more; then laying out unit places and creating the missing ones, each a menu of its own.
+   */
+  JPopupMenu placesMenu() {
     final JPopupMenu menu = new JPopupMenu();
-    menu.add(placesItem("Units — place.txt", PlaceKind.UNITS));
-    menu.add(placesItem("Centers — centers.txt", PlaceKind.CENTERS));
+    menu.add(placesItem("Units", MapFiles.PLACEMENTS, PlaceKind.UNITS));
+    menu.add(placesItem("Centers", MapFiles.CENTERS, PlaceKind.CENTERS));
     for (final Marker marker : Marker.values()) {
-      menu.add(placesItem(marker.getLabel() + " — " + marker.getFile(), marker));
+      menu.add(placesItem(placesName(marker), marker.getFile(), marker));
     }
-    final JCheckBoxMenuItem decorate =
-        new JCheckBoxMenuItem("Decorations — decorations.txt", mode == Mode.DECORATE);
+    final JCheckBoxMenuItem decorate = new JCheckBoxMenuItem("Decorations", mode == Mode.DECORATE);
     decorate.setToolTipText(
-        decorationPicture.getItemCount() > 0
-            ? "Place pictures from the map's misc folder anywhere on the map"
-            : "The map's misc folder has no pictures to place; Files imports them");
+        (decorationPicture.getItemCount() > 0
+                ? "Place pictures from the map's misc folder anywhere on the map"
+                : "The map's misc folder has no pictures to place; Files imports them")
+            + " — decorations.txt");
     decorate.setEnabled(decorationPicture.getItemCount() > 0);
     decorate.addActionListener(
         e -> {
@@ -434,30 +455,56 @@ final class TerritoriesEditor implements Editor {
         });
     menu.add(decorate);
     menu.addSeparator();
-    menu.add(header("Lay out unit places"));
+    menu.add(layOutMenu());
+    menu.add(createMissingMenu());
+    return menu;
+  }
+
+  /** The marker's places in the menu, in plain words. */
+  private static String placesName(final Marker marker) {
+    return switch (marker) {
+      case NAME -> "Names";
+      case VALUE -> "PUs";
+      case CAPITAL -> "Capitals";
+      case VICTORY_CITY -> "Victory cities";
+      case BLOCKADE -> "Blockades";
+      case CONVOY -> "Convoys";
+      case COMMENT -> "Comments";
+      case KAMIKAZE -> "Kamikaze";
+      case EFFECT -> "Terrain effects";
+    };
+  }
+
+  /** How many places a territory gets at most, then each layout for the chosen one and for all. */
+  private JMenu layOutMenu() {
+    final JMenu layOut = new JMenu("Lay out unit places");
     final JPanel most = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_S, 0));
     most.setOpaque(false);
-    // in line with the header: a centered panel would push the menu's rows apart
+    // in line with the items: a centered panel would push the menu's rows apart
     most.setAlignmentX(Component.LEFT_ALIGNMENT);
-    most.setBorder(BorderFactory.createEmptyBorder(0, Theme.GAP_M - Theme.GAP_S, Theme.GAP_XS, 0));
+    most.setBorder(
+        BorderFactory.createEmptyBorder(Theme.GAP_XS, Theme.GAP_M - Theme.GAP_S, Theme.GAP_XS, 0));
     final JLabel atMost = new JLabel("At most");
     atMost.setLabelFor(mostPlaces);
     most.add(atMost);
     most.add(mostPlaces);
     most.add(new JLabel("per territory"));
     mostPlaces.setToolTipText("More units than places go on beside the last place");
-    menu.add(most);
+    layOut.add(most);
     for (final UnitLayout layout : UnitLayout.values()) {
-      final String name = layout == UnitLayout.SQUEEZE ? "Squeeze" : "Grid";
+      final String name =
+          layout == UnitLayout.SQUEEZE ? "Round the center" : "In rows below the center";
+      layOut.addSeparator();
       Optional.ofNullable(selected)
-          .ifPresent(t -> menu.add(layOutItem(name + " in " + t, layout, List.of(t))));
-      menu.add(
+          .filter(project.getFiles().polygons()::containsKey)
+          .ifPresent(t -> layOut.add(layOutItem(name + " — in " + t, layout, List.of(t))));
+      layOut.add(
           layOutItem(
-              name + " in all territories",
+              name + " — in all territories",
               layout,
               List.copyOf(project.getFiles().polygons().keySet())));
     }
-    return menu;
+    return layOut;
   }
 
   /** Lays out the territories' unit places as one step, and shows them. */
@@ -470,6 +517,12 @@ final class TerritoriesEditor implements Editor {
             : "Places in rows below the center, the first at 6:00, 4 px apart");
     item.addActionListener(
         e -> {
+          final Optional<String> refused = project.whyNoPlaces(MapFiles.PLACEMENTS);
+          if (refused.isPresent()) {
+            Dialogs.toast(
+                page, refused.get(), "Files", () -> MapMakerWindow.openTool(page, "Files", null));
+            return;
+          }
           project.layOutUnitPlaces(layout, (Integer) mostPlaces.getValue(), territories);
           shownPlaces = shownPlaces.with(PlaceKind.UNITS);
           showModeButtons();
@@ -478,8 +531,101 @@ final class TerritoriesEditor implements Editor {
     return item;
   }
 
-  private JCheckBoxMenuItem placesItem(final String text, final Enum<?> kind) {
+  /**
+   * Per kind of place, and for all, how many territories miss their line in its file; an item
+   * creates them.
+   */
+  private JMenu createMissingMenu() {
+    final JMenu create = new JMenu("Create missing places");
+    final List<Enum<?>> kinds = new ArrayList<>(List.of(PlaceKind.UNITS));
+    kinds.addAll(List.of(Marker.values()));
+    // every territory is asked about, per kind
+    final Game territories = MapXml.withTerritoryAttachmentsOnly(project.game());
+    int all = 0;
+    for (final Enum<?> kind : kinds) {
+      final int missing = missingPlaces(territories, kind);
+      all += missing;
+      final String file = kind instanceof Marker marker ? marker.getFile() : MapFiles.PLACEMENTS;
+      final JMenuItem item =
+          createMissingItem(
+              kind instanceof Marker marker ? placesName(marker) : "Units",
+              missing,
+              "Each territory without a line in "
+                  + file
+                  + " gets its found place there; places set already stay",
+              List.of(kind));
+      if (project.getFiles().placesUnread(file)) {
+        item.setText(item.getText().replaceFirst(" — .*", " — file does not read"));
+        item.setToolTipText(
+            file + " does not read, eg for a name twice: open it in Files to put it right");
+      }
+      create.add(item);
+    }
+    create.addSeparator();
+    create.add(
+        createMissingItem(
+            "All kinds",
+            all,
+            "Each territory gets the found place of every kind it has none of; places set already"
+                + " stay",
+            kinds));
+    return create;
+  }
+
+  private int missingPlaces(final Game territories, final Enum<?> kind) {
+    final MapFiles files = project.getFiles();
+    return kind instanceof Marker marker
+        ? files.withoutMarkerPlace(territories, marker).size()
+        : files.withoutUnitPlaces().size();
+  }
+
+  private JMenuItem createMissingItem(
+      final String name, final int missing, final String tip, final List<Enum<?>> kinds) {
+    final JMenuItem item =
+        new JMenuItem(name + " — " + (missing == 0 ? "none missing" : missing + " missing"));
+    item.setEnabled(missing > 0);
+    item.setToolTipText(tip);
+    item.addActionListener(e -> createMissingPlaces(kinds));
+    return item;
+  }
+
+  /**
+   * Gives every territory that misses a place of these kinds its found one, as one step, so the
+   * next save writes them; one kind then shows on the map.
+   */
+  void createMissingPlaces(final List<Enum<?>> kinds) {
+    commit();
+    // a marker's place is found from the territory's own attachment
+    final Game game = MapXml.withTerritoryAttachmentsOnly(project.game());
+    final int missing = kinds.stream().mapToInt(kind -> missingPlaces(game, kind)).sum();
+    project.editFiles(
+        files -> {
+          MapFiles filled = files;
+          for (final Enum<?> kind : kinds) {
+            filled =
+                kind instanceof Marker marker
+                    ? filled.withMissingMarkerPlaces(game, marker)
+                    : filled.withMissingUnitPlaces();
+          }
+          return filled;
+        });
+    if (kinds.size() == 1) {
+      shownPlaces = shownPlaces.with(kinds.getFirst());
+      showModeButtons();
+      map.showPlaces(shownPlaces);
+    }
+    Dialogs.toast(
+        page,
+        "✓ "
+            + missing
+            + (missing == 1 ? " place created." : " places created.")
+            + " The next save writes "
+            + (missing == 1 ? "it." : "them."));
+  }
+
+  private JCheckBoxMenuItem placesItem(final String text, final String file, final Enum<?> kind) {
     final JCheckBoxMenuItem item = new JCheckBoxMenuItem(text, shownPlaces.shows(kind));
+    item.setToolTipText("Shown on every territory, to drag — " + file);
     item.putClientProperty("CheckBoxMenuItem.doNotCloseOnMouseClick", true);
     item.addActionListener(
         e -> {
@@ -488,6 +634,20 @@ final class TerritoriesEditor implements Editor {
           map.showPlaces(shownPlaces);
         });
     return item;
+  }
+
+  /** The kind of place a file holds, eg name_place.txt the names'; none for another file. */
+  private static Optional<Enum<?>> placeKind(final String file) {
+    if (MapFiles.PLACEMENTS.equals(file)) {
+      return Optional.of(PlaceKind.UNITS);
+    }
+    if (MapFiles.CENTERS.equals(file)) {
+      return Optional.of(PlaceKind.CENTERS);
+    }
+    return Arrays.stream(Marker.values())
+        .filter(marker -> marker.getFile().equals(file))
+        .findFirst()
+        .map(marker -> marker);
   }
 
   @Override
@@ -524,8 +684,26 @@ final class TerritoriesEditor implements Editor {
     map.select(selected);
   }
 
+  /**
+   * Shows the territory; or, for a place file's name, eg name_place.txt from Files, its kind of
+   * place on every territory, with the Places menu open to create the missing ones.
+   */
   @Override
   public void show(final String territory) {
+    final Optional<Enum<?>> kind =
+        placeKind(territory).filter(k -> !MapXml.territories(project.game()).contains(territory));
+    if (kind.isPresent()) {
+      shownPlaces = shownPlaces.with(kind.get());
+      showModeButtons();
+      map.showPlaces(shownPlaces);
+      SwingUtilities.invokeLater(
+          () -> {
+            if (places.isShowing()) {
+              placesMenu().show(places, 0, places.getHeight());
+            }
+          });
+      return;
+    }
     choose(territory);
     list.choose(territory);
     map.scrollTo(territory);
@@ -561,6 +739,13 @@ final class TerritoriesEditor implements Editor {
     }
     // a text being typed is the shown territory's, before the inspector shows another
     commit();
+    if (mode == Mode.MERGE && selected != null) {
+      // the keeper stays chosen: each click brings it another part
+      if (!territory.equals(selected)) {
+        merge(selected, territory);
+      }
+      return;
+    }
     brush.filter(b -> mode == Mode.PAINT).ifPresent(b -> paint(b, List.of(territory)));
     choose(territory);
     list.choose(territory);
@@ -607,8 +792,8 @@ final class TerritoriesEditor implements Editor {
     if (another) {
       refusedName = Optional.empty();
       // the line cuts the territory chosen before; the banner names the one whose places move
-      if (mode == Mode.SPLIT || mode == Mode.MOVE_PLACES) {
-        if (mode == Mode.SPLIT) {
+      if (mode == Mode.SPLIT || mode == Mode.MERGE || mode == Mode.MOVE_PLACES) {
+        if (mode != Mode.MOVE_PLACES) {
           resetMode();
         }
         refreshMap();
@@ -717,6 +902,14 @@ final class TerritoriesEditor implements Editor {
                 + " to add a place for units, right-click or Delete removes one.",
             this::endMode);
       }
+      case MERGE -> {
+        map.stopEditingPlaces();
+        map.showEditBanner(
+            "Merging into "
+                + territory
+                + ": click each territory that belongs to it. Esc or Done ends.",
+            this::endMode);
+      }
       case DRAW -> {
         borderStyle()
             .ifPresentOrElse(
@@ -725,13 +918,15 @@ final class TerritoriesEditor implements Editor {
                     case FREEHAND -> map.drawLine(this::borderDrawn);
                     case LINE -> map.drawLineByPoints(this::borderDrawn);
                     case CIRCLE -> map.drawCircle(this::borderDrawn);
+                    case ERASER -> map.eraseLine(this::bordersErased, eraserWidth());
                   }
                   map.showBanner(
-                      // short, or the line's tools no longer fit at 1280 px
+                      // short, or the brushes and the line's tools no longer fit at 1280 px
                       switch (drawBrush) {
-                        case FREEHAND -> "Drag on the map to draw a border line.";
-                        case LINE -> "Click points of the line; double-click ends it.";
-                        case CIRCLE -> "Drag from corner to corner to draw a circle.";
+                        case FREEHAND -> "Drag to draw a border line.";
+                        case LINE -> "Click points; double-click ends.";
+                        case CIRCLE -> "Drag corner to corner for a circle.";
+                        case ERASER -> "Drag over border lines to erase them.";
                       },
                       Optional.of(drawingTools(style)),
                       "Done",
@@ -756,7 +951,7 @@ final class TerritoriesEditor implements Editor {
             this::endMode);
       }
     }
-    map.mark(withEffect);
+    map.mark(mode == Mode.MERGE ? Set.of(territory) : withEffect);
     final Optional<String> brushEffect = brush.flatMap(Brush::effect);
     if (mode == Mode.PAINT
         && (brushEffect.isPresent() || brush.equals(Optional.of(NO_EFFECTS)))) {
@@ -1218,6 +1413,22 @@ final class TerritoriesEditor implements Editor {
                         + " the map's edge, or back at its start."));
   }
 
+  /**
+   * A band released on the map: the border lines under it go from the picture, each side's color
+   * growing over them, as one step.
+   */
+  void bordersErased(final List<Point> stroke) {
+    if (!project.eraseBorders(stroke, eraserWidth())) {
+      Dialogs.toast(page, "! Nothing erased: no border line under the eraser.");
+    }
+  }
+
+  /** The eraser's width in the picture's pixels: as chosen, else three times its lines' width. */
+  private int eraserWidth() {
+    return eraserWidth.orElseGet(
+        () -> 3 * foundStyle.map(MapPicture.LineStyle::width).orElse(2));
+  }
+
   /** Ends drawing and finds the territories in the picture with the lines drawn into it. */
   void findDrawnTerritories() {
     endMode();
@@ -1230,7 +1441,7 @@ final class TerritoriesEditor implements Editor {
     Theme.setPrimaryButtonStyle(make);
     make.setToolTipText("The areas between the lines become territories, as Redraw borders does");
     make.addActionListener(e -> findDrawnTerritories());
-    final JPanel tools = lineFields(style);
+    final JPanel tools = drawBrush == DrawBrush.ERASER ? eraserFields() : lineFields(style);
     tools.add(brushButton(Glyph.FREEHAND, "Freehand: drag to draw", DrawBrush.FREEHAND), 0);
     final String lineTip =
         "Line: click points, double-click or Enter ends it; Backspace takes back a point,"
@@ -1243,7 +1454,15 @@ final class TerritoriesEditor implements Editor {
             DrawBrush.CIRCLE);
     circle.getAccessibleContext().setAccessibleName("Circle");
     tools.add(circle, 2);
-    tools.add(Box.createHorizontalStrut(Theme.GAP_M), 3);
+    final JToggleButton eraser =
+        brushButton(
+            Glyph.ERASER,
+            "Eraser: drag over border lines to take them out of the picture; Make territories"
+                + " then joins the areas they parted",
+            DrawBrush.ERASER);
+    eraser.getAccessibleContext().setAccessibleName("Eraser");
+    tools.add(eraser, 3);
+    tools.add(Box.createHorizontalStrut(Theme.GAP_M), 4);
     tools.add(Box.createHorizontalStrut(Theme.GAP_M));
     tools.add(make);
     return tools;
@@ -1433,6 +1652,26 @@ final class TerritoriesEditor implements Editor {
             : pictureUnread
                 ? "The map's picture tiles could not be read."
                 : "The map has no picture to draw into: choose one in the picture menu at the right.";
+  }
+
+  /** The eraser's width, kept for the session as changed. */
+  private JPanel eraserFields() {
+    final JSpinner width = new JSpinner(new SpinnerNumberModel(eraserWidth(), 1, 99, 1));
+    width.setToolTipText(
+        "Pixels wide; at first three times as wide as most of the picture's lines");
+    width.getAccessibleContext().setAccessibleName("Eraser width in pixels");
+    width.addChangeListener(
+        e -> {
+          eraserWidth = Optional.of((Integer) width.getValue());
+          // the band dragged next is as wide; the banner stays, with the field being typed in
+          map.eraseLine(this::bordersErased, eraserWidth());
+        });
+    final JPanel fields = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+    fields.setOpaque(false);
+    fields.add(width);
+    fields.add(Box.createHorizontalStrut(Theme.GAP_XS));
+    fields.add(new JLabel("px"));
+    return fields;
   }
 
   /** The color and width of the line, kept for the session as changed. */
@@ -1707,6 +1946,22 @@ final class TerritoriesEditor implements Editor {
     actions.add(movePlaces);
     actions.add(split);
     onTheMap.row(actions);
+    final JButton mergeHere = new JButton("Merge into this…");
+    Theme.setSecondaryButtonStyle(mergeHere);
+    mergeHere.setToolTipText(
+        "Then click each territory that belongs to "
+            + territory
+            + ", eg the islands of a group: it becomes part of it");
+    mergeHere.addActionListener(e -> startMode(Mode.MERGE));
+    final JButton mergeInto = new JButton("Merge into…");
+    Theme.setSecondaryButtonStyle(mergeInto);
+    mergeInto.setToolTipText(territory + " becomes part of another territory you choose");
+    mergeInto.addActionListener(e -> mergeInto(territory));
+    final JPanel merging = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_S, 0));
+    merging.setOpaque(false);
+    merging.add(mergeHere);
+    merging.add(mergeInto);
+    onTheMap.row(merging);
     final JPanel again = leftAligned();
     again.add(findPlaces);
     onTheMap.row(again);
@@ -1842,6 +2097,185 @@ final class TerritoriesEditor implements Editor {
     }
   }
 
+  /**
+   * Removes the territories ticked in a list, the smallest first, as one step, and tells which
+   * stay because attachments still name them.
+   */
+  private void removeTerritories() {
+    commit();
+    final Game game = project.game();
+    final MapFiles files = project.getFiles();
+    final Map<String, String> byLine = new LinkedHashMap<>();
+    smallestFirst(MapXml.territories(game), files)
+        .forEach(t -> byLine.put(areaLine(t, files), t));
+    final List<String> chosen =
+        Dialogs.pickMany(
+                page, "Remove territories", List.copyOf(byLine.keySet()), List.of(), "Next")
+            .orElse(List.of())
+            .stream()
+            .map(byLine::get)
+            .toList();
+    if (chosen.isEmpty()) {
+      return;
+    }
+    final String many = SearchList.count(chosen.size(), chosen.size(), "territory", "territories");
+    if (!Dialogs.confirmRemove(
+        page,
+        "Remove " + many + "?",
+        "They go with their owners, starting units, connections, settings, outlines and places."
+            + " One that attachments still name stays.\nUndo takes them back.",
+        removeDetails(game, chosen),
+        "Remove " + many)) {
+      return;
+    }
+    final Map<String, List<String>> named = project.removeTerritories(chosen);
+    if (selected != null && !MapXml.territories(project.game()).contains(selected)) {
+      selected = null;
+      map.select(null);
+      card = LIST;
+      showInspector();
+    }
+    if (named.isEmpty()) {
+      Dialogs.toast(page, "✓ Removed " + many + ".");
+    } else {
+      final List<String> where = new ArrayList<>();
+      named.forEach((territory, places) -> places.forEach(p -> where.add(territory + ": " + p)));
+      Dialogs.refuseNamed(
+          page,
+          (chosen.size() - named.size()) + " removed, " + named.size() + " can't be removed yet",
+          stillNamedText("them", where),
+          named.values().stream().flatMap(List::stream).toList());
+    }
+  }
+
+  /** The territories by the area inside their outlines, the smallest first, then by name. */
+  static List<String> smallestFirst(final Collection<String> territories, final MapFiles files) {
+    return territories.stream()
+        .sorted(Comparator.<String>comparingLong(files::area).thenComparing(t -> t))
+        .toList();
+  }
+
+  /** "Tiny Island · 1,240 px²"; one without an outline says so. */
+  static String areaLine(final String territory, final MapFiles files) {
+    final long area = files.area(territory);
+    return territory
+        + " · "
+        + (area == 0 ? "not on the map" : String.format(Locale.ENGLISH, "%,d px²", area));
+  }
+
+  /** What goes with many territories: how many have an owner or units, then each one's own. */
+  static List<String> removeDetails(final Game game, final List<String> territories) {
+    final List<String> details = new ArrayList<>();
+    final long owned = territories.stream().filter(t -> MapXml.owner(game, t).isPresent()).count();
+    if (owned > 0) {
+      details.add(owned + " of them " + (owned == 1 ? "has" : "have") + " an owner.");
+    }
+    final long withUnits =
+        territories.stream().filter(t -> !MapXml.units(game, t).isEmpty()).count();
+    if (withUnits > 0) {
+      details.add(
+          withUnits + " of them " + (withUnits == 1 ? "has" : "have") + " starting units.");
+    }
+    territories.forEach(
+        t -> removeDetails(game, t).forEach(d -> details.add(t + ": " + d)));
+    return List.copyOf(details);
+  }
+
+  // ---- merge
+
+  /** Asks which territory this one becomes part of, among those of its kind, and merges it. */
+  private void mergeInto(final String territory) {
+    commit();
+    final Game game = project.game();
+    final boolean water = MapXml.isWater(game, territory);
+    final List<String> keepers =
+        MapXml.territories(game).stream()
+            .filter(t -> !t.equals(territory) && MapXml.isWater(game, t) == water)
+            .sorted()
+            .toList();
+    Dialogs.pick(
+            page,
+            "Merge " + territory,
+            territory
+                + " becomes part of the territory chosen, which keeps its own owner, units and"
+                + " settings.",
+            keepers,
+            t -> t,
+            "Merge")
+        .filter(keeper -> merge(keeper, territory))
+        .ifPresent(this::show);
+  }
+
+  /**
+   * Makes the other part of the keeper, as one step, asking first when the other has something
+   * that goes with it; says why not for land with sea or while attachments still name the other.
+   */
+  private boolean merge(final String keeper, final String other) {
+    final Game game = project.game();
+    final Optional<String> refusal = project.mergeRefusal(keeper, other);
+    if (refusal.isPresent()) {
+      Dialogs.toast(page, "! Not merged: " + refusal.get());
+      return false;
+    }
+    // no point asking to merge what stays anyway
+    final List<String> stillNamed =
+        RulesXml.whereNamed(MapXml.withoutTerritory(game, other), other);
+    final List<String> lost = stillNamed.isEmpty() ? mergeLosses(game, keeper, other) : List.of();
+    if (!lost.isEmpty()
+        && !Dialogs.confirmRemove(
+            page,
+            "Merge " + other + " into " + keeper + "?",
+            other
+                + " becomes part of "
+                + keeper
+                + ", which keeps its own owner, units and settings. What "
+                + other
+                + " has goes.\nUndo takes it back.",
+            lost,
+            "Merge")) {
+      return false;
+    }
+    final List<String> named =
+        stillNamed.isEmpty() ? project.mergeTerritories(keeper, other) : stillNamed;
+    if (!named.isEmpty()) {
+      Dialogs.refuseNamed(page, other + " can't be merged yet", stillNamedText(named), named);
+      return false;
+    }
+    Dialogs.toast(page, "✓ " + other + " is now part of " + keeper + ".");
+    return true;
+  }
+
+  /** What the other territory has that a merge drops, as the keeper keeps its own. */
+  static List<String> mergeLosses(final Game game, final String keeper, final String other) {
+    final List<String> lost = new ArrayList<>();
+    MapXml.owner(game, other)
+        .filter(owner -> !MapXml.owner(game, keeper).equals(Optional.of(owner)))
+        .ifPresent(owner -> lost.add("Its owner, " + owner + "."));
+    if (!MapXml.units(game, other).isEmpty()) {
+      lost.add("Its starting units.");
+    }
+    final int production = MapXml.production(game, other);
+    if (production > 0) {
+      lost.add("Its " + pus(production) + " per turn.");
+    }
+    final long settings =
+        AttachmentsXml.attachments(game).stream()
+            // not its canals, told with the canal
+            .filter(
+                a ->
+                    AttachmentsXml.isNamed(a, Constants.TERRITORY_ATTACHMENT_NAME)
+                        && other.equals(a.getAttachTo()))
+            .flatMap(a -> AttachmentsXml.options(a).stream())
+            .map(option -> String.valueOf(option.getName()))
+            .filter(name -> !Set.of("production", "capital", "victoryCity").contains(name))
+            .count();
+    if (settings > 0) {
+      lost.add(settings == 1 ? "Another setting of its own." : settings + " other settings.");
+    }
+    lost.addAll(removeDetails(game, other));
+    return List.copyOf(lost);
+  }
+
   /** What else goes with the territory: its being a capital or victory city, its canals. */
   static List<String> removeDetails(final Game game, final String territory) {
     final List<String> details = new ArrayList<>();
@@ -1862,7 +2296,16 @@ final class TerritoriesEditor implements Editor {
 
   /** Why a territory stays: what still names it, at most six of them. */
   static String stillNamedText(final List<String> named) {
-    return "The game would not load without it.\nThese still name it:\n"
+    return stillNamedText("it", named);
+  }
+
+  /** As {@link #stillNamedText(List)}; of several territories: "them". */
+  private static String stillNamedText(final String what, final List<String> named) {
+    return "The game would not load without "
+        + what
+        + ".\nThese still name "
+        + what
+        + ":\n"
         + named.stream().limit(MAX_NAMED).map(n -> "• " + n).collect(Collectors.joining("\n"))
         + (named.size() > MAX_NAMED ? " … and " + (named.size() - MAX_NAMED) + " more" : "")
         + "\nChange them in Attachments first.";

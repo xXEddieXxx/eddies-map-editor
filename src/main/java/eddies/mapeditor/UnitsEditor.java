@@ -98,6 +98,8 @@ final class UnitsEditor implements Editor {
   private @Nullable String openSupport;
   private @Nullable JLabel headerLine;
   private boolean editingHere;
+  private boolean picturesToFind;
+  private @Nullable WithoutPicture withoutPicture;
   // the text field typed in and not yet taken, for commit()
   private @Nullable Runnable typing;
 
@@ -166,6 +168,39 @@ final class UnitsEditor implements Editor {
   @Override
   public JComponent page() {
     return page;
+  }
+
+  @Override
+  public void showing() {
+    if (picturesToFind) {
+      picturesToFind = false;
+      // once the page shows, which is right after this call
+      SwingUtilities.invokeLater(this::showInspector);
+    }
+  }
+
+  /** What {@link #nationsWithoutPicture} last found, and for which map and unit. */
+  private record WithoutPicture(
+      Game game, Game saved, MapFiles files, String unit, List<String> nations) {}
+
+  /**
+   * The nations that can have the unit but have no picture of it; read from the map's folder once
+   * for a map (game, saved game and files as they are) and unit, as the inspector is laid out
+   * anew often.
+   */
+  List<String> nationsWithoutPicture(final Game game, final String unit) {
+    final Game saved = project.savedGame();
+    final MapFiles files = project.getFiles();
+    if (withoutPicture == null
+        || withoutPicture.game() != game
+        || withoutPicture.saved() != saved
+        || withoutPicture.files() != files
+        || !withoutPicture.unit().equals(unit)) {
+      withoutPicture =
+          new WithoutPicture(
+              game, saved, files, unit, MapChecks.nationsWithoutPicture(game, saved, files, unit));
+    }
+    return withoutPicture.nations();
   }
 
   /** eg "1-2-1 · 3 PUs". */
@@ -269,7 +304,10 @@ final class UnitsEditor implements Editor {
       picture.forEach(
           image ->
               project.setUnitPicture(
-                  unit, new UnitPicture(MapFolder.toUnitSize(image), Coloring.PER_NATION)));
+                  unit,
+                  new UnitPicture(
+                      askToScale(page, project.getFiles(), Map.of(unit, image)).get(unit),
+                      Coloring.PER_NATION)));
     }
   }
 
@@ -364,8 +402,42 @@ final class UnitsEditor implements Editor {
             unit,
             lineAndLinks,
             List.of()));
+    showMissingPictures(game, unit);
     // an uploaded picture's coloring says it too: one choice, not two
     uploaded.ifPresentOrElse(u -> showColoring(unit, u), () -> showNationTint(unit));
+  }
+
+  /**
+   * The nations that can have the unit but have no picture of it, for which the game draws a
+   * placeholder: said right below Upload picture, which gives every nation one.
+   */
+  private void showMissingPictures(final Game game, final String unit) {
+    if (!page.isShowing()) {
+      // the map changes in other tools too: looked for when Units shows
+      picturesToFind = true;
+      return;
+    }
+    final List<String> without = nationsWithoutPicture(game, unit);
+    if (without.isEmpty()) {
+      return;
+    }
+    final JLabel missing =
+        Theme.newStatusLabel(
+            Theme.Status.WARNING,
+            "No picture for " + String.join(", ", without.subList(0, Math.min(4, without.size())))
+                + (without.size() > 4 ? " and " + (without.size() - 4) + " more" : ""));
+    missing.setToolTipText(
+        "<html>The game draws a placeholder for: "
+            + SearchList.escape(String.join(", ", without))
+            + "<br>Looked for: units/&lt;nation&gt;/"
+            + SearchList.escape(unit)
+            + ".png, units/"
+            + SearchList.escape(unit)
+            + ".png</html>");
+    inspector.row(leftAligned(missing));
+    inspector.row(
+        Help.link("Upload picture… gives every nation one; a nation's own are imported in",
+            "Nations"));
   }
 
   /**
@@ -1224,7 +1296,61 @@ final class UnitsEditor implements Editor {
             chosen ->
                 project.setUnitPicture(
                     unit,
-                    new UnitPicture(MapFolder.toUnitSize(chosen.image()), Coloring.PER_NATION)));
+                    new UnitPicture(
+                        askToScale(page, project.getFiles(), Map.of(unit, chosen.image()))
+                            .get(unit),
+                        Coloring.PER_NATION)));
+  }
+
+  /**
+   * The pictures as they go into the map: when some are clearly bigger than the map's units, the
+   * map maker is asked whether to scale those to the unit size (TripleA's Image Shrinker job);
+   * the game draws a picture at its own size, so a bigger one covers its neighbours.
+   */
+  static Map<String, BufferedImage> askToScale(
+      final Component parent, final MapFiles files, final Map<String, BufferedImage> pictures) {
+    final Dimension unit = files.unitPictureSize();
+    final List<String> bigger =
+        pictures.keySet().stream()
+            .filter(name -> MapFolder.isBiggerThanUnit(pictures.get(name), unit))
+            .toList();
+    if (bigger.isEmpty()) {
+      return pictures;
+    }
+    final BufferedImage first = pictures.get(bigger.getFirst());
+    final String which =
+        pictures.size() == 1
+            ? "The picture is " + first.getWidth() + " × " + first.getHeight() + " px"
+            : bigger.size() + " of " + pictures.size() + " pictures are bigger";
+    if (!Dialogs.confirm(
+        parent,
+        "Bigger than the map's units",
+        which
+            + ", units on this map "
+            + unit.width
+            + " × "
+            + unit.height
+            + " px. The game draws a picture at its own size, so a bigger one covers its"
+            + " neighbours.",
+        pictures.size() == 1 ? "Keep its size" : "Keep their size",
+        "Scale to the map's unit size")) {
+      return pictures;
+    }
+    return scaled(pictures, unit);
+  }
+
+  /** The pictures, those clearly bigger than a unit shrunk to its size, keeping their shape. */
+  static Map<String, BufferedImage> scaled(
+      final Map<String, BufferedImage> pictures, final Dimension unit) {
+    final Map<String, BufferedImage> scaled = new LinkedHashMap<>();
+    pictures.forEach(
+        (name, picture) ->
+            scaled.put(
+                name,
+                MapFolder.isBiggerThanUnit(picture, unit)
+                    ? MapFolder.toUnitSize(picture, unit)
+                    : picture));
+    return scaled;
   }
 
   private record Picture(Path file, BufferedImage image) {}

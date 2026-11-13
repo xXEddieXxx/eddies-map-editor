@@ -70,6 +70,9 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
     SELECT,
     DECORATIONS,
     PENCIL,
+    PLACES,
+    ERASER,
+    PUBLISH,
     FIT
   }
 
@@ -198,6 +201,12 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
         g.drawRoundRect(1, 1, 14, 14, 2, 2);
         g.fillRect(4, 1, 7, 5);
         g.drawRect(4, 9, 8, 6);
+      }
+      case PUBLISH -> {
+        // an arrow up out of a tray
+        g.drawLine(8, 2, 8, 10);
+        g.drawPolyline(new int[] {4, 8, 12}, new int[] {6, 2, 6}, 3);
+        g.drawPolyline(new int[] {2, 2, 14, 14}, new int[] {10, 14, 14, 10}, 4);
       }
       case MENU -> {
         g.drawLine(2, 4, 14, 4);
@@ -335,6 +344,23 @@ record MakerIcon(Glyph glyph, int size) implements Icon {
         g.drawPolygon(new Polygon(new int[] {11, 15, 5, 1}, new int[] {1, 5, 15, 11}, 4));
         g.drawLine(9, 3, 13, 7);
         g.fillPolygon(new Polygon(new int[] {1, 5, 1}, new int[] {11, 15, 15}, 3));
+      }
+      case PLACES -> {
+        // a map pin: a drop with its point down, a hole in its head
+        final Path2D pin = new Path2D.Double();
+        pin.moveTo(8, 15);
+        pin.curveTo(4, 10, 3, 8, 3, 6);
+        pin.curveTo(3, -0.5, 13, -0.5, 13, 6);
+        pin.curveTo(13, 8, 12, 10, 8, 15);
+        pin.closePath();
+        g.draw(pin);
+        g.fillOval(6, 4, 4, 4);
+      }
+      case ERASER -> {
+        // a rubber lying on its line, its used end filled
+        g.drawPolygon(new Polygon(new int[] {9, 14, 7, 2}, new int[] {2, 7, 14, 9}, 4));
+        g.fillPolygon(new Polygon(new int[] {5, 10, 7, 2}, new int[] {6, 11, 14, 9}, 4));
+        g.drawLine(9, 14, 15, 14);
       }
       case FIT -> {
         // four corners pointing out

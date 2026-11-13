@@ -267,7 +267,7 @@ final class MapViewTest {
             "Select",
             "▾",
             "Draw borders",
-            "▾");
+            "Places ▾");
     assertThat(inLegend).as("the legend has only keys").containsExactly(false);
   }
 

@@ -126,7 +126,11 @@ final class Textures {
 
   /** The texture's picture made small for a menu, eg the Paint menu's, made once per picture. */
   static Optional<BufferedImage> icon(final MapFiles files, final String name) {
-    return picture(files, name).map(p -> ICONS.computeIfAbsent(p, q -> small(q, PREMADE.contains(name) ? PREMADE_ICON_PART : ICON_PART)));
+    return picture(files, name)
+        .map(
+            p ->
+                ICONS.computeIfAbsent(
+                    p, q -> small(q, PREMADE.contains(name) ? PREMADE_ICON_PART : ICON_PART)));
   }
 
   private static BufferedImage small(final BufferedImage picture, final int most) {

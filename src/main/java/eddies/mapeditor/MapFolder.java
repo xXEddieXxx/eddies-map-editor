@@ -5,6 +5,7 @@ import games.strategy.triplea.Constants;
 import games.strategy.triplea.ResourceLoader;
 import java.awt.AlphaComposite;
 import java.awt.Color;
+import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.Graphics2D;
@@ -13,6 +14,7 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -29,8 +31,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
@@ -62,6 +68,15 @@ class MapFolder {
   private static final Map<String, Integer> FLAG_SIZES =
       Map.of("", 32, "_small", 12, "_large", 100);
   private static final String BASE_NATION = "Germans";
+  // as the faded flags of the maps that have them, eg Big World 1940's Japanese_fade.png
+  private static final float FADE_ALPHA = 0.4f;
+  private static final String MAP_NAME_KEY = "map_name";
+  private static final String VERSION_KEY = "version";
+  private static final Pattern WHOLE_NUMBER = Pattern.compile("\\d{1,9}");
+  static final String PREVIEW_FILE = "preview.png";
+  static final String DESCRIPTION_FILE = "description.html";
+  // the map server shows no longer one: its database column (MapDescriptionReader)
+  static final int DESCRIPTION_MAX_LENGTH = 3000;
 
   /**
    * A copy of the game XML under a new name beside it, listed in the map's map.yml so that it shows
@@ -285,10 +300,7 @@ class MapFolder {
       }
     }
     // the game needs a small map to show the whole map at once
-    ImageIO.write(
-        shrunk(image, SMALL_MAP_WIDTH),
-        "png",
-        folder.resolve(Constants.SMALL_MAP_FILENAME + ".png").toFile());
+    writeSmallMap(folder, image);
     // the map browser and the game chooser show the map by its preview
     ImageIO.write(shrunk(image, PREVIEW_WIDTH), "png", folder.resolve("preview.png").toFile());
   }
@@ -363,6 +375,138 @@ class MapFolder {
   }
 
   /**
+   * The nation's flags made from one picture, each over the one there was as {@link #replace}
+   * does: the flag beside the units and in the lists 32 px high, the small one 12, the one on the
+   * capital up to 100 (never blown up), and the faded one the game draws on kamikaze zones
+   * (KamikazeZoneDrawable), the flag at {@value #FADE_ALPHA} of its strength. No convoy flag: the
+   * game takes the flag itself unless map.properties says map.useNation_convoyFlags.
+   */
+  static void importFlag(final Path folder, final String nation, final BufferedImage picture)
+      throws IOException {
+    final Path flags = Files.createDirectories(folder.resolve("flags"));
+    for (final Map.Entry<String, Integer> size : FLAG_SIZES.entrySet()) {
+      final BufferedImage flag = fitted(picture, Math.min(size.getValue(), picture.getHeight()));
+      writeFlag(flags, nation + size.getKey(), flag);
+    }
+    final BufferedImage flag = fitted(picture, Math.min(FLAG_SIZES.get(""), picture.getHeight()));
+    final BufferedImage faded =
+        new BufferedImage(flag.getWidth(), flag.getHeight(), BufferedImage.TYPE_INT_ARGB);
+    final Graphics2D g = faded.createGraphics();
+    g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, FADE_ALPHA));
+    g.drawImage(flag, 0, 0, null);
+    g.dispose();
+    writeFlag(flags, nation + "_fade", faded);
+  }
+
+  /** The flag as a png; a gif of its name goes (its .bak stays), as the game takes a gif first. */
+  private static void writeFlag(final Path flags, final String name, final BufferedImage flag)
+      throws IOException {
+    replace(flags.resolve(name + ".png"), to -> ImageIO.write(flag, "png", to.toFile()));
+    remove(flags.resolve(name + ".gif"));
+  }
+
+  /** The picture at this height, keeping its shape and its see-through parts. */
+  private static BufferedImage fitted(final BufferedImage picture, final int height) {
+    // in halves first, as one big step down leaves a picture's lines jagged
+    BufferedImage from = picture;
+    while (from.getHeight() >= height * 2 && from.getWidth() >= 2) {
+      from = drawn(from, from.getWidth() / 2, from.getHeight() / 2);
+    }
+    return drawn(
+        from,
+        Math.max(1, (int) Math.round(picture.getWidth() * height / (double) picture.getHeight())),
+        height);
+  }
+
+  private static BufferedImage drawn(
+      final BufferedImage picture, final int width, final int height) {
+    final BufferedImage drawn = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+    final Graphics2D g = drawn.createGraphics();
+    g.setRenderingHint(
+        RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+    g.drawImage(picture, 0, 0, width, height, null);
+    g.dispose();
+    return drawn;
+  }
+
+  /**
+   * The flag's file as the game finds it (FlagIconImageFactory): a gif, the map's before the
+   * game's own, then a png likewise; the ending is "", "_small", "_large" (png only), "_fade" or
+   * "_convoy".
+   */
+  static Optional<URL> flag(final Path folder, final String nation, final String ending) {
+    final List<String> names =
+        "_large".equals(ending)
+            ? List.of(nation + ending + ".png")
+            : List.of(nation + ending + ".gif", nation + ending + ".png");
+    for (final String name : names) {
+      final Path file = folder.resolve("flags").resolve(name);
+      if (Files.isRegularFile(file)) {
+        try {
+          return Optional.of(file.toUri().toURL());
+        } catch (final MalformedURLException e) {
+          // a file the game could not name either
+        }
+      }
+      final Optional<URL> own = engineAsset("flags", name);
+      if (own.isPresent()) {
+        return own;
+      }
+    }
+    return Optional.empty();
+  }
+
+  /**
+   * Writes the map's whole picture, without its relief, as one png: the one loaded, else put
+   * together from its base tiles (TripleA's Tile Image Reconstructor), eg for a paint program.
+   *
+   * @throws IOException also for a map without a picture, or one too big to hold in memory
+   */
+  static void savePicture(final MapFiles files, final Path file) throws IOException {
+    final BufferedImage picture =
+        files
+            .basePicture()
+            .orElseThrow(
+                () -> new IOException("The map has no picture in baseTiles, or it is too big."));
+    replace(file, to -> ImageIO.write(picture, "png", to.toFile()));
+  }
+
+  /**
+   * The picture shrunk as the game's small map, over the one there was as {@link #replace} does.
+   * The game draws it as it is and only fills the land in its owners' colors over it
+   * (SmallMapImageManager), so the sea and the coasts show a relief only when this picture has it.
+   */
+  static void writeSmallMap(final Path folder, final BufferedImage picture) throws IOException {
+    final BufferedImage small = shrunk(picture, SMALL_MAP_WIDTH);
+    final String kind = smallMapKind(folder).orElse("png");
+    replace(
+        folder.resolve(Constants.SMALL_MAP_FILENAME + "." + kind),
+        to -> ImageIO.write(small, kind.equals("png") ? "png" : "jpeg", to.toFile()));
+  }
+
+  /** Whether the map has a small map's file, maybe made by hand. */
+  static boolean hasSmallMap(final Path folder) {
+    return smallMapKind(folder).isPresent();
+  }
+
+  /** The ending of the small map's file the game takes: the first there is of jpeg, jpg, png. */
+  private static Optional<String> smallMapKind(final Path folder) {
+    return Arrays.stream(Constants.SMALL_MAP_EXTENSIONS)
+        .filter(
+            ending -> Files.exists(folder.resolve(Constants.SMALL_MAP_FILENAME + "." + ending)))
+        .findFirst();
+  }
+
+  /**
+   * The picture shrunk as the map's preview.png at the top of the map, which the map server shows
+   * in the list of maps to download; over the one there was as {@link #replace} does.
+   */
+  static void writePreview(final Path root, final BufferedImage picture) throws IOException {
+    final BufferedImage small = shrunk(picture, PREVIEW_WIDTH);
+    replace(root.resolve(PREVIEW_FILE), to -> ImageIO.write(small, "png", to.toFile()));
+  }
+
+  /**
    * A picture for each unit type of the nation that neither the game nor the map has: the game's
    * picture of the unit for the {@value #BASE_NATION} in the nation's color, else a disc in its
    * color with the unit's first letter.
@@ -382,6 +526,36 @@ class MapFolder {
             unit,
             basePicture.map(p -> tint(p, color)).orElseGet(() -> newUnitPicture(unit, color)));
       }
+    }
+  }
+
+  /**
+   * The nation's unit types the game finds no picture for and so draws as a placeholder
+   * (UnitImageFactory.getBaseImageUrl): none in the map's units/&lt;nation&gt;/ nor in units/, and
+   * none among the game's own for the nation or for all.
+   *
+   * @param forAll the {@link #names} in the map's units folder, listed once for all nations
+   */
+  static List<String> unitsWithoutPicture(
+      final Path folder,
+      final Set<String> forAll,
+      final String nation,
+      final Collection<String> units) {
+    final Set<String> own = names(folder.resolve("units").resolve(nation));
+    return units.stream()
+        .filter(unit -> !own.contains(unit + ".png") && !forAll.contains(unit + ".png"))
+        .filter(unit -> engineAsset("units", nation, unit + ".png").isEmpty())
+        .filter(unit -> engineAsset("units", unit + ".png").isEmpty())
+        .toList();
+  }
+
+  /** The names of what is in the folder, in one listing as a big map has thousands of pictures. */
+  static Set<String> names(final Path folder) {
+    try (Stream<Path> files = Files.list(folder)) {
+      return files.map(file -> file.getFileName().toString()).collect(Collectors.toSet());
+    } catch (final IOException | UncheckedIOException expected) {
+      // no such folder: nothing there
+      return Set.of();
     }
   }
 
@@ -485,22 +659,32 @@ class MapFolder {
    * The picture as a unit's: one larger than a unit shrunk to fit, keeping its shape, in the middle
    * of a clear square of a unit's size; a smaller one as it is.
    */
-  static BufferedImage toUnitSize(final BufferedImage image) {
-    if (image.getWidth() <= UNIT_SIZE && image.getHeight() <= UNIT_SIZE) {
+  static BufferedImage toUnitSize(final BufferedImage image, final Dimension unit) {
+    if (image.getWidth() <= unit.width && image.getHeight() <= unit.height) {
       return image;
     }
     final double scale =
-        Math.min(UNIT_SIZE / (double) image.getWidth(), UNIT_SIZE / (double) image.getHeight());
-    final int width = Math.max(1, (int) Math.round(image.getWidth() * scale));
-    final int height = Math.max(1, (int) Math.round(image.getHeight() * scale));
-    final BufferedImage fitted =
-        new BufferedImage(UNIT_SIZE, UNIT_SIZE, BufferedImage.TYPE_INT_ARGB);
-    final Graphics2D g = fitted.createGraphics();
-    g.setRenderingHint(
-        RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
-    g.drawImage(image, (UNIT_SIZE - width) / 2, (UNIT_SIZE - height) / 2, width, height, null);
+        Math.min(unit.width / (double) image.getWidth(), unit.height / (double) image.getHeight());
+    final BufferedImage scaled =
+        fitted(image, Math.max(1, (int) Math.round(image.getHeight() * scale)));
+    final BufferedImage unitPicture =
+        new BufferedImage(unit.width, unit.height, BufferedImage.TYPE_INT_ARGB);
+    final Graphics2D g = unitPicture.createGraphics();
+    g.drawImage(
+        scaled,
+        (unit.width - scaled.getWidth()) / 2,
+        (unit.height - scaled.getHeight()) / 2,
+        null);
     g.dispose();
-    return fitted;
+    return unitPicture;
+  }
+
+  /**
+   * Whether the picture is clearly bigger than a unit of this size, so that it would cover its
+   * neighbours on the map: more than a quarter wider or taller.
+   */
+  static boolean isBiggerThanUnit(final BufferedImage image, final Dimension unit) {
+    return image.getWidth() > unit.width * 1.25 || image.getHeight() > unit.height * 1.25;
   }
 
   private static BufferedImage newUnitPicture(final String unit, final Color color) {
@@ -716,6 +900,95 @@ class MapFolder {
   }
 
   /**
+   * What the map's map.yml says of the map itself.
+   *
+   * @param name map_name, the name in the list of maps to download; "" without one
+   * @param version version, "a simple number" the map's maker raises with an update; "" without
+   */
+  record MapDetails(String name, String version) {}
+
+  /**
+   * The map's name and version in the map.yml at its top.
+   *
+   * @throws IOException for a map without a map.yml, or one that does not read
+   */
+  static MapDetails mapDetails(final Path root) throws IOException {
+    final Map<String, Object> yaml = readYaml(yamlOf(root));
+    return new MapDetails(
+        Objects.toString(yaml.get(MAP_NAME_KEY), "").strip(),
+        Objects.toString(yaml.get(VERSION_KEY), "").strip());
+  }
+
+  /** Gives the map a new name in its map.yml; every other entry of the file stays. */
+  static void setMapName(final Path root, final String name) throws IOException {
+    setMapDetail(root, MAP_NAME_KEY, name.strip());
+  }
+
+  /**
+   * Sets the map's version in its map.yml, a whole number as one (as TripleA's own example has
+   * it), other text as typed, none for a blank one; every other entry of the file stays.
+   */
+  static void setMapVersion(final Path root, final String version) throws IOException {
+    final String typed = version.strip();
+    if (typed.isEmpty()) {
+      final Path yamlFile = yamlOf(root);
+      final Map<String, Object> yaml = readYaml(yamlFile);
+      yaml.remove(VERSION_KEY);
+      replaceText(yamlFile, YamlWriter.writeToString(yaml));
+      return;
+    }
+    setMapDetail(
+        root, VERSION_KEY, WHOLE_NUMBER.matcher(typed).matches() ? Integer.valueOf(typed) : typed);
+  }
+
+  /** The version after this one: its whole number raised by one, 1 for none. */
+  static String raised(final String version) {
+    final Matcher number = WHOLE_NUMBER.matcher(version.strip());
+    return String.valueOf(number.lookingAt() ? Integer.parseInt(number.group()) + 1 : 1);
+  }
+
+  private static void setMapDetail(final Path root, final String key, final Object value)
+      throws IOException {
+    final Path yamlFile = yamlOf(root);
+    final Map<String, Object> yaml = readYaml(yamlFile);
+    // a new entry goes before the games, as in TripleA's example; one there keeps its place
+    final Map<String, Object> ordered = new LinkedHashMap<>();
+    for (final Map.Entry<String, Object> entry : yaml.entrySet()) {
+      if (entry.getKey().equals("games")) {
+        ordered.putIfAbsent(key, value);
+      }
+      ordered.put(entry.getKey(), entry.getValue());
+    }
+    ordered.put(key, value);
+    replaceText(yamlFile, YamlWriter.writeToString(ordered));
+  }
+
+  private static Path yamlOf(final Path root) throws IOException {
+    final Path yamlFile = root.resolve(MapDescriptionYaml.MAP_YAML_FILE_NAME);
+    if (!Files.isRegularFile(yamlFile)) {
+      throw new IOException("The map has no map.yml");
+    }
+    return yamlFile;
+  }
+
+  /**
+   * The files in the map's folder that are no part of the map: the ".bak" of a file's first
+   * version and what a save that failed left; {@link #zip} leaves them out.
+   */
+  static List<Path> leftovers(final Path root) throws IOException {
+    try (Stream<Path> walk = Files.walk(root)) {
+      return walk.filter(Files::isRegularFile).filter(MapFolder::isLeftover).sorted().toList();
+    } catch (final UncheckedIOException e) {
+      throw e.getCause();
+    }
+  }
+
+  private static boolean isLeftover(final Path file) {
+    final String name = file.getFileName().toString();
+    return name.endsWith(".bak") || name.endsWith(".saving");
+  }
+
+  /**
    * The map.yml as its entries, to change and write back with every other entry; its comments are
    * lost, kept in the .bak {@link #replaceText} leaves.
    */
@@ -733,9 +1006,8 @@ class MapFolder {
     try (Stream<Path> walk = Files.walk(folder)) {
       files =
           walk.filter(Files::isRegularFile)
-              .filter(f -> !f.getFileName().toString().endsWith(".bak"))
-              // left over from a save that failed
-              .filter(f -> !f.getFileName().toString().endsWith(".saving"))
+              // a file's first version, and what a save that failed left
+              .filter(f -> !isLeftover(f))
               .filter(f -> !f.toAbsolutePath().equals(zipFile.toAbsolutePath()))
               // a clone's .git, .github, .gitignore: no part of the map
               .filter(

@@ -19,7 +19,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -29,6 +28,7 @@ import java.util.function.BiFunction;
 import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
+import javax.imageio.ImageIO;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
@@ -53,11 +53,7 @@ import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import org.triplea.map.data.elements.AttachmentList.Attachment.Option;
 import org.triplea.map.data.elements.Game;
-import org.triplea.map.data.elements.Initialize;
-import org.triplea.map.data.elements.Initialize.UnitInitialize;
-import org.triplea.map.data.elements.Initialize.UnitInitialize.UnitPlacement;
 import org.triplea.map.data.elements.PlayerList.Player;
-import org.triplea.map.data.elements.Production.Rule.Result;
 import org.triplea.swing.SwingComponents;
 import org.triplea.swing.WrapLayout;
 import eddies.mapeditor.MakerIcon.Glyph;
@@ -362,11 +358,82 @@ final class NationsEditor implements Editor {
     headerLine = line;
     final List<JComponent> links = new ArrayList<>();
     links.add(newLink("Change color", () -> changeColor(nation)));
+    final JButton flag = newLink("Flag…", () -> importFlag(nation));
+    flag.setToolTipText(
+        "Choose a picture: it becomes the nation's flags in the sizes the game shows"
+            + " (flags/" + nation + ".png, _small, _large, _fade)");
+    links.add(flag);
     if (capital(game, nation).isEmpty()) {
       links.add(newLink(
               "Mark one in Territories", () -> map.followStep(MapGuide.Step.Id.CAPITALS)));
     }
-    inspector.row(Details.header(Optional.of(swatch), nation, line, links));
+    final JPanel visual = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_S, 0));
+    visual.setOpaque(false);
+    visual.add(swatch);
+    flagIcon(nation)
+        .ifPresent(
+            icon -> {
+              final JLabel shown = new JLabel(icon);
+              shown.setToolTipText("The nation's flag as the game shows it");
+              shown.getAccessibleContext().setAccessibleName("Flag of " + nation);
+              visual.add(shown);
+            });
+    inspector.row(Details.header(Optional.of(visual), nation, line, links));
+  }
+
+  /** The nation's flag as the game finds it, the map's or the game's own; empty without one. */
+  Optional<Icon> flagIcon(final String nation) {
+    return project
+        .getFiles()
+        .folder()
+        .flatMap(folder -> MapFolder.flag(folder, nation, ""))
+        // read anew each time, as an import replaces the file under the same name
+        .flatMap(
+            url -> {
+              try {
+                return Optional.ofNullable(ImageIO.read(url));
+              } catch (final IOException e) {
+                return Optional.empty();
+              }
+            })
+        .map(NationsEditor::icon);
+  }
+
+  /**
+   * A picture chosen becomes the nation's flags in the map's folder, at once and outside undo as
+   * other picture imports, each over the one before with its first version as ".bak".
+   */
+  private void importFlag(final String nation) {
+    final Optional<Path> folder = project.getFiles().folder();
+    if (folder.isEmpty()) {
+      Dialogs.toast(page, "! Save the map first: its flags go into its folder");
+      return;
+    }
+    MapMakerWindow.chooseFileToOpen(
+            page,
+            "Choose a flag picture for " + nation,
+            Path.of(System.getProperty("user.home")),
+            "png",
+            "gif",
+            "jpg",
+            "jpeg")
+        .ifPresent(
+            file -> {
+              try {
+                final BufferedImage picture = ImageIO.read(file.toFile());
+                if (picture == null) {
+                  throw new IOException("It is no png, gif or jpg picture.");
+                }
+                MapFolder.importFlag(folder.get(), nation, picture);
+                showInspector();
+                Dialogs.toast(page, "✓ " + nation + " has a new flag, in 4 sizes in flags/");
+              } catch (final IOException e) {
+                Dialogs.warn(
+                    page,
+                    "Flag",
+                    "Could not take " + file.getFileName() + " as the flag.\n" + e.getMessage());
+              }
+            });
   }
 
   /** "Axis · 30 PUs at the start · capital Germany · 9 territories", a missing capital warned. */
@@ -655,27 +722,8 @@ final class NationsEditor implements Editor {
    * when it has none, eg in a new map. A big map has hundreds, of every nation.
    */
   private static List<String> unitsOf(final Game game, final String nation) {
-    final Set<String> rules =
-        ProductionXml.frontierOf(game, nation)
-            .map(f -> Set.copyOf(ProductionXml.rulesIn(game, f)))
-            .orElse(Set.of());
-    final Set<String> its = new HashSet<>();
-    ProductionXml.rules(game).stream()
-        .filter(r -> rules.contains(r.getName()))
-        .flatMap(r -> Optional.ofNullable(r.getResults()).orElse(List.of()).stream())
-        .map(Result::getResourceOrUnit)
-        .forEach(its::add);
-    Optional.ofNullable(game.getInitialize())
-        .map(Initialize::getUnitInitialize)
-        .map(UnitInitialize::getUnitPlacements)
-        .orElse(List.of())
-        .stream()
-        .filter(u -> nation.equals(u.getOwner()))
-        .map(UnitPlacement::getUnitType)
-        .forEach(its::add);
-    final List<String> all = MapXml.unitTypes(game);
-    final List<String> own = all.stream().filter(its::contains).toList();
-    return own.isEmpty() ? all : own;
+    final List<String> own = MapChecks.unitsOf(game, nation);
+    return own.isEmpty() ? MapXml.unitTypes(game) : own;
   }
 
   private static Icon icon(final Image image) {
@@ -719,7 +767,8 @@ final class NationsEditor implements Editor {
           "No picture there is named like a unit type of this game, eg infantry.png.");
       return;
     }
-    project.setNationUnitPictures(nation, read.byUnit());
+    project.setNationUnitPictures(
+        nation, UnitsEditor.askToScale(page, project.getFiles(), read.byUnit()));
     Dialogs.toast(
         page,
         "✓ "

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.awt.Component;
 import java.awt.Container;
 import java.awt.Point;
+import java.awt.Polygon;
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.io.InputStream;
@@ -14,12 +15,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Properties;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
 import javax.swing.AbstractButton;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JList;
+import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JSpinner;
 import javax.swing.JTextField;
@@ -28,6 +31,7 @@ import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.triplea.map.data.elements.Game;
 
 final class TerritoriesEditorTest {
   private static final String NORTH = "red north 1";
@@ -116,7 +120,7 @@ final class TerritoriesEditorTest {
     assertThat(seen.get(1)).as("its toggle on").isEqualTo(true);
     assertThat(seen.get(2))
         .as("freehand again")
-        .isEqualTo("Drag on the map to draw a border line.");
+        .isEqualTo("Drag to draw a border line.");
   }
 
   @DisplayName("A click on the chosen brush keeps it, and the banner with a half-set line")
@@ -818,7 +822,7 @@ final class TerritoriesEditorTest {
     // then
     assertThat(seen)
         .as("the circle's banner")
-        .containsExactly("Drag from corner to corner to draw a circle.");
+        .containsExactly("Drag corner to corner for a circle.");
     assertThat(after.getRGB(240, 165) & 0xFFFFFF).as("the ring in the lines' color").isZero();
     assertThat(after.getRGB(300, 165) & 0xFFFFFF).as("its inside as it was").isNotZero();
     assertThat(areasAfter).as("Make territories finds the inside").isEqualTo(areasBefore + 1);
@@ -893,5 +897,277 @@ final class TerritoriesEditorTest {
     assertThat(seen)
         .as("the capital brush is gone; a land territory is open with its Add units")
         .containsExactly(false, true);
+  }
+
+  @DisplayName("The Places menu names the kinds in plain words, files as tool tips, then two menus")
+  @Test
+  void placesMenuInPlainWords() throws Exception {
+    // given: a map from a picture, no place set yet
+    final MapProject project = givenPictureMap();
+    final List<String> items = new ArrayList<>();
+    final List<String> tips = new ArrayList<>();
+    final List<String> layOut = new ArrayList<>();
+    final List<String> create = new ArrayList<>();
+    final List<String> disabled = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final TerritoriesEditor editor = new TerritoriesEditor(project, givenMap(project));
+          for (final Component c : editor.placesMenu().getComponents()) {
+            if (c instanceof JMenu menu) {
+              items.add(menu.getText());
+              final List<String> texts = menu.getText().startsWith("Lay out") ? layOut : create;
+              Stream.of(menu.getMenuComponents())
+                  .filter(JMenuItem.class::isInstance)
+                  .map(JMenuItem.class::cast)
+                  .forEach(
+                      item -> {
+                        texts.add(item.getText());
+                        if (!item.isEnabled()) {
+                          disabled.add(item.getText());
+                        }
+                      });
+            } else if (c instanceof JMenuItem item) {
+              items.add(item.getText());
+              tips.add(item.getToolTipText());
+            }
+          }
+        });
+
+    // then
+    assertThat(items)
+        .as("the kinds, then the two menus")
+        .containsExactly(
+            "Units",
+            "Centers",
+            "Names",
+            "PUs",
+            "Capitals",
+            "Victory cities",
+            "Blockades",
+            "Convoys",
+            "Comments",
+            "Kamikaze",
+            "Terrain effects",
+            "Decorations",
+            "Lay out unit places",
+            "Create missing places");
+    assertThat(tips.get(0)).as("the file only in the tool tip").endsWith("place.txt");
+    assertThat(tips.get(2)).as("the names' file").endsWith("name_place.txt");
+    assertThat(layOut)
+        .as("no territory chosen: each layout for all")
+        .containsExactly(
+            "Round the center — in all territories",
+            "In rows below the center — in all territories");
+    assertThat(create)
+        .as("how many are missing per kind: 5 territories, none with a value or capital")
+        .startsWith("Units — 5 missing", "Names — 5 missing", "PUs — none missing")
+        .endsWith("All kinds — 10 missing");
+    assertThat(disabled)
+        .as("nothing to create: off")
+        .contains("PUs — none missing", "Capitals — none missing");
+  }
+
+  @DisplayName("Create missing places gives every territory its place as one step")
+  @Test
+  void createsMissingPlaces() throws Exception {
+    // given
+    final MapProject project = givenPictureMap();
+    final MapFiles files = project.getFiles();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () ->
+            new TerritoriesEditor(project, givenMap(project))
+                .createMissingPlaces(List.of(MapCanvas.PlaceKind.UNITS, MapFiles.Marker.NAME)));
+
+    // then
+    assertThat(project.getFiles().places().units()).as("unit places for all 5").hasSize(5);
+    assertThat(project.getFiles().places().markers(MapFiles.Marker.NAME))
+        .as("and names")
+        .hasSize(5);
+    project.undo();
+    assertThat(project.getFiles()).as("one undo takes all back").isSameAs(files);
+  }
+
+  @DisplayName("Merge into this: each click on the map merges that territory, the keeper stays")
+  @Test
+  void mergeModeMergesClicked() throws Exception {
+    // given
+    final MapProject project = givenPictureMap();
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenMap(project);
+          final TerritoriesEditor editor = new TerritoriesEditor(project, map);
+          editor.show("Territory 1");
+          find(editor.page(), AbstractButton.class, b -> "Merge into this…".equals(b.getText()))
+              .doClick();
+          seen.add(map.bannerText());
+          editor.clickOnMap("Territory 2");
+          editor.clickOnMap("Sea Zone 1");
+          seen.add(map.bannerText().isPresent());
+          seen.add(
+              all(editor.page())
+                  .anyMatch(c -> c instanceof JTextField f && "Territory 1".equals(f.getText())));
+        });
+
+    // then
+    assertThat(seen)
+        .as("the banner; still merging after the clicks; the keeper still shown")
+        .containsExactly(
+            Optional.of(
+                "Merging into Territory 1: click each territory that belongs to it."
+                    + " Esc or Done ends."),
+            true,
+            true);
+    assertThat(MapXml.territories(project.game()))
+        .as("the land clicked is part of it now; the sea zone, refused, stays")
+        .doesNotContain("Territory 2")
+        .contains("Territory 1", "Sea Zone 1");
+    assertThat(project.getFiles().polygons().get("Territory 1")).as("two outlines").hasSize(2);
+    project.undo();
+    assertThat(MapXml.territories(project.game())).as("one step per click").contains("Territory 2");
+  }
+
+  @DisplayName("Remove territories lists the smallest first, each with its area")
+  @Test
+  void removeListSmallestFirst() {
+    // given
+    final MapFiles files =
+        new MapFiles(
+            Optional.empty(),
+            Map.of(
+                "Big",
+                List.of(givenSquare(0, 100)),
+                "Islands",
+                List.of(givenSquare(200, 10), givenSquare(300, 40))),
+            Map.of(),
+            new Properties(),
+            Optional.empty(),
+            Map.of(),
+            Map.of(),
+            Optional.empty(),
+            MapFiles.Places.none());
+
+    // when
+    final List<String> lines =
+        TerritoriesEditor.smallestFirst(List.of("Big", "Islands", "Ghost"), files).stream()
+            .map(t -> TerritoriesEditor.areaLine(t, files))
+            .toList();
+
+    // then
+    assertThat(lines)
+        .as("one without an outline, then by the area of all its outlines")
+        .containsExactly("Ghost · not on the map", "Islands · 1,700 px²", "Big · 10,000 px²");
+  }
+
+  private static Polygon givenSquare(final int at, final int side) {
+    return new Polygon(
+        new int[] {at, at + side, at + side, at}, new int[] {0, 0, side, side}, 4);
+  }
+
+  @DisplayName("What a merge drops is told: the other's owner, units and value")
+  @Test
+  void mergeLossesAreTold() throws Exception {
+    // given
+    final MapProject project = givenMinimap();
+
+    // when
+    final List<String> lost = TerritoriesEditor.mergeLosses(project.game(), "blue north 1", NORTH);
+    final List<String> ofSea = TerritoriesEditor.mergeLosses(project.game(), "sea zone 2", SEA);
+
+    // then
+    assertThat(lost)
+        .as("another owner's land with units and a value")
+        .contains("Its owner, Russians.", "Its starting units.");
+    assertThat(lost).as("its value").anyMatch(line -> line.endsWith("per turn."));
+    assertThat(ofSea).as("an empty sea zone has nothing to lose: no question asked").isEmpty();
+  }
+
+  @DisplayName("Draw borders' eraser takes a line out of the picture, one step")
+  @Test
+  void eraserErasesBorder() throws Exception {
+    // given: a map whose picture is held, a black line 3 px wide down x 199 to 201
+    final MapProject project = givenPictureMap();
+    final BufferedImage before = project.getFiles().picture().orElseThrow();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () ->
+            new TerritoriesEditor(project, givenMap(project))
+                .bordersErased(List.of(new Point(200, 20), new Point(200, 90))));
+
+    // then
+    assertThat(MapPicture.isBorder(before.getRGB(200, 50))).as("a line before").isTrue();
+    assertThat(MapPicture.isBorder(project.getFiles().picture().orElseThrow().getRGB(200, 50)))
+        .as("erased with the default width, three times the line's")
+        .isFalse();
+    project.undo();
+    assertThat(project.getFiles().picture()).as("one step").containsSame(before);
+  }
+
+  @DisplayName("A sea zone's canal is told once in a merge, not also as its settings")
+  @Test
+  void mergeLossesCountOnlyTerritorySettings() throws Exception {
+    // given: a canal on two sea zones, which puts a canalAttachment on each
+    final MapProject project = givenMinimap();
+    final Game game =
+        CanalXml.withCanal(
+            project.game(),
+            "",
+            new CanalXml.Canal("Strait", List.of(SEA, "sea zone 2"), List.of(NORTH), List.of()));
+
+    // when
+    final List<String> lost = TerritoriesEditor.mergeLosses(game, "sea zone 3", SEA);
+
+    // then
+    assertThat(lost)
+        .as("the canal that goes with it; the canal's own options are no settings of the zone")
+        .containsExactly("The canal Strait goes with it.");
+  }
+
+  @DisplayName("Create missing places is off for a place file that does not read, and says why")
+  @Test
+  void createMissingOffForUnreadFile() throws Exception {
+    // given: a saved map whose place.txt names a territory twice
+    final MapProject made =
+        MapProject.newMap(
+                "Island Wars",
+                MapPictureTest.givenPicture(),
+                List.of("Red"),
+                folder.resolve("maps"))
+            .project();
+    Files.writeString(
+        made.getFolder().orElseThrow().resolve("place.txt"),
+        "Sea Zone 1 (1,2)\r\nSea Zone 1 (3,4)\r\n");
+    final MapProject project = MapProject.open(made.getXmlFile().orElseThrow());
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final TerritoriesEditor editor = new TerritoriesEditor(project, givenMap(project));
+          Stream.of(editor.placesMenu().getComponents())
+              .filter(c -> c instanceof JMenu menu && menu.getText().startsWith("Create"))
+              .map(c -> (JMenuItem) ((JMenu) c).getMenuComponent(0))
+              .forEach(
+                  units -> {
+                    seen.add(units.getText());
+                    seen.add(units.isEnabled());
+                    seen.add(units.getToolTipText());
+                  });
+        });
+
+    // then
+    assertThat(seen)
+        .as("no places to create over lines that are not known")
+        .containsExactly(
+            "Units — file does not read",
+            false,
+            "place.txt does not read, eg for a name twice: open it in Files to put it right");
   }
 }
