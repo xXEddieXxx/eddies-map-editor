@@ -171,7 +171,11 @@ public final class MapMakerWindow extends JFrame {
     // before the look and feel is set up, which reads the editor's colors then
     Theme.install();
     HeadedGameRunner.initializeLookAndFeel();
-    SwingUtilities.invokeLater(MapMakerWindow::openStandalone);
+    SwingUtilities.invokeLater(
+        () -> {
+          Theme.useFlatLaf();
+          openStandalone();
+        });
   }
 
   /** Opens the editor on its start page; closing it ends the program. */

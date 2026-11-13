@@ -8,6 +8,7 @@ import java.awt.Font;
 import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.Polygon;
+import java.awt.Rectangle;
 import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
@@ -18,6 +19,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import javax.imageio.ImageIO;
 import javax.swing.Action;
 import javax.swing.JComponent;
@@ -87,6 +89,114 @@ final class MapCanvasTest {
     assertThat(cursors)
         .as("the crosshair of the line is gone")
         .containsExactly(Cursor.DEFAULT_CURSOR);
+  }
+
+  /** The project's canvas, painted once, showing units and centers on every territory. */
+  private static MapCanvas givenCanvasShowingPlaces(final MapProject project) {
+    final BufferedImage picture = MapPictureTest.givenPicture();
+    project.loadPicture(picture, MapPicture.detect(picture));
+    final MapCanvas canvas = new MapCanvas(project);
+    canvas.setSize(400, 300);
+    canvas.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 12));
+    canvas.showPlaces(
+        MapCanvas.ShownPlaces.NONE
+            .with(MapCanvas.PlaceKind.UNITS)
+            .with(MapCanvas.PlaceKind.CENTERS));
+    // a paint takes the unit size the places are drawn in
+    shown(canvas);
+    return canvas;
+  }
+
+  @DisplayName("Places shown on every territory drag there, each move one step, centers too")
+  @Test
+  void shownPlacesDragOnAnyTerritory() throws Exception {
+    // given
+    final MapProject project = MapProject.newEmpty();
+    final List<Point> before = new ArrayList<>();
+    final List<Point> after = new ArrayList<>();
+    final List<Boolean> undone = new ArrayList<>();
+    final List<Double> zoom = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapCanvas canvas = givenCanvasShowingPlaces(project);
+          final double z = canvas.getZoom();
+          zoom.add(z);
+          final Point unit = project.getFiles().unitPlaces(EFFECT_LAND).getFirst();
+          final Point center = project.getFiles().centers().get(EFFECT_LAND);
+          before.addAll(List.of(unit, center));
+          final Point onUnit = new Point((int) (unit.x * z) + 3, (int) (unit.y * z) + 3);
+          drag(canvas, onUnit, new Point(onUnit.x + 10, onUnit.y + 6));
+          final Point onCenter = new Point((int) (center.x * z), (int) (center.y * z));
+          drag(canvas, onCenter, new Point(onCenter.x - 8, onCenter.y + 4));
+          after.add(project.getFiles().unitPlaces(EFFECT_LAND).getFirst());
+          after.add(project.getFiles().centers().get(EFFECT_LAND));
+          project.undo();
+          undone.add(project.getFiles().centers().get(EFFECT_LAND).equals(center));
+          project.undo();
+          undone.add(project.getFiles().unitPlaces(EFFECT_LAND).getFirst().equals(unit));
+        });
+
+    // then
+    final double z = zoom.getFirst();
+    assertThat(after)
+        .as("the unselected territory's unit place and center, moved by the drags")
+        .containsExactly(
+            new Point(
+                before.get(0).x + (int) Math.round(10 / z),
+                before.get(0).y + (int) Math.round(6 / z)),
+            new Point(
+                before.get(1).x - (int) Math.round(8 / z),
+                before.get(1).y + (int) Math.round(4 / z)));
+    assertThat(undone).as("each move undone by one step").containsExactly(true, true);
+  }
+
+  @DisplayName("Unit places show their number only while big enough on screen to read")
+  @Test
+  void placeNumbersOnlyWhenBigEnough() {
+    // given: a 48 px unit at 100 % and zoomed out to fit a big map
+    final Rectangle full = new Rectangle(0, 0, 48, 48);
+    final Rectangle fit = new Rectangle(0, 0, 15, 15);
+
+    // when, then
+    assertThat(MapCanvas.isNumbered(full)).as("readable at 100 %").isTrue();
+    assertThat(MapCanvas.isNumbered(fit)).as("numbers would run together at fit").isFalse();
+  }
+
+  @DisplayName("Faintly marked territories, eg the other canals, show in the mark's color")
+  @Test
+  void faintMarksShow() throws Exception {
+    // given
+    final List<Integer> magenta = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapCanvas canvas = givenCanvas();
+          final int before = magentaPixels(shown(canvas));
+          canvas.setMarked(Set.of(), Set.of(EFFECT_LAND));
+          magenta.add(magentaPixels(shown(canvas)) - before);
+        });
+
+    // then
+    assertThat(magenta)
+        .as("the territory tinted and outlined in the mark's color")
+        .allMatch(n -> n > 100);
+  }
+
+  /** Pixels clearly more red and blue than green, as the mark's magenta tints them. */
+  private static int magentaPixels(final BufferedImage image) {
+    int count = 0;
+    for (int y = 0; y < image.getHeight(); y++) {
+      for (int x = 0; x < image.getWidth(); x++) {
+        final Color c = new Color(image.getRGB(x, y));
+        if (c.getRed() - c.getGreen() > 40 && c.getBlue() - c.getGreen() > 20) {
+          count++;
+        }
+      }
+    }
+    return count;
   }
 
   private static BufferedImage shown(final MapCanvas canvas) {

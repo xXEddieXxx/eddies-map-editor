@@ -723,11 +723,13 @@ final class MapLookEditor implements Editor {
     private final Set<String> water;
     private final Rectangle area;
     private final BufferedImage under;
+    private final Map<String, Textures.Fill> fills;
 
     ReliefOptions(final MapFiles files, final Set<String> water) {
       this.files = files;
       this.water = water;
-      area = previewArea(files, water);
+      fills = Textures.fills(files);
+      area = previewArea(files, water, fills.keySet());
       under = pictureOf(files, area);
       // as wide as its widest text, so the slider does not move while dragged
       final JLabel value = new JLabel("100 %");
@@ -747,8 +749,8 @@ final class MapLookEditor implements Editor {
       final JLabel label = new JLabel("Strength");
       label.setLabelFor(strength);
       form.note(
-          "A part of your map with the relief. Saving writes it for the whole map into"
-              + " reliefTiles.");
+          "A part of your map with the relief, and the textures painted in Territories."
+              + " Saving writes it for the whole map into reliefTiles.");
       form.row(preview);
       form.row(
           fitting(
@@ -779,7 +781,8 @@ final class MapLookEditor implements Editor {
       final BufferedImage shown = copy(under);
       final Graphics2D g = shown.createGraphics();
       g.drawImage(
-          ReliefMaker.make(area, files.polygons(), water, strength.getValue(), touches()),
+          ReliefMaker.make(
+              area, files.polygons(), water, strength.getValue(), touches(), fills),
           0,
           0,
           null);
@@ -801,7 +804,12 @@ final class MapLookEditor implements Editor {
       @Override
       protected BufferedImage doInBackground() {
         return ReliefMaker.make(
-            new Rectangle(files.size()), files.polygons(), water, strength, touches);
+            new Rectangle(files.size()),
+            files.polygons(),
+            water,
+            strength,
+            touches,
+            Textures.fills(files));
       }
 
       @Override
@@ -829,8 +837,12 @@ final class MapLookEditor implements Editor {
     }.execute();
   }
 
-  /** A part of the map with a coast, the one nearest its middle; the middle if it has none. */
-  private static Rectangle previewArea(final MapFiles files, final Set<String> water) {
+  /**
+   * A part of the map with a coast, the one nearest its middle; the middle if it has none. With
+   * textures, a border of a textured territory instead, so they show.
+   */
+  private static Rectangle previewArea(
+      final MapFiles files, final Set<String> water, final Set<String> textured) {
     final Dimension size = files.size();
     final Point middle = new Point(size.width / 2, size.height / 2);
     final List<Polygon> seas =
@@ -840,10 +852,17 @@ final class MapLookEditor implements Editor {
             .toList();
     final Point at =
         files.polygons().entrySet().stream()
-            .filter(e -> !water.contains(e.getKey()))
+            .filter(
+                e ->
+                    textured.isEmpty()
+                        ? !water.contains(e.getKey())
+                        : textured.contains(e.getKey()))
             .flatMap(e -> e.getValue().stream())
             .flatMap(p -> IntStream.range(0, p.npoints).mapToObj(i -> corner(p, i)))
-            .filter(p -> seas.stream().anyMatch(sea -> sea.intersects(p.x - 4, p.y - 4, 8, 8)))
+            .filter(
+                p ->
+                    !textured.isEmpty()
+                        || seas.stream().anyMatch(sea -> sea.intersects(p.x - 4, p.y - 4, 8, 8)))
             .min(Comparator.comparingDouble(p -> p.distance(middle)))
             .orElse(middle);
     final int width = Math.min(PREVIEW.width, size.width);

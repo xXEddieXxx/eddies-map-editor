@@ -550,7 +550,9 @@ final class MapView extends JPanel {
     canvas.onTerritoryClick(onClick);
     canvas.stopEditingPlaces();
     canvas.setMarked(Set.of());
+    canvas.showPlaces(MapCanvas.ShownPlaces.NONE);
     canvas.hideEffects();
+    canvas.hideTextures();
     hideBanner();
   }
 
@@ -708,6 +710,16 @@ final class MapView extends JPanel {
     canvas.setMarked(territories);
   }
 
+  /** Like {@link #mark(Set)}, with others shown lighter, eg the other canals. */
+  void mark(final Set<String> territories, final Set<String> faintly) {
+    canvas.setMarked(territories, faintly);
+  }
+
+  /** Shows these places on every territory to drag, until another editor takes the map. */
+  void showPlaces(final MapCanvas.ShownPlaces places) {
+    canvas.showPlaces(places);
+  }
+
   /** Shows each territory's terrain effects on the map, the painted one standing out. */
   void showEffects(final Optional<String> painted) {
     canvas.showEffects(painted);
@@ -715,6 +727,15 @@ final class MapView extends JPanel {
 
   void hideEffects() {
     canvas.hideEffects();
+  }
+
+  /** Fills each textured territory with its texture, until another editor takes the map. */
+  void showTextures() {
+    canvas.showTextures();
+  }
+
+  void hideTextures() {
+    canvas.hideTextures();
   }
 
   /** A left drag paints the territories it passes, given at its end; until stopEditingPlaces. */

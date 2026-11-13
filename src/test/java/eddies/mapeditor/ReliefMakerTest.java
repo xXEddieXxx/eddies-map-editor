@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import eddies.mapeditor.ReliefMaker.Touch;
 import java.awt.Color;
+import java.awt.Point;
 import java.awt.Polygon;
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
@@ -80,7 +81,8 @@ final class ReliefMakerTest {
             givenPolygons(),
             Set.of("Sea"),
             50,
-            EnumSet.allOf(Touch.class));
+            EnumSet.allOf(Touch.class),
+            Map.of());
 
     assertThat(part.getRGB(10, 20))
         .as("the coast and the texture at the same place")
@@ -88,8 +90,66 @@ final class ReliefMakerTest {
     assertThat(part.getRGB(40, 20)).as("inside the land").isEqualTo(whole.getRGB(70, 70));
   }
 
+  @DisplayName("A textured territory has its texture, repeated from the texture's offset on")
+  @Test
+  void textureFollowsOffset() {
+    // given: a texture of a red and a blue pixel side by side, on West only
+    final BufferedImage texture = new BufferedImage(2, 1, BufferedImage.TYPE_INT_RGB);
+    texture.setRGB(0, 0, 0xFF0000);
+    texture.setRGB(1, 0, 0x0000FF);
+
+    // when
+    final BufferedImage atZero = givenTexturedRelief(texture, new Point());
+    final BufferedImage moved = givenTexturedRelief(texture, new Point(1, 0));
+
+    // then
+    final Color west = new Color(atZero.getRGB(65, 70), true);
+    assertThat(west.getAlpha()).as("the texture covers most of the map below").isGreaterThan(150);
+    assertThat(west.getBlue())
+        .as("x 65 is the texture's second, blue pixel")
+        .isGreaterThan(west.getRed());
+    assertThat(alpha(atZero, 115, 70)).as("East, untextured, stays clear").isZero();
+    final Color westMoved = new Color(moved.getRGB(65, 70), true);
+    assertThat(westMoved.getRed())
+        .as("moved by one pixel, its first, red pixel is there")
+        .isGreaterThan(westMoved.getBlue());
+  }
+
+  @DisplayName("Where a texture is see-through, the relief is as without it")
+  @Test
+  void clearTextureLeavesRelief() {
+    // given: a texture of a see-through and a red pixel side by side, on West only
+    final BufferedImage texture = new BufferedImage(2, 1, BufferedImage.TYPE_INT_ARGB);
+    texture.setRGB(1, 0, 0xFFFF0000);
+
+    // when
+    final BufferedImage textured = givenTexturedRelief(texture, new Point());
+    final BufferedImage plain = givenRelief(EnumSet.noneOf(Touch.class));
+
+    // then
+    assertThat(textured.getRGB(64, 70))
+        .as("x 64 is the see-through pixel: the relief as it was")
+        .isEqualTo(plain.getRGB(64, 70));
+    assertThat(textured.getRGB(44, 70))
+        .as("near the border, with shading, too")
+        .isEqualTo(plain.getRGB(44, 70));
+    assertThat(new Color(textured.getRGB(65, 70), true).getRed())
+        .as("x 65 is the red pixel")
+        .isGreaterThan(200);
+  }
+
+  private static BufferedImage givenTexturedRelief(final BufferedImage texture, final Point at) {
+    return ReliefMaker.make(
+        MAP,
+        givenPolygons(),
+        Set.of("Sea"),
+        50,
+        EnumSet.noneOf(Touch.class),
+        Map.of("West", new Textures.Fill(texture, at)));
+  }
+
   private static BufferedImage givenRelief(final Set<Touch> touches) {
-    return ReliefMaker.make(MAP, givenPolygons(), Set.of("Sea"), 50, touches);
+    return ReliefMaker.make(MAP, givenPolygons(), Set.of("Sea"), 50, touches, Map.of());
   }
 
   /** Two land territories side by side, from x 40 to 90 and 90 to 140, in a sea. */

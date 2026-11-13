@@ -21,6 +21,7 @@ import javax.swing.LookAndFeel;
 import javax.swing.UIManager;
 import javax.swing.UnsupportedLookAndFeelException;
 import javax.swing.plaf.metal.MetalLookAndFeel;
+import javax.swing.plaf.nimbus.NimbusLookAndFeel;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -248,5 +249,39 @@ final class ThemeTest {
       properties.load(in);
     }
     return properties;
+  }
+
+  @DisplayName("Under another look, eg Nimbus, the editor uses FlatLaf, light or dark like it")
+  @Test
+  void otherLooksBecomeFlatLaf() throws UnsupportedLookAndFeelException {
+    // given
+    UIManager.setLookAndFeel(new NimbusLookAndFeel());
+
+    // when
+    Theme.useFlatLaf();
+    final LookAndFeel light = UIManager.getLookAndFeel();
+    UIManager.setLookAndFeel(new NimbusLookAndFeel());
+    UIManager.put("Panel.background", new Color(0x2B2B2B));
+    Theme.useFlatLaf();
+    final LookAndFeel dark = UIManager.getLookAndFeel();
+    UIManager.put("Panel.background", null);
+
+    // then
+    assertThat(light).as("Nimbus is light: FlatLaf's light look").isInstanceOf(FlatLightLaf.class);
+    assertThat(dark).as("a dark look: FlatLaf's dark look").isInstanceOf(FlatDarkLaf.class);
+  }
+
+  @DisplayName("Under a FlatLaf look the editor keeps it")
+  @Test
+  void flatLafStays() throws UnsupportedLookAndFeelException {
+    // given
+    final FlatDarkLaf dark = new FlatDarkLaf();
+    UIManager.setLookAndFeel(dark);
+
+    // when
+    Theme.useFlatLaf();
+
+    // then
+    assertThat(UIManager.getLookAndFeel()).as("the look as it was").isSameAs(dark);
   }
 }

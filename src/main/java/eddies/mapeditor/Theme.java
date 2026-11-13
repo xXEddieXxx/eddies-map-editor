@@ -1,7 +1,9 @@
 package eddies.mapeditor;
 
 import com.formdev.flatlaf.FlatClientProperties;
+import com.formdev.flatlaf.FlatDarkLaf;
 import com.formdev.flatlaf.FlatLaf;
+import com.formdev.flatlaf.FlatLightLaf;
 import com.formdev.flatlaf.util.UIScale;
 import eddies.mapeditor.MakerIcon.Glyph;
 import java.awt.Color;
@@ -47,6 +49,26 @@ class Theme {
   /** The editor's colors in the FlatLaf themes; call it before the look and feel is set up. */
   static void install() {
     FlatLaf.registerCustomDefaultsSource(THEME_PACKAGE, Theme.class.getClassLoader());
+  }
+
+  /**
+   * FlatLaf, light or dark like the look TripleA set up, when that is another look, eg Nimbus:
+   * the editor's sizes and styles are made for FlatLaf, and other looks cut its buttons to "...".
+   * Call it on the Swing thread after TripleA's look is set up.
+   */
+  static void useFlatLaf() {
+    if (UIManager.getLookAndFeel() instanceof FlatLaf) {
+      return;
+    }
+    final Color background =
+        Optional.ofNullable(UIManager.getColor("Panel.background")).orElse(Color.WHITE);
+    final boolean dark =
+        (background.getRed() + background.getGreen() + background.getBlue()) / 3 < 128;
+    if (dark) {
+      FlatDarkLaf.setup();
+    } else {
+      FlatLightLaf.setup();
+    }
   }
 
   /** Undoes {@link #install()}, for tests that set up a look and feel. */

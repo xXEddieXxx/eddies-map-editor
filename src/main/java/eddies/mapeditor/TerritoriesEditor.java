@@ -1,6 +1,10 @@
 package eddies.mapeditor;
 
 import com.formdev.flatlaf.FlatClientProperties;
+import eddies.mapeditor.MapCanvas.PlaceKind;
+import eddies.mapeditor.MapCanvas.ShownPlaces;
+import eddies.mapeditor.MapFiles.Marker;
+import eddies.mapeditor.MapFiles.UnitLayout;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Color;
@@ -40,7 +44,9 @@ import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.ButtonGroup;
 import javax.swing.Icon;
+import javax.swing.ImageIcon;
 import javax.swing.JButton;
+import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
@@ -57,6 +63,7 @@ import javax.swing.JToggleButton;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
+import javax.swing.text.DefaultFormatter;
 import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.Initialize.UnitInitialize.UnitPlacement;
 import org.triplea.swing.FileChooser;
@@ -108,6 +115,17 @@ final class TerritoriesEditor implements Editor {
           Optional.empty(),
           (g, t) -> TerritoryXml.withEffects(g, t, List.of()));
 
+  // with the texture brushes: the map shows the textures it clears
+  private static final Brush NO_TEXTURE =
+      new Brush(
+          "No texture",
+          "Clearing textures: click or drag across territories to take their texture away.",
+          Optional.empty(),
+          (g, t) -> g,
+          Optional.empty(),
+          (f, t) -> f.withTexture(t, Optional.empty()),
+          Optional.empty());
+
   /** How Draw borders draws: a dragged line, clicked points, or an ellipse from corner to corner. */
   private enum DrawBrush {
     FREEHAND,
@@ -137,13 +155,23 @@ final class TerritoriesEditor implements Editor {
   private final JToggleButton select = new JToggleButton("Select");
   private final JToggleButton paint =
       new JToggleButton("▾", new MakerIcon(Glyph.BRUSH, Theme.MAP_TOOL_ICON));
-  private final JToggleButton decorations = new JToggleButton("Decorations");
+  // not shown: the Decorations mode starts from the Places menu, but its button is in the group
+  private final JToggleButton decorations = new JToggleButton();
   private final JToggleButton drawBorders = new JToggleButton("Draw borders");
+  // not a mode: the places shown on every territory stay while modes change
+  private final JToggleButton places =
+      new JToggleButton("▾", new MakerIcon(Glyph.VALUES, Theme.MAP_TOOL_ICON));
+  private ShownPlaces shownPlaces = ShownPlaces.NONE;
+  // the layouts' places per territory at most; huge sea zones rely on overflow
+  private final JSpinner mostPlaces = new JSpinner(new SpinnerNumberModel(16, 1, 999, 1));
   private final Consumer<BufferedImage> findTerritories;
   private final JPanel modes = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_XS, 0));
   // in the inspector, built again with it; one button, so the banner's Done can untoggle it
   private final JToggleButton movePlaces = new JToggleButton("Move places");
   private final JComboBox<String> decorationPicture = new JComboBox<>();
+  // the chosen texture's offset, in the banner while its brush is chosen
+  private final JSpinner textureX = new JSpinner(new SpinnerNumberModel(0, -9999, 9999, 1));
+  private final JSpinner textureY = new JSpinner(new SpinnerNumberModel(0, -9999, 9999, 1));
   private Mode mode = Mode.SELECT;
   private Optional<Brush> brush = Optional.empty();
   // the territory whose units the copy brush copies, taken when the brush is chosen
@@ -209,6 +237,10 @@ final class TerritoriesEditor implements Editor {
     page.add(newTerritoryCard(), TERRITORY);
     page.add(SwingComponents.newJScrollPane(splitForm), SPLIT);
     buildModes();
+    // a number typed counts without Enter: a click on Squeeze closes the menu before focus-lost
+    ((DefaultFormatter)
+            ((JSpinner.DefaultEditor) mostPlaces.getEditor()).getTextField().getFormatter())
+        .setCommitsOnValidEdit(true);
     project.onChange(
         () -> {
           list.refresh();
@@ -221,6 +253,8 @@ final class TerritoriesEditor implements Editor {
           } else if (mode == Mode.PAINT && paintedEffect.isPresent()) {
             refreshMap();
           }
+          // an undo may move the texture back
+          brush.flatMap(Brush::texture).ifPresent(this::showOffset);
           fillDecorationPictures();
           if (!editingHere) {
             showInspector();
@@ -234,6 +268,22 @@ final class TerritoriesEditor implements Editor {
             applyMode();
           }
         });
+    for (final JSpinner offset : List.of(textureX, textureY)) {
+      offset.addChangeListener(
+          e -> {
+            if (!refilling) {
+              brush
+                  .flatMap(Brush::texture)
+                  .ifPresent(
+                      texture ->
+                          project.setTextureOffset(
+                              texture,
+                              new Point((int) textureX.getValue(), (int) textureY.getValue())));
+            }
+          });
+    }
+    textureX.setToolTipText("Moves the texture right, eg to line it up with the one beside it");
+    textureY.setToolTipText("Moves the texture down, eg to line it up with the one beside it");
     movePlaces.addActionListener(
         e -> {
           if (movePlaces.isSelected()) {
@@ -305,25 +355,23 @@ final class TerritoriesEditor implements Editor {
     return territoryCard;
   }
 
-  /** Select, Paint (a brush with ▾), Decorations and Draw borders above the map. */
+  /** Select, Paint (a brush with ▾), Draw borders and Places (with ▾) above the map. */
   private void buildModes() {
     final ButtonGroup group = new ButtonGroup();
     Theme.setNamedMapToolStyle(select, Glyph.SELECT);
     Theme.setMapToolStyle(paint);
-    Theme.setNamedMapToolStyle(decorations, Glyph.DECORATIONS);
     Theme.setNamedMapToolStyle(drawBorders, Glyph.PENCIL);
     for (final JToggleButton button : List.of(select, paint, decorations, drawBorders)) {
       group.add(button);
-      modes.add(button);
     }
+    List.of(select, paint, drawBorders).forEach(modes::add);
     select.setSelected(true);
     // with the name, as only the glyph shows when the toolbar is short of room
     select.setToolTipText("Select: a click on the map chooses the territory");
     paint.setToolTipText(
-        "Paint: give many territories an owner, a capital, PUs, units, rules or effects");
+        "Paint: give many territories an owner, a capital, PUs, units, rules, effects or"
+            + " textures");
     paint.getAccessibleContext().setAccessibleName("Paint");
-    decorations.setToolTipText(
-        "Decorations: place pictures from the map's misc folder anywhere on the map");
     select.addActionListener(e -> endMode());
     paint.addActionListener(
         e -> {
@@ -331,11 +379,103 @@ final class TerritoriesEditor implements Editor {
           showModeButtons();
           paintMenu().show(paint, 0, paint.getHeight());
         });
-    decorations.addActionListener(e -> startMode(Mode.DECORATE));
     drawBorders.setToolTipText(
         "Draw borders: draw border lines into the map's picture by hand, then make territories"
             + " of them");
     drawBorders.addActionListener(e -> startMode(Mode.DRAW));
+    Theme.setMapToolStyle(places);
+    places.getAccessibleContext().setAccessibleName("Places");
+    places.setToolTipText(
+        "Places: show where the game draws units, names, flags and markers on every territory,"
+            + " drag one to move it; lay out units; place decorations");
+    places.addActionListener(
+        e -> {
+          // the click toggled it: the menu decides
+          showModeButtons();
+          placesMenu().show(places, 0, places.getHeight());
+        });
+    modes.add(places);
+  }
+
+  /** A check per kind of place, several at once; the menu stays open to check more. */
+  private JPopupMenu placesMenu() {
+    final JPopupMenu menu = new JPopupMenu();
+    menu.add(placesItem("Units — place.txt", PlaceKind.UNITS));
+    menu.add(placesItem("Centers — centers.txt", PlaceKind.CENTERS));
+    for (final Marker marker : Marker.values()) {
+      menu.add(placesItem(marker.getLabel() + " — " + marker.getFile(), marker));
+    }
+    final JCheckBoxMenuItem decorate =
+        new JCheckBoxMenuItem("Decorations — decorations.txt", mode == Mode.DECORATE);
+    decorate.setToolTipText(
+        decorationPicture.getItemCount() > 0
+            ? "Place pictures from the map's misc folder anywhere on the map"
+            : "The map's misc folder has no pictures to place; Files imports them");
+    decorate.setEnabled(decorationPicture.getItemCount() > 0);
+    decorate.addActionListener(
+        e -> {
+          if (decorate.isSelected()) {
+            startMode(Mode.DECORATE);
+          } else {
+            endMode();
+          }
+        });
+    menu.add(decorate);
+    menu.addSeparator();
+    menu.add(header("Lay out unit places"));
+    final JPanel most = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_S, 0));
+    most.setOpaque(false);
+    // in line with the header: a centered panel would push the menu's rows apart
+    most.setAlignmentX(Component.LEFT_ALIGNMENT);
+    most.setBorder(BorderFactory.createEmptyBorder(0, Theme.GAP_M - Theme.GAP_S, Theme.GAP_XS, 0));
+    final JLabel atMost = new JLabel("At most");
+    atMost.setLabelFor(mostPlaces);
+    most.add(atMost);
+    most.add(mostPlaces);
+    most.add(new JLabel("per territory"));
+    mostPlaces.setToolTipText("More units than places go on beside the last place");
+    menu.add(most);
+    for (final UnitLayout layout : UnitLayout.values()) {
+      final String name = layout == UnitLayout.SQUEEZE ? "Squeeze" : "Grid";
+      Optional.ofNullable(selected)
+          .ifPresent(t -> menu.add(layOutItem(name + " in " + t, layout, List.of(t))));
+      menu.add(
+          layOutItem(
+              name + " in all territories",
+              layout,
+              List.copyOf(project.getFiles().polygons().keySet())));
+    }
+    return menu;
+  }
+
+  /** Lays out the territories' unit places as one step, and shows them. */
+  private JMenuItem layOutItem(
+      final String text, final UnitLayout layout, final List<String> territories) {
+    final JMenuItem item = new JMenuItem(text);
+    item.setToolTipText(
+        layout == UnitLayout.SQUEEZE
+            ? "Places round the center, clockwise from 12:00, 4 px apart"
+            : "Places in rows below the center, the first at 6:00, 4 px apart");
+    item.addActionListener(
+        e -> {
+          project.layOutUnitPlaces(layout, (Integer) mostPlaces.getValue(), territories);
+          shownPlaces = shownPlaces.with(PlaceKind.UNITS);
+          showModeButtons();
+          map.showPlaces(shownPlaces);
+        });
+    return item;
+  }
+
+  private JCheckBoxMenuItem placesItem(final String text, final Enum<?> kind) {
+    final JCheckBoxMenuItem item = new JCheckBoxMenuItem(text, shownPlaces.shows(kind));
+    item.putClientProperty("CheckBoxMenuItem.doNotCloseOnMouseClick", true);
+    item.addActionListener(
+        e -> {
+          shownPlaces = item.isSelected() ? shownPlaces.with(kind) : shownPlaces.without(kind);
+          showModeButtons();
+          map.showPlaces(shownPlaces);
+        });
+    return item;
   }
 
   @Override
@@ -367,6 +507,7 @@ final class TerritoriesEditor implements Editor {
   @Override
   public void showing() {
     map.useFor(MapMode.GAME, modes, this::clickOnMap);
+    map.showPlaces(shownPlaces);
     applyMode();
     map.select(selected);
   }
@@ -408,9 +549,7 @@ final class TerritoriesEditor implements Editor {
     }
     // a text being typed is the shown territory's, before the inspector shows another
     commit();
-    brush
-        .filter(b -> mode == Mode.PAINT)
-        .ifPresent(b -> project.edit(game -> b.paint().apply(game, territory)));
+    brush.filter(b -> mode == Mode.PAINT).ifPresent(b -> paint(b, List.of(territory)));
     choose(territory);
     list.choose(territory);
   }
@@ -418,18 +557,27 @@ final class TerritoriesEditor implements Editor {
   /** A drag across the map with a brush: paints each territory it passed, as one step. */
   void paintStroke(final List<String> territories) {
     commit();
-    brush
-        .filter(b -> mode == Mode.PAINT)
-        .ifPresent(
-            b ->
-                project.edit(
-                    game -> {
-                      Game painted = game;
-                      for (final String territory : territories) {
-                        painted = b.paint().apply(painted, territory);
-                      }
-                      return painted;
-                    }));
+    brush.filter(b -> mode == Mode.PAINT).ifPresent(b -> paint(b, territories));
+  }
+
+  /** The brush on the territories as one step: a brush changes the game or the files. */
+  private void paint(final Brush b, final List<String> territories) {
+    project.edit(
+        game -> {
+          Game painted = game;
+          for (final String territory : territories) {
+            painted = b.paint().apply(painted, territory);
+          }
+          return painted;
+        });
+    project.editFiles(
+        files -> {
+          MapFiles painted = files;
+          for (final String territory : territories) {
+            painted = b.paintFiles().apply(painted, territory);
+          }
+          return painted;
+        });
   }
 
   /** A choice in the list also brings the territory into view; one on the map is in it. */
@@ -516,7 +664,10 @@ final class TerritoriesEditor implements Editor {
         map.paintStrokes(this::paintStroke);
         map.showBanner(
             brush.orElseThrow().banner(),
-            map.goalStep().filter(Step.Id.LAND::equals).map(step -> nationBox()),
+            map.goalStep()
+                .filter(Step.Id.LAND::equals)
+                .map(step -> (JComponent) nationBox())
+                .or(() -> brush.flatMap(Brush::texture).map(this::offsetBox)),
             "Done",
             this::endMode);
         paintedEffect.ifPresent(
@@ -601,6 +752,32 @@ final class TerritoriesEditor implements Editor {
     } else {
       map.hideEffects();
     }
+    if (mode == Mode.PAINT
+        && (brush.flatMap(Brush::texture).isPresent() || brush.equals(Optional.of(NO_TEXTURE)))) {
+      map.showTextures();
+    } else {
+      map.hideTextures();
+    }
+  }
+
+  /** The texture's offset, X and Y, each change a step. */
+  private JComponent offsetBox(final String texture) {
+    showOffset(texture);
+    final JPanel box = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_XS, 0));
+    box.setOpaque(false);
+    box.add(new JLabel("Offset X"));
+    box.add(textureX);
+    box.add(new JLabel("Y"));
+    box.add(textureY);
+    return box;
+  }
+
+  private void showOffset(final String texture) {
+    final Point offset = project.getFiles().textureOffset(texture);
+    refilling = true;
+    textureX.setValue(offset.x);
+    textureY.setValue(offset.y);
+    refilling = false;
   }
 
   /** The nation the owner brush paints, to change it without the Paint menu. */
@@ -628,6 +805,7 @@ final class TerritoriesEditor implements Editor {
         })
         .setSelected(true);
     movePlaces.setSelected(mode == Mode.MOVE_PLACES);
+    places.setSelected(mode == Mode.DECORATE || !shownPlaces.equals(ShownPlaces.NONE));
   }
 
   private Set<String> territoriesWith(final String effect) {
@@ -641,13 +819,15 @@ final class TerritoriesEditor implements Editor {
       String banner,
       Optional<Icon> icon,
       BiFunction<Game, String, Game> paint,
-      Optional<String> effect) {
+      Optional<String> effect,
+      BiFunction<MapFiles, String, MapFiles> paintFiles,
+      Optional<String> texture) {
     Brush(
         final String title,
         final String banner,
         final Optional<Icon> icon,
         final BiFunction<Game, String, Game> paint) {
-      this(title, banner, icon, paint, Optional.empty());
+      this(title, banner, icon, paint, Optional.empty(), (f, t) -> f, Optional.empty());
     }
   }
 
@@ -749,7 +929,126 @@ final class TerritoriesEditor implements Editor {
       effects.forEach(effect -> add(menu, effectBrush(effect)));
       add(menu, NO_EFFECTS);
     }
+    menu.add(header("Textures"));
+    Textures.names(project.getFiles()).forEach(texture -> add(menu, textureBrush(texture)));
+    add(menu, NO_TEXTURE);
+    final Optional<Path> folder = project.getFiles().folder();
+    final JMenuItem own = menu.add("Import texture…");
+    own.setEnabled(folder.isPresent());
+    own.setToolTipText(
+        folder.isPresent()
+            ? "Copies a picture into the map's textures folder; it is repeated over the territory"
+            : "Save the map first: the picture goes into its folder.");
+    folder.ifPresent(f -> own.addActionListener(e -> importTexture(f)));
+    final JMenuItem find = menu.add("Find textures in the map…");
+    final boolean canFind = folder.isPresent() && project.getFiles().hasPictureOrRelief();
+    find.setEnabled(canFind);
+    find.setToolTipText(
+        canFind
+            ? "Finds the textures painted into the map's picture or relief, as brushes"
+            : folder.isEmpty()
+                ? "Save the map first: the textures go into its folder."
+                : "The map has no picture or relief to find textures in.");
+    folder.ifPresent(f -> find.addActionListener(e -> findTextures(f)));
     return menu;
+  }
+
+  /**
+   * Finds the textures in the map in the background; if the map is still the same, asks which to
+   * take: their pictures go into textures/ at once, the territories get them as one step.
+   */
+  private void findTextures(final Path folder) {
+    final MapFiles files = project.getFiles();
+    final Game game = project.game();
+    final Set<String> water =
+        files.polygons().keySet().stream()
+            .filter(t -> MapXml.isWater(game, t))
+            .collect(Collectors.toUnmodifiableSet());
+    Dialogs.toast(page, "Looking for textures in the map…");
+    new SwingWorker<List<TextureFinder.Found>, Void>() {
+      @Override
+      protected List<TextureFinder.Found> doInBackground() {
+        return files
+            .shownPicture()
+            .map(picture -> TextureFinder.find(picture, files.polygons(), water))
+            .orElse(List.of());
+      }
+
+      @Override
+      protected void done() {
+        final List<TextureFinder.Found> found;
+        try {
+          found = get();
+        } catch (final InterruptedException e) {
+          Thread.currentThread().interrupt();
+          return;
+        } catch (final ExecutionException e) {
+          Dialogs.warn(page, "Find textures", String.valueOf(e.getCause().getMessage()));
+          return;
+        }
+        if (project.getFiles() != files || project.game() != game) {
+          Dialogs.toast(page, "! The map changed while textures were looked for. Find them again.");
+          return;
+        }
+        FindTexturesDialog.ask(page, found, Textures.names(files))
+            .filter(taken -> !taken.isEmpty())
+            .ifPresent(
+                taken -> {
+                  try {
+                    TextureFinder.write(folder, taken);
+                  } catch (final IOException e) {
+                    Dialogs.warn(
+                        page, "Find textures", "Could not write them.\n" + e.getMessage());
+                    return;
+                  }
+                  project.editFiles(f -> TextureFinder.withFound(f, taken));
+                });
+      }
+    }.execute();
+  }
+
+  // the relief Map look makes has the textures; the game knows none
+  private Brush textureBrush(final String texture) {
+    return new Brush(
+        texture,
+        "Painting "
+            + texture
+            + ": click or drag across territories. Map look's Create relief bakes it in.",
+        Textures.icon(project.getFiles(), texture).map(p -> (Icon) new ImageIcon(p)),
+        (g, t) -> g,
+        Optional.empty(),
+        (f, t) -> f.withTexture(t, Optional.of(texture)),
+        Optional.of(texture));
+  }
+
+  /** Copies a picture into the map's textures folder at once, outside undo, and paints it. */
+  private void importTexture(final Path folder) {
+    final Optional<Path> chosen =
+        MapMakerWindow.chooseFileToOpen(page, "Texture picture", folder, "png", "gif", "jpg");
+    if (chosen.isEmpty()) {
+      return;
+    }
+    final String file = chosen.get().getFileName().toString();
+    final int dot = file.lastIndexOf('.');
+    final String texture = (dot > 0 ? file.substring(0, dot) : file) + ".png";
+    final Path target = folder.resolve(Textures.FOLDER).resolve(texture);
+    if (Files.exists(target)
+        && !Dialogs.confirm(
+            page,
+            "Import texture",
+            "The map has a texture "
+                + texture
+                + " already. Replace it? Its first version stays as .bak.",
+            "Replace")) {
+      return;
+    }
+    try {
+      MapFolder.importPicture(chosen.get(), target);
+    } catch (final IOException e) {
+      Dialogs.warn(page, "Import texture", "Could not take " + file + ".\n" + e.getMessage());
+      return;
+    }
+    paintWith(textureBrush(texture));
   }
 
   // owners paint land only: a sweep across the map leaves the sea zones as they are
@@ -786,7 +1085,9 @@ final class TerritoriesEditor implements Editor {
         "Painting " + effect + ": click or drag across territories to add the effect.",
         Optional.empty(),
         (g, t) -> TerritoryXml.withEffect(g, t, effect),
-        Optional.of(effect));
+        Optional.of(effect),
+        (f, t) -> f,
+        Optional.empty());
   }
 
   private void paintWith(final Brush chosen) {
@@ -835,7 +1136,6 @@ final class TerritoriesEditor implements Editor {
     final Set<String> named = new TreeSet<>(project.getFiles().miscPictures());
     named.addAll(project.getFiles().places().decorations().keySet());
     final List<String> pictures = List.copyOf(named);
-    decorations.setVisible(!pictures.isEmpty());
     final List<String> shown =
         IntStream.range(0, decorationPicture.getItemCount())
             .mapToObj(decorationPicture::getItemAt)

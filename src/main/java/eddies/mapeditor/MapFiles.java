@@ -38,6 +38,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.IntStream;
@@ -88,6 +89,10 @@ record MapFiles(
   static final String UNIT_TINT = "units.transform.color.";
   // the unit types never tinted, eg ones in the same colors for every nation
   static final String UNTINTED_UNITS = "units.transform.ignore";
+  // the textures the editor bakes into the relief it makes, which the game does not read: a
+  // territory's, eg relief.texture.Mordor=Mountains, and where one starts, relief.textureOffset.
+  static final String TEXTURE = "relief.texture.";
+  static final String TEXTURE_OFFSET = "relief.textureOffset.";
   private static final String POLYGONS = "polygons.txt";
   private static final String CENTERS = "centers.txt";
   private static final String PLACEMENTS = "place.txt";
@@ -99,6 +104,8 @@ record MapFiles(
   private static final int CAPITAL_FLAG_SIZE = 100;
   private static final int VICTORY_CITY_SIZE = 36;
   private static final int MAX_PLACES = 30;
+  // pixels kept free around each laid out unit place, so neighbours stand 4 px apart
+  private static final int UNIT_GUTTER = 2;
   // pixels around the territories redrawn where borders were drawn, for the lines around them
   private static final int REDRAW_MARGIN = 10;
   // found effects side by side, about as wide as the game's effect pictures
@@ -171,7 +178,7 @@ record MapFiles(
         folder,
         renamedKey(polygons, old, renamed),
         renamedKey(centers, old, renamed),
-        properties,
+        textureMoved(old, Optional.of(renamed)),
         picture,
         unitPictures,
         nationUnitPictures,
@@ -221,12 +228,22 @@ record MapFiles(
         folder,
         outlined,
         middles,
-        properties,
+        textureMoved(territory, Optional.empty()),
         picture,
         unitPictures,
         nationUnitPictures,
         relief,
         places.without(List.of(territory)));
+  }
+
+  /** The properties with the territory's texture under the new name, or none. */
+  private Properties textureMoved(final String territory, final Optional<String> renamed) {
+    final Properties moved = copyOfProperties();
+    final Object texture = moved.remove(TEXTURE + territory);
+    if (texture != null) {
+      renamed.ifPresent(r -> moved.put(TEXTURE + r, texture));
+    }
+    return moved;
   }
 
   private static <T> Map<String, T> renamedKey(
@@ -592,6 +609,25 @@ record MapFiles(
         .orElseGet(Rectangle::new);
   }
 
+  /** The files with the territory's center, as centers.txt has it, at this point. */
+  MapFiles withCenter(final String territory, final Point center) {
+    if (center.equals(centers.get(territory))) {
+      return this;
+    }
+    final Map<String, Point> moved = new LinkedHashMap<>(centers);
+    moved.put(territory, new Point(center));
+    return new MapFiles(
+        folder,
+        polygons,
+        Collections.unmodifiableMap(moved),
+        properties,
+        picture,
+        unitPictures,
+        nationUnitPictures,
+        relief,
+        places);
+  }
+
   /** The files in this folder, eg once a new map is saved. */
   MapFiles withFolder(final Path mapFolder) {
     return new MapFiles(
@@ -654,6 +690,13 @@ record MapFiles(
         nationUnitPictures,
         relief,
         places);
+  }
+
+  /** The files with the territory's texture, or with none. */
+  MapFiles withTexture(final String territory, final Optional<String> texture) {
+    return texture.orElse("").equals(properties.getProperty(TEXTURE + territory, ""))
+        ? this
+        : withProperty(TEXTURE + territory, texture.orElse(""));
   }
 
   MapFiles withoutNationColor(final String nation) {
@@ -917,7 +960,7 @@ record MapFiles(
     KAMIKAZE("kamikaze_place.txt", "Kamikaze", "K"),
     EFFECT("territory_effects.txt", "Effect", "E");
 
-    private final String file;
+    @Getter private final String file;
     @Getter private final String label;
     // on the map, where the full labels would cover each other
     @Getter private final String letter;
@@ -1144,6 +1187,166 @@ record MapFiles(
     final boolean toLeft =
         Optional.ofNullable(places.units().get(territory)).map(Tuple::getSecond).orElse(false);
     return withPlaces(places.withUnits(territory, Tuple.of(List.copyOf(points), toLeft)));
+  }
+
+  /** How a territory's unit places are laid out afresh around its center. */
+  enum UnitLayout {
+    /** A clockwise spiral from 12:00 outward. */
+    SQUEEZE,
+    /** In rows from 6:00, ordered by {@code gridOrder}. */
+    GRID
+  }
+
+  /**
+   * The files with these territories' unit places laid out afresh, at most so many each, with the
+   * overflow direction {@link #unitPlacesLaidOut} chose; a territory without outlines is skipped.
+   */
+  MapFiles withUnitPlacesLaidOut(
+      final UnitLayout layout, final int most, final Collection<String> territories) {
+    Places laidOut = places;
+    for (final String territory : territories) {
+      if (polygons.containsKey(territory)) {
+        laidOut = laidOut.withUnits(territory, unitPlacesLaidOut(layout, most, territory));
+      }
+    }
+    return laidOut.equals(places) ? this : withPlaces(laidOut);
+  }
+
+  /**
+   * The territory's unit places as the layout orders them, at most so many, and whether its extra
+   * units go to the left. The places lie on a grid of unit squares with a {@link #UNIT_GUTTER}
+   * around each; a place fits when its unit square (not the gutter) is wholly inside the outlines.
+   * The grid's square on the center holds none, so units leave the center free. The last place is
+   * the end of the bottom row with more room beyond it, where the extra units go. If none fits,
+   * the found places.
+   */
+  Tuple<List<Point>, Boolean> unitPlacesLaidOut(
+      final UnitLayout layout, final int most, final String territory) {
+    final List<Polygon> outlines = polygons.getOrDefault(territory, List.of());
+    final Dimension unit = unitSize();
+    final boolean toLeftNow =
+        Optional.ofNullable(places.units().get(territory)).map(Tuple::getSecond).orElse(false);
+    if (outlines.isEmpty()) {
+      return Tuple.of(unitPlaces(territory), toLeftNow);
+    }
+    final Rectangle bounds =
+        outlines.stream().map(Polygon::getBounds).reduce(Rectangle::union).orElseThrow();
+    final int width = Math.max(1, unit.width);
+    final int height = Math.max(1, unit.height);
+    final int stepX = width + 2 * UNIT_GUTTER;
+    final int stepY = height + 2 * UNIT_GUTTER;
+    final Point middle = middle(territory);
+    // the corner of the center's square (0,0)
+    final int left = middle.x - stepX / 2;
+    final int top = middle.y - stepY / 2;
+    final Function<Point, Point> place =
+        cell -> new Point(left + cell.x * stepX + UNIT_GUTTER, top + cell.y * stepY + UNIT_GUTTER);
+    // a sea's outline has no holes: the islands in it are other territories' outlines
+    final List<Polygon> others =
+        polygons.entrySet().stream()
+            .filter(e -> !e.getKey().equals(territory))
+            .flatMap(e -> e.getValue().stream())
+            .filter(o -> o.getBounds().intersects(bounds))
+            .toList();
+    final Predicate<Point> fits =
+        cell -> {
+          final Rectangle square = new Rectangle(place.apply(cell), unit);
+          return outlines.stream().anyMatch(o -> o.contains(square))
+              && others.stream().noneMatch(o -> o.intersects(square));
+        };
+    // how many squares the grid reaches from the center's square to each side of the bounds
+    final int toLeft = Math.max(0, Math.ceilDiv(left - bounds.x, stepX));
+    final int toRight = Math.max(0, Math.ceilDiv(bounds.x + bounds.width - left - stepX, stepX));
+    final int up = Math.max(0, Math.ceilDiv(top - bounds.y, stepY));
+    final int down = Math.max(0, Math.ceilDiv(bounds.y + bounds.height - top - stepY, stepY));
+    final List<Point> cells =
+        layout == UnitLayout.SQUEEZE
+            ? spiralOrder(Math.max(Math.max(toLeft, toRight), Math.max(up, down)))
+            : gridOrder(toLeft, toRight, up, down);
+    final List<Point> kept =
+        new ArrayList<>(cells.stream().filter(fits).limit(Math.max(1, most)).toList());
+    if (kept.isEmpty()) {
+      final List<Point> found = placesInside(outlines, centers.get(territory), unit);
+      return Tuple.of(found.subList(0, Math.min(found.size(), Math.max(1, most))), toLeftNow);
+    }
+    final int bottom = kept.stream().mapToInt(cell -> cell.y).max().orElseThrow();
+    final List<Point> bottomRow = kept.stream().filter(cell -> cell.y == bottom).toList();
+    final Point leftEnd = bottomRow.stream().min(Comparator.comparingInt(c -> c.x)).orElseThrow();
+    final Point rightEnd = bottomRow.stream().max(Comparator.comparingInt(c -> c.x)).orElseThrow();
+    final boolean overflowToLeft = roomBeyond(leftEnd, -1, fits) > roomBeyond(rightEnd, 1, fits);
+    final Point last = overflowToLeft ? leftEnd : rightEnd;
+    kept.remove(last);
+    kept.add(last);
+    return Tuple.of(kept.stream().map(place).toList(), overflowToLeft);
+  }
+
+  /** The free squares inside the outlines on from this end of its row, one after another. */
+  private static int roomBeyond(final Point end, final int dx, final Predicate<Point> fits) {
+    int free = 0;
+    // the outlines end, so the row of fitting squares does
+    for (Point next = new Point(end.x + dx, end.y); fits.test(next); next.translate(dx, 0)) {
+      free++;
+    }
+    return free;
+  }
+
+  /**
+   * Squeeze's order of grid squares (x right, y down, the center's square 0,0 left out): ring by
+   * ring outward, each clockwise from 12:00.
+   */
+  private static List<Point> spiralOrder(final int rings) {
+    final List<Point> cells = new ArrayList<>();
+    for (int k = 1; k <= rings; k++) {
+      for (int x = 0; x <= k; x++) {
+        cells.add(new Point(x, -k));
+      }
+      for (int y = -k + 1; y <= k; y++) {
+        cells.add(new Point(k, y));
+      }
+      for (int x = k - 1; x >= -k; x--) {
+        cells.add(new Point(x, k));
+      }
+      for (int y = k - 1; y >= -k; y--) {
+        cells.add(new Point(-k, y));
+      }
+      for (int x = -k + 1; x < 0; x++) {
+        cells.add(new Point(x, -k));
+      }
+    }
+    return cells;
+  }
+
+  /**
+   * Grid's order of grid squares (x right, y down, the center's square 0,0 left out), the one place
+   * that says it. The first row is the one below the center, from 6:00 outward, left first, so
+   * left to right it reads 4 2 1 3 5; then the rows further below, then the center's row, then the
+   * rows above, nearest first; those each left to right.
+   */
+  private static List<Point> gridOrder(
+      final int toLeft, final int toRight, final int up, final int down) {
+    final List<Point> cells = new ArrayList<>();
+    if (down > 0) {
+      for (int x = 0; x <= Math.max(toLeft, toRight); x++) {
+        if (x > 0 && x <= toLeft) {
+          cells.add(new Point(-x, 1));
+        }
+        if (x <= toRight) {
+          cells.add(new Point(x, 1));
+        }
+      }
+    }
+    final List<Integer> rows = new ArrayList<>();
+    IntStream.rangeClosed(2, down).forEach(rows::add);
+    rows.add(0);
+    IntStream.rangeClosed(1, up).forEach(y -> rows.add(-y));
+    for (final int y : rows) {
+      for (int x = -toLeft; x <= toRight; x++) {
+        if (x != 0 || y != 0) {
+          cells.add(new Point(x, y));
+        }
+      }
+    }
+    return cells;
   }
 
   /** The files with the marker's point of this number (0 but for effects) at the point given. */
@@ -1419,6 +1622,29 @@ record MapFiles(
         .toList();
   }
 
+  /** Each territory's texture, by territory, {@link Textures}. */
+  Map<String, String> textures() {
+    final Map<String, String> textures = new HashMap<>();
+    for (final String key : properties.stringPropertyNames()) {
+      if (key.startsWith(TEXTURE)) {
+        textures.put(key.substring(TEXTURE.length()), properties.getProperty(key).strip());
+      }
+    }
+    return Map.copyOf(textures);
+  }
+
+  /** Where the texture's pictures start on the map, "x,y" in map.properties; 0,0 if unset. */
+  Point textureOffset(final String texture) {
+    final String[] parts = properties.getProperty(TEXTURE_OFFSET + texture, "").split(",");
+    try {
+      return parts.length == 2
+          ? new Point(Integer.parseInt(parts[0].strip()), Integer.parseInt(parts[1].strip()))
+          : new Point();
+    } catch (final NumberFormatException e) {
+      return new Point();
+    }
+  }
+
   /** The nation's color from map.properties, empty when the map gives it none. */
   Optional<Color> nationColor(final String nation) {
     try {
@@ -1473,6 +1699,67 @@ record MapFiles(
       g.dispose();
     }
     return Optional.of(whole);
+  }
+
+  /** Whether the map has a picture or a relief, loaded or in tiles. */
+  boolean hasPictureOrRelief() {
+    return picture.isPresent()
+        || relief.isPresent()
+        || tile(0, 0).isPresent()
+        || reliefTile(0, 0).isPresent();
+  }
+
+  /**
+   * The map as players see it, its picture with the relief over it, loaded or put together from
+   * tiles (a missing one left see-through); empty without either, or too big to hold in memory.
+   */
+  Optional<BufferedImage> shownPicture() {
+    final Dimension size = size();
+    if (!hasPictureOrRelief()
+        || size.width <= 0
+        || size.height <= 0
+        || (long) size.width * size.height > MAX_HELD_PICTURE) {
+      return Optional.empty();
+    }
+    final BufferedImage shown =
+        new BufferedImage(size.width, size.height, BufferedImage.TYPE_INT_ARGB);
+    final Graphics2D g = shown.createGraphics();
+    try {
+      if (picture.isPresent()) {
+        g.drawImage(picture.get(), 0, 0, null);
+      } else {
+        drawTiles(g, size, this::tile);
+      }
+      if (relief.isPresent()) {
+        g.drawImage(relief.get(), 0, 0, null);
+      } else {
+        drawTiles(g, size, this::reliefTile);
+      }
+    } catch (final IOException e) {
+      return Optional.empty();
+    } finally {
+      g.dispose();
+    }
+    return Optional.of(shown);
+  }
+
+  private static void drawTiles(
+      final Graphics2D g,
+      final Dimension size,
+      final BiFunction<Integer, Integer, Optional<Path>> tileAt)
+      throws IOException {
+    final int tileSize = tileSize();
+    for (int column = 0; column * tileSize < size.width; column++) {
+      for (int row = 0; row * tileSize < size.height; row++) {
+        final Optional<Path> file = tileAt.apply(column, row);
+        if (file.isPresent()) {
+          final BufferedImage read = ImageIO.read(file.get().toFile());
+          if (read != null) {
+            g.drawImage(read, column * tileSize, row * tileSize, null);
+          }
+        }
+      }
+    }
   }
 
   /** The tile of the map's picture at the column and row, as the game cuts it; empty if missing. */

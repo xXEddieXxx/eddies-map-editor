@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
@@ -20,6 +21,7 @@ import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JMenuItem;
+import javax.swing.JSpinner;
 import javax.swing.JTextField;
 import javax.swing.JViewport;
 import javax.swing.SwingUtilities;
@@ -370,7 +372,9 @@ final class TerritoriesEditorTest {
     assertThat(button.isSelected()).as("on while painting").isTrue();
     assertThat(button.getToolTipText())
         .as("says what it does")
-        .isEqualTo("Paint: give many territories an owner, a capital, PUs, units, rules or effects");
+        .isEqualTo(
+            "Paint: give many territories an owner, a capital, PUs, units, rules, effects or"
+                + " textures");
   }
 
   @DisplayName("Copy units names its source and is off until a territory is chosen")
@@ -696,6 +700,95 @@ final class TerritoriesEditorTest {
     assertThat(seen.get(4))
         .as("one undo takes back the whole stroke")
         .isNotEqualTo(Optional.of("Italians"));
+  }
+
+  @DisplayName("A texture stroke paints land and sea as one step; the banner moves the texture")
+  @Test
+  void texturePaintsAndMoves() throws Exception {
+    // given
+    final MapProject project = givenMinimap();
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenMap(project);
+          final TerritoriesEditor editor = new TerritoriesEditor(project, map);
+          editor.showing();
+          menuItem(editor, "Coastal sea").doClick();
+          editor.paintStroke(List.of(NORTH, SEA));
+          seen.add(project.getFiles().textures());
+          find(map, JSpinner.class, s -> s.getToolTipText().contains("right")).setValue(7);
+          seen.add(project.getFiles().textureOffset("Coastal sea"));
+          project.undo();
+          project.undo();
+          seen.add(project.getFiles().textures());
+        });
+
+    // then
+    assertThat(seen.get(0))
+        .as("each territory passed has the texture")
+        .isEqualTo(Map.of(NORTH, "Coastal sea", SEA, "Coastal sea"));
+    assertThat(seen.get(1)).as("X moves the texture").isEqualTo(new Point(7, 0));
+    assertThat(seen.get(2)).as("the offset and the whole stroke are one step each").isEqualTo(Map.of());
+  }
+
+  @DisplayName("The map shows textures while a texture brush or No texture is chosen, else not")
+  @Test
+  void texturesShowWithTheirBrushes() throws Exception {
+    // given: Territory 1 in forest, on screen within (0, 0) to (100, 55)
+    final MapProject project = givenPictureMap();
+    project.editFiles(files -> files.withTexture("Territory 1", Optional.of("Forest")));
+    final List<Integer> changed = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenMap(project);
+          final TerritoriesEditor editor = new TerritoriesEditor(project, map);
+          editor.showing();
+          final MapCanvas canvas = find(map, MapCanvas.class, c -> true);
+          canvas.setSize(400, 300);
+          // the picture would be made smaller in the background
+          canvas.hidePicture();
+          final BufferedImage before = shown(canvas);
+          menuItem(editor, "Forest").doClick();
+          changed.add(changedPixels(before, shown(canvas)));
+          menuItem(editor, "Impassable").doClick();
+          changed.add(changedPixels(before, shown(canvas)));
+          menuItem(editor, "No texture").doClick();
+          changed.add(changedPixels(before, shown(canvas)));
+          find(map, AbstractButton.class, b -> "Done".equals(b.getText())).doClick();
+          changed.add(changedPixels(before, shown(canvas)));
+        });
+
+    // then: of Territory 1's 5,500 pixels on screen
+    assertThat(changed.get(0)).as("the forest brush shows the trees").isGreaterThan(50);
+    assertThat(changed.get(0))
+        .as("as sparse strokes: the owner's color stays between them")
+        .isLessThan(5500 / 2);
+    assertThat(changed.get(1)).as("another brush does not").isZero();
+    assertThat(changed.get(2)).as("No texture shows what it clears").isGreaterThan(50);
+    assertThat(changed.get(3)).as("gone once painting is done").isZero();
+  }
+
+  private static BufferedImage shown(final MapCanvas canvas) {
+    final BufferedImage shown = new BufferedImage(400, 300, BufferedImage.TYPE_INT_RGB);
+    final java.awt.Graphics2D g = shown.createGraphics();
+    canvas.paint(g);
+    g.dispose();
+    return shown;
+  }
+
+  /** How many pixels within Territory 1 on screen differ. */
+  private static int changedPixels(final BufferedImage before, final BufferedImage after) {
+    int changed = 0;
+    for (int y = 0; y < 55; y++) {
+      for (int x = 0; x < 100; x++) {
+        changed += before.getRGB(x, y) != after.getRGB(x, y) ? 1 : 0;
+      }
+    }
+    return changed;
   }
 
   @DisplayName("The Circle draws a closed ring into the picture, one step; it makes a new area")

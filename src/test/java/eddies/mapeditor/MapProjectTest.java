@@ -53,6 +53,51 @@ final class MapProjectTest {
         .project();
   }
 
+  @DisplayName("A painted texture and its offset are map.properties steps, undone one by one")
+  @Test
+  void texturesAreSteps() throws Exception {
+    // given
+    final MapProject project = givenMinimapProject();
+
+    // when
+    project.editFiles(files -> files.withTexture(NORTH, Optional.of("Forest")));
+    project.setTextureOffset("Forest", new Point(5, -3));
+    final Properties painted = project.getFiles().properties();
+    final Point offset = project.getFiles().textureOffset("Forest");
+    project.undo();
+    final Point undoneOffset = project.getFiles().textureOffset("Forest");
+    final Map<String, String> beforeUndo = project.getFiles().textures();
+    project.undo();
+
+    // then
+    assertThat(painted.getProperty(MapFiles.TEXTURE + NORTH))
+        .as("the territory's texture, kept in map.properties")
+        .isEqualTo("Forest");
+    assertThat(painted.getProperty(MapFiles.TEXTURE_OFFSET + "Forest")).isEqualTo("5,-3");
+    assertThat(offset).as("the offset as written").isEqualTo(new Point(5, -3));
+    assertThat(undoneOffset).as("one undo takes the offset back").isEqualTo(new Point());
+    assertThat(beforeUndo).as("and keeps the texture").containsEntry(NORTH, "Forest");
+    assertThat(project.getFiles().textures()).as("the next takes the texture back").isEmpty();
+  }
+
+  @DisplayName("A renamed territory keeps its texture; a removed one's goes with it")
+  @Test
+  void textureFollowsTerritory() throws Exception {
+    // given
+    final MapProject project = givenMinimapProject();
+    project.editFiles(files -> files.withTexture(NORTH, Optional.of("Forest")));
+
+    // when
+    project.rename(NORTH, "Archangel");
+    final MapFiles removed = project.getFiles().withoutTerritory("Archangel");
+
+    // then
+    assertThat(project.getFiles().textures())
+        .as("the texture under the new name only")
+        .isEqualTo(Map.of("Archangel", "Forest"));
+    assertThat(removed.textures()).as("no texture of a territory no more").isEmpty();
+  }
+
   @DisplayName("A nation's imported unit picture is shown and saved; taken back, the game's again")
   @Test
   void importsNationUnitPictures() throws Exception {
@@ -475,6 +520,28 @@ final class MapProjectTest {
     assertThat(MapXml.neighbors(project.game(), "West"))
         .as("its neighbour across the old border")
         .contains(TOP_LEFT, TOP_RIGHT);
+  }
+
+  @DisplayName("A split's new part keeps the territory's texture")
+  @Test
+  void splitKeepsTexture() throws Exception {
+    // given
+    final MapProject project = givenSavedMapWithRed();
+    project.editFiles(files -> files.withTexture("Territory 4", Optional.of("Desert")));
+    final OutlineCut.Cut cut =
+        OutlineCut.cut(
+                project.getFiles().polygons().get("Territory 4"),
+                List.of(new Point(150, 160), new Point(450, 160)))
+            .orElseThrow();
+
+    // when
+    project.splitTerritory("Territory 4", cut, "South");
+
+    // then
+    assertThat(project.getFiles().textures())
+        .as("both parts in the desert")
+        .containsEntry("Territory 4", "Desert")
+        .containsEntry("South", "Desert");
   }
 
   @DisplayName("A split drawn into the held picture counts as drawn for Make territories")

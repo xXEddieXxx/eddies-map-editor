@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.UnaryOperator;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
 import javax.swing.BorderFactory;
@@ -153,10 +154,18 @@ final class CanalsEditor implements Editor {
     }
   }
 
-  /** The open canal's territories marked, and the banner that says what a click does. */
+  /**
+   * Every canal's territories marked, the open one's strongly, and the banner that says what a
+   * click does.
+   */
   private void showOnMap() {
     final Optional<Canal> canal = shown();
-    map.mark(canal.map(c -> Set.copyOf(territories(c))).orElse(Set.of()));
+    final Set<String> open = canal.map(c -> Set.copyOf(territories(c))).orElse(Set.of());
+    map.mark(
+        open,
+        CanalXml.canals(project.game()).stream()
+            .flatMap(c -> territories(c).stream())
+            .collect(Collectors.toSet()));
     canal.ifPresentOrElse(
         c ->
             map.showBanner(

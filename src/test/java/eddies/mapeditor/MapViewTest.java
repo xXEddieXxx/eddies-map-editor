@@ -266,8 +266,8 @@ final class MapViewTest {
             "Neighbours",
             "Select",
             "▾",
-            "Decorations",
-            "Draw borders");
+            "Draw borders",
+            "▾");
     assertThat(inLegend).as("the legend has only keys").containsExactly(false);
   }
 
@@ -342,8 +342,8 @@ final class MapViewTest {
 
     // then
     assertThat(toolbar)
-        .as("glyphs only, Paint with its arrow")
-        .startsWith("", "", "", "", "", "", "", "▾", "", "");
+        .as("glyphs only, Paint and Places with their arrows")
+        .startsWith("", "", "", "", "", "", "", "▾", "", "▾");
     assertThat(select)
         .as("Select as its glyph, named in its tool tip")
         .containsExactly(
@@ -446,15 +446,13 @@ final class MapViewTest {
     }
   }
 
-  /** The map at this width, laid out, with Territories' modes above it, Decorations too. */
+  /** The map at this width, laid out, with Territories' modes above it. */
   private static MapView givenToolbar(final int width) {
     final MapProject project = MapProject.newEmpty();
     final BufferedImage picture = MapPictureTest.givenPicture();
     project.loadPicture(picture, MapPicture.detect(picture));
     final MapView map = new MapView(project, () -> {}, () -> {}, () -> {});
     new TerritoriesEditor(project, map).showing();
-    // shown on a map with pictures in misc
-    toolbarButton(map, "Decorations").setVisible(true);
     map.setSize(width, 600);
     // twice, as the toolbar may change texts and lines in its layout
     layOut(map);

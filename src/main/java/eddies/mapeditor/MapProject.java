@@ -267,6 +267,11 @@ final class MapProject {
     }
   }
 
+  /** Changes the map's files, eg textures painted on territories; one changing nothing is no step. */
+  void editFiles(final UnaryOperator<MapFiles> change) {
+    stepFiles(change.apply(current.files()));
+  }
+
   private void step(final State next) {
     undos.push(current);
     redos.clear();
@@ -668,7 +673,10 @@ final class MapProject {
     step(
         new State(
             changed,
-            pictured.withOutlines(territory, cut.kept()).withOutlines(newName, cut.split()),
+            pictured
+                .withOutlines(territory, cut.kept())
+                .withOutlines(newName, cut.split())
+                .withTexture(newName, Optional.ofNullable(files.textures().get(territory))),
             current.texts(),
             pictured == files ? current.drawn() : drawnWith(drawn.orElseThrow())));
     return true;
@@ -769,6 +777,13 @@ final class MapProject {
     stepFiles(changed);
   }
 
+  /** Where the texture's pictures start on the map, as one step; 0,0 needs no entry. */
+  void setTextureOffset(final String texture, final Point offset) {
+    setMapProperty(
+        MapFiles.TEXTURE_OFFSET + texture,
+        offset.x == 0 && offset.y == 0 ? "" : offset.x + "," + offset.y);
+  }
+
   /** The nation's color, and its units' tint along with it when it was the old color, one step. */
   void setNationColor(final String nation, final Color color) {
     if (color.equals(nationColor(nation))) {
@@ -855,12 +870,26 @@ final class MapProject {
   }
 
   /**
+   * Lays out the territories' unit places afresh, at most so many each, all as one step, {@link
+   * MapFiles#unitPlacesLaidOut}.
+   */
+  void layOutUnitPlaces(
+      final MapFiles.UnitLayout layout, final int most, final Collection<String> territories) {
+    stepFiles(current.files().withUnitPlacesLaidOut(layout, most, territories));
+  }
+
+  /**
    * Places the territory's marker, eg its name, at this point, as one step; the index counts the
    * effects, 0 for the other markers.
    */
   void setMarkerPlace(
       final Marker marker, final String territory, final int index, final Point place) {
     stepFiles(current.files().withMarkerPlace(game(), marker, territory, index, place));
+  }
+
+  /** Moves the territory's center to this point, as one step. */
+  void setCenter(final String territory, final Point center) {
+    stepFiles(current.files().withCenter(territory, center));
   }
 
   /** Draws the misc picture at these top left corners, as one step; none takes it off the map. */
@@ -1245,7 +1274,9 @@ final class MapProject {
     final MapFiles files = saving.files().withFolder(mapFolder);
     final boolean firstSave = xmlFile == null;
     // the outlines first: if they fail, the game file still names the territories they hold
-    if (firstSave || saving.files().polygons() != saved.files().polygons()) {
+    if (firstSave
+        || saving.files().polygons() != saved.files().polygons()
+        || saving.files().centers() != saved.files().centers()) {
       files.writeOutlines();
     }
     // a map made here gets them also when its picture comes after the first save

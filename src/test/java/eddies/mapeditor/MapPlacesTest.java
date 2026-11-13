@@ -69,6 +69,29 @@ final class MapPlacesTest {
         .containsExactly(moved);
   }
 
+  @DisplayName("A moved center is one step and saved over centers.txt, keeping its .bak")
+  @Test
+  void savesMovedCenter() throws Exception {
+    final MapProject project = givenSavedMapWithUnknownPlace();
+    final Path centers = placeTxt(project).resolveSibling("centers.txt");
+    final String before = Files.readString(centers);
+    final Point moved = new Point(11, 12);
+
+    project.setCenter(TERRITORY, moved);
+    project.save();
+
+    assertThat(PointFileReaderWriter.readOneToOne(centers).get(TERRITORY))
+        .as("the territory's center, moved")
+        .isEqualTo(moved);
+    assertThat(centers.resolveSibling("centers.txt.bak"))
+        .as("the file as it was before the save")
+        .hasContent(before);
+    project.undo();
+    assertThat(project.getFiles().centers().get(TERRITORY))
+        .as("undone: the center as opened")
+        .isNotEqualTo(moved);
+  }
+
   @DisplayName("A save without moved places leaves the files of places as they are")
   @Test
   void savesNoUnchangedPlaces() throws Exception {
@@ -108,6 +131,35 @@ final class MapPlacesTest {
     assertThat(project.hasUnsavedChanges()).as("back to the saved map").isFalse();
     project.setUnitPlaces(TERRITORY, List.of());
     assertThat(project.canUndo()).as("taking the last place away is refused").isFalse();
+  }
+
+  @DisplayName("Laying out several territories' unit places is one step, with their overflow")
+  @Test
+  void layOutIsOneStep() throws Exception {
+    final MapProject project = givenSavedMapWithUnknownPlace();
+    final List<String> territories = List.of(TERRITORY, SEA);
+    final Map<String, List<Point>> before =
+        Map.of(
+            TERRITORY, project.getFiles().unitPlaces(TERRITORY),
+            SEA, project.getFiles().unitPlaces(SEA));
+
+    project.layOutUnitPlaces(MapFiles.UnitLayout.GRID, 16, territories);
+    final MapFiles laidOut = project.getFiles();
+    project.undo();
+
+    assertThat(territories)
+        .as("both laid out anew")
+        .allMatch(t -> !laidOut.unitPlaces(t).equals(before.get(t)));
+    assertThat(territories)
+        .as("each with the overflow its layout chose")
+        .allMatch(
+            t ->
+                laidOut.places().units().get(t).equals(
+                    laidOut.unitPlacesLaidOut(MapFiles.UnitLayout.GRID, 16, t)));
+    assertThat(territories)
+        .as("one undo takes back both")
+        .allMatch(t -> project.getFiles().unitPlaces(t).equals(before.get(t)));
+    assertThat(project.canUndo()).as("it was a single step").isFalse();
   }
 
   @DisplayName("A renamed territory keeps its places and saves them under its new name")

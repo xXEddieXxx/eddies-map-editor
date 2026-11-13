@@ -8,16 +8,19 @@ import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferByte;
 import java.awt.image.DataBufferInt;
 import java.awt.image.IndexColorModel;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.ToIntFunction;
 import java.util.stream.IntStream;
 
 /**
  * A relief made from the territories' outlines, for a map maker without a paint program: a dark
  * line and a soft shadow along the coasts, wave lines in the sea beside them, and land raised a
  * little at its borders with light from the top left; see-through everywhere else, as the game
- * draws the relief over the map.
+ * draws the relief over the map. A territory with a texture ({@link Textures}) has it under all
+ * that, so its borders stay, at the texture's own alpha: its see-through parts add nothing.
  */
 final class ReliefMaker {
   /** What the relief has besides the coasts and the raised land. */
@@ -44,6 +47,9 @@ final class ReliefMaker {
   private static final float SHADOW = 10;
   private static final float[] WAVES = {5, 9.5f, 15};
   private static final float[] WAVE_ALPHAS = {0.3f, 0.2f, 0.12f};
+  // a texture covers nearly all of the map below, as a painted one would; the map shows it so too
+  static final float TEXTURE_ALPHA = 0.9f;
+  private static final int MAX_FILLS = 255;
 
   private ReliefMaker() {}
 
@@ -51,16 +57,34 @@ final class ReliefMaker {
    * The relief of the area of the map; for the whole map the area is its size.
    *
    * @param strength how strong the relief is drawn, 50 as meant, up to 100
+   * @param fills the textured territories' fills, by territory
    */
   static BufferedImage make(
       final Rectangle area,
       final Map<String, List<Polygon>> polygons,
       final Set<String> water,
       final int strength,
-      final Set<Touch> touches) {
+      final Set<Touch> touches,
+      final Map<String, Textures.Fill> fills) {
     final int width = area.width;
     final int height = area.height;
     final byte[] kind = kinds(area, polygons, water);
+    final List<String> textured =
+        polygons.keySet().stream()
+            .filter(fills::containsKey)
+            // land over sea, as kinds draws them
+            .sorted(Comparator.comparing(t -> !water.contains(t)))
+            .toList();
+    // territories of one texture share its fill, so its pixels are taken once
+    // shortcut: at most 255 different fills, the rest left out; a short index if maps need more
+    final List<Textures.Fill> distinct =
+        textured.stream().map(fills::get).distinct().limit(MAX_FILLS).toList();
+    // without textures no index: on a big map it would take as much memory as the kinds
+    final byte[] fillOf =
+        distinct.isEmpty()
+            ? new byte[0]
+            : fillIndex(area, polygons, textured, t -> distinct.indexOf(fills.get(t)));
+    final int[][] texels = distinct.stream().map(f -> pixels(f.picture())).toArray(int[][]::new);
     final byte[] toWater = distances(kind, width, height, WATER);
     final byte[] toLand = distances(kind, width, height, LAND);
     final byte[] toBorder = distancesFromOther(kind, width, height);
@@ -74,6 +98,17 @@ final class ReliefMaker {
               for (int x = 0; x < width; x++) {
                 final int i = y * width + x;
                 final Pixel pixel = new Pixel(scale);
+                final int f = fillOf.length == 0 ? 0 : fillOf[i] & 0xFF;
+                if (f > 0) {
+                  final Textures.Fill fill = distinct.get(f - 1);
+                  final int w = fill.picture().getWidth();
+                  final int h = fill.picture().getHeight();
+                  final int tx = Math.floorMod(x + area.x - fill.offset().x, w);
+                  final int ty = Math.floorMod(y + area.y - fill.offset().y, h);
+                  final int texel = texels[f - 1][ty * w + tx];
+                  // a see-through texture pixel leaves the relief as it is
+                  pixel.overColor(texel, TEXTURE_ALPHA * (texel >>> 24) / 255f);
+                }
                 shade(pixel, i, x, y, width, height, kind, toWater, toLand, toBorder);
                 if (touches.contains(Touch.WAVES) && kind[i] == WATER) {
                   waves(pixel, (toLand[i] & 0xFF) / (float) UNIT);
@@ -110,6 +145,42 @@ final class ReliefMaker {
         .forEach(g::drawPolygon);
     g.dispose();
     return ((DataBufferByte) kinds.getRaster().getDataBuffer()).getData();
+  }
+
+  /** Which fill each pixel has, its index counted from 1; 0 for none. */
+  private static byte[] fillIndex(
+      final Rectangle area,
+      final Map<String, List<Polygon>> polygons,
+      final List<String> textured,
+      final ToIntFunction<String> fillOf) {
+    // a palette whose entry i is the color (i, 0, 0), so a fill in that color writes i
+    final byte[] reds = new byte[256];
+    for (int i = 0; i < reds.length; i++) {
+      reds[i] = (byte) i;
+    }
+    final byte[] none = new byte[256];
+    final BufferedImage index =
+        new BufferedImage(
+            area.width,
+            area.height,
+            BufferedImage.TYPE_BYTE_INDEXED,
+            new IndexColorModel(8, 256, reds, none, none));
+    final Graphics2D g = index.createGraphics();
+    g.translate(-area.x, -area.y);
+    for (final String territory : textured) {
+      final int fill = fillOf.applyAsInt(territory);
+      if (fill >= 0) {
+        g.setColor(new Color(fill + 1, 0, 0));
+        polygons.get(territory).forEach(g::fill);
+      }
+    }
+    g.dispose();
+    return ((DataBufferByte) index.getRaster().getDataBuffer()).getData();
+  }
+
+  private static int[] pixels(final BufferedImage picture) {
+    final int width = picture.getWidth();
+    return picture.getRGB(0, 0, width, picture.getHeight(), null, 0, width);
   }
 
   private static void fillIf(final Graphics2D g, final List<Polygon> shapes, final boolean fill) {
@@ -273,11 +344,13 @@ final class ReliefMaker {
     return ((h ^ (h >>> 16)) & 0xFFFF) / 32_767.5f - 1;
   }
 
-  /** One pixel of the relief, gray layers laid over each other. */
+  /** One pixel of the relief, layers laid over each other: gray ones and textures. */
   private static final class Pixel {
     private final float scale;
     // premultiplied
-    private float gray;
+    private float red;
+    private float green;
+    private float blue;
     private float alpha;
 
     Pixel(final float scale) {
@@ -285,8 +358,20 @@ final class ReliefMaker {
     }
 
     void over(final float layerGray, final float layerAlpha) {
+      over(layerGray, layerGray, layerGray, layerAlpha);
+    }
+
+    /** A texture's color at this alpha; the alpha the texture has is the caller's to apply. */
+    void overColor(final int rgb, final float layerAlpha) {
+      over(
+          (rgb >> 16 & 0xFF) / 255f, (rgb >> 8 & 0xFF) / 255f, (rgb & 0xFF) / 255f, layerAlpha);
+    }
+
+    private void over(final float r, final float g, final float b, final float layerAlpha) {
       final float a = Math.min(1, layerAlpha * scale);
-      gray = layerGray * a + gray * (1 - a);
+      red = r * a + red * (1 - a);
+      green = g * a + green * (1 - a);
+      blue = b * a + blue * (1 - a);
       alpha = a + alpha * (1 - a);
     }
 
@@ -294,8 +379,14 @@ final class ReliefMaker {
       if (alpha <= 0) {
         return 0;
       }
-      final int v = Math.round(gray / alpha * 255);
-      return Math.round(alpha * 255) << 24 | v << 16 | v << 8 | v;
+      return Math.round(alpha * 255) << 24
+          | channel(red) << 16
+          | channel(green) << 8
+          | channel(blue);
+    }
+
+    private int channel(final float premultiplied) {
+      return Math.clamp(Math.round(premultiplied / alpha * 255), 0, 255);
     }
   }
 }

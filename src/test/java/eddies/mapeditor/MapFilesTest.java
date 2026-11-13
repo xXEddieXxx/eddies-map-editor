@@ -9,10 +9,15 @@ import java.awt.Point;
 import java.awt.Polygon;
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import javax.imageio.ImageIO;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.triplea.util.Tuple;
 import eddies.mapeditor.MapFiles.NationUnit;
 import eddies.mapeditor.MapFiles.Redrawn;
 
@@ -21,6 +26,54 @@ final class MapFilesTest {
   private static final String TOP_LEFT = "Territory 1";
   private static final String TOP_RIGHT = "Territory 2";
   private static final String UNCHANGED = "Territory 3";
+
+  @TempDir Path folder;
+
+  @DisplayName("The shown picture: the tiles, the relief tiles over them, a missing one clear")
+  @Test
+  void shownPictureFromTiles() throws Exception {
+    // given: a map of 2 x 2 tiles, base tiles blue and green above, none below, one relief tile
+    // see-through at its left half, red at its right
+    final int size = MapFiles.tileSize();
+    givenTile("baseTiles", "0_0.png", Color.BLUE, size);
+    givenTile("baseTiles", "1_0.png", Color.GREEN, size);
+    final BufferedImage relief = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
+    final Graphics2D g = relief.createGraphics();
+    g.setColor(Color.RED);
+    g.fillRect(size / 2, 0, size / 2, size);
+    g.dispose();
+    Files.createDirectories(folder.resolve("reliefTiles"));
+    ImageIO.write(relief, "png", folder.resolve("reliefTiles/0_0.png").toFile());
+    final MapFiles files =
+        MapFiles.none()
+            .withFolder(folder)
+            .withProperty("map.width", String.valueOf(2 * size))
+            .withProperty("map.height", String.valueOf(2 * size));
+
+    // when
+    final BufferedImage shown = files.shownPicture().orElseThrow();
+
+    // then
+    assertThat(files.hasPictureOrRelief()).as("it has tiles").isTrue();
+    assertThat(MapFiles.none().hasPictureOrRelief()).as("no files, no picture").isFalse();
+    assertThat(shown.getRGB(10, 10)).as("the base tile under a clear relief").isEqualTo(0xFF0000FF);
+    assertThat(shown.getRGB(size - 10, 10)).as("the relief over it").isEqualTo(0xFFFF0000);
+    assertThat(shown.getRGB(size + 10, 10))
+        .as("the second tile in its place")
+        .isEqualTo(0xFF00FF00);
+    assertThat(shown.getRGB(10, size + 10) >>> 24).as("a missing tile stays clear").isZero();
+  }
+
+  private void givenTile(final String tiles, final String name, final Color color, final int size)
+      throws Exception {
+    final BufferedImage tile = new BufferedImage(size, size, BufferedImage.TYPE_INT_RGB);
+    final Graphics2D g = tile.createGraphics();
+    g.setColor(color);
+    g.fillRect(0, 0, size, size);
+    g.dispose();
+    Files.createDirectories(folder.resolve(tiles));
+    ImageIO.write(tile, "png", folder.resolve(tiles).resolve(name).toFile());
+  }
 
   private static MapFiles givenFilesOfPicture() {
     final BufferedImage picture = MapPictureTest.givenPicture();
@@ -230,6 +283,121 @@ final class MapFilesTest {
         .allMatch(p -> (p.x - places.getFirst().x) % 24 == 0)
         .allMatch(p -> (p.y - places.getFirst().y) % 24 == 0)
         .anyMatch(p -> Math.abs(p.x - places.getFirst().x) == 24);
+  }
+
+  // a unit of 48 px with 2 px around it: one place every 52 px
+  private static final int STEP = 52;
+
+  /** A territory "Square" of 480 px, its center at 340, 340. */
+  private static MapFiles givenSquare() {
+    return MapFiles.none().withOutlines("Square", List.of(square(100, 100, 480)));
+  }
+
+  /** The place of the grid square so many squares right and down of the center's (316, 316). */
+  private static Point squareAt(final int right, final int down) {
+    return new Point(316 + right * STEP, 316 + down * STEP);
+  }
+
+  @DisplayName("Laid out, squeeze starts above the center, grid below; both leave the center free")
+  @Test
+  void laysOutUnitPlaces() {
+    final MapFiles files = givenSquare();
+    final Polygon outline = files.polygons().get("Square").getFirst();
+    final Point center = files.centers().get("Square");
+    final Dimension unit = files.unitSize();
+
+    final List<Point> squeeze =
+        files.unitPlacesLaidOut(MapFiles.UnitLayout.SQUEEZE, 100, "Square").getFirst();
+    final List<Point> grid =
+        files.unitPlacesLaidOut(MapFiles.UnitLayout.GRID, 100, "Square").getFirst();
+
+    assertThat(center).as("the square's middle").isEqualTo(new Point(340, 340));
+    assertThat(squeeze.subList(0, 2))
+        .as("straight above the center, then clockwise to the right")
+        .containsExactly(squareAt(0, -1), squareAt(1, -1));
+    assertThat(grid.subList(0, 5))
+        .as("the row below the center from 6:00, left first: left to right 4 2 1 3 5")
+        .containsExactly(squareAt(0, 1), squareAt(-1, 1), squareAt(1, 1), squareAt(-2, 1),
+            squareAt(2, 1));
+    assertThat(grid.subList(9, 11))
+        .as("the row below the first, after its 9 places, left to right")
+        .containsExactly(squareAt(-4, 2), squareAt(-3, 2));
+    assertThat(grid.get(2).x - grid.get(0).x - unit.width)
+        .as("4 px between neighbouring units")
+        .isEqualTo(4);
+    for (final List<Point> places : List.of(squeeze, grid)) {
+      assertThat(places)
+          .as("every unit wholly inside, none on the center, 9 by 9 but the center")
+          .allMatch(p -> outline.contains(new Rectangle(p, unit)))
+          .noneMatch(p -> new Rectangle(p, unit).contains(center))
+          .doesNotHaveDuplicates()
+          .hasSize(80);
+    }
+  }
+
+  @DisplayName("Laid out to a limit, the last place ends the bottom row, where there is more room")
+  @Test
+  void laysOutUnitPlacesToLimit() {
+    final MapFiles files = givenSquare();
+
+    final Tuple<List<Point>, Boolean> grid =
+        files.unitPlacesLaidOut(MapFiles.UnitLayout.GRID, 16, "Square");
+    final Tuple<List<Point>, Boolean> squeeze =
+        files.unitPlacesLaidOut(MapFiles.UnitLayout.SQUEEZE, 16, "Square");
+
+    assertThat(grid.getFirst()).as("at most 16").hasSize(16);
+    assertThat(squeeze.getFirst()).as("at most 16").hasSize(16);
+    assertThat(grid.getFirst().getLast())
+        .as("9 in the first row, 7 in the second from the left: its right end, 2 free beyond it")
+        .isEqualTo(squareAt(2, 2));
+    assertThat(grid.getSecond()).as("extra units go right").isFalse();
+  }
+
+  @DisplayName("Laid out where the bottom row has more room on the left, extra units go left")
+  @Test
+  void laysOutOverflowToRoomyLeft() {
+    // wide on top, and below the center only to the left of it
+    final Polygon outline =
+        new Polygon(new int[] {0, 1000, 1000, 600, 600, 0}, new int[] {0, 0, 100, 100, 300, 300}, 6);
+    final MapFiles files = MapFiles.none().withOutlines("Hook", List.of(outline));
+    final Point center = files.centers().get("Hook");
+    final Point first = new Point(center.x - 24, center.y + 28);
+
+    final Tuple<List<Point>, Boolean> laidOut =
+        files.unitPlacesLaidOut(MapFiles.UnitLayout.GRID, 3, "Hook");
+
+    assertThat(laidOut.getFirst())
+        .as("6:00 first, the left end of the row last")
+        .containsExactly(
+            first, new Point(first.x + STEP, first.y), new Point(first.x - STEP, first.y));
+    assertThat(laidOut.getSecond()).as("extra units go left, where the row has room").isTrue();
+  }
+
+  @DisplayName("Laid out in a sea around an island, no place lies on the island")
+  @Test
+  void laysOutAroundIsland() {
+    // the sea's outline has no hole: the island is only the other territory's outline
+    final Polygon island = square(330, 380, 120);
+    final MapFiles files = givenSquare().withOutlines("Island", List.of(island));
+
+    final List<Point> places =
+        files.unitPlacesLaidOut(MapFiles.UnitLayout.GRID, 100, "Square").getFirst();
+
+    assertThat(places)
+        .as("around the island, never on it")
+        .isNotEmpty()
+        .noneMatch(p -> island.intersects(new Rectangle(p, files.unitSize())));
+  }
+
+  @DisplayName("A territory too small for a laid out unit keeps a found place")
+  @Test
+  void laidOutTooSmallKeepsFoundPlace() {
+    final MapFiles files = MapFiles.none().withOutlines("Speck", List.of(square(0, 0, 10)));
+
+    final List<Point> places =
+        files.unitPlacesLaidOut(MapFiles.UnitLayout.SQUEEZE, 16, "Speck").getFirst();
+
+    assertThat(places).as("as found today").isEqualTo(files.unitPlaces("Speck")).isNotEmpty();
   }
 
   @DisplayName("A redrawn border finds the places of its territories again; the others keep theirs")
