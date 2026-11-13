@@ -10,6 +10,7 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.prefs.Preferences;
 import java.util.stream.Stream;
+import java.util.zip.ZipFile;
 import javax.swing.JComponent;
 import javax.swing.JFileChooser;
 import javax.swing.JOptionPane;
@@ -39,14 +40,24 @@ public final class EddiesMapEditor {
       tell("TripleA did not start. Install it again from triplea-game.org.");
       System.exit(1);
     }
+    final List<Path> found =
+        Stream.concat(
+                Stream.of(PlayWith.program(), PlayWith.installed())
+                    .flatMap(Optional::stream)
+                    .map(EddiesMapEditor::jarOf)
+                    .flatMap(Optional::stream),
+                keptJar().stream())
+            .toList();
     final Optional<Path> jar =
-        Stream.of(PlayWith.program(), PlayWith.installed())
-            .flatMap(Optional::stream)
-            .map(EddiesMapEditor::jarOf)
-            .flatMap(Optional::stream)
+        found.stream()
+            .filter(EddiesMapEditor::isNewEnough)
             .findFirst()
-            .or(EddiesMapEditor::keptJar)
-            .or(EddiesMapEditor::askForTriplea);
+            .or(
+                () -> {
+                  // a newer TripleA may be where it was not looked for
+                  found.stream().findFirst().ifPresent(old -> tell(tooOld(old)));
+                  return askForTriplea();
+                });
     if (jar.isEmpty()) {
       tell("Eddie's Map Editor needs TripleA. Install it from triplea-game.org and start again.");
       System.exit(1);
@@ -88,6 +99,25 @@ public final class EddiesMapEditor {
     }
   }
 
+  /**
+   * Whether the TripleA has what the editor uses: FlatLaf, its look, came with the releases of
+   * 2026-06; older ones (Substance) stop the editor at its start.
+   */
+  static boolean isNewEnough(final Path jar) {
+    try (ZipFile zip = new ZipFile(jar.toFile())) {
+      return zip.getEntry("com/formdev/flatlaf/FlatLaf.class") != null;
+    } catch (final IOException e) {
+      return false;
+    }
+  }
+
+  private static String tooOld(final Path jar) {
+    return "The TripleA found ("
+        + jar.getFileName()
+        + ") is too old for Eddie's Map Editor.\n"
+        + "Install the newest TripleA from triplea-game.org, or show where a newer one is.";
+  }
+
   private static Optional<Path> keptJar() {
     return Optional.of(preferences().get(JAR, ""))
         .filter(jar -> !jar.isEmpty())
@@ -103,14 +133,17 @@ public final class EddiesMapEditor {
     while (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
       final Path chosen = chooser.getSelectedFile().toPath();
       final Optional<Path> jar = jarOf(chosen);
-      if (jar.isPresent()) {
+      if (jar.isPresent() && !isNewEnough(jar.get())) {
+        tell(tooOld(jar.get()));
+      } else if (jar.isPresent()) {
         preferences().put(JAR, jar.get().toString());
         if (isProgram(chosen)) {
           PlayWith.keep(chosen);
         }
         return jar;
+      } else {
+        tell("No TripleA there. Choose TripleA.exe, TripleA.app or the folder TripleA is in.");
       }
-      tell("No TripleA there. Choose TripleA.exe, TripleA.app or the folder TripleA is in.");
     }
     return Optional.empty();
   }

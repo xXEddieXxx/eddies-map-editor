@@ -29,6 +29,8 @@ existing map folder. Then change its territories, nations, units and rules, and 
    [`eddies-map-editor-windows.zip`](https://github.com/xXEddieXxx/eddies-map-editor/releases/latest/download/eddies-map-editor-windows.zip),
    unzip it anywhere and start `Eddies Map Editor.exe`. It brings its own Java and runs with your
    installed [TripleA](https://triplea-game.org/download/), which it finds by itself or asks for.
+   It needs a TripleA from June 2026 or newer (older ones lack the look the editor uses); with an
+   older one it says so at its start.
 2. **macOS and Linux:** download `eddies-map-editor-<version>.zip` from the
    [latest release](https://github.com/xXEddieXxx/eddies-map-editor/releases/latest), install
    [Java 25](https://adoptium.net/) and TripleA, and start `bin/eddies-map-editor`.
@@ -65,6 +67,7 @@ link leads there, and a remove that triggers still need offers *Show in Attachme
 | ↳ *Paint* | Give many territories an owner, a capital, PUs, units, rules, effects or textures at once: click them, or hold the left button and drag across them (one undo step per stroke). With a terrain effect brush the map shows every territory's effects as small pictures. Textures (light line drawings that hint at open sea, coastal sea, grass, forest, hills, mountains, desert, swamp or snow, or your own pictures, *Import texture…*; *Find textures in the map…* takes the ones painted into the map's picture or relief) mark territories in the relief that *Map look → Create relief* makes; while one is chosen the map shows them all, and *Offset X/Y* moves a texture to line it up with its neighbour. |
 | ↳ *Draw borders* | Draw border lines into the map picture by hand (like its lines, black or grey; width in px), freehand, as a line of clicked points (double-click or Enter ends it, Backspace takes back a point) or as a circle dragged from corner to corner (Shift: round); a line's ends snap to the borders near them, and a line that ends back at its start is a closed border of its own, eg an island. *Make territories* then turns the areas between them into territories, looking only where lines were drawn since: territories elsewhere stay as they are. |
 | ↳ *Split with a line* | Cut one territory in two; the new border is drawn into the picture in the same line style. |
+| ↳ *Export territory pictures* | In the list's ⋯ menu: a PNG of each territory you tick, cut from the map picture and see-through outside its border, to draw on in a paint program; `territory-pictures.txt` says where each lies on the map. |
 | ↳ *Move places* | Drag where the game draws one territory's units, names, flags and markers. |
 | ↳ *Places* | Show units, centers, names, PUs, capitals, victory cities, convoys and the other markers on every territory, several kinds at once, and drag them into place. Lay out unit places for one or all territories, 4 px apart, at most 16 (or as set) per territory, numbered: *Squeeze* (round the center clockwise from 12:00) or *Grid* (rows below the center, the first at 6:00); the last place ends the bottom row on the side with room, and the units beyond go that way (overflowToLeft). *Decorations* places pictures from the map's `misc` folder anywhere on the map. |
 | **Connections** | Which territories are neighbours. |

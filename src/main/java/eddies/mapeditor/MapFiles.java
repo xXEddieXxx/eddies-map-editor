@@ -14,6 +14,7 @@ import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.Polygon;
 import java.awt.Rectangle;
+import java.awt.geom.Area;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
@@ -1699,6 +1700,36 @@ record MapFiles(
       g.dispose();
     }
     return Optional.of(whole);
+  }
+
+  /** The map's picture without its relief, loaded or put together from its tiles. */
+  Optional<BufferedImage> basePicture() {
+    return picture.or(this::tilesPicture);
+  }
+
+  /** A territory's part of the map's picture and where its top left corner lies on the map. */
+  record TerritoryPicture(BufferedImage picture, Point at) {}
+
+  /**
+   * The territory's part of the map, see-through outside its outlines, eg to draw on in a paint
+   * program and lay back over the map at the same place; empty without outlines on the map.
+   */
+  Optional<TerritoryPicture> territoryPicture(final BufferedImage map, final String territory) {
+    final Area area = new Area();
+    polygons.getOrDefault(territory, List.of()).forEach(p -> area.add(new Area(p)));
+    final Rectangle bounds =
+        area.getBounds().intersection(new Rectangle(map.getWidth(), map.getHeight()));
+    if (bounds.isEmpty()) {
+      return Optional.empty();
+    }
+    final BufferedImage cut =
+        new BufferedImage(bounds.width, bounds.height, BufferedImage.TYPE_INT_ARGB);
+    final Graphics2D g = cut.createGraphics();
+    g.translate(-bounds.x, -bounds.y);
+    g.setClip(area);
+    g.drawImage(map, 0, 0, null);
+    g.dispose();
+    return Optional.of(new TerritoryPicture(cut, bounds.getLocation()));
   }
 
   /** Whether the map has a picture or a relief, loaded or in tiles. */

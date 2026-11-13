@@ -161,7 +161,7 @@ final class CanalsEditor implements Editor {
   private void showOnMap() {
     final Optional<Canal> canal = shown();
     final Set<String> open = canal.map(c -> Set.copyOf(territories(c))).orElse(Set.of());
-    map.mark(
+    map.markCanals(
         open,
         CanalXml.canals(project.game()).stream()
             .flatMap(c -> territories(c).stream())

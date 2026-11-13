@@ -389,6 +389,33 @@ final class MapFilesTest {
         .noneMatch(p -> island.intersects(new Rectangle(p, files.unitSize())));
   }
 
+  @DisplayName("A territory's picture is its part of the map, see-through outside its outline")
+  @Test
+  void cutsTerritoryPicture() {
+    // given: a triangle on a red map
+    final Polygon triangle = new Polygon(new int[] {100, 300, 100}, new int[] {50, 50, 250}, 3);
+    final MapFiles files = MapFiles.none().withOutlines("Corner", List.of(triangle));
+    final BufferedImage map = new BufferedImage(400, 300, BufferedImage.TYPE_INT_ARGB);
+    final Graphics2D g = map.createGraphics();
+    g.setColor(Color.RED);
+    g.fillRect(0, 0, 400, 300);
+    g.dispose();
+
+    // when
+    final MapFiles.TerritoryPicture cut = files.territoryPicture(map, "Corner").orElseThrow();
+
+    // then
+    assertThat(cut.at()).as("its top left on the map").isEqualTo(new Point(100, 50));
+    assertThat(cut.picture().getWidth()).as("as wide as the outline").isEqualTo(200);
+    assertThat(new Color(cut.picture().getRGB(10, 10), true))
+        .as("inside: the map")
+        .isEqualTo(Color.RED);
+    assertThat(cut.picture().getRGB(190, 190) >>> 24)
+        .as("outside the outline: see-through")
+        .isZero();
+    assertThat(files.territoryPicture(map, "Nowhere")).as("no outline, no picture").isEmpty();
+  }
+
   @DisplayName("A territory too small for a laid out unit keeps a found place")
   @Test
   void laidOutTooSmallKeepsFoundPlace() {

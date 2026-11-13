@@ -158,6 +158,8 @@ final class MapCanvas extends JComponent {
   private transient Set<String> marked = Set.of();
   // territories shown lighter beside them, eg every other canal's
   private transient Set<String> faintlyMarked = Set.of();
+  // canals in MARKED on a halo; other tools' marks, eg a nation's land, in the calm accent
+  private boolean canalMarks;
   private transient Consumer<String> onClick = territory -> {};
   // what Esc does, while a tool's mode is on
   private transient Optional<Runnable> onEscape = Optional.empty();
@@ -269,6 +271,7 @@ final class MapCanvas extends JComponent {
       @Nullable String selected,
       Set<String> marked,
       Set<String> faintlyMarked,
+      boolean canalMarks,
       boolean showingTextures,
       int changes,
       MapFiles files,
@@ -538,6 +541,10 @@ final class MapCanvas extends JComponent {
     repaint();
   }
 
+  Optional<String> getSelected() {
+    return Optional.ofNullable(selected);
+  }
+
   void setSelected(@Nullable final String territory) {
     selected = territory;
     repaint();
@@ -562,15 +569,22 @@ final class MapCanvas extends JComponent {
     repaint();
   }
 
-  /** Shows these territories together, in {@link #MARKED}; none for no marks. */
+  /** Shows these territories together in the accent color, eg a nation's land; none for none. */
   void setMarked(final Set<String> territories) {
-    setMarked(territories, Set.of());
+    marked = Set.copyOf(territories);
+    faintlyMarked = Set.of();
+    canalMarks = false;
+    repaint();
   }
 
-  /** Like {@link #setMarked(Set)}, with others shown lighter, eg the other canals. */
-  void setMarked(final Set<String> territories, final Set<String> faintly) {
+  /**
+   * Shows a canal's territories in {@link #MARKED} on a white halo, so they stand out on any
+   * picture, and the other canals' lighter.
+   */
+  void setCanalMarks(final Set<String> territories, final Set<String> faintly) {
     marked = Set.copyOf(territories);
     faintlyMarked = Set.copyOf(faintly);
+    canalMarks = true;
     repaint();
   }
 
@@ -673,6 +687,7 @@ final class MapCanvas extends JComponent {
             selected,
             marked,
             faintlyMarked,
+            canalMarks,
             showingTextures,
             changes,
             project.getFiles(),
@@ -1425,11 +1440,14 @@ final class MapCanvas extends JComponent {
     }
     final boolean isMarked = marked.contains(territory);
     if (isMarked) {
-      // a canal's sea zones filled, its land hatched, so the two read apart
-      g.setColor(withAlpha(MARKED, look.water() ? 0x66 : 0x33));
-      shapes.forEach(g::fill);
+      // sea zones filled, land hatched, so the two read apart
+      final Color mark = canalMarks ? MARKED : Theme.getAccentColor();
+      if (canalMarks || look.water()) {
+        g.setColor(withAlpha(mark, look.water() ? (canalMarks ? 0x66 : 0x59) : 0x33));
+        shapes.forEach(g::fill);
+      }
       if (!look.water()) {
-        g.setPaint(hatch(8 / zoom, MARKED));
+        g.setPaint(hatch(8 / zoom, mark));
         shapes.forEach(g::fill);
       }
     }
@@ -1449,7 +1467,7 @@ final class MapCanvas extends JComponent {
     // a territory with a problem stands out in red, as the legend says
     final boolean problem = !isSelected && problemTerritories().contains(territory);
     // over a picture its own lines are the borders: a thin outline beside them only doubles them
-    if (isMarked) {
+    if (isMarked && canalMarks) {
       // on a white halo, so it reads on any picture
       g.setColor(Color.WHITE);
       g.setStroke(new BasicStroke((float) (7 / zoom)));
@@ -1457,7 +1475,7 @@ final class MapCanvas extends JComponent {
     }
     if (isSelected || problem || !overPicture || political) {
       g.setColor(
-          isMarked
+          isMarked && canalMarks
               ? MARKED
               : isSelected ? Theme.getAccentColor() : problem ? PROBLEM : OUTLINE);
       g.setStroke(new BasicStroke((float) ((isSelected ? 4 : problem ? 3 : 1) / zoom)));

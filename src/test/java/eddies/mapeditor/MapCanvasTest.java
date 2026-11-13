@@ -175,7 +175,7 @@ final class MapCanvasTest {
         () -> {
           final MapCanvas canvas = givenCanvas();
           final int before = magentaPixels(shown(canvas));
-          canvas.setMarked(Set.of(), Set.of(EFFECT_LAND));
+          canvas.setCanalMarks(Set.of(), Set.of(EFFECT_LAND));
           magenta.add(magentaPixels(shown(canvas)) - before);
         });
 
@@ -183,6 +183,41 @@ final class MapCanvasTest {
     assertThat(magenta)
         .as("the territory tinted and outlined in the mark's color")
         .allMatch(n -> n > 100);
+  }
+
+  @DisplayName("Other tools' marks, eg a nation's land, stay in the calm accent, not magenta")
+  @Test
+  void otherMarksNotMagenta() throws Exception {
+    // given
+    final List<Integer> magenta = new ArrayList<>();
+    final List<Integer> changed = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapCanvas canvas = givenCanvas();
+          final BufferedImage before = shown(canvas);
+          canvas.setMarked(Set.of(EFFECT_LAND));
+          final BufferedImage after = shown(canvas);
+          magenta.add(magentaPixels(after) - magentaPixels(before));
+          changed.add(changedPixels(before, after));
+        });
+
+    // then
+    assertThat(magenta).as("no magenta for a nation's land").allMatch(n -> n < 20);
+    assertThat(changed).as("the land is marked all the same").allMatch(n -> n > 100);
+  }
+
+  private static int changedPixels(final BufferedImage before, final BufferedImage after) {
+    int count = 0;
+    for (int y = 0; y < before.getHeight(); y++) {
+      for (int x = 0; x < before.getWidth(); x++) {
+        if (before.getRGB(x, y) != after.getRGB(x, y)) {
+          count++;
+        }
+      }
+    }
+    return count;
   }
 
   /** Pixels clearly more red and blue than green, as the mark's magenta tints them. */

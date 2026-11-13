@@ -27,7 +27,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -37,9 +41,11 @@ import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.UnaryOperator;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import javax.annotation.Nullable;
+import javax.imageio.ImageIO;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.ButtonGroup;
@@ -304,10 +310,15 @@ final class TerritoriesEditor implements Editor {
     final JMenuItem importNames = namesMenu.add("Import names…");
     importNames.setToolTipText("Renames territories by a text or CSV file of lines old;new");
     importNames.addActionListener(e -> importNames());
+    namesMenu.addSeparator();
+    final JMenuItem exportPictures = namesMenu.add("Export territory pictures…");
+    exportPictures.setToolTipText(
+        "A PNG of each territory chosen, to draw on in a paint program and lay over the map");
+    exportPictures.addActionListener(e -> exportPictures());
     final JButton names = new JButton("⋯");
     Theme.setTertiaryButtonStyle(names);
-    names.setToolTipText("Rename many territories at once with a file");
-    names.getAccessibleContext().setAccessibleName("Rename many territories at once with a file");
+    names.setToolTipText("Names and pictures of many territories as files");
+    names.getAccessibleContext().setAccessibleName("Names and pictures of many territories as files");
     names.addActionListener(e -> namesMenu.show(names, 0, names.getHeight()));
     // over the list's count line, which the list draws itself
     final JPanel listCard =
@@ -1874,6 +1885,142 @@ final class TerritoriesEditor implements Editor {
 
   private static Path userFolder() {
     return Path.of(System.getProperty("user.home"));
+  }
+
+  /**
+   * Writes a PNG of each territory chosen into a folder, see-through outside its outlines, and
+   * territory-pictures.txt with where each lies on the map (name;file;x;y), so a design drawn on
+   * it can be laid back at its place; files there already are replaced only after asking.
+   */
+  private static final String PICTURE_POSITIONS = "territory-pictures.txt";
+  // Windows' reserved file names, also with an extension
+  private static final Pattern RESERVED =
+      Pattern.compile("(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(\\..*)?");
+
+  private void exportPictures() {
+    final List<String> territories = List.copyOf(project.getFiles().polygons().keySet());
+    final Optional<List<String>> chosen =
+        Dialogs.pickMany(
+            page,
+            "Export territory pictures",
+            territories,
+            Optional.ofNullable(selected).map(List::of).orElse(List.of()),
+            "Next");
+    if (chosen.isEmpty() || chosen.get().isEmpty()) {
+      return;
+    }
+    final Optional<Path> folder =
+        MapMakerWindow.chooseFolder(page, "Choose a folder for the pictures", userFolder());
+    if (folder.isEmpty()) {
+      return;
+    }
+    final Map<String, String> pictures = pictureFiles(chosen.get());
+    final Path positions = folder.get().resolve(PICTURE_POSITIONS);
+    final long there =
+        pictures.values().stream().map(folder.get()::resolve).filter(Files::exists).count();
+    if (there > 0
+        && !Dialogs.confirm(
+            page,
+            "Export territory pictures",
+            there + " of these pictures are in the folder already. Replace them?",
+            "Replace")) {
+      return;
+    }
+    final MapFiles files = project.getFiles();
+    new SwingWorker<Integer, Void>() {
+      @Override
+      protected Integer doInBackground() throws IOException {
+        final BufferedImage map =
+            files
+                .basePicture()
+                .orElseThrow(
+                    () ->
+                        new IOException(
+                            "The map has no picture, or one too big to hold in memory."));
+        final Map<String, String> lines = new LinkedHashMap<>();
+        for (final Map.Entry<String, String> picture : pictures.entrySet()) {
+          final Optional<MapFiles.TerritoryPicture> cut =
+              files.territoryPicture(map, picture.getKey());
+          if (cut.isPresent()) {
+            ImageIO.write(
+                cut.get().picture(), "png", folder.get().resolve(picture.getValue()).toFile());
+            lines.put(
+                picture.getKey(),
+                String.join(
+                    ";",
+                    picture.getKey(),
+                    picture.getValue(),
+                    String.valueOf(cut.get().at().x),
+                    String.valueOf(cut.get().at().y)));
+          }
+        }
+        final List<String> before =
+            Files.exists(positions)
+                ? Files.readAllLines(positions, StandardCharsets.UTF_8)
+                : List.of();
+        Files.write(positions, withPositions(before, lines), StandardCharsets.UTF_8);
+        return lines.size();
+      }
+
+      @Override
+      protected void done() {
+        try {
+          Dialogs.toast(page, "✓ Wrote " + get() + " territory pictures.");
+        } catch (final ExecutionException e) {
+          Dialogs.warn(
+              page,
+              "Export territory pictures",
+              "Could not write the pictures:\n" + e.getCause().getMessage());
+        } catch (final InterruptedException e) {
+          Thread.currentThread().interrupt();
+        }
+      }
+    }.execute();
+  }
+
+  /**
+   * Each territory's picture file: its name with what files may not have replaced, and a number
+   * after a name taken already in this export (files on Windows ignore case).
+   */
+  static Map<String, String> pictureFiles(final List<String> territories) {
+    final Map<String, String> files = new LinkedHashMap<>();
+    final Set<String> taken = new HashSet<>();
+    for (final String territory : territories) {
+      final String base = fileSafe(territory);
+      String file = base + ".png";
+      for (int n = 2; !taken.add(file.toLowerCase(Locale.ROOT)); n++) {
+        file = base + " (" + n + ").png";
+      }
+      files.put(territory, file);
+    }
+    return files;
+  }
+
+  private static String fileSafe(final String name) {
+    final String safe =
+        name.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_").replaceAll("[. ]+$", "_");
+    return safe.isEmpty() || RESERVED.matcher(safe).matches() ? safe + "_" : safe;
+  }
+
+  /**
+   * territory-pictures.txt with these lines (name;file;x;y by territory): an earlier export's
+   * lines stay, but for the territories written now or a file written over now.
+   */
+  static List<String> withPositions(final List<String> before, final Map<String, String> now) {
+    final Set<String> files =
+        now.values().stream()
+            .map(line -> line.split(";")[1].toLowerCase(Locale.ROOT))
+            .collect(Collectors.toSet());
+    final List<String> lines = new ArrayList<>();
+    for (final String line : before) {
+      final String[] parts = line.split(";");
+      if (parts.length < 2
+          || (!now.containsKey(parts[0]) && !files.contains(parts[1].toLowerCase(Locale.ROOT)))) {
+        lines.add(line);
+      }
+    }
+    lines.addAll(now.values());
+    return lines;
   }
 
   /** Writes the names as lines "name;" for a spreadsheet, where the new names are filled in. */

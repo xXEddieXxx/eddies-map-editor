@@ -380,6 +380,31 @@ final class MapViewTest {
     assertThat(rowHeight.getFirst()).as("more than one line").isGreaterThan(48);
   }
 
+  @DisplayName("The Neighbours view starts with no territory chosen; another view shows it again")
+  @Test
+  void neighboursViewStartsUnchosen() throws Exception {
+    // given
+    final List<Optional<String>> selected = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenMap();
+          map.useFor(MapMode.GAME, new JPanel(), territory -> {});
+          map.select("Territory 1");
+          toolbarButton(map, MapMode.CONNECTIONS + ": " + MapMode.CONNECTIONS.getDescription())
+              .doClick();
+          selected.add(find(map, MapCanvas.class).getSelected());
+          toolbarButton(map, MapMode.GAME + ": " + MapMode.GAME.getDescription()).doClick();
+          selected.add(find(map, MapCanvas.class).getSelected());
+        });
+
+    // then
+    assertThat(selected)
+        .as("none in Neighbours, the tool's again in Game")
+        .containsExactly(Optional.empty(), Optional.of("Territory 1"));
+  }
+
   @DisplayName("A tool without controls of its own leaves no line and no room in the toolbar")
   @Test
   void noEditorToolsNoLine() throws Exception {

@@ -826,4 +826,43 @@ final class TerritoriesEditorTest {
         .as("one undo, the picture as before")
         .containsSame(before);
   }
+
+  @DisplayName("Territory picture files: safe names, each once in an export, ignoring case")
+  @Test
+  void pictureFileNames() {
+    // given
+    final List<String> territories =
+        List.of("Sea Zone 1", "A/B\\C:D?", "A_B_C_D_", "north", "North", "CON", "Cape.");
+
+    // when
+    final Map<String, String> files = TerritoriesEditor.pictureFiles(territories);
+
+    // then
+    assertThat(files)
+        .as("plain names stay; others made safe; a clash numbered")
+        .containsExactly(
+            Map.entry("Sea Zone 1", "Sea Zone 1.png"),
+            Map.entry("A/B\\C:D?", "A_B_C_D_.png"),
+            Map.entry("A_B_C_D_", "A_B_C_D_ (2).png"),
+            Map.entry("north", "north.png"),
+            Map.entry("North", "North (2).png"),
+            Map.entry("CON", "CON_.png"),
+            Map.entry("Cape.", "Cape_.png"));
+  }
+
+  @DisplayName("Exporting again keeps the positions of territories exported before")
+  @Test
+  void picturePositionsMerge() {
+    // given
+    final List<String> before = List.of("Alpha;Alpha.png;1;2", "Beta;Beta.png;3;4");
+    final Map<String, String> now = Map.of("Beta", "Beta;Beta.png;5;6");
+
+    // when
+    final List<String> merged = TerritoriesEditor.withPositions(before, now);
+
+    // then
+    assertThat(merged)
+        .as("Alpha kept, Beta's line replaced")
+        .containsExactly("Alpha;Alpha.png;1;2", "Beta;Beta.png;5;6");
+  }
 }

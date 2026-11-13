@@ -7,6 +7,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -67,5 +69,29 @@ final class EddiesMapEditorTest {
             System.getProperty("java.class.path") + File.pathSeparator + jar,
             EddiesMapEditor.class.getName(),
             "a");
+  }
+
+  @DisplayName("Only a TripleA with FlatLaf (from 2026-06) is new enough; an older one is not")
+  @Test
+  void tellsTooOldTriplea() throws Exception {
+    // given
+    final Path newer = givenJar("new.jar", "com/formdev/flatlaf/FlatLaf.class");
+    final Path older = givenJar("old.jar", "org/pushingpixels/substance/api/SubstanceSkin.class");
+
+    // when, then
+    assertThat(EddiesMapEditor.isNewEnough(newer)).as("has FlatLaf").isTrue();
+    assertThat(EddiesMapEditor.isNewEnough(older)).as("Substance, before 2026-06").isFalse();
+    assertThat(EddiesMapEditor.isNewEnough(folder.resolve("missing.jar")))
+        .as("no jar")
+        .isFalse();
+  }
+
+  private Path givenJar(final String name, final String entry) throws Exception {
+    final Path jar = folder.resolve(name);
+    try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(jar))) {
+      zip.putNextEntry(new ZipEntry(entry));
+      zip.closeEntry();
+    }
+    return jar;
   }
 }

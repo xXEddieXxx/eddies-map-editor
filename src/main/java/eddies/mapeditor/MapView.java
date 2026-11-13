@@ -80,6 +80,8 @@ final class MapView extends JPanel {
   private final MapCanvas canvas;
 
   private final MapViewsBar views;
+  // the territory the tool chose, shown again when the map maker leaves Neighbours
+  private @Nullable String chosen;
   private final MapLegend legend;
   private final JPanel top = new JPanel(new BorderLayout());
   private final JPanel editorTools = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
@@ -120,7 +122,7 @@ final class MapView extends JPanel {
     scroll = SwingComponents.newJScrollPane(canvas);
     scroll.getVerticalScrollBar().setUnitIncrement(24);
     scroll.getHorizontalScrollBar().setUnitIncrement(24);
-    views = new MapViewsBar(MapMode.GAME, this::showMode);
+    views = new MapViewsBar(MapMode.GAME, this::viewChosen);
     legend = new MapLegend(project);
     goal = new GoalStrip(project);
     final JButton zoomShown = new JButton();
@@ -402,6 +404,15 @@ final class MapView extends JPanel {
     banner.add(done, BorderLayout.EAST);
     banner.setVisible(false);
     return banner;
+  }
+
+  /**
+   * The view the map maker chose; Neighbours starts with no territory chosen, so it shows all
+   * connections until a click chooses one; another view shows the tool's choice again.
+   */
+  private void viewChosen(final MapMode mode) {
+    showMode(mode);
+    canvas.setSelected(mode == MapMode.CONNECTIONS ? null : chosen);
   }
 
   /** The map and its legend in this view. */
@@ -710,9 +721,9 @@ final class MapView extends JPanel {
     canvas.setMarked(territories);
   }
 
-  /** Like {@link #mark(Set)}, with others shown lighter, eg the other canals. */
-  void mark(final Set<String> territories, final Set<String> faintly) {
-    canvas.setMarked(territories, faintly);
+  /** A canal's territories in a strong color that stands out, the other canals' lighter. */
+  void markCanals(final Set<String> territories, final Set<String> faintly) {
+    canvas.setCanalMarks(territories, faintly);
   }
 
   /** Shows these places on every territory to drag, until another editor takes the map. */
@@ -795,6 +806,7 @@ final class MapView extends JPanel {
   }
 
   void select(@Nullable final String territory) {
+    chosen = territory;
     canvas.setSelected(territory);
   }
 
