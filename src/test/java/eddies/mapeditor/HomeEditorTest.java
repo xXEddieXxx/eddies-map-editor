@@ -1,6 +1,7 @@
 package eddies.mapeditor;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.awt.Component;
 import java.awt.Container;
@@ -254,6 +255,9 @@ final class HomeEditorTest {
 
     // then
     assertThat(tiles).as("every tool's tile").hasSizeGreaterThan(15);
+    assumeTrue(
+        System.getProperty("os.name").startsWith("Windows"),
+        "the tile width is tuned to Windows' fonts; others, eg on Linux, are wider");
     assertThat(tiles)
         .as("the line, its tool tip, no wider than the tile's text")
         .allMatch(

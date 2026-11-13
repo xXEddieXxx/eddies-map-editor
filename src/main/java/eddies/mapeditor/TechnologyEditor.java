@@ -51,10 +51,11 @@ final class TechnologyEditor implements Editor {
   private final SearchList list;
   private final JLabel standardNote =
       Theme.newSecondaryLabel(
-          "<html><div style='width:" + Theme.htmlWidth(260) + "'>This game uses TripleA's standard technologies."
-              + " Changing one writes the list into the game.</div></html>");
-  private final JComponent standardLink =
-      Help.link("Which ones: WW2V3 Tech Model in", "Game options");
+          "<html><div style='width:" + Theme.htmlWidth(260) + "'>This game uses TripleA's standard technologies,"
+              + " the WW2V3 Tech Model option says which. Changing one writes the list into the"
+              + " game.</div></html>");
+  // short: a long link line widens the list where fonts are wider, eg on Linux
+  private final JComponent standardLink = Help.link("Chosen in", "Game options");
   private final Form details = new Form(420);
   private @Nullable String selected;
   private Optional<JTable> nationsShown = Optional.empty();

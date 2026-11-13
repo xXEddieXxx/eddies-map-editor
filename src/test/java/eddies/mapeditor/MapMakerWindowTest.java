@@ -1,10 +1,12 @@
 package eddies.mapeditor;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 import eddies.mapeditor.MapMakerWindow.Check;
 import eddies.mapeditor.MapMakerWindow.Pill;
 import eddies.mapeditor.Theme.Status;
+import java.awt.GraphicsEnvironment;
 import java.lang.reflect.Field;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -78,6 +80,7 @@ final class MapMakerWindowTest {
   @DisplayName("Following a step opens its tool with the step as the goal and the brush it needs")
   @Test
   void followsAStepIntoItsTool() throws Exception {
+    assumeFalse(GraphicsEnvironment.isHeadless(), "the window needs a screen");
     // given: the minimap with the Italians, its second nation, owning no land
     final MapProject project = givenMinimapWithoutItalianLand();
     final List<Object> seen = new ArrayList<>();
