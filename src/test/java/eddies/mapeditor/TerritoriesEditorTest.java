@@ -26,6 +26,7 @@ import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
+import javax.swing.JRootPane;
 import javax.swing.JSpinner;
 import javax.swing.JTextField;
 import javax.swing.JViewport;
@@ -176,7 +177,7 @@ final class TerritoriesEditorTest {
     assertThat(seen.get(1)).as("its toggle on").isEqualTo(true);
     assertThat(seen.get(2))
         .as("freehand again")
-        .isEqualTo("Drag a border line.");
+        .isEqualTo("Drag a line.");
   }
 
   @DisplayName("A click on the chosen brush keeps it, and the banner with a half-set line")
@@ -1013,7 +1014,7 @@ final class TerritoriesEditorTest {
     // then
     assertThat(seen)
         .as("the circle's banner")
-        .containsExactly("Drag a circle, corner to corner.");
+        .containsExactly("Drag a circle.");
     assertThat(after.getRGB(240, 165) & 0xFFFFFF).as("the ring in the lines' color").isZero();
     assertThat(after.getRGB(300, 165) & 0xFFFFFF).as("its inside as it was").isNotZero();
     assertThat(areasAfter).as("Make territories finds the inside").isEqualTo(areasBefore + 1);
@@ -1090,7 +1091,7 @@ final class TerritoriesEditorTest {
         .containsExactly(false, true);
   }
 
-  @DisplayName("The Places menu names the kinds in plain words, files as tool tips, two menus, the reload")
+  @DisplayName("The Places menu: kinds by name, the sea zones' last, (none) where none shows")
   @Test
   void placesMenuInPlainWords() throws Exception {
     // given: a map from a picture, no place set yet
@@ -1120,33 +1121,39 @@ final class TerritoriesEditorTest {
                         }
                       });
             } else if (c instanceof JMenuItem item) {
-              items.add(item.getText());
+              // the grey of "(none)" is HTML
+              items.add(item.getText().replaceAll("<[^>]+>", ""));
               tips.add(item.getToolTipText());
+            } else {
+              items.add("—");
             }
           }
         });
 
     // then
     assertThat(items)
-        .as("the kinds, the two menus, then the reload")
+        .as("units, the kinds by name, the sea zones' own, the two menus, the reload; (none) only"
+            + " for kinds no territory shows, found places count")
         .containsExactly(
             "Units",
+            "Capitals (none)",
             "Centers",
+            "Comments (none)",
+            "Decorations (none)",
             "Names",
-            "PUs",
-            "Capitals",
-            "Victory cities",
-            "Blockades",
-            "Convoys",
-            "Comments",
-            "Kamikaze",
-            "Terrain effects",
-            "Decorations",
+            "PUs (none)",
+            "Terrain effects (none)",
+            "Victory cities (none)",
+            "—",
+            "Blockades (none)",
+            "Convoys (none)",
+            "Kamikaze (none)",
+            "—",
             "Lay out unit places",
             "Create missing places",
             "Reload places from the files");
     assertThat(tips.get(0)).as("the file only in the tool tip").endsWith("place.txt");
-    assertThat(tips.get(2)).as("the names' file").endsWith("name_place.txt");
+    assertThat(tips.get(5)).as("the names' file").endsWith("name_place.txt");
     assertThat(layOut)
         .as("no territory chosen: each layout for all")
         .containsExactly(
@@ -1343,6 +1350,10 @@ final class TerritoriesEditorTest {
     SwingUtilities.invokeAndWait(
         () -> {
           final TerritoriesEditor editor = new TerritoriesEditor(project, givenMap(project));
+          seen.add(
+              ((JMenuItem) editor.placesMenu().getComponent(0))
+                  .getText()
+                  .replaceAll("<[^>]+>", ""));
           Stream.of(editor.placesMenu().getComponents())
               .filter(c -> c instanceof JMenu menu && menu.getText().startsWith("Create"))
               .map(c -> (JMenuItem) ((JMenu) c).getMenuComponent(0))
@@ -1356,10 +1367,150 @@ final class TerritoriesEditorTest {
 
     // then
     assertThat(seen)
-        .as("no places to create over lines that are not known")
+        .as("the units' kind says so; no places to create over lines that are not known")
         .containsExactly(
+            "Units (not read)",
             "Units — file does not read",
             false,
             "place.txt does not read, eg for a name twice: open it in Files to put it right");
+  }
+
+  @DisplayName("Lay out unit places moves centers only when asked, as one step with the places")
+  @Test
+  void layOutMovesCentersWhenAsked() throws Exception {
+    // given
+    final MapProject project = givenPictureMap();
+    final MapFiles before = project.getFiles();
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final TerritoriesEditor editor =
+              new TerritoriesEditor(project, givenMap(project), (tool, item) -> {}, picture -> {});
+          final JMenu layOut =
+              find(editor.placesMenu(), JMenu.class, menu -> menu.getText().startsWith("Lay out"));
+          final JCheckBox move =
+              find(layOut, JCheckBox.class, box -> box.getText().startsWith("Move centers"));
+          seen.add(move.isSelected());
+          seen.add(find(layOut, JSpinner.class, spinner -> spinner.getParent() == move.getParent())
+              .getValue());
+          final AbstractButton all =
+              find(
+                  layOut,
+                  AbstractButton.class,
+                  item -> "In rows below the center — in all territories".equals(item.getText()));
+          all.doClick();
+          seen.add(project.getFiles().centers() == before.centers());
+          project.undo();
+          move.setSelected(true);
+          all.doClick();
+        });
+    // laid out in the background, then taken on the Swing thread
+    final MapFiles moved = givenFilesOtherThan(project, before);
+    project.undo();
+
+    // then
+    assertThat(seen)
+        .as("off at first, up to 27 px; without it the layout leaves the centers")
+        .containsExactly(false, 27, true);
+    assertThat(moved.centers())
+        .as("ticked: a center moved where a second row of units fits")
+        .isNotEqualTo(before.centers());
+    assertThat(moved.centers().keySet()).as("no center lost").isEqualTo(before.centers().keySet());
+    assertThat(project.getFiles()).as("one undo takes centers and places back").isSameAs(before);
+  }
+
+  @DisplayName("Lay out unit places done in the background is refused when the map changed")
+  @Test
+  void layOutRefusedAfterAChange() throws Exception {
+    // given: the editor in a window, centers to be moved
+    final MapProject project = givenPictureMap();
+    final JRootPane window = new JRootPane();
+    final List<MapFiles> changed = new ArrayList<>();
+
+    // when: the files change before the layout's result comes back
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final TerritoriesEditor editor =
+              new TerritoriesEditor(project, givenMap(project), (tool, item) -> {}, picture -> {});
+          window.getContentPane().add(editor.page());
+          final JMenu layOut =
+              find(editor.placesMenu(), JMenu.class, menu -> menu.getText().startsWith("Lay out"));
+          find(layOut, JCheckBox.class, box -> box.getText().startsWith("Move centers"))
+              .setSelected(true);
+          find(
+                  layOut,
+                  AbstractButton.class,
+                  item -> "In rows below the center — in all territories".equals(item.getText()))
+              .doClick();
+          project.editFiles(files -> files.withProperty("units.scale", "0.75"));
+          changed.add(project.getFiles());
+        });
+    final List<String> told = new ArrayList<>(List.of(""));
+    for (int i = 0; i < 500 && !told.getFirst().startsWith("!"); i++) {
+      Thread.sleep(20);
+      SwingUtilities.invokeAndWait(
+          () ->
+              told.set(
+                  0,
+                  Toast.shown(window.getLayeredPane())
+                      .map(toast -> toast.getAccessibleContext().getAccessibleDescription())
+                      .orElse("")));
+    }
+
+    // then
+    assertThat(told.getFirst())
+        .as("the map maker is told to lay them out again")
+        .startsWith("! The map changed");
+    assertThat(project.getFiles()).as("the layout is not taken").isSameAs(changed.getFirst());
+  }
+
+  @DisplayName("Lay out unit places says the size units are drawn at, with the way to Map look")
+  @Test
+  void layOutSaysTheUnitSize() throws Exception {
+    // given
+    final MapProject project = givenPictureMap();
+    final String standard = TerritoriesEditor.unitSizeLine(project.getFiles());
+    project.editFiles(
+        files ->
+            files
+                .withProperty("units.width", "54")
+                .withProperty("units.height", "60")
+                .withProperty("units.scale", "0.75"));
+    final List<String> shown = new ArrayList<>();
+    final List<String> opened = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final TerritoriesEditor editor =
+              new TerritoriesEditor(
+                  project, givenMap(project), (tool, item) -> opened.add(tool), picture -> {});
+          final JMenu layOut =
+              find(editor.placesMenu(), JMenu.class, menu -> menu.getText().startsWith("Lay out"));
+          shown.add(
+              find(layOut, JLabel.class, label -> label.getText().startsWith("Units")).getText());
+          find(layOut, AbstractButton.class, button -> "Map look ›".equals(button.getText()))
+              .doClick();
+        });
+
+    // then
+    assertThat(standard).as("TripleA's own size").isEqualTo("Units are drawn 48 × 48 px at 100 %");
+    assertThat(shown)
+        .as("as map.properties says")
+        .containsExactly("Units are drawn 54 × 60 px at 75 %");
+    assertThat(opened).as("the link leads to where it is set").containsExactly("Map look");
+  }
+
+  /** The project's files once they are no longer these, as background work changed them. */
+  private static MapFiles givenFilesOtherThan(final MapProject project, final MapFiles these)
+      throws Exception {
+    final List<MapFiles> now = new ArrayList<>(List.of(these));
+    for (int i = 0; i < 500 && now.getFirst() == these; i++) {
+      Thread.sleep(20);
+      SwingUtilities.invokeAndWait(() -> now.set(0, project.getFiles()));
+    }
+    return now.getFirst();
   }
 }

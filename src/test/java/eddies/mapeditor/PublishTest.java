@@ -655,7 +655,7 @@ final class PublishTest {
     project.setRelief(givenPicture(first.getWidth(), first.getHeight(), Color.MAGENTA));
     project.save();
 
-    MapFolder.writeSmallMap(givenRoot(), project.getFiles().shownPicture().orElseThrow());
+    MapFolder.writeSmallMap(givenRoot(), project.getFiles()::shownPicture);
 
     assertThat(ImageIO.read(smallMap.toFile()).getRGB(180, 160) & 0xFFFFFF)
         .as("the sea under the relief")
@@ -672,7 +672,7 @@ final class PublishTest {
         "jpeg",
         folder.resolve("smallMap.jpeg").toFile());
 
-    MapFolder.writeSmallMap(folder, givenPicture(500, 300, Color.BLUE));
+    MapFolder.writeSmallMap(folder, () -> Optional.of(givenPicture(500, 300, Color.BLUE)));
 
     assertThat(ImageIO.read(folder.resolve("smallMap.jpeg").toFile()).getWidth())
         .as("the jpeg the game takes first, 250 px wide")

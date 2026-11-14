@@ -20,6 +20,8 @@ import org.junit.jupiter.api.Test;
 final class UnitRoomTest {
   private static final String STAIRS = "Stairs";
   private static final String STRIP = "Strip";
+  private static final String BAR = "Bar";
+  private static final String ROOMY = "Roomy";
 
   /**
    * Three boxes of 60 by 56 px, each half a grid step right of the one above: beside the center's
@@ -57,6 +59,82 @@ final class UnitRoomTest {
       }
     }
     return true;
+  }
+
+  /**
+   * A bar 110 px wide and 60 high, its center in the middle: the center's square leaves less than
+   * a unit's 48 px on each side, so no place is wholly inside; and a roomy box beside it.
+   */
+  private static MapFiles givenBarAndRoomyBox() {
+    return MapFiles.none()
+        .withOutlines(BAR, List.of(box(0, 0, 110, 60)))
+        .withCenter(BAR, new Point(55, 30))
+        .withOutlines(ROOMY, List.of(box(200, 0, 400, 400)))
+        .withCenter(ROOMY, new Point(400, 200));
+  }
+
+  private static long whollyInside(final MapFiles files, final String territory) {
+    final Polygon outline = files.polygons().get(territory).getFirst();
+    return files.unitPlaces(territory).stream()
+        .filter(p -> outline.contains(new Rectangle(p, files.unitSize())))
+        .count();
+  }
+
+  @DisplayName("A center is moved, within the distance given, to where more unit places fit")
+  @Test
+  void movesCenterToFitMorePlaces() {
+    // given
+    final MapFiles files = givenBarAndRoomyBox();
+    final List<String> both = List.of(BAR, ROOMY);
+
+    // when
+    final MapFiles stayed = files.withUnitPlacesLaidOut(MapFiles.UnitLayout.GRID, 4, both);
+    final MapFiles moved = files.withUnitPlacesLaidOut(MapFiles.UnitLayout.GRID, 4, both, 27);
+    final MapFiles tooNear = files.withUnitPlacesLaidOut(MapFiles.UnitLayout.GRID, 4, both, 5);
+
+    // then
+    assertThat(stayed.centers()).as("without the option no center moves").isSameAs(files.centers());
+    assertThat(whollyInside(stayed, BAR)).as("the bar's center leaves no room beside it").isZero();
+    final Point center = moved.centers().get(BAR);
+    assertThat(center.distance(55, 30))
+        .as("moved, by no more than the 27 px given")
+        .isGreaterThan(0)
+        .isLessThanOrEqualTo(27);
+    assertThat(moved.polygons().get(BAR).getFirst().contains(center))
+        .as("the center stays inside its territory")
+        .isTrue();
+    assertThat(whollyInside(moved, BAR))
+        .as("a unit now fits wholly beside the center")
+        .isEqualTo(1);
+    assertThat(moved.unitPlaces(BAR))
+        .as("no place on the moved center's square")
+        .noneMatch(p -> new Rectangle(p, moved.unitSize()).contains(center));
+    assertThat(moved.centers().get(ROOMY))
+        .as("a territory with all the places wanted keeps its center")
+        .isEqualTo(new Point(400, 200));
+    assertThat(tooNear.centers())
+        .as("nothing better within 5 px: the old center stays")
+        .isSameAs(files.centers());
+  }
+
+  @DisplayName("Moved centers and the laid out places are one undo step")
+  @Test
+  void movedCentersAreOneStepWithTheLayout() {
+    // given
+    final MapProject project = MapProject.newEmpty();
+    project.editFiles(files -> givenBarAndRoomyBox());
+    final MapFiles before = project.getFiles();
+
+    // when
+    project.editFiles(
+        files -> files.withUnitPlacesLaidOut(MapFiles.UnitLayout.GRID, 4, List.of(BAR, ROOMY), 27));
+    final MapFiles laidOut = project.getFiles();
+    project.undo();
+
+    // then
+    assertThat(laidOut.centers().get(BAR)).as("the center moved").isNotEqualTo(new Point(55, 30));
+    assertThat(laidOut.unitPlaces(ROOMY)).as("places laid out too").hasSize(4);
+    assertThat(project.getFiles()).as("one undo takes back centers and places").isSameAs(before);
   }
 
   @DisplayName("Where no square of the grid fits, places off the grid use the room, wholly inside")

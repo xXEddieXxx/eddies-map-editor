@@ -94,6 +94,7 @@ public final class MapMakerWindow extends JFrame {
   private static final String DRAGGED_KEY = "eddies.draggedDivider";
   private static final int NAME_MIN_WIDTH = 160;
   private static final String SAVE = "Save";
+  private static final String SAVE_TIP = "Writes the map's files (Ctrl+S)";
 
   /** How far Check is with the map as it is now. */
   enum Check {
@@ -130,7 +131,16 @@ public final class MapMakerWindow extends JFrame {
   private final JLabel checkState = Theme.newSecondaryLabel("");
   private final JButton pill = new JButton();
   private final JPanel workspace = new JPanel(new CardLayout());
-  private final JButton saveButton = new JButton(SAVE, MakerIcon.small(Glyph.SAVE));
+  private final JButton saveButton =
+      new JButton(SAVE, MakerIcon.small(Glyph.SAVE)) {
+        @Serial private static final long serialVersionUID = 1L;
+
+        // asked when the tool tip shows: the files are found by a save that writes nothing
+        @Override
+        public String getToolTipText(final MouseEvent event) {
+          return saveToolTip(project);
+        }
+      };
   private final JButton playButton = new JButton("Play", MakerIcon.small(Glyph.PLAYTEST));
   private final JButton checkButton = new JButton("Check", MakerIcon.small(Glyph.VALIDATE));
   private final JButton undoButton =
@@ -1146,7 +1156,8 @@ public final class MapMakerWindow extends JFrame {
     checkButton.addActionListener(e -> validateMap());
     pill.setToolTipText("Shows the problems in Home");
     pill.addActionListener(e -> showProblems());
-    saveButton.setToolTipText("Writes the map's files (Ctrl+S)");
+    // set, so the button has a tool tip at all; its text is saveToolTip
+    saveButton.setToolTipText(SAVE_TIP);
     saveButton.addActionListener(e -> save());
     playButton.setToolTipText("Saves and starts the game in a new TripleA window (F7)");
     playButton.addActionListener(e -> playtest());
@@ -1415,11 +1426,14 @@ public final class MapMakerWindow extends JFrame {
             && project.getFolder().filter(MapFolder::hasSmallMap).isPresent();
     final boolean texturesWait = project.hasTexturesNotInRelief();
     try {
-      project.save();
+      final List<Path> written = project.save();
+      // with news and an action after it only the count, so the toast stays short
+      final String saved =
+          "✓ Saved " + written.size() + (written.size() == 1 ? " file" : " files");
       if (texturesWait && editors.get("Map look") instanceof MapLookEditor look) {
         Dialogs.toast(
             this,
-            "✓ Saved. The game shows the new textures once the relief is made",
+            saved + ". The game shows the new textures once the relief is made",
             "Create relief…",
             () -> {
               showTool("Map look");
@@ -1428,24 +1442,57 @@ public final class MapMakerWindow extends JFrame {
       } else if (smallMapStays && editors.get("Map look") instanceof MapLookEditor look) {
         Dialogs.toast(
             this,
-            "✓ Saved. The small map still shows the map without the new relief",
+            saved + ". The small map still shows the map without the new relief",
             "Update the small map",
             look::updateSmallMap);
       } else if (openedFromFile && firstBackup && Files.exists(backup)) {
         Dialogs.toast(
             this,
-            "✓ Saved. The old file stays as " + backup.getFileName(),
+            saved + ". The old file stays as " + backup.getFileName(),
             "Show",
             () -> {
               showFiles();
               files.reveal(backup);
             });
+      } else {
+        Dialogs.toast(this, savedNews(project.getFolder().orElseThrow(), written));
       }
       return true;
     } catch (final Exception e) {
       log.warn("Could not save {}", xml, e);
       Dialogs.warn(this, SAVE, "Could not save the map\n" + e.getMessage());
       return false;
+    }
+  }
+
+  /** The toast after a save: the files it wrote, or that there was nothing to write. */
+  static String savedNews(final Path mapFolder, final List<Path> written) {
+    return written.isEmpty()
+        ? "✓ Nothing to save"
+        : "✓ Saved " + MapProject.filesLine(mapFolder, written);
+  }
+
+  /**
+   * The Save button's tool tip: the files the next save writes, eg "Saves 3 files: 300BC.xml,
+   * place.txt, map.properties (Ctrl+S)", so a change not meant is seen before it is saved. With
+   * nothing to write, eg all undone, the plain one.
+   */
+  static String saveToolTip(final MapProject project) {
+    if (!project.hasUnsavedChanges()) {
+      return SAVE_TIP;
+    }
+    try {
+      final List<Path> files = project.filesToSave();
+      return files.isEmpty()
+          ? SAVE_TIP
+          : "Saves "
+              + MapProject.filesLine(project.getFolder().orElseThrow(), files)
+              + " (Ctrl+S)";
+    } catch (final IOException | RuntimeException | OutOfMemoryError e) {
+      // eg a place file that cannot be read now, or a big picture's tiles compared with too little
+      // memory: the save itself will say so
+      log.info("Could not tell what a save writes", e);
+      return SAVE_TIP;
     }
   }
 

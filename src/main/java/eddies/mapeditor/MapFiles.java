@@ -50,6 +50,7 @@ import java.util.TreeSet;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.function.ToIntFunction;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -132,7 +133,7 @@ record MapFiles(
   static final String POLYGONS = "polygons.txt";
   static final String CENTERS = "centers.txt";
   static final String PLACEMENTS = "place.txt";
-  private static final String DECORATIONS = "decorations.txt";
+  static final String DECORATIONS = "decorations.txt";
   // the game's default map font and the sizes of its capital flags and victory city marker
   // shortcut: a map with another map font or other flag sizes gets its names and flags slightly
   // off center; read the font from map.properties and the flag size from its flags when that shows
@@ -144,6 +145,8 @@ record MapFiles(
   private static final int UNIT_GUTTER = 2;
   // below so many places a territory also gets some that stick out over its border
   private static final int FEW_PLACES = 3;
+  // a center to move is tried about so many steps to each side, as each try is a layout
+  private static final int CENTER_TRIES = 3;
   // off the grid only for territories with at most so many positions to try, so a layout of every
   // territory stays quick: a sea of 3000 px has room on the grid
   private static final int MOST_OFF_GRID = 4000;
@@ -1458,7 +1461,9 @@ record MapFiles(
         saved,
         t -> !savedNames.containsKey(t),
         t -> Tuple.of(unitPlaces(t), Boolean.FALSE),
-        placed -> pointsText(placed.getFirst()) + " | overflowToLeft=" + placed.getSecond());
+        // the default, to the right, is not written, as the game reads a line without it
+        placed ->
+            pointsText(placed.getFirst()) + (placed.getSecond() ? " | overflowToLeft=true" : ""));
     final Set<String> changed = changedTerritories(game, savedGame, savedNames);
     for (final Marker marker : Marker.values()) {
       writeKeeping(
@@ -1709,6 +1714,13 @@ record MapFiles(
     // on the map, where the full labels would cover each other
     @Getter private final String letter;
 
+    /**
+     * The order menus list them in, the Places menu and the map's right-click menu: by name, with
+     * Centers and Decorations between them, the sea zones' rare ones last.
+     */
+    static final List<Marker> IN_MENUS =
+        List.of(CAPITAL, COMMENT, NAME, VALUE, EFFECT, VICTORY_CITY, BLOCKADE, CONVOY, KAMIKAZE);
+
     /** Whether the game draws it for the territory, as TripleA's TileManager decides. */
     boolean isOn(final Game game, final String territory) {
       final boolean water = MapXml.isWater(game, territory);
@@ -1944,9 +1956,29 @@ record MapFiles(
     if (placesUnread(PLACEMENTS) || points.isEmpty() || points.equals(unitPlaces(territory))) {
       return this;
     }
-    final boolean toLeft =
-        Optional.ofNullable(places.units().get(territory)).map(Tuple::getSecond).orElse(false);
-    return withPlaces(places.withUnits(territory, Tuple.of(List.copyOf(points), toLeft)));
+    return withPlaces(
+        places.withUnits(territory, Tuple.of(List.copyOf(points), overflowsToLeft(territory))));
+  }
+
+  /**
+   * Whether the territory's stacks of units beyond its places go on to the left of the last place,
+   * place.txt's overflowToLeft; to the right without.
+   */
+  boolean overflowsToLeft(final String territory) {
+    return Optional.ofNullable(places.units().get(territory)).map(Tuple::getSecond).orElse(false);
+  }
+
+  /**
+   * The files with the territory's extra units going on to the other side of its last place;
+   * unchanged while place.txt does not read.
+   */
+  MapFiles withOverflowFlipped(final String territory) {
+    if (placesUnread(PLACEMENTS) || !polygons.containsKey(territory)) {
+      return this;
+    }
+    return withPlaces(
+        places.withUnits(
+            territory, Tuple.of(unitPlaces(territory), !overflowsToLeft(territory))));
   }
 
   /** How a territory's unit places are laid out afresh around its center. */
@@ -1964,16 +1996,153 @@ record MapFiles(
    */
   MapFiles withUnitPlacesLaidOut(
       final UnitLayout layout, final int most, final Collection<String> territories) {
+    return withUnitPlacesLaidOut(layout, most, territories, 0);
+  }
+
+  /**
+   * As {@link #withUnitPlacesLaidOut(UnitLayout, int, Collection)}, each territory's center first
+   * moved by up to so many pixels to where the layout gives it more places ({@link
+   * #centerForMostPlaces}); 0 leaves the centers.
+   */
+  MapFiles withUnitPlacesLaidOut(
+      final UnitLayout layout,
+      final int most,
+      final Collection<String> territories,
+      final int moveCenters) {
     if (placesUnread(PLACEMENTS)) {
       return this;
     }
     Places laidOut = places;
+    final Map<String, Point> moved = new LinkedHashMap<>(centers);
     for (final String territory : territories) {
       if (polygons.containsKey(territory)) {
-        laidOut = laidOut.withUnits(territory, unitPlacesLaidOut(layout, most, territory));
+        final Point center =
+            moveCenters > 0
+                ? centerForMostPlaces(layout, most, territory, moveCenters)
+                : middle(territory);
+        if (!center.equals(middle(territory))) {
+          moved.put(territory, center);
+        }
+        laidOut =
+            laidOut.withUnits(
+                territory,
+                unitPlacesLaidOut(layout, most, territory, center, roomOf(territory)));
       }
     }
-    return laidOut.equals(places) ? this : withPlaces(laidOut);
+    if (laidOut.equals(places) && moved.equals(centers)) {
+      return this;
+    }
+    return new MapFiles(
+        folder,
+        polygons,
+        // the same centers stay the same value: a save writes them when they are another
+        moved.equals(centers) ? centers : Collections.unmodifiableMap(moved),
+        properties,
+        picture,
+        unitPictures,
+        nationUnitPictures,
+        relief,
+        laidOut);
+  }
+
+  /**
+   * Where the territory's center gives the layout the most places: the center, or a point up to
+   * so many pixels from it, inside the territory and on no other territory inside it, eg an
+   * island. More places wholly inside count first, then more places at all, then the nearer
+   * point; the center stays unless another point is better. Each try is a layout of its own, so
+   * the tries are few: a quarter of a place's step apart, or a multiple of it, at most about
+   * {@value #CENTER_TRIES} to each side. That is the lattice the places off the grid lie on, so
+   * the tries ask for the same squares and share the answers ({@link Room}). None for a territory
+   * that has all the places wanted.
+   */
+  private Point centerForMostPlaces(
+      final UnitLayout layout, final int most, final String territory, final int within) {
+    final Point center = middle(territory);
+    final Room room = roomOf(territory);
+    final ToIntFunction<Point> score =
+        tried -> {
+          final List<Point> laidOut =
+              unitPlacesLaidOut(layout, most, territory, tried, room).getFirst();
+          return (int) laidOut.stream().filter(room::holds).count() * (most + 1) + laidOut.size();
+        };
+    final int full = Math.max(1, most) * (most + 2);
+    int best = score.applyAsInt(center);
+    if (best >= full) {
+      return center;
+    }
+    final int quarterX = Math.max(1, (room.unit.width + 2 * UNIT_GUTTER) / 4);
+    final int quarterY = Math.max(1, (room.unit.height + 2 * UNIT_GUTTER) / 4);
+    final int stepX = quarterX * Math.max(1, within / (CENTER_TRIES * quarterX));
+    final int stepY = quarterY * Math.max(1, within / (CENTER_TRIES * quarterY));
+    final List<Point> tries = new ArrayList<>();
+    for (int dx = -(within / stepX) * stepX; dx <= within; dx += stepX) {
+      for (int dy = -(within / stepY) * stepY; dy <= within; dy += stepY) {
+        final Point tried = new Point(center.x + dx, center.y + dy);
+        if (dx * dx + dy * dy <= within * within
+            && !tried.equals(center)
+            && room.outlines.stream().anyMatch(o -> o.contains(tried))
+            && room.others.stream().noneMatch(o -> o.contains(tried))) {
+          tries.add(tried);
+        }
+      }
+    }
+    // the nearest first, so of two as good the nearer one is taken
+    tries.sort(Comparator.comparingDouble(center::distanceSq));
+    Point taken = center;
+    for (final Point tried : tries) {
+      final int places = score.applyAsInt(tried);
+      if (places > best) {
+        best = places;
+        taken = tried;
+      }
+      if (best >= full) {
+        break;
+      }
+    }
+    return taken;
+  }
+
+  /**
+   * Where a unit fits in a territory: its square wholly inside the outlines and on no other
+   * territory there, as a sea's outline has no holes and the islands in it are other
+   * territories' outlines. An answer is kept by the square's corner, as layouts around several
+   * centers ask for the same squares.
+   */
+  private static final class Room {
+    private final List<Polygon> outlines;
+    // the outlines of the other territories whose bounds meet the territory's
+    private final List<Polygon> others;
+    private final Dimension unit;
+    private final Map<Point, Boolean> known = new HashMap<>();
+
+    private Room(final List<Polygon> outlines, final List<Polygon> others, final Dimension unit) {
+      this.outlines = outlines;
+      this.others = others;
+      this.unit = unit;
+    }
+
+    boolean holds(final Point corner) {
+      return known.computeIfAbsent(
+          new Point(corner),
+          c -> {
+            final Rectangle square = new Rectangle(c, unit);
+            return outlines.stream().anyMatch(o -> o.contains(square))
+                && others.stream().noneMatch(o -> o.intersects(square));
+          });
+    }
+  }
+
+  private Room roomOf(final String territory) {
+    final List<Polygon> outlines = polygons.getOrDefault(territory, List.of());
+    final Rectangle bounds = boundsOf(outlines);
+    return new Room(
+        outlines,
+        polygons.entrySet().stream()
+            .filter(e -> !e.getKey().equals(territory))
+            .flatMap(e -> e.getValue().stream())
+            .filter(o -> o.getBounds().intersects(bounds))
+            .toList(),
+        unitSize());
   }
 
   /**
@@ -1986,10 +2155,19 @@ record MapFiles(
    */
   Tuple<List<Point>, Boolean> unitPlacesLaidOut(
       final UnitLayout layout, final int most, final String territory) {
+    return unitPlacesLaidOut(layout, most, territory, middle(territory), roomOf(territory));
+  }
+
+  /** {@link #unitPlacesLaidOut(UnitLayout, int, String)} around this point as the center. */
+  private Tuple<List<Point>, Boolean> unitPlacesLaidOut(
+      final UnitLayout layout,
+      final int most,
+      final String territory,
+      final Point middle,
+      final Room room) {
     final List<Polygon> outlines = polygons.getOrDefault(territory, List.of());
     final Dimension unit = unitSize();
-    final boolean toLeftNow =
-        Optional.ofNullable(places.units().get(territory)).map(Tuple::getSecond).orElse(false);
+    final boolean toLeftNow = overflowsToLeft(territory);
     if (outlines.isEmpty()) {
       return Tuple.of(unitPlaces(territory), toLeftNow);
     }
@@ -1999,25 +2177,12 @@ record MapFiles(
     final int height = Math.max(1, unit.height);
     final int stepX = width + 2 * UNIT_GUTTER;
     final int stepY = height + 2 * UNIT_GUTTER;
-    final Point middle = middle(territory);
     // the corner of the center's square (0,0)
     final int left = middle.x - stepX / 2;
     final int top = middle.y - stepY / 2;
     final Function<Point, Point> place =
         cell -> new Point(left + cell.x * stepX + UNIT_GUTTER, top + cell.y * stepY + UNIT_GUTTER);
-    // a sea's outline has no holes: the islands in it are other territories' outlines
-    final List<Polygon> others =
-        polygons.entrySet().stream()
-            .filter(e -> !e.getKey().equals(territory))
-            .flatMap(e -> e.getValue().stream())
-            .filter(o -> o.getBounds().intersects(bounds))
-            .toList();
-    final Predicate<Point> fits =
-        cell -> {
-          final Rectangle square = new Rectangle(place.apply(cell), unit);
-          return outlines.stream().anyMatch(o -> o.contains(square))
-              && others.stream().noneMatch(o -> o.intersects(square));
-        };
+    final Predicate<Point> fits = cell -> room.holds(place.apply(cell));
     // how many squares the grid reaches from the center's square to each side of the bounds
     final int toLeft = Math.max(0, Math.ceilDiv(left - bounds.x, stepX));
     final int toRight = Math.max(0, Math.ceilDiv(bounds.x + bounds.width - left - stepX, stepX));
@@ -2033,7 +2198,7 @@ record MapFiles(
     final List<Point> offGrid =
         placesOffGrid(
             territory,
-            others,
+            room,
             place.apply(new Point()),
             kept.stream().map(place).toList(),
             Math.max(1, most) - kept.size());
@@ -2058,7 +2223,6 @@ record MapFiles(
     return Tuple.of(List.copyOf(laidOut), overflowToLeft);
   }
 
-
   /**
    * Up to so many more places for the territory's units, off the layout's grid, nearest the
    * center first: positions a quarter step apart whose unit square is wholly inside the outlines,
@@ -2072,7 +2236,7 @@ record MapFiles(
    */
   private List<Point> placesOffGrid(
       final String territory,
-      final List<Polygon> others,
+      final Room room,
       final Point centerSquare,
       final List<Point> taken,
       final int most) {
@@ -2114,10 +2278,7 @@ record MapFiles(
           return placed.stream().noneMatch(grown::intersects);
         };
     final Predicate<Rectangle> inside =
-        square ->
-            !square.intersects(center)
-                && outlines.stream().anyMatch(o -> o.contains(square))
-                && others.stream().noneMatch(o -> o.intersects(square));
+        square -> !square.intersects(center) && room.holds(square.getLocation());
     // most of the square inside: its middle and at least 6 of 9 points spread over it
     final Predicate<Rectangle> mostlyInside =
         square ->
@@ -2136,20 +2297,6 @@ record MapFiles(
                         .count()
                     >= 6;
     final List<Rectangle> othersOwn = new ArrayList<>();
-    centers.forEach(
-        (name, point) -> {
-          if (!name.equals(territory)) {
-            othersOwn.add(new Rectangle(point.x, point.y, 1, 1));
-          }
-        });
-    places
-        .units()
-        .forEach(
-            (name, set) -> {
-              if (!name.equals(territory)) {
-                set.getFirst().forEach(p -> othersOwn.add(new Rectangle(p, unit)));
-              }
-            });
     final Predicate<Rectangle> offOthers =
         square -> othersOwn.stream().noneMatch(square::intersects);
     final List<Predicate<Rectangle>> rules =
@@ -2157,6 +2304,23 @@ record MapFiles(
     for (int rule = 0; rule < rules.size(); rule++) {
       // squares that stick out only for a territory that would have too few places
       final int wanted = rule == 0 ? most : Math.min(most, FEW_PLACES - taken.size());
+      if (rule == 1 && added.size() < wanted) {
+        // only now, as few territories need them and a map has thousands
+        centers.forEach(
+            (name, point) -> {
+              if (!name.equals(territory)) {
+                othersOwn.add(new Rectangle(point.x, point.y, 1, 1));
+              }
+            });
+        places
+            .units()
+            .forEach(
+                (name, set) -> {
+                  if (!name.equals(territory)) {
+                    set.getFirst().forEach(p -> othersOwn.add(new Rectangle(p, unit)));
+                  }
+                });
+      }
       for (final Point candidate : candidates) {
         if (added.size() >= wanted) {
           break;
@@ -2262,6 +2426,24 @@ record MapFiles(
     return moved.equals(before)
         ? this
         : withPlaces(places.withMarker(marker, territory, List.copyOf(moved)));
+  }
+
+  /**
+   * The files without the place set for the territory's marker, so it is found again, as {@link
+   * #withPlacesFoundAgain} does for all of a territory's; unchanged while the marker's file does
+   * not read.
+   */
+  MapFiles withMarkerPlaceFoundAgain(final Marker marker, final String territory) {
+    if (placesUnread(marker.file) || !places.markers(marker).containsKey(territory)) {
+      return this;
+    }
+    final Map<String, List<Point>> kept = new LinkedHashMap<>(places.markers(marker));
+    kept.remove(territory);
+    final Map<Marker, Map<String, List<Point>>> changed = new EnumMap<>(Marker.class);
+    changed.putAll(places.markers());
+    changed.put(marker, Collections.unmodifiableMap(kept));
+    return withPlaces(
+        new Places(places.units(), Map.copyOf(changed), places.decorations(), places.unread()));
   }
 
   /** The files with the territory's places found again; unchanged if they are the found ones. */
@@ -2435,16 +2617,20 @@ record MapFiles(
   /** The size of a unit on the map as the game draws it: units.width and height by units.scale. */
   Dimension unitSize() {
     final int size = UnitImageFactory.DEFAULT_UNIT_ICON_SIZE;
-    double scale;
-    try {
-      scale = Double.parseDouble(properties.getProperty(MapData.PROPERTY_UNITS_SCALE, "1"));
-    } catch (final NumberFormatException e) {
-      // the game takes such a map's units at their size too
-      scale = 1;
-    }
+    final double scale = unitScale();
     return new Dimension(
         (int) (scale * intProperty(MapData.PROPERTY_UNITS_WIDTH).orElse(size)),
         (int) Math.round(scale * intProperty(MapData.PROPERTY_UNITS_HEIGHT).orElse(size)));
+  }
+
+  /** How much bigger or smaller than their pictures the game draws units: units.scale, else 1. */
+  double unitScale() {
+    try {
+      return Double.parseDouble(properties.getProperty(MapData.PROPERTY_UNITS_SCALE, "1"));
+    } catch (final NumberFormatException e) {
+      // the game takes such a map's units at their size too
+      return 1;
+    }
   }
 
   /**
@@ -2499,6 +2685,34 @@ record MapFiles(
         yield new Point(baseline.x - font.stringWidth(text) / 2, baseline.y + below - top);
       }
     };
+  }
+
+  /**
+   * The middle of what the game draws at the marker's place: for the territory's name and value
+   * the middle of the text, as the place is its left end on the baseline, or its top left with
+   * map.drawNamesFromTopLeft; for the other markers the place itself.
+   */
+  Point markerMiddle(
+      final Game game, final Marker marker, final String territory, final Point place) {
+    if (marker != Marker.NAME && marker != Marker.VALUE) {
+      return place;
+    }
+    final FontMetrics font = NameMetrics.FONT;
+    final String text =
+        marker == Marker.VALUE ? String.valueOf(MapXml.production(game, territory)) : territory;
+    // from the top left the baseline is a font's height below the place (TerritoryNameDrawable)
+    final int down =
+        (font.getDescent() - font.getAscent()) / 2
+            + (Boolean.parseBoolean(
+                    properties.getProperty(MapData.PROPERTY_MAP_DRAWNAMESFROMTOPLEFT))
+                ? font.getHeight()
+                : 0);
+    return new Point(place.x + font.stringWidth(text) / 2, place.y + down);
+  }
+
+  // made once, as the map asks for every text marker it paints
+  private static final class NameMetrics {
+    private static final FontMetrics FONT = fontMetrics();
   }
 
   private static FontMetrics fontMetrics() {

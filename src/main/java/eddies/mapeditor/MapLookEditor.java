@@ -647,7 +647,7 @@ final class MapLookEditor implements Editor {
       protected Boolean doInBackground() throws IOException {
         final Optional<BufferedImage> shown = files.shownPicture();
         if (shown.isPresent()) {
-          MapFolder.writeSmallMap(folder, shown.get());
+          MapFolder.writeSmallMap(folder, () -> shown);
         }
         return shown.isPresent();
       }

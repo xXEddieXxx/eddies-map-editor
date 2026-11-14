@@ -20,9 +20,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Stream;
 import javax.imageio.ImageIO;
 import javax.swing.Action;
 import javax.swing.JComponent;
+import javax.swing.JMenuItem;
 import javax.swing.JViewport;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
@@ -1017,5 +1019,162 @@ final class MapCanvasTest {
     return game.toBuilder()
         .playerList(game.getPlayerList().toBuilder().alliances(alliances).build())
         .build();
+  }
+
+  /** The texts of the right-click menu at the point; none without a menu. */
+  private static List<String> menuTexts(final MapCanvas canvas, final Point at) {
+    return canvas.placesMenu(at).stream()
+        .flatMap(menu -> Stream.of(menu.getComponents()))
+        .map(item -> ((JMenuItem) item).getText())
+        .toList();
+  }
+
+  private static void choose(final MapCanvas canvas, final Point at, final String text) {
+    Stream.of(canvas.placesMenu(at).orElseThrow().getComponents())
+        .map(JMenuItem.class::cast)
+        .filter(item -> item.getText().equals(text))
+        .findFirst()
+        .orElseThrow()
+        .doClick();
+  }
+
+  @DisplayName("A right-click where places show offers what is shown there, each item one step")
+  @Test
+  void rightClickMenuForPlaces() throws Exception {
+    // given
+    final MapProject project = MapProject.newEmpty();
+    final List<List<String>> menus = new ArrayList<>();
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapCanvas canvas = givenCanvasShowingPlaces(project);
+          final double z = canvas.getZoom();
+          final List<Point> units = project.getFiles().unitPlaces(EFFECT_LAND);
+          final Point onUnit =
+              new Point((int) (units.getFirst().x * z) + 3, (int) (units.getFirst().y * z) + 3);
+          menus.add(menuTexts(canvas, onUnit));
+          choose(canvas, onUnit, "Add a unit place here");
+          seen.add(project.getFiles().unitPlaces(EFFECT_LAND).size() - units.size());
+          choose(canvas, onUnit, "Remove this unit place");
+          seen.add(project.getFiles().unitPlaces(EFFECT_LAND).size() - units.size());
+          choose(canvas, onUnit, "Units overflow to the left");
+          seen.add(project.getFiles().overflowsToLeft(EFFECT_LAND));
+          menus.add(menuTexts(canvas, onUnit));
+          // the names shown alone: a name's place set at the click, then taken away there
+          canvas.showPlaces(MapCanvas.ShownPlaces.NONE.with(MapFiles.Marker.NAME));
+          final Point free = new Point(onUnit.x + 1, onUnit.y + 1);
+          menus.add(menuTexts(canvas, free));
+          final MapFiles before = project.getFiles();
+          choose(canvas, free, "Put here: Name");
+          // the name's mark, on the middle of its text, is where the click was
+          final Point mark =
+              project
+                  .getFiles()
+                  .markerMiddle(
+                      project.game(),
+                      MapFiles.Marker.NAME,
+                      EFFECT_LAND,
+                      project
+                          .getFiles()
+                          .places()
+                          .markers(MapFiles.Marker.NAME)
+                          .get(EFFECT_LAND)
+                          .getFirst());
+          seen.add(mark);
+          menus.add(menuTexts(canvas, free));
+          choose(canvas, free, "Back to its found place: Name");
+          seen.add(
+              project.getFiles().places().markers(MapFiles.Marker.NAME).containsKey(EFFECT_LAND));
+          project.undo();
+          project.undo();
+          seen.add(project.getFiles() == before);
+          canvas.showPlaces(MapCanvas.ShownPlaces.NONE);
+          menus.add(menuTexts(canvas, free));
+          seen.add(new Point((int) Math.round(free.x / z), (int) Math.round(free.y / z)));
+        });
+
+    // then
+    assertThat(menus)
+        .as("on a unit place; flipped; names shown, none set; on the set name; no places shown")
+        .containsExactly(
+            List.of(
+                "Add a unit place here", "Remove this unit place", "Units overflow to the left"),
+            List.of(
+                "Add a unit place here", "Remove this unit place", "Units overflow to the right"),
+            List.of("Put here: Name"),
+            List.of("Put here: Name", "Back to its found place: Name"),
+            List.of());
+    assertThat(seen.subList(0, 6))
+        .as("a place more, then as many as before, to the left, the name's mark at the click,"
+            + " then found again, each one step")
+        .containsExactly(1, 0, true, seen.get(6), false, true);
+  }
+
+  @DisplayName("The map binds no Ctrl+O: it stays the window's Open a map")
+  @Test
+  void ctrlOStaysTheWindowsOpen() throws Exception {
+    // given
+    final MapProject project = MapProject.newEmpty();
+    final List<Object> bound = new ArrayList<>();
+
+    // when: the chosen territory's unit places show
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapCanvas canvas = givenCanvasShowingPlaces(project);
+          canvas.setSelected(EFFECT_LAND);
+          bound.add(
+              String.valueOf(
+                  canvas
+                      .getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
+                      .get(KeyStroke.getKeyStroke(KeyEvent.VK_O, InputEvent.CTRL_DOWN_MASK))));
+        });
+
+    // then
+    assertThat(bound).as("no action of the map on Ctrl+O").containsExactly("null");
+  }
+
+  @DisplayName("A capital's place shows as a yellow star; the overflow arrow follows the side")
+  @Test
+  void capitalStarAndOverflowArrow() throws Exception {
+    // given: a capital, its place and the unit places shown
+    final MapProject project = MapProject.newEmpty();
+    final List<Long> stars = new ArrayList<>();
+    final List<Integer> changed = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapCanvas canvas = givenCanvasShowingPlaces(project);
+          project.edit(game -> MapXml.withNation(game, "Red"));
+          project.edit(game -> MapXml.withCapital(game, EFFECT_LAND, "Red"));
+          stars.add(yellow(shown(canvas)));
+          canvas.showPlaces(
+              MapCanvas.ShownPlaces.NONE
+                  .with(MapCanvas.PlaceKind.UNITS)
+                  .with(MapFiles.Marker.CAPITAL));
+          final BufferedImage toRight = shown(canvas);
+          stars.add(yellow(toRight));
+          project.flipOverflow(EFFECT_LAND);
+          changed.add(changedPixels(toRight, shown(canvas)));
+        });
+
+    // then
+    assertThat(stars.get(0)).as("no star while capitals do not show").isZero();
+    assertThat(stars.get(1)).as("the star's yellow").isGreaterThan(20);
+    assertThat(changed).as("the arrow drawn on the other side").allMatch(pixels -> pixels > 10);
+  }
+
+  private static long yellow(final BufferedImage image) {
+    long count = 0;
+    for (int y = 0; y < image.getHeight(); y++) {
+      for (int x = 0; x < image.getWidth(); x++) {
+        if ((image.getRGB(x, y) & 0xFFFFFF) == 0xFFD400) {
+          count++;
+        }
+      }
+    }
+    return count;
   }
 }

@@ -62,17 +62,18 @@ import org.triplea.swing.SwingComponents;
  * The map that Territories and Connections share: one toolbar above it, on a background of its
  * own, left the views ({@link MapViewsBar}) and an editor's own tools, fitted by {@link
  * ToolbarLayout}, eg its brush, right the map's controls: zoom, Fit and the picture menu
- * (picture on or off, load another, redraw borders, make the territories again); below the row the
- * banner of a mode a tool has on, {@link #showBanner}, the goal it works towards above it, {@link
- * #showStep}; below the map the legend, {@link MapLegend}. Without outlines the map shows what to
+ * (picture on or off, load another, redraw borders, make the territories again); below the row a
+ * second one of a fixed height, empty or with the banner of a mode a tool has on, {@link
+ * #showBanner}, the goal it works towards above its text, {@link #showStep}, so the map keeps its
+ * place; below the map the legend, {@link MapLegend}. Without outlines the map shows what to
  * do next instead, without toolbar and legend.
  */
 final class MapView extends JPanel {
   @Serial private static final long serialVersionUID = 1L;
   private static final double ZOOM_STEP = 1.25;
-  private static final int BANNER_HEIGHT = 32;
-  // taller in an edit mode, so the map maker notices each click changes the map
-  private static final int EDIT_BANNER_HEIGHT = 40;
+  // the banner's row is always there, also empty: the map below never moves when a mode's banner
+  // or the goal shows or hides
+  static final int BANNER_HEIGHT = 40;
   private static final String EDIT_MODE = "Edit mode";
   // the veil over a picture without territories yet: the map's background at 70 %
   private static final Color VEIL =
@@ -100,7 +101,6 @@ final class MapView extends JPanel {
   private final JPanel bannerLine = new JPanel();
   private final JLabel bannerText = new JLabel();
   private final JLabel editBadge = newEditBadge();
-  private boolean editing;
   private final JButton bannerDone = new JButton("Done");
   private final JScrollPane scroll;
   private final GoalStrip goal;
@@ -204,10 +204,8 @@ final class MapView extends JPanel {
     final JPanel row = new JPanel();
     row.setLayout(new ToolbarLayout(row, mapTools));
     row.setBackground(Theme.getMapToolbarColor());
-    row.setBorder(
-        BorderFactory.createCompoundBorder(
-            BorderFactory.createMatteBorder(0, 0, 1, 0, Theme.getMapToolbarLineColor()),
-            BorderFactory.createEmptyBorder(6, Theme.GAP_S, 6, Theme.GAP_XS)));
+    // its line is below the banner's row, so toolbar and an empty row read as one
+    row.setBorder(BorderFactory.createEmptyBorder(6, Theme.GAP_S, 7, Theme.GAP_XS));
     row.add(views);
     row.add(beforeEditorTools);
     row.add(editorTools);
@@ -473,15 +471,21 @@ final class MapView extends JPanel {
     return badge;
   }
 
-  /** The strip that says what a click does in a tool's mode, with Done to end it; hidden. */
+  /**
+   * The row of the strip that says what a click does in a tool's mode, with Done to end it; the
+   * strip hidden, its row there.
+   */
   private JPanel newBanner() {
     banner.setBackground(Theme.getSelectionColor());
     banner.setBorder(BorderFactory.createEmptyBorder(0, Theme.GAP_M, 0, Theme.GAP_XS));
-    banner.setPreferredSize(new Dimension(0, BANNER_HEIGHT));
     bannerLine.setLayout(new BoxLayout(bannerLine, BoxLayout.X_AXIS));
     bannerLine.setOpaque(false);
-    banner.add(goal, BorderLayout.NORTH);
-    banner.add(bannerLine, BorderLayout.CENTER);
+    // the goal's line above the text, the buttons beside both
+    final JPanel lines = new JPanel(new BorderLayout());
+    lines.setOpaque(false);
+    lines.add(goal, BorderLayout.NORTH);
+    lines.add(bannerLine, BorderLayout.CENTER);
+    banner.add(lines, BorderLayout.CENTER);
     Theme.setSecondaryButtonStyle(bannerDone);
     final JPanel done = new JPanel(new GridBagLayout());
     done.setOpaque(false);
@@ -491,7 +495,12 @@ final class MapView extends JPanel {
     done.add(bannerDone);
     banner.add(done, BorderLayout.EAST);
     banner.setVisible(false);
-    return banner;
+    final JPanel row = new JPanel(new BorderLayout());
+    row.setBackground(Theme.getMapToolbarColor());
+    row.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Theme.getMapToolbarLineColor()));
+    row.setPreferredSize(new Dimension(0, BANNER_HEIGHT));
+    row.add(banner);
+    return row;
   }
 
   /**
@@ -684,7 +693,7 @@ final class MapView extends JPanel {
 
   /**
    * Like {@link #showBanner(String, Runnable)} for a mode that changes the map with each click, eg
-   * Connections' connecting: a taller banner that starts with an "Edit mode" badge.
+   * Connections' connecting: the banner starts with an "Edit mode" badge.
    */
   void showEditBanner(final String text, final Runnable done) {
     editBadge.setText(EDIT_MODE);
@@ -707,7 +716,6 @@ final class MapView extends JPanel {
       final String verb,
       final Runnable done,
       final boolean edit) {
-    editing = edit;
     bannerText.setText(text);
     bannerText.setToolTipText(text);
     // short of room the text is cut ("…", whole in its tool tip), never the controls after it
@@ -721,6 +729,8 @@ final class MapView extends JPanel {
     extra.ifPresent(
         component -> {
           component.setMinimumSize(component.getPreferredSize());
+          // centered in the row like the text, at its own width
+          component.setMaximumSize(component.getPreferredSize());
           bannerLine.add(Box.createHorizontalStrut(Theme.GAP_M));
           bannerLine.add(component);
         });
@@ -797,11 +807,6 @@ final class MapView extends JPanel {
   }
 
   private void fitBanner() {
-    banner.setPreferredSize(
-        new Dimension(
-            0,
-            (editing ? EDIT_BANNER_HEIGHT : BANNER_HEIGHT)
-                + (goal.isVisible() ? GoalStrip.HEIGHT : 0)));
     revalidate();
     repaint();
   }

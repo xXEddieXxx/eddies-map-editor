@@ -55,6 +55,8 @@ import javax.annotation.Nullable;
 import javax.imageio.ImageIO;
 import javax.swing.AbstractAction;
 import javax.swing.JComponent;
+import javax.swing.JMenuItem;
+import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JViewport;
 import javax.swing.KeyStroke;
@@ -110,6 +112,8 @@ final class MapCanvas extends JComponent {
   private static final int LAYER_SQUARES_KEPT = 32;
   // the radius of a marker's dot while places are edited, in pixels of the screen
   private static final int PLACE_DOT = 8;
+  private static final Color CAPITAL_STAR = new Color(0xFFD400);
+  private static final Color CAPITAL_STAR_LINE = new Color(0x4D3B00);
   // a unit place narrower on screen gets no number: zoomed out they would run into each other
   private static final int NUMBERED_PLACE = 24;
   // the size of a decoration whose picture is missing, so it can still be moved or removed
@@ -766,7 +770,7 @@ final class MapCanvas extends JComponent {
                     : place
                             .decoration()
                             .orElse("Units " + (place.index() + 1) + " · " + place.territory())
-                        + ": drag to move, right-click or Delete removes")
+                        + ": drag to move, Delete removes, right-click for more")
         .or(() -> territoryAt(event.getPoint()))
         .orElse(null);
   }
@@ -1098,8 +1102,15 @@ final class MapCanvas extends JComponent {
    */
   private Rectangle onScreen(final Place place) {
     final Point by = place.equals(dragged) ? draggedBy : new Point();
-    final int x = (int) (place.at().x * zoom) + by.x;
-    final int y = (int) (place.at().y * zoom) + by.y;
+    // a name or value on the middle of its text, not on its left end, eg over a unit's square
+    final MapFiles files = project.getFiles();
+    final Point at =
+        place
+            .marker()
+            .map(m -> files.markerMiddle(project.game(), m, place.territory(), place.at()))
+            .orElse(place.at());
+    final int x = (int) (at.x * zoom) + by.x;
+    final int y = (int) (at.y * zoom) + by.y;
     if (place.marker().isPresent() || place.center()) {
       return new Rectangle(x - PLACE_DOT, y - PLACE_DOT, 2 * PLACE_DOT, 2 * PLACE_DOT);
     }
@@ -1182,12 +1193,106 @@ final class MapCanvas extends JComponent {
     return why.isPresent();
   }
 
-  /** A place for units after the others, centered at the point on the screen. */
-  private void addUnitPlace(final Point point) {
+  /**
+   * The right-click menu for the places shown in the territory at the point on the screen: a unit
+   * place added there or the one under the mouse removed, the side its extra units go to, and for
+   * each shown marker the game draws there, in the Places menu's order ({@link Marker#IN_MENUS}),
+   * its place put at the point, or the set one under the mouse taken back to its found place.
+   * Empty where no places show, and for decorations.
+   */
+  Optional<JPopupMenu> placesMenu(final Point point) {
+    final Optional<Place> on = placeAt(point);
+    final Optional<String> where = on.map(Place::territory).or(() -> territoryAt(point));
+    if (decorating.isPresent() || where.isEmpty()) {
+      return Optional.empty();
+    }
+    final String territory = where.get();
+    final ShownPlaces shown =
+        editingPlaces && territory.equals(selected) ? ShownPlaces.SELECTED : everywhere;
+    final JPopupMenu menu = new JPopupMenu();
+    if (shown.shows(PlaceKind.UNITS)) {
+      menu.add("Add a unit place here").addActionListener(e -> addUnitPlace(territory, point));
+      // the last one stays, as the game needs one
+      on.filter(place -> place.marker().isEmpty() && !place.center())
+          .filter(place -> unitPlacesOf(territory).size() > 1)
+          .ifPresent(
+              place ->
+                  menu.add("Remove this unit place")
+                      .addActionListener(e -> removeUnitPlace(territory, place.index())));
+      final boolean toLeft = project.getFiles().overflowsToLeft(territory);
+      final JMenuItem flip = menu.add("Units overflow to the " + (toLeft ? "right" : "left"));
+      flip.setToolTipText(
+          "Stacks of units beyond the last unit place go on beside it: now to the "
+              + (toLeft ? "left" : "right")
+              + ", as the arrow there shows");
+      flip.addActionListener(e -> flipOverflow(territory));
+    }
+    final Game game = project.game();
+    for (final Marker marker : Marker.IN_MENUS) {
+      // a marker only kept from its file has no item: taken away, a save would write it a found
+      // place
+      if (!shown.shows(marker) || !marker.isOn(game, territory)) {
+        continue;
+      }
+      final boolean set =
+          !project
+              .getFiles()
+              .places()
+              .markers(marker)
+              .getOrDefault(territory, List.of())
+              .isEmpty();
+      // "put", not "add": the marker shows at its found place already, and has one place
+      menu.add("Put here: " + marker.getLabel())
+          .addActionListener(
+              e -> {
+                if (!refusesPlaces(marker.getFile())) {
+                  // the game's place is the text's left end: set so its middle is at the click
+                  final Point click =
+                      new Point((int) Math.round(point.x / zoom), (int) Math.round(point.y / zoom));
+                  final Point middle =
+                      project.getFiles().markerMiddle(project.game(), marker, territory, click);
+                  project.setMarkerPlace(
+                      marker,
+                      territory,
+                      0,
+                      new Point(2 * click.x - middle.x, 2 * click.y - middle.y));
+                }
+              });
+      if (set && on.filter(place -> place.marker().equals(Optional.of(marker))).isPresent()) {
+        final JMenuItem remove = menu.add("Back to its found place: " + marker.getLabel());
+        remove.setToolTipText("Takes the set place away; the one found for it is used again");
+        remove.addActionListener(
+            e -> {
+              if (!refusesPlaces(marker.getFile())) {
+                project.findMarkerPlaceAgain(marker, territory);
+              }
+            });
+      }
+    }
+    return menu.getComponentCount() == 0 ? Optional.empty() : Optional.of(menu);
+  }
+
+  /** The territory's extra units to the other side of its last unit place, told with Undo. */
+  private void flipOverflow(final String territory) {
     if (refusesPlaces(MapFiles.PLACEMENTS)) {
       return;
     }
-    final String territory = Objects.requireNonNull(selected);
+    project.flipOverflow(territory);
+    Dialogs.toast(
+        this,
+        "✓ Units in "
+            + territory
+            + " overflow to the "
+            + (project.getFiles().overflowsToLeft(territory) ? "left" : "right"),
+        "Undo",
+        project::undo);
+  }
+
+  /** A place for the territory's units after the others, centered at the point on the screen. */
+  private void addUnitPlace(final String territory, final Point point) {
+    if (refusesPlaces(MapFiles.PLACEMENTS)) {
+      return;
+    }
     final List<Point> added = new ArrayList<>(unitPlacesOf(territory));
     added.add(
         new Point(
@@ -1259,6 +1364,18 @@ final class MapCanvas extends JComponent {
             (int) shown.getCenterX(),
             (int) shown.getCenterY());
       }
+      if (place.index() == unitPlacesOf(place.territory()).size() - 1) {
+        paintOverflowArrow(g, shown, project.getFiles().overflowsToLeft(place.territory()));
+      }
+    } else if (place.marker().equals(Optional.of(Marker.CAPITAL))
+        && !hovered.map(shown::contains).orElse(false)) {
+      // a star, as on maps; its name while the mouse is over it, as the other markers'
+      final Polygon star = star((int) shown.getCenterX(), (int) shown.getCenterY(), PLACE_DOT + 3);
+      g.setStroke(new BasicStroke(1));
+      g.setColor(CAPITAL_STAR);
+      g.fill(star);
+      g.setColor(CAPITAL_STAR_LINE);
+      g.draw(star);
     } else {
       // a letter on the point, the whole name while the mouse is over it
       final boolean hover = hovered.map(shown::contains).orElse(false);
@@ -1267,7 +1384,7 @@ final class MapCanvas extends JComponent {
               ? label(place)
               : place
                   .marker()
-                  .map(m -> m.getLetter() + (m == Marker.EFFECT ? place.index() + 1 : ""))
+                  .map(m -> letters(m, place))
                   .orElse("+");
       g.setFont(getFont().deriveFont(Font.BOLD, 11f));
       final FontMetrics metrics = g.getFontMetrics();
@@ -1282,6 +1399,51 @@ final class MapCanvas extends JComponent {
           x + (width - metrics.stringWidth(text)) / 2,
           shown.y + (shown.height + metrics.getAscent() - metrics.getDescent()) / 2);
     }
+  }
+
+  /** A marker's letter on the map: an effect's with its number, the PUs' after the value. */
+  private String letters(final Marker marker, final Place place) {
+    return switch (marker) {
+      case EFFECT -> marker.getLetter() + (place.index() + 1);
+      case VALUE -> MapXml.production(project.game(), place.territory()) + marker.getLetter();
+      default -> marker.getLetter();
+    };
+  }
+
+  /**
+   * A small arrow beside the territory's last unit place, on the side stacks of units beyond the
+   * places go on to.
+   */
+  private static void paintOverflowArrow(
+      final Graphics2D g, final Rectangle place, final boolean toLeft) {
+    final int half = Math.clamp(place.height / 4, 4, 10);
+    final int direction = toLeft ? -1 : 1;
+    final int base = toLeft ? place.x - 4 : place.x + place.width + 4;
+    final int middle = (int) place.getCenterY();
+    final Polygon arrow =
+        new Polygon(
+            new int[] {base, base, base + direction * (half + 3)},
+            new int[] {middle - half, middle + half, middle},
+            3);
+    // on a white halo, as the map's other marks, so a unit drawn there does not swallow it
+    g.setStroke(new BasicStroke(4, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+    g.setColor(Color.WHITE);
+    g.draw(arrow);
+    g.setColor(Theme.getAccentColor());
+    g.fill(arrow);
+  }
+
+  /** A star of five points round the point, its first one up. */
+  private static Polygon star(final int x, final int y, final int radius) {
+    final Polygon star = new Polygon();
+    for (int i = 0; i < 10; i++) {
+      final double angle = -Math.PI / 2 + i * Math.PI / 5;
+      final double reach = i % 2 == 0 ? radius : radius * 0.42;
+      star.addPoint(
+          (int) Math.round(x + reach * Math.cos(angle)),
+          (int) Math.round(y + reach * Math.sin(angle)));
+    }
+    return star;
   }
 
   /** One square of the screen's colors and outlines, at the square's place in the map. */
@@ -1971,7 +2133,8 @@ final class MapCanvas extends JComponent {
 
   /**
    * Each stack of units, its picture at one of the territory's places and how many beside it, as
-   * the game draws them; stacks beyond the places go on to the right of the last.
+   * the game draws them; stacks beyond the places go on beside the last, to the right or, with
+   * place.txt's overflowToLeft, to the left.
    */
   private void paintUnits(
       final Graphics2D g, final String territory, final List<UnitPlacement> units, final int size) {
@@ -1979,12 +2142,14 @@ final class MapCanvas extends JComponent {
       return;
     }
     final List<Point> places = unitPlacesOf(territory);
-    g.setFont(getFont().deriveFont(Font.BOLD, 11f));
+    final int beyond = project.getFiles().overflowsToLeft(territory) ? -size : size;
+    // how many in a stack, growing with the units, so it stays readable zoomed in
+    g.setFont(getFont().deriveFont(Font.BOLD, Math.clamp(size / 4f, 11f, 28f)));
     final FontMetrics metrics = g.getFontMetrics();
     for (int i = 0; i < units.size(); i++) {
       final UnitPlacement stack = units.get(i);
       final Point place = places.get(Math.min(i, places.size() - 1));
-      final int x = (int) (place.x * zoom) + Math.max(0, i - places.size() + 1) * size;
+      final int x = (int) (place.x * zoom) + Math.max(0, i - places.size() + 1) * beyond;
       final int y = (int) (place.y * zoom);
       unitPicture(stack.getOwner(), stack.getUnitType())
           .ifPresentOrElse(
@@ -2004,6 +2169,8 @@ final class MapCanvas extends JComponent {
 
   /** Where the game draws the territory's units, {@link MapFiles#unitPlaces}, once per change. */
   private List<Point> unitPlacesOf(final String territory) {
+    // also asked between a change and the next paint, eg by a menu's item
+    followFiles();
     return unitPlaces.computeIfAbsent(territory, project.getFiles()::unitPlaces);
   }
 
@@ -2202,7 +2369,11 @@ final class MapCanvas extends JComponent {
       }
       final Optional<Place> place = placeAt(e.getPoint());
       final Optional<String> territory = territoryAt(e.getPoint());
-      if (place.isPresent()) {
+      final Optional<JPopupMenu> menu =
+          SwingUtilities.isRightMouseButton(e) ? placesMenu(e.getPoint()) : Optional.empty();
+      if (menu.isPresent()) {
+        menu.get().show(MapCanvas.this, e.getX(), e.getY());
+      } else if (place.isPresent()) {
         if (SwingUtilities.isRightMouseButton(e)) {
           remove(place.get());
         } else if (SwingUtilities.isLeftMouseButton(e) && decorating.isEmpty()) {
@@ -2213,13 +2384,13 @@ final class MapCanvas extends JComponent {
         if (decorating.isPresent()) {
           addDecoration(decorating.get(), e.getPoint());
         } else if (editingPlaces && territory.isPresent() && territory.get().equals(selected)) {
-          addUnitPlace(e.getPoint());
+          addUnitPlace(territory.get(), e.getPoint());
         } else if (addsUnitPlaces
             && everywhere.shows(PlaceKind.UNITS)
             && territory.isPresent()
             && territory.get().equals(selected)) {
           // the unit places show on every territory: a click in the chosen one adds one there
-          addUnitPlace(e.getPoint());
+          addUnitPlace(territory.get(), e.getPoint());
           Dialogs.toast(
               MapCanvas.this,
               "✓ Added a place for units in " + selected,

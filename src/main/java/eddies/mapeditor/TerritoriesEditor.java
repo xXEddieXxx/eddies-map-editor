@@ -75,10 +75,12 @@ import javax.swing.JSpinner;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.JTextField;
 import javax.swing.JToggleButton;
+import javax.swing.MenuSelectionManager;
 import javax.swing.KeyStroke;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
+import javax.swing.UIManager;
 import javax.swing.text.DefaultFormatter;
 import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.Initialize.UnitInitialize.UnitPlacement;
@@ -105,10 +107,14 @@ final class TerritoriesEditor implements Editor {
   // the width of the decoration box: G40's misc folder holds dozens of long names
   private static final String DECORATION_WIDTH = "a_decoration_name.png";
   private static final String LIST = "list";
+  // after a kind of place in the Places menu: the map shows none of it, or its file does not read
+  private static final String NONE = "(none)";
+  private static final String NOT_READ = "(not read)";
   private static final String TERRITORY = "territory";
   private static final String SPLIT = "split";
   private static final String NAME_REFUSED = "Already used, empty, or holds : < (.";
-  static final String ERASER_HOW_TO = "Click a border to erase all of it; drag to erase a part.";
+  // banner texts short enough for 1280 px beside the brushes; the brushes' tool tips say more
+  static final String ERASER_HOW_TO = "Click erases a border, drag a part.";
   private static final int MAX_NAMED = 6;
   // how near a border, in pixels of the screen, a drawn line's end is brought to it
   private static final int SNAP_PIXELS = 12;
@@ -185,6 +191,11 @@ final class TerritoriesEditor implements Editor {
   private ShownPlaces shownPlaces = ShownPlaces.NONE;
   // the layouts' places per territory at most; huge sea zones rely on overflow
   private final JSpinner mostPlaces = new JSpinner(new SpinnerNumberModel(16, 1, 999, 1));
+  // off at first: a center is also where the game draws eg a flag
+  private final JCheckBox moveCenters =
+      new JCheckBox("Move centers where that fits more places (up to");
+  // half the tallest unit the game has
+  private final JSpinner moveCentersBy = new JSpinner(new SpinnerNumberModel(27, 1, 999, 1));
   private final Consumer<BufferedImage> findTerritories;
   private final JPanel modes = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_XS, 0));
   // in the inspector, built again with it; one button, so the banner's Done can untoggle it
@@ -276,7 +287,8 @@ final class TerritoriesEditor implements Editor {
     buildModes();
     // a number typed counts without Enter: a click on Squeeze closes the menu before focus-lost,
     // and a press on the map takes no focus, so a stroke would paint the value before
-    List.of(mostPlaces, paintedPus, textureX, textureY).forEach(TerritoriesEditor::takeAsTyped);
+    List.of(mostPlaces, moveCentersBy, paintedPus, textureX, textureY)
+        .forEach(TerritoriesEditor::takeAsTyped);
     project.onChange(
         () -> {
           list.refresh();
@@ -457,16 +469,27 @@ final class TerritoriesEditor implements Editor {
 
   /**
    * A check per kind of place in plain words, several at once, the menu staying open to check
-   * more; then laying out unit places and creating the missing ones, each a menu of its own.
+   * more: the units', then the others by name, the sea zones' rare ones behind a line ({@link
+   * Marker#IN_MENUS}); a kind the map shows no place of says "(none)", one whose file does not read
+   * "(not read)". Then laying out unit places and creating the missing ones, each a menu of its
+   * own.
    */
   JPopupMenu placesMenu() {
     final JPopupMenu menu = new JPopupMenu();
     menu.add(placesItem("Units", MapFiles.PLACEMENTS, PlaceKind.UNITS));
+    menu.add(placesItem(Marker.IN_MENUS.get(0)));
     menu.add(placesItem("Centers", MapFiles.CENTERS, PlaceKind.CENTERS));
-    for (final Marker marker : Marker.values()) {
-      menu.add(placesItem(placesName(marker), marker.getFile(), marker));
-    }
-    final JCheckBoxMenuItem decorate = new JCheckBoxMenuItem("Decorations", mode == Mode.DECORATE);
+    menu.add(placesItem(Marker.IN_MENUS.get(1)));
+    final JCheckBoxMenuItem decorate =
+        new JCheckBoxMenuItem(
+            withNote(
+                "Decorations",
+                project.getFiles().placesUnread(MapFiles.DECORATIONS)
+                    ? Optional.of(NOT_READ)
+                    : Optional.of(NONE)
+                        .filter(n -> project.getFiles().places().decorations().isEmpty())),
+            mode == Mode.DECORATE);
+    decorate.getAccessibleContext().setAccessibleName("Decorations");
     decorate.setToolTipText(
         (decorationPicture.getItemCount() > 0
                 ? "Place pictures from the map's misc folder anywhere on the map"
@@ -482,6 +505,9 @@ final class TerritoriesEditor implements Editor {
           }
         });
     menu.add(decorate);
+    Marker.IN_MENUS.subList(2, 6).forEach(marker -> menu.add(placesItem(marker)));
+    menu.addSeparator();
+    Marker.IN_MENUS.subList(6, 9).forEach(marker -> menu.add(placesItem(marker)));
     menu.addSeparator();
     menu.add(layOutMenu());
     menu.add(createMissingMenu());
@@ -540,8 +566,10 @@ final class TerritoriesEditor implements Editor {
     most.setOpaque(false);
     // in line with the items: a centered panel would push the menu's rows apart
     most.setAlignmentX(Component.LEFT_ALIGNMENT);
+    // the rows start where the items' texts do, the flow's gap before the first one
+    final int textStart = menuTextStart();
     most.setBorder(
-        BorderFactory.createEmptyBorder(Theme.GAP_XS, Theme.GAP_M - Theme.GAP_S, Theme.GAP_XS, 0));
+        BorderFactory.createEmptyBorder(Theme.GAP_XS, textStart - Theme.GAP_S, Theme.GAP_XS, 0));
     final JLabel atMost = new JLabel("At most");
     atMost.setLabelFor(mostPlaces);
     most.add(atMost);
@@ -549,6 +577,32 @@ final class TerritoriesEditor implements Editor {
     most.add(new JLabel("per territory"));
     mostPlaces.setToolTipText("More units than places go on beside the last place");
     layOut.add(most);
+    final JPanel centers = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_S, 0));
+    centers.setOpaque(false);
+    centers.setAlignmentX(Component.LEFT_ALIGNMENT);
+    centers.setBorder(BorderFactory.createEmptyBorder(0, textStart - Theme.GAP_S, Theme.GAP_XS, 0));
+    moveCenters.setOpaque(false);
+    moveCenters.setToolTipText(
+        "A territory short of places gets its center moved to where more units fit, inside it;"
+            + " one undo takes centers and places back");
+    moveCentersBy.getAccessibleContext().setAccessibleName("Move centers up to, in px");
+    centers.add(moveCenters);
+    centers.add(moveCentersBy);
+    centers.add(new JLabel("px)"));
+    layOut.add(centers);
+    // the places are laid out for units of this size; a menu may be a window of its own, so the
+    // link gets the way to the tool
+    final JComponent size =
+        Help.link(
+            unitSizeLine(project.getFiles()),
+            "Map look",
+            () -> {
+              MenuSelectionManager.defaultManager().clearSelectedPath();
+              openTool.accept("Map look", null);
+            });
+    size.setAlignmentX(Component.LEFT_ALIGNMENT);
+    size.setBorder(BorderFactory.createEmptyBorder(0, textStart, Theme.GAP_XS, 0));
+    layOut.add(size);
     for (final UnitLayout layout : UnitLayout.values()) {
       final String name =
           layout == UnitLayout.SQUEEZE ? "Round the center" : "In rows below the center";
@@ -563,6 +617,28 @@ final class TerritoriesEditor implements Editor {
               List.copyOf(project.getFiles().polygons().keySet())));
     }
     return layOut;
+  }
+
+  /** Where a menu item's text starts: its margin, the column for icons and the gap after it. */
+  private static int menuTextStart() {
+    return UIScale.scale(
+        Optional.ofNullable(UIManager.getInsets("MenuItem.margin")).map(i -> i.left).orElse(6)
+            + Optional.ofNullable(UIManager.getDimension("MenuItem.minimumIconSize"))
+                .map(d -> d.width)
+                .orElse(16)
+            + UIManager.getInt("MenuItem.iconTextGap"));
+  }
+
+  /** The size the game draws units at, as map.properties says, eg before laying out places. */
+  static String unitSizeLine(final MapFiles files) {
+    final Dimension picture = files.unitPictureSize();
+    return "Units are drawn "
+        + picture.width
+        + " × "
+        + picture.height
+        + " px at "
+        + Math.round(files.unitScale() * 100)
+        + " %";
   }
 
   /** Lays out the territories' unit places as one step, and shows them. */
@@ -581,12 +657,71 @@ final class TerritoriesEditor implements Editor {
                 page, refused.get(), "Files", () -> MapMakerWindow.openTool(page, "Files", null));
             return;
           }
-          project.layOutUnitPlaces(layout, (Integer) mostPlaces.getValue(), territories);
+          final int most = (Integer) mostPlaces.getValue();
+          if (moveCenters.isSelected()) {
+            layOutMovingCenters(layout, most, territories, (Integer) moveCentersBy.getValue());
+            return;
+          }
+          project.layOutUnitPlaces(layout, most, territories);
           shownPlaces = shownPlaces.with(PlaceKind.UNITS);
           showModeButtons();
           map.showPlaces(shownPlaces);
         });
     return item;
+  }
+
+  /**
+   * Lays out the places with centers moved, in the background, as each center tried is a layout of
+   * its own and a big map takes seconds; taken as one step only if the files did not change
+   * meanwhile.
+   */
+  private void layOutMovingCenters(
+      final UnitLayout layout, final int most, final List<String> territories, final int within) {
+    final MapFiles files = project.getFiles();
+    Dialogs.toast(page, "Laying out unit places…");
+    new SwingWorker<MapFiles, Void>() {
+      @Override
+      protected MapFiles doInBackground() {
+        return files.withUnitPlacesLaidOut(layout, most, territories, within);
+      }
+
+      @Override
+      protected void done() {
+        final MapFiles laidOut;
+        try {
+          laidOut = get();
+        } catch (final InterruptedException e) {
+          Thread.currentThread().interrupt();
+          return;
+        } catch (final ExecutionException e) {
+          final Throwable cause = e.getCause();
+          Dialogs.warn(
+              page,
+              "Lay out unit places",
+              Optional.ofNullable(cause.getMessage()).orElse(cause.getClass().getSimpleName()));
+          return;
+        }
+        if (project.getFiles() != files) {
+          Dialogs.toast(page, "! The map changed while places were laid out. Lay them out again.");
+          return;
+        }
+        project.editFiles(f -> laidOut);
+        final long moved =
+            territories.stream()
+                .filter(t -> !Objects.equals(laidOut.centers().get(t), files.centers().get(t)))
+                .count();
+        Dialogs.toast(
+            page,
+            "✓ Unit places laid out · "
+                + moved
+                + (moved == 1 ? " center moved" : " centers moved"),
+            "Undo",
+            project::undo);
+        shownPlaces = shownPlaces.with(PlaceKind.UNITS);
+        showModeButtons();
+        map.showPlaces(shownPlaces);
+      }
+    }.execute();
   }
 
   /**
@@ -681,11 +816,37 @@ final class TerritoriesEditor implements Editor {
             + (missing == 1 ? "it." : "them."));
   }
 
+  private JCheckBoxMenuItem placesItem(final Marker marker) {
+    return placesItem(placesName(marker), marker.getFile(), marker);
+  }
+
   private JCheckBoxMenuItem placesItem(final String text, final String file, final Enum<?> kind) {
-    final JCheckBoxMenuItem item = new JCheckBoxMenuItem(text, shownPlaces.shows(kind));
+    final MapFiles files = project.getFiles();
+    final Game game = project.game();
+    // what the map shows of the kind: found places too, so none only where no territory has one
+    final boolean none =
+        kind instanceof Marker marker
+            ? files.polygons().keySet().stream()
+                .noneMatch(
+                    t ->
+                        marker.isOn(game, t)
+                            || (marker.keepsUnused()
+                                && files.places().markers(marker).containsKey(t)))
+            : files.polygons().isEmpty();
+    final JCheckBoxMenuItem item =
+        new JCheckBoxMenuItem(
+            withNote(
+                text,
+                files.placesUnread(file)
+                    ? Optional.of(NOT_READ)
+                    : Optional.of(NONE).filter(n -> none)),
+            shownPlaces.shows(kind));
+    item.getAccessibleContext().setAccessibleName(text);
     item.setToolTipText(
-        "Shown on every territory, to drag"
-            + (kind == PlaceKind.UNITS ? "; a click in the chosen territory adds a place" : "")
+        "Shown on every territory, to drag; a right-click there for more"
+            + (kind == PlaceKind.UNITS
+                ? "; a click in the chosen territory adds a place"
+                : "")
             + " — "
             + file);
     item.putClientProperty("CheckBoxMenuItem.doNotCloseOnMouseClick", true);
@@ -696,6 +857,20 @@ final class TerritoriesEditor implements Editor {
           map.showPlaces(shownPlaces);
         });
     return item;
+  }
+
+  /** The kind's name, with a grey note after it, eg "(none)" when the map shows no such place. */
+  private static String withNote(final String name, final Optional<String> note) {
+    return note.map(
+            n ->
+                "<html>"
+                    + name
+                    + " <font color='"
+                    + Theme.convertColorToHex(Theme.getSecondaryTextColor())
+                    + "'>"
+                    + n
+                    + "</font></html>")
+        .orElse(name);
   }
 
   /** The kind of place a file holds, eg name_place.txt the names'; none for another file. */
@@ -1014,9 +1189,8 @@ final class TerritoriesEditor implements Editor {
         map.showBanner(
             "Moving "
                 + territory
-                + "'s places: drag a place to move it, click inside "
-                + territory
-                + " to add a place for units, right-click or Delete removes one.",
+                + "'s places: drag one to move it, click inside to add a unit place,"
+                + " right-click for more.",
             this::endMode);
       }
       case MERGE -> {
@@ -1044,9 +1218,9 @@ final class TerritoriesEditor implements Editor {
                           ? "Edits the picture · no undo"
                           : "Edits the picture",
                       switch (drawBrush) {
-                        case FREEHAND -> "Drag a border line.";
-                        case LINE -> "Click points; double-click ends.";
-                        case CIRCLE -> "Drag a circle, corner to corner.";
+                        case FREEHAND -> "Drag a line.";
+                        case LINE -> "Click points.";
+                        case CIRCLE -> "Drag a circle.";
                         case ERASER -> ERASER_HOW_TO;
                       },
                       drawingTools(style),
@@ -1411,9 +1585,7 @@ final class TerritoriesEditor implements Editor {
   private Brush textureBrush(final String texture) {
     return new Brush(
         texture,
-        "Painting "
-            + texture
-            + ": click or drag across territories. In the game after Map look's Create relief.",
+        "Painting " + texture + ". In the game after Map look's Create relief.",
         Optional.empty(),
         (g, t) -> g,
         Optional.empty(),

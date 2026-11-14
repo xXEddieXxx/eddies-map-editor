@@ -15,6 +15,7 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.lang.ref.WeakReference;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.ByteBuffer;
@@ -27,14 +28,18 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.WeakHashMap;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -229,18 +234,46 @@ class MapFolder {
    */
   static void writeChangedTiles(
       final Path folder, final BufferedImage image, final BufferedImage before) throws IOException {
+    writeTiles(
+        folder, image, listsOnly() ? listedTiles(image, before) : changedTiles(image, before));
+  }
+
+  // per picture, the tiles that differ from a picture before, as a save that only lists its files
+  // found them: it is asked after every step, and a big picture has thousands of tiles. Only for
+  // the list, so a picture changed in place meanwhile still gets every changed tile written
+  private static final Map<BufferedImage, ChangedTiles> LISTED_TILES =
+      Collections.synchronizedMap(new WeakHashMap<>());
+
+  private record ChangedTiles(WeakReference<BufferedImage> before, List<Point> tiles) {}
+
+  private static List<Point> listedTiles(final BufferedImage image, final BufferedImage before) {
+    final ChangedTiles known = LISTED_TILES.get(image);
+    if (known != null && known.before().get() == before) {
+      return known.tiles();
+    }
+    final List<Point> tiles = changedTiles(image, before);
+    LISTED_TILES.put(image, new ChangedTiles(new WeakReference<>(before), tiles));
+    return tiles;
+  }
+
+  /** For a picture changed in place: its tiles are found again when the save is next listed. */
+  static void forgetListedTiles(final BufferedImage image) {
+    LISTED_TILES.remove(image);
+  }
+
+  /** The tiles of the picture that differ from the same tile of the one before, as (column, row). */
+  private static List<Point> changedTiles(final BufferedImage image, final BufferedImage before) {
     final int size = MapFiles.tileSize();
-    final Path tiles = Files.createDirectories(folder.resolve("baseTiles"));
+    final List<Point> changed = new ArrayList<>();
     for (int column = 0; column * size < image.getWidth(); column++) {
       for (int row = 0; row * size < image.getHeight(); row++) {
-        final BufferedImage tile = tileOf(image, column, row, size);
-        if (!Arrays.equals(pixels(tile), pixels(tileOf(before, column, row, size)))) {
-          final Path file = tiles.resolve(column + "_" + row + ".png");
-          final BufferedImage written = overOldTile(file, image, column, row, size);
-          MapFolder.replace(file, f -> ImageIO.write(written, "png", f.toFile()));
+        if (!Arrays.equals(
+            pixels(tileOf(image, column, row, size)), pixels(tileOf(before, column, row, size)))) {
+          changed.add(new Point(column, row));
         }
       }
     }
+    return List.copyOf(changed);
   }
 
   /**
@@ -251,11 +284,12 @@ class MapFolder {
       final Path folder, final BufferedImage image, final Collection<Point> changed)
       throws IOException {
     final int size = MapFiles.tileSize();
-    final Path tiles = Files.createDirectories(folder.resolve("baseTiles"));
+    final Path tiles = made(folder.resolve("baseTiles"));
     for (final Point tile : changed) {
       final Path file = tiles.resolve(tile.x + "_" + tile.y + ".png");
-      final BufferedImage written = overOldTile(file, image, tile.x, tile.y, size);
-      MapFolder.replace(file, f -> ImageIO.write(written, "png", f.toFile()));
+      MapFolder.replace(
+          file,
+          f -> ImageIO.write(overOldTile(file, image, tile.x, tile.y, size), "png", f.toFile()));
     }
   }
 
@@ -300,9 +334,12 @@ class MapFolder {
   static void writePicture(final Path folder, final BufferedImage image) throws IOException {
     writeTiles(folder, image);
     // the game needs a small map to show the whole map at once
-    writeSmallMap(folder, image);
+    writeSmallMap(folder, () -> Optional.of(image));
     // the map browser and the game chooser show the map by its preview
-    ImageIO.write(shrunk(image, PREVIEW_WIDTH), "png", folder.resolve("preview.png").toFile());
+    final Path preview = folder.resolve("preview.png");
+    if (writes(preview)) {
+      ImageIO.write(shrunk(image, PREVIEW_WIDTH), "png", preview.toFile());
+    }
   }
 
   /**
@@ -311,28 +348,18 @@ class MapFolder {
    */
   static void writeTiles(final Path folder, final BufferedImage image) throws IOException {
     final int size = MapFiles.tileSize();
-    final Path tiles = Files.createDirectories(folder.resolve("baseTiles"));
+    final Path tiles = made(folder.resolve("baseTiles"));
     final Set<Path> written = new HashSet<>();
     for (int column = 0; column * size < image.getWidth(); column++) {
       for (int row = 0; row * size < image.getHeight(); row++) {
-        final BufferedImage tile = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
-        final Graphics2D g = tile.createGraphics();
-        g.drawImage(image, -column * size, -row * size, null);
-        g.dispose();
         final Path file = tiles.resolve(column + "_" + row + ".png");
-        replace(file, to -> ImageIO.write(tile, "png", to.toFile()));
+        final int x = column;
+        final int y = row;
+        replace(file, to -> ImageIO.write(tileOf(image, x, y, size), "png", to.toFile()));
         written.add(file);
       }
     }
-    try (Stream<Path> before = Files.list(tiles)) {
-      for (final Path stale :
-          before
-              .filter(f -> f.getFileName().toString().endsWith(".png"))
-              .filter(f -> !written.contains(f))
-              .toList()) {
-        remove(stale);
-      }
-    }
+    removeStale(tiles, written);
   }
 
   /**
@@ -341,25 +368,34 @@ class MapFolder {
    */
   static void writeRelief(final Path folder, final BufferedImage image) throws IOException {
     final int size = MapFiles.tileSize();
-    final Path tiles = Files.createDirectories(folder.resolve("reliefTiles"));
+    final Path tiles = made(folder.resolve("reliefTiles"));
     final Set<Path> written = new HashSet<>();
     for (int column = 0; column * size < image.getWidth(); column++) {
       for (int row = 0; row * size < image.getHeight(); row++) {
-        final BufferedImage tile = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
-        final Graphics2D g = tile.createGraphics();
-        g.drawImage(image, -column * size, -row * size, null);
-        g.dispose();
         final Path file = tiles.resolve(column + "_" + row + ".png");
-        replace(file, to -> ImageIO.write(tile, "png", to.toFile()));
+        final int x = column;
+        final int y = row;
+        replace(file, to -> ImageIO.write(tileOf(image, x, y, size), "png", to.toFile()));
         written.add(file);
       }
     }
-    try (Stream<Path> before = Files.list(tiles)) {
-      for (final Path stale :
-          before
-              .filter(f -> f.getFileName().toString().endsWith(".png"))
-              .filter(f -> !written.contains(f))
-              .toList()) {
+    removeStale(tiles, written);
+  }
+
+  /** Removes the tiles there that the save did not write, eg of a bigger picture before. */
+  private static void removeStale(final Path tiles, final Set<Path> written) throws IOException {
+    final List<Path> before;
+    if (listsOnly()) {
+      // the folder may not be made yet, as nothing is
+      before = names(tiles).stream().map(tiles::resolve).sorted().toList();
+    } else {
+      // a folder that cannot be read fails the save; sorted, as the list of files it wrote is
+      try (Stream<Path> files = Files.list(tiles)) {
+        before = files.sorted().toList();
+      }
+    }
+    for (final Path stale : before) {
+      if (stale.getFileName().toString().endsWith(".png") && !written.contains(stale)) {
         remove(stale);
       }
     }
@@ -387,10 +423,10 @@ class MapFolder {
     if (engineAsset("flags", nation + ".png").isPresent()) {
       return;
     }
-    final Path flags = Files.createDirectories(folder.resolve("flags"));
+    final Path flags = made(folder.resolve("flags"));
     for (final Map.Entry<String, Integer> size : FLAG_SIZES.entrySet()) {
       final Path file = flags.resolve(nation + size.getKey() + ".png");
-      if (!Files.exists(file)) {
+      if (!Files.exists(file) && writes(file)) {
         final int side = size.getValue();
         final BufferedImage flag = new BufferedImage(side, side, BufferedImage.TYPE_INT_ARGB);
         final Graphics2D g = flag.createGraphics();
@@ -586,7 +622,7 @@ class MapFolder {
     }
     final Path flags = folder.resolve("flags");
     for (final String name : names(flags)) {
-      if (flagOf(old).matcher(name).matches()) {
+      if (flagOf(old).matcher(name).matches() && writes(flags.resolve(name))) {
         Files.deleteIfExists(flags.resolve(name));
       }
     }
@@ -595,26 +631,31 @@ class MapFolder {
       try (Stream<Path> walk = Files.walk(units)) {
         // deepest first: the files, then the folders they leave empty
         for (final Path left : walk.sorted(java.util.Comparator.reverseOrder()).toList()) {
-          Files.deleteIfExists(left);
+          // a folder is no file to tell of
+          if (Files.isDirectory(left) ? !listsOnly() : writes(left)) {
+            Files.deleteIfExists(left);
+          }
         }
       }
     }
   }
 
   private static void copy(final Path from, final Path to) throws IOException {
-    Files.createDirectories(to.getParent());
     if (Files.exists(to) && Files.isSameFile(from, to)) {
       // only the letters' case differs, which Windows takes for the same file: renamed, by way
       // of another name, as a move to itself is none
-      if (!to.toRealPath().getFileName().equals(to.getFileName())) {
+      if (!to.toRealPath().getFileName().equals(to.getFileName()) && writes(to)) {
         final Path between = from.resolveSibling(from.getFileName() + ".renaming");
         Files.move(from, between, StandardCopyOption.REPLACE_EXISTING);
         Files.move(between, to);
       }
       return;
     }
-    backUp(to);
-    Files.copy(from, to, StandardCopyOption.REPLACE_EXISTING);
+    if (writes(to)) {
+      Files.createDirectories(to.getParent());
+      backUp(to);
+      Files.copy(from, to, StandardCopyOption.REPLACE_EXISTING);
+    }
   }
 
   /** The game's own picture into the map, where the map has none and the game none of that name. */
@@ -624,14 +665,14 @@ class MapFolder {
     final Optional<URL> own = engineAsset(asset.toArray(String[]::new));
     if (own.isPresent()
         && !Files.exists(to)
-        && engineAsset(assetOfNewName.toArray(String[]::new)).isEmpty()) {
+        && engineAsset(assetOfNewName.toArray(String[]::new)).isEmpty()
+        && writes(to)) {
       Files.createDirectories(to.getParent());
       try (java.io.InputStream in = own.get().openStream()) {
         Files.copy(in, to);
       }
     }
   }
-
 
   /**
    * Writes the map's whole picture, without its relief, as one png: the one loaded, else put
@@ -652,13 +693,23 @@ class MapFolder {
    * The picture shrunk as the game's small map, over the one there was as {@link #replace} does.
    * The game draws it as it is and only fills the land in its owners' colors over it
    * (SmallMapImageManager), so the sea and the coasts show a relief only when this picture has it.
+   * The picture is asked for only when the file is written, not when a save just lists its files;
+   * none writes nothing.
    */
-  static void writeSmallMap(final Path folder, final BufferedImage picture) throws IOException {
-    final BufferedImage small = shrunk(picture, SMALL_MAP_WIDTH);
+  // shortcut: a save that only lists its files names the small map also where the picture would
+  // be none (eg tiles that do not read); ask the picture there too if that misleads
+  static void writeSmallMap(final Path folder, final Supplier<Optional<BufferedImage>> picture)
+      throws IOException {
     final String kind = smallMapKind(folder).orElse("png");
-    replace(
-        folder.resolve(Constants.SMALL_MAP_FILENAME + "." + kind),
-        to -> ImageIO.write(small, kind.equals("png") ? "png" : "jpeg", to.toFile()));
+    final Path file = folder.resolve(Constants.SMALL_MAP_FILENAME + "." + kind);
+    if (!writes(file)) {
+      return;
+    }
+    final Optional<BufferedImage> shown = picture.get();
+    if (shown.isPresent()) {
+      final BufferedImage small = shrunk(shown.get(), SMALL_MAP_WIDTH);
+      replace(file, to -> ImageIO.write(small, kind.equals("png") ? "png" : "jpeg", to.toFile()));
+    }
   }
 
   /** Whether the map has a small map's file, maybe made by hand. */
@@ -748,6 +799,9 @@ class MapFolder {
       final Path folder, final String nation, final String unit, final BufferedImage picture)
       throws IOException {
     final Path file = unitPicture(folder, nation, unit);
+    if (!writes(file)) {
+      return;
+    }
     Files.createDirectories(file.getParent());
     backUp(file);
     ImageIO.write(picture, "png", file.toFile());
@@ -948,6 +1002,9 @@ class MapFolder {
    * nothing.
    */
   static void replace(final Path file, final ContentWriter writer) throws IOException {
+    if (!writes(file)) {
+      return;
+    }
     backUp(file);
     final Path written = file.resolveSibling(file.getFileName() + ".saving");
     Files.deleteIfExists(written);
@@ -967,14 +1024,77 @@ class MapFolder {
 
   /** Deletes a file as {@link #replace} replaces one: the first version stays as ".bak". */
   static void remove(final Path file) throws IOException {
-    backUp(file);
-    Files.deleteIfExists(file);
+    if (Files.exists(file) && writes(file)) {
+      backUp(file);
+      Files.deleteIfExists(file);
+    }
   }
 
   /** Writes a file's content to the path given. */
   @FunctionalInterface
   interface ContentWriter {
     void write(Path to) throws IOException;
+  }
+
+  // while a save runs on this thread: the files it writes, makes or removes. Per thread, as
+  // imports write on others meanwhile
+  private static final ThreadLocal<Noted> NOTED = new ThreadLocal<>();
+
+  /** The files of a save in its order; one that only lists them changes nothing on disk. */
+  private static final class Noted {
+    private final Set<Path> files = new LinkedHashSet<>();
+    private final boolean listsOnly;
+
+    private Noted(final boolean listsOnly) {
+      this.listsOnly = listsOnly;
+    }
+  }
+
+  /** What a save does to the map's folder, with the methods of this class. */
+  @FunctionalInterface
+  interface Save {
+    void run() throws IOException;
+  }
+
+  /** Runs the save; the files it wrote, made or removed, in its order. */
+  static List<Path> written(final Save save) throws IOException {
+    return noted(save, new Noted(false));
+  }
+
+  /**
+   * The files the save would write, make or remove, in its order, by running it with nothing
+   * written: so the list is the save's own, whatever it compares to find them.
+   */
+  static List<Path> wouldWrite(final Save save) throws IOException {
+    return noted(save, new Noted(true));
+  }
+
+  private static List<Path> noted(final Save save, final Noted noted) throws IOException {
+    // a save asked for its files while it runs, eg by a listener, finds the one before again
+    final Noted before = NOTED.get();
+    NOTED.set(noted);
+    try {
+      save.run();
+    } finally {
+      NOTED.set(before);
+    }
+    return List.copyOf(noted.files);
+  }
+
+  /** Notes the file for the save that runs; false if that save only lists its files. */
+  private static boolean writes(final Path file) {
+    final Optional<Noted> noted = Optional.ofNullable(NOTED.get());
+    noted.ifPresent(n -> n.files.add(file));
+    return !listsOnly();
+  }
+
+  private static boolean listsOnly() {
+    return Optional.ofNullable(NOTED.get()).filter(n -> n.listsOnly).isPresent();
+  }
+
+  /** The folder, made unless the save that runs only lists its files. */
+  private static Path made(final Path folder) throws IOException {
+    return listsOnly() ? folder : Files.createDirectories(folder);
   }
 
   /** The folders of pictures the game looks for in a map, with what they hold. */

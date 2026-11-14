@@ -3,12 +3,12 @@ package eddies.mapeditor;
 import eddies.mapeditor.MapGuide.Step;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
-import java.awt.FlowLayout;
 import java.io.Serial;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
 import javax.swing.Box;
+import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
@@ -20,11 +20,12 @@ import javax.swing.JPanel;
  */
 final class GoalStrip extends JPanel {
   @Serial private static final long serialVersionUID = 1L;
-  static final int HEIGHT = 24;
+  // with the banner's text below it in the banner's one row of MapView.BANNER_HEIGHT
+  static final int HEIGHT = 18;
 
   private final transient MapProject project;
   private final JLabel text = new JLabel();
-  private final JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, Theme.GAP_XS, 0));
+  private final JPanel left = new JPanel();
   private final JLabel progress = Theme.newSecondaryLabel("");
   private final JButton next = new JButton();
   private transient Consumer<Step.Id> followStep = step -> {};
@@ -39,6 +40,9 @@ final class GoalStrip extends JPanel {
     setOpaque(false);
     setPreferredSize(new Dimension(0, HEIGHT));
     left.setOpaque(false);
+    // short of room the title is cut with "…" (whole in its tool tip), never its "?"
+    left.setLayout(new BoxLayout(left, BoxLayout.X_AXIS));
+    text.setMinimumSize(new Dimension(0, 0));
     add(left, BorderLayout.CENTER);
     add(progress, BorderLayout.EAST);
     Theme.setPrimaryButtonStyle(next);
@@ -59,7 +63,13 @@ final class GoalStrip extends JPanel {
     final Step current = current(MapGuide.steps(project), shown);
     left.removeAll();
     left.add(text);
-    left.add(Help.button(current.text(), current.why()));
+    left.add(Box.createHorizontalStrut(Theme.GAP_XS));
+    final JButton help = Help.button(current.text(), current.why());
+    final Dimension square = new Dimension(HEIGHT, HEIGHT);
+    help.setPreferredSize(square);
+    help.setMinimumSize(square);
+    help.setMaximumSize(square);
+    left.add(help);
     wasDone = current.done();
     setVisible(true);
     refresh();
@@ -74,6 +84,7 @@ final class GoalStrip extends JPanel {
     // as tall as a step's "?", so the title lines up with the progress as there
     left.add(Box.createVerticalStrut(HEIGHT));
     text.setText(title);
+    text.setToolTipText(title);
     progress.setText(howFar);
     next.setText(action);
     nextAction = onAction;
@@ -112,6 +123,7 @@ final class GoalStrip extends JPanel {
     final Step current = current(steps, step.get());
     text.setText(
         "Step " + (steps.indexOf(current) + 1) + " of " + steps.size() + " · " + current.text());
+    text.setToolTipText(text.getText());
     progress.setText(current.progress());
     // the same next step as Home's; "Next" only for one further down the list
     final Optional<Step> following = MapGuide.firstOpen(steps);

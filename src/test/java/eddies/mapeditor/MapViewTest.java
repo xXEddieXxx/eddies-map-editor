@@ -313,26 +313,42 @@ final class MapViewTest {
         .toList();
   }
 
-  @DisplayName("The map starts right under the toolbar's line, no gap between")
+  @DisplayName("The map keeps its place when a mode's banner or the goal shows and hides")
   @Test
-  void mapRightUnderToolbar() throws Exception {
+  void mapStaysWhereItIs() throws Exception {
     // given
     final List<Integer> ys = new ArrayList<>();
+    final List<Integer> toolbarBottom = new ArrayList<>();
 
     // when
     SwingUtilities.invokeAndWait(
         () -> {
           final MapView map = givenToolbar(1400);
           final Container row = find(map, MapViewsBar.class).getParent();
-          ys.add(SwingUtilities.convertPoint(row, 0, row.getHeight(), map).y);
-          final MapCanvas canvas = find(map, MapCanvas.class);
-          // the scroll pane's top, the map's frame
-          ys.add(
-              SwingUtilities.convertPoint(canvas.getParent().getParent(), 0, 0, map).y);
+          toolbarBottom.add(SwingUtilities.convertPoint(row, 0, row.getHeight(), map).y);
+          ys.add(mapTop(map));
+          map.showBanner(TEXT, () -> {});
+          ys.add(mapTop(map));
+          map.showEditBanner(TEXT, () -> {});
+          ys.add(mapTop(map));
+          map.showStep(MapGuide.Step.Id.NATIONS);
+          ys.add(mapTop(map));
+          map.hideBanner();
+          ys.add(mapTop(map));
         });
 
     // then
-    assertThat(ys.get(1)).as("the map's top at the toolbar's bottom").isEqualTo(ys.get(0));
+    assertThat(ys)
+        .as("without a banner, with one, in an edit mode, with the goal, and after: one place")
+        .containsOnly(toolbarBottom.getFirst() + MapView.BANNER_HEIGHT);
+  }
+
+  /** Where the map's frame, its scroll pane, starts in the view once that is laid out again. */
+  private static int mapTop(final MapView map) {
+    map.validate();
+    layOut(map);
+    final MapCanvas canvas = find(map, MapCanvas.class);
+    return SwingUtilities.convertPoint(canvas.getParent().getParent(), 0, 0, map).y;
   }
 
   @DisplayName("Short of room the views are one dropdown, the tools keep their names, none is cut")
@@ -738,7 +754,7 @@ final class MapViewTest {
     assertThat(shown).as("the banner is gone after Esc").containsExactly(false);
   }
 
-  @DisplayName("A step shows above the banner, 56 px high, kept by a new banner, ended by hiding")
+  @DisplayName("A step shows above the banner's text, kept by a new banner, ended by hiding")
   @Test
   void stepShowsAboveTheBanner() throws Exception {
     // given
@@ -749,13 +765,11 @@ final class MapViewTest {
         () -> {
           final MapView map = givenMap();
           map.showStep(MapGuide.Step.Id.NATIONS);
-          seen.add(bannerHeight(map));
           seen.add(map.bannerText().orElseThrow());
           map.showBanner(TEXT, () -> {});
           seen.add(map.goalStep().orElseThrow());
           map.hideBanner();
           seen.add(map.goalText().isPresent());
-          seen.add(bannerHeight(map));
           map.showStep(MapGuide.Step.Id.NATIONS);
           map.useFor(MapMode.GAME, new JPanel(), territory -> {});
           seen.add(map.goalStep().isPresent());
@@ -763,17 +777,12 @@ final class MapViewTest {
 
     // then
     assertThat(seen)
-        .as("56 px with how to add a nation; a mode's banner keeps it; hiding and useFor end it")
+        .as("how to add a nation; a mode's banner keeps the step; hiding and useFor end it")
         .containsExactly(
-            56,
-            MapGuide.howTo(MapGuide.Step.Id.NATIONS),
-            MapGuide.Step.Id.NATIONS,
-            false,
-            32,
-            false);
+            MapGuide.howTo(MapGuide.Step.Id.NATIONS), MapGuide.Step.Id.NATIONS, false, false);
   }
 
-  @DisplayName("An edit mode's banner is taller and says Edit mode; a plain banner after it is not")
+  @DisplayName("An edit mode's banner says Edit mode; a plain banner after it does not")
   @Test
   void editBannerSaysSo() throws Exception {
     // given
@@ -784,17 +793,13 @@ final class MapViewTest {
         () -> {
           final MapView map = givenMap();
           map.showEditBanner(TEXT, () -> {});
-          seen.add(bannerHeight(map));
           seen.add(editBadgeShown(map));
           map.showBanner(TEXT, () -> {});
-          seen.add(bannerHeight(map));
           seen.add(editBadgeShown(map));
         });
 
     // then
-    assertThat(seen)
-        .as("40 px with the badge, then 32 px without")
-        .containsExactly(40, true, 32, false);
+    assertThat(seen).as("with the badge, then without").containsExactly(true, false);
   }
 
   private static boolean editBadgeShown(final MapView map) {
@@ -807,10 +812,6 @@ final class MapViewTest {
     return in instanceof Container c
         ? Stream.concat(self, Stream.of(c.getComponents()).flatMap(MapViewTest::labels))
         : self;
-  }
-
-  private static int bannerHeight(final MapView map) {
-    return button(map, "Done").orElseThrow().getParent().getParent().getPreferredSize().height;
   }
 
   @DisplayName("Short of room the banner cuts its text, never the control after it")

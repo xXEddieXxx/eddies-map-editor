@@ -3,6 +3,7 @@ package eddies.mapeditor;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import games.strategy.triplea.attachments.TerritoryAttachment;
+import games.strategy.triplea.ui.mapdata.MapData;
 import java.awt.Point;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -269,6 +270,53 @@ final class MapPlacesTest {
     assertThat(folder.resolve("name_place.txt"))
         .as("the game still places the names itself")
         .doesNotExist();
+  }
+
+  @DisplayName("A value's mark sits on the middle of its text, right of and above its place")
+  @Test
+  void valueMarkOnItsText() throws Exception {
+    // given
+    final MapProject project = givenMapWithoutNamePlaces();
+    final MapFiles files = project.getFiles();
+    final Point place = files.markerPlaces(project.game(), Marker.VALUE, TERRITORY).getFirst();
+
+    // when
+    final Point value = files.markerMiddle(project.game(), Marker.VALUE, TERRITORY, place);
+    final Point effect = files.markerMiddle(project.game(), Marker.EFFECT, TERRITORY, place);
+
+    // then
+    assertThat(value.x).as("the place is the text's left end").isGreaterThan(place.x);
+    assertThat(value.y).as("and on its baseline").isLessThan(place.y);
+    assertThat(effect).as("a picture's mark stays on its place").isEqualTo(place);
+  }
+
+  @DisplayName("Drawn from the top left, a name's mark is still on the middle of its text")
+  @Test
+  void nameMarkFromTopLeft() throws Exception {
+    // given: the same map with names drawn from their baseline and from their top left
+    final MapProject project = givenMapWithoutNamePlaces();
+    final MapFiles onBaseline = project.getFiles();
+    final MapFiles fromTopLeft =
+        onBaseline.withProperty(MapData.PROPERTY_MAP_DRAWNAMESFROMTOPLEFT, "true");
+
+    // when: each name at its found place, where the game draws the text on the same spot
+    final Point baselineMark =
+        onBaseline.markerMiddle(
+            project.game(),
+            Marker.NAME,
+            TERRITORY,
+            onBaseline.markerPlaces(project.game(), Marker.NAME, TERRITORY).getFirst());
+    final Point topLeftMark =
+        fromTopLeft.markerMiddle(
+            project.game(),
+            Marker.NAME,
+            TERRITORY,
+            fromTopLeft.markerPlaces(project.game(), Marker.NAME, TERRITORY).getFirst());
+
+    // then
+    assertThat(topLeftMark)
+        .as("the text is drawn on the same spot, so its middle is too")
+        .isEqualTo(baselineMark);
   }
 
   /** A saved map without name_place.txt and pu_place.txt, opened, whose territory gives PUs. */
@@ -775,9 +823,10 @@ final class MapPlacesTest {
     final MapProject project = MapProject.open(made.getXmlFile().orElseThrow());
     final List<String> territories = List.copyOf(project.getFiles().polygons().keySet());
 
-    // when: a unit place set as a drag does, then Lay out unit places for every territory
+    // when: a unit place set as a drag does, Lay out unit places for every territory, the overflow
     project.setUnitPlaces(SEA, List.of(new Point(5, 5)));
     project.layOutUnitPlaces(MapFiles.UnitLayout.GRID, 6, territories);
+    project.flipOverflow(SEA);
     final boolean changed = project.hasUnsavedChanges();
     project.save();
 
@@ -787,7 +836,7 @@ final class MapPlacesTest {
         .hasValueSatisfying(
             why -> assertThat(why).contains("place.txt does not read", "in Files"));
     assertThat(project.whyNoPlaces("name_place.txt")).as("a file that reads").isEmpty();
-    assertThat(changed).as("neither made a step").isFalse();
+    assertThat(changed).as("none made a step").isFalse();
     assertThat(Files.readAllBytes(places)).as("the save left every byte of it").isEqualTo(before);
   }
 
@@ -824,5 +873,82 @@ final class MapPlacesTest {
         .as("name_place.txt likewise, the spacing typed by hand kept")
         .isEqualTo(nameLines.stream().filter(line -> !line.startsWith("Territory 4 ")).toList())
         .hasSize(nameLines.size() - 1);
+  }
+
+  @DisplayName("The side extra units go to flips as one step; only overflowToLeft=true is written")
+  @Test
+  void overflowFlipsAndIsSaved() throws Exception {
+    // given
+    final MapProject project = givenSavedMapWithUnknownPlace();
+    final List<String> before = Files.readAllLines(placeTxt(project));
+    final List<Point> places = project.getFiles().unitPlaces(TERRITORY);
+
+    // when: flipped to the left and saved
+    project.flipOverflow(TERRITORY);
+    final boolean toLeft = project.getFiles().overflowsToLeft(TERRITORY);
+    project.undo();
+    final boolean undone = project.getFiles().overflowsToLeft(TERRITORY);
+    project.redo();
+    project.save();
+    final List<String> left = Files.readAllLines(placeTxt(project));
+
+    // then
+    assertThat(List.of(toLeft, undone))
+        .as("to the left; one undo takes it back")
+        .containsExactly(true, false);
+    assertThat(project.getFiles().unitPlaces(TERRITORY)).as("the places stay").isEqualTo(places);
+    assertThat(left.stream().filter(line -> line.startsWith(TERRITORY + " ")))
+        .as("the territory's line says so, as the game reads it")
+        .singleElement()
+        .satisfies(line -> assertThat(line).endsWith(" | overflowToLeft=true"));
+    assertThat(left.stream().filter(line -> !line.startsWith(TERRITORY + " ")))
+        .as("every other line as it was")
+        .containsExactlyElementsOf(
+            before.stream().filter(line -> !line.startsWith(TERRITORY + " ")).toList());
+    assertThat(
+            MapProject.open(project.getXmlFile().orElseThrow())
+                .getFiles()
+                .overflowsToLeft(TERRITORY))
+        .as("opened again")
+        .isTrue();
+
+    // when: flipped back and saved
+    project.flipOverflow(TERRITORY);
+    project.save();
+
+    // then
+    assertThat(
+            Files.readAllLines(placeTxt(project)).stream()
+                .filter(line -> line.startsWith(TERRITORY + " ")))
+        .as("to the right is the game's default: not written")
+        .singleElement()
+        .satisfies(line -> assertThat(line).doesNotContain("overflowToLeft"));
+  }
+
+  @DisplayName("A marker's set place taken away is found again, as one step")
+  @Test
+  void markerPlaceFoundAgain() throws Exception {
+    // given
+    final MapProject project = givenSavedMapWithUnknownPlace();
+    final Point found = project.getFiles().markerPlace(project.game(), Marker.CAPITAL, TERRITORY);
+    project.setMarkerPlace(Marker.CAPITAL, TERRITORY, 0, new Point(7, 8));
+    final MapFiles set = project.getFiles();
+
+    // when
+    project.findMarkerPlaceAgain(Marker.CAPITAL, TERRITORY);
+    final MapFiles away = project.getFiles();
+    project.findMarkerPlaceAgain(Marker.CAPITAL, TERRITORY);
+    final boolean again = project.getFiles() == away;
+    project.undo();
+
+    // then
+    assertThat(away.places().markers(Marker.CAPITAL))
+        .as("no place set")
+        .doesNotContainKey(TERRITORY);
+    assertThat(away.markerPlace(project.game(), Marker.CAPITAL, TERRITORY))
+        .as("the found one again")
+        .isEqualTo(found);
+    assertThat(again).as("nothing to take away is no step").isTrue();
+    assertThat(project.getFiles()).as("one undo brings the set place back").isSameAs(set);
   }
 }

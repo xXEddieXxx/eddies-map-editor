@@ -104,6 +104,17 @@ final class MapProject {
   // (column, row); and how often any was changed
   private final Map<BufferedImage, Set<Point>> unsavedTiles = new WeakHashMap<>();
   private int pictureEdits;
+  // the files the next save writes, as last asked, and the step they were found for
+  private List<Path> toSave = List.of();
+  @Nullable private State toSaveOf;
+  // how many files or kinds of pictures a line about a save names
+  private static final int FILES_NAMED = 4;
+  // folders a save writes many pictures into (the file's folder or the one above), and what one
+  // is called
+  private static final Map<String, String> PICTURES_COUNTED =
+      Map.of(
+          "baseTiles", "tile", "reliefTiles", "relief tile", "flags", "flag", "units",
+          "unit picture");
   // pixels around a line drawn or erased in place that are cut out with it
   private static final int IN_PLACE_MARGIN = 64;
   // a resized picture: the picture it was made from, so a save writes its tiles and leaves the
@@ -113,7 +124,7 @@ final class MapProject {
   private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
   private @Nullable Path xmlFile;
   private @Nullable Path folder;
-  // the name of a map made here, written into its game on every save
+  // the name of a map made here, written into its game whenever that is written
   private @Nullable String mapName;
   private State saved;
   private State current;
@@ -1219,6 +1230,8 @@ final class MapProject {
     if (differing.isEmpty()) {
       return false;
     }
+    // the picture is no longer the one its listed tiles were found for
+    MapFolder.forgetListedTiles(picture);
     final Graphics2D into = picture.createGraphics();
     into.setComposite(AlphaComposite.Src);
     into.drawImage(changed.get(), part.x, part.y, null);
@@ -1575,6 +1588,19 @@ final class MapProject {
   void setMarkerPlace(
       final Marker marker, final String territory, final int index, final Point place) {
     stepFiles(current.files().withMarkerPlace(game(), marker, territory, index, place));
+  }
+
+  /** Takes away the place set for the territory's marker, so it is found again, as one step. */
+  void findMarkerPlaceAgain(final Marker marker, final String territory) {
+    stepFiles(current.files().withMarkerPlaceFoundAgain(marker, territory));
+  }
+
+  /**
+   * Lets the territory's stacks of units beyond its places go on to the other side of the last
+   * place, as one step; nothing while place.txt does not read.
+   */
+  void flipOverflow(final String territory) {
+    stepFiles(current.files().withOverflowFlipped(territory));
   }
 
   /** Moves the territory's center to this point, as one step. */
@@ -1983,12 +2009,82 @@ final class MapProject {
    * they differ from the files, as they follow the outlines and the game. Text files are written as
    * {@link MapFolder#replace} does, so a failed save loses nothing.
    *
+   * @return the files written, made or removed, in the save's order
    * @throws IllegalStateException for a new map, which {@link #saveAsNewMap} saves first
    */
-  void save() throws IOException {
-    write(
-        getXmlFile().orElseThrow(() -> new IllegalStateException("Not saved yet: " + UNTITLED)),
-        Objects.requireNonNull(folder));
+  List<Path> save() throws IOException {
+    final Path xml =
+        getXmlFile().orElseThrow(() -> new IllegalStateException("Not saved yet: " + UNTITLED));
+    return MapFolder.written(() -> write(xml, Objects.requireNonNull(folder)));
+  }
+
+  /**
+   * The files the next save writes, makes or removes, found by running the save itself with
+   * nothing written ({@link MapFolder#wouldWrite}): it reads the place files and compares a
+   * changed picture tile by tile, so it is asked when the list is shown and kept per step. None
+   * for a map not saved yet.
+   */
+  List<Path> filesToSave() throws IOException {
+    if (xmlFile == null || folder == null) {
+      return List.of();
+    }
+    if (toSaveOf != current) {
+      final State saving = current;
+      final Path xml = xmlFile;
+      final Path mapFolder = folder;
+      toSave =
+          MapFolder.wouldWrite(
+              () ->
+                  removeOldNationFiles(
+                      saving.game(), xml, mapFolder, writeFiles(saving, xml, mapFolder)));
+      toSaveOf = saving;
+    }
+    return toSave;
+  }
+
+  /** Has {@link #filesToSave} look again, eg as the map's folder may have changed meanwhile. */
+  void findFilesToSaveAgain() {
+    toSaveOf = null;
+  }
+
+  /**
+   * The files as a line's end, eg "3 files: 300BC.xml, place.txt, map.properties": pictures the
+   * save writes many of as their number (tiles, relief tiles, flags, unit pictures), at most
+   * {@value #FILES_NAMED} entries, then "and 4 more". Only their path in the map's folder counts,
+   * so a map in a folder named eg "units" is no unit picture.
+   */
+  // shortcut: a file the save removes (eg emptied notes, a renamed nation's old pictures) is
+  // listed like a written one; say "removes" if map makers ask which
+  static String filesLine(final Path mapFolder, final List<Path> files) {
+    // by file name, or by kind of picture, in the save's order
+    final Map<String, Integer> counts = new LinkedHashMap<>();
+    for (final Path file : files) {
+      final List<String> in = new ArrayList<>();
+      (file.startsWith(mapFolder) ? mapFolder.relativize(file) : file.getFileName())
+          .forEach(part -> in.add(part.toString()));
+      final int last = in.size() - 1;
+      counts.merge(
+          PICTURES_COUNTED.entrySet().stream()
+              .filter(e -> in.subList(Math.max(0, last - 2), last).contains(e.getKey()))
+              .map(Map.Entry::getValue)
+              .findFirst()
+              .orElse(in.get(last)),
+          1,
+          Integer::sum);
+    }
+    final List<Map.Entry<String, Integer>> named =
+        counts.entrySet().stream().limit(FILES_NAMED).toList();
+    final int more = files.size() - named.stream().mapToInt(Map.Entry::getValue).sum();
+    return files.size()
+        + (files.size() == 1 ? " file: " : " files: ")
+        + named.stream()
+            .map(
+                e ->
+                    PICTURES_COUNTED.containsValue(e.getKey())
+                        ? e.getValue() + " " + e.getKey() + (e.getValue() == 1 ? "" : "s")
+                        : e.getKey())
+            .collect(Collectors.joining(", "))
+        + (more > 0 ? " and " + more + " more" : "");
   }
 
   /**
@@ -2017,6 +2113,57 @@ final class MapProject {
 
   private void write(final Path xml, final Path mapFolder) throws IOException {
     final State saving = current;
+    final Map<String, String> movedNations = writeFiles(saving, xml, mapFolder);
+    final Set<Point> drawnTiles = unsavedTilesOf(saving.files());
+    if (!drawnTiles.isEmpty()) {
+      drawnTiles.clear();
+    }
+    saved = saving;
+    current = saved;
+    // the same step writes other files now
+    findFilesToSaveAgain();
+    if (!movedNations.isEmpty()) {
+      // every step finds its nations' pictures where they are now, eg after an undo of the rename
+      holdEach(
+          state ->
+              state
+                  .files()
+                  .withNationFilesMoved(movedNations, MapXml.nations(state.game())));
+    }
+    try {
+      // after the map counts as saved: a picture that does not go, eg open in another program,
+      // leaves it saved
+      removeOldNationFiles(saving.game(), xml, mapFolder, movedNations);
+    } finally {
+      listeners.forEach(Runnable::run);
+    }
+  }
+
+  /**
+   * The game is saved under the new names: the pictures under the old ones go, unless a nation of
+   * this or another game of the map still has the name.
+   *
+   * @param movedNations the renamed nations' new names by their old ones
+   */
+  private static void removeOldNationFiles(
+      final Game game, final Path xml, final Path mapFolder, final Map<String, String> movedNations)
+      throws IOException {
+    for (final Map.Entry<String, String> moved : movedNations.entrySet()) {
+      if (!MapXml.nations(game).contains(moved.getKey())
+          && !MapFolder.otherGameHasNation(mapFolder, xml, moved.getKey())) {
+        MapFolder.removeNationFiles(mapFolder, moved.getKey(), moved.getValue());
+      }
+    }
+  }
+
+  /**
+   * Everything a save writes of the state into the map's folder, the game last; this project
+   * stays as it is, so {@link #filesToSave} can ask the same code what it would write.
+   *
+   * @return the nations renamed since the last save, the new names by the old ones
+   */
+  private Map<String, String> writeFiles(final State saving, final Path xml, final Path mapFolder)
+      throws IOException {
     final MapFiles files = saving.files().withFolder(mapFolder);
     final boolean firstSave = xmlFile == null;
     // the outlines first: if they fail, the game file still names the territories they hold
@@ -2048,7 +2195,8 @@ final class MapProject {
         // made with the relief
         MapFolder.writeTiles(mapFolder, picture);
         if (!hadSmallMap) {
-          MapFolder.writeSmallMap(mapFolder, files.shownPicture().orElse(picture));
+          MapFolder.writeSmallMap(
+              mapFolder, () -> files.shownPicture().or(() -> Optional.of(picture)));
         }
       } else {
         MapFolder.writePicture(mapFolder, picture);
@@ -2056,20 +2204,16 @@ final class MapProject {
     }
     // lines drawn into a big picture itself: the tiles they touched, unless all were just written
     final Set<Point> drawnTiles = unsavedTilesOf(files);
-    if (!drawnTiles.isEmpty()) {
-      if (!firstSave && files.picture().equals(saved.files().picture())) {
-        MapFolder.writeTiles(mapFolder, files.picture().orElseThrow(), drawnTiles);
-      }
-      drawnTiles.clear();
+    if (!drawnTiles.isEmpty() && !firstSave && files.picture().equals(saved.files().picture())) {
+      MapFolder.writeTiles(mapFolder, files.picture().orElseThrow(), drawnTiles);
     }
+
     if (files.relief().isPresent() && !files.relief().equals(saved.files().relief())) {
       MapFolder.writeRelief(mapFolder, files.relief().get());
       // a map without a small map gets one with the relief; one there may be made by hand and
       // stays, until Map look's Update the small map
-      final Optional<BufferedImage> shown =
-          hadSmallMap ? Optional.empty() : files.shownPicture();
-      if (shown.isPresent()) {
-        MapFolder.writeSmallMap(mapFolder, shown.get());
+      if (!hadSmallMap) {
+        MapFolder.writeSmallMap(mapFolder, files::shownPicture);
       }
     }
     final Game before = firstSave ? Game.builder().build() : saved.game();
@@ -2095,32 +2239,15 @@ final class MapProject {
       writeNotes(notesFile(xml), notes);
     }
     saving.texts().writeChanged(mapFolder, saved.texts());
-    final Game game = mapName == null ? saving.game() : MapXml.withMapName(saving.game(), mapName);
-    // the file there is the last save: what TripleA's model does not hold is kept from it
-    MapFolder.replace(xml, file -> GameXmlKeeper.export(game, xml, file));
-    saved = saving;
-    current = saved;
-    if (!movedNations.isEmpty()) {
-      // every step finds its nations' pictures where they are now, eg after an undo of the rename
-      holdEach(
-          state ->
-              state
-                  .files()
-                  .withNationFilesMoved(movedNations, MapXml.nations(state.game())));
+    // an unchanged game keeps its file as it is, so a save of other files leaves its formatting;
+    // a map made here has its name in the file since the first save
+    if (firstSave || saving.game() != saved.game()) {
+      final Game game =
+          mapName == null ? saving.game() : MapXml.withMapName(saving.game(), mapName);
+      // the file there is the last save: what TripleA's model does not hold is kept from it
+      MapFolder.replace(xml, file -> GameXmlKeeper.export(game, xml, file));
     }
-    try {
-      // the game is saved under the new names: the pictures under the old ones go, unless a
-      // nation of this or another game of the map still has the name. After the map counts as
-      // saved: a picture that does not go, eg open in another program, leaves it saved
-      for (final Map.Entry<String, String> moved : movedNations.entrySet()) {
-        if (!MapXml.nations(saving.game()).contains(moved.getKey())
-            && !MapFolder.otherGameHasNation(mapFolder, xml, moved.getKey())) {
-          MapFolder.removeNationFiles(mapFolder, moved.getKey(), moved.getValue());
-        }
-      }
-    } finally {
-      listeners.forEach(Runnable::run);
-    }
+    return movedNations;
   }
 
   /**
