@@ -177,9 +177,13 @@ final class FormTest {
   void columnsRevalidateWhenWidened() throws Exception {
     final AtomicInteger invalidated = new AtomicInteger();
     final Form form = givenTwoSectionsIn(givenParentCounting(invalidated));
-    // a scroll pane sizes its form while laying it out, which drops this first invalidation
-    form.setSize(900, 2000);
-    invalidated.set(0);
+    // a scroll pane sizes its form while laying it out, which drops this first invalidation;
+    // both on the Swing thread, so the form's later one cannot run before the count is reset
+    SwingUtilities.invokeAndWait(
+        () -> {
+          form.setSize(900, 2000);
+          invalidated.set(0);
+        });
 
     SwingUtilities.invokeAndWait(() -> {});
 

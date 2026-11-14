@@ -65,6 +65,10 @@ val jpackage = javaToolchains.launcherFor { languageVersion.set(JavaLanguageVers
     .map { it.metadata.installationPath.file("bin/jpackage").asFile.absolutePath }
 val appImageDir = layout.buildDirectory.dir("app-image")
 val isWindows = System.getProperty("os.name").startsWith("Windows")
+val isMac = System.getProperty("os.name").startsWith("Mac")
+// macOS takes no version starting with 0: there 0.1.6 is packaged as 1.1.6; the editor itself
+// shows the jar's version, the real one
+val packagedVersion = if (isMac && appVersion.startsWith("0.")) "1" + appVersion.drop(1) else appVersion
 
 val appImage = tasks.register<Exec>("appImage") {
     group = "distribution"
@@ -81,7 +85,7 @@ val appImage = tasks.register<Exec>("appImage") {
     args(
         "--type", "app-image",
         "--name", appName,
-        "--app-version", appVersion,
+        "--app-version", packagedVersion,
         "--vendor", "Eddie",
         "--input", lib.get().asFile.absolutePath,
         "--main-jar", "eddies-map-editor.jar",
