@@ -43,3 +43,34 @@ jobs:
         with:
           name: eddies-map-editor
           path: build/distributions/*.zip
+
+  # the Mac program packages too, so the Release workflow does not find out first
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: TripleA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download -R triplea-game/triplea -p game-headed.zip
+          unzip -q game-headed.zip -d triplea
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # ditto, not Gradle's zip: it keeps the app's links and its signature whole
+      - name: Package
+        run: |
+          ./gradlew appImage -PtripleaHome=triplea
+          ditto -c -k --keepParent "build/app-image/Eddies Map Editor.app" eddies-map-editor-macos.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eddies-map-editor-macos
+          path: eddies-map-editor-macos.zip

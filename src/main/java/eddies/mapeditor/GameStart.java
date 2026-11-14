@@ -378,4 +378,21 @@ class GameStart {
     }
     return Optional.ofNullable(told.getMessage()).orElse(told.getClass().getSimpleName());
   }
+
+  /**
+   * Makes the game TripleA's last chosen one. Started with a game, TripleA loads that game and, on
+   * another thread, the game last chosen, and whichever comes later is the one it launches, with
+   * the players of the first: "gamePlayer is null", or "the return value of Map.get(Object) is
+   * null" when the other game has a nation that can be switched off. With both the same game there
+   * is nothing to mix up. TripleA keeps it in its settings, which every TripleA of this user
+   * reads; without them (a TripleA that keeps them otherwise) Play starts as before.
+   */
+  static void chooseAsLastGame(final Path gameXml) {
+    try {
+      ClientSetting.defaultGameUri.setValue(gameXml.toAbsolutePath().toUri().toString());
+      ClientSetting.flush();
+    } catch (final RuntimeException | LinkageError e) {
+      log.info("Could not make {} TripleA's last game", gameXml, e);
+    }
+  }
 }

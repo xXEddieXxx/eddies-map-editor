@@ -11,6 +11,8 @@
 <p align="center">
   <a href="https://github.com/xXEddieXxx/eddies-map-editor/releases/latest/download/eddies-map-editor-windows.zip"><b>⬇️ Download for Windows</b></a>
   &nbsp;·&nbsp;
+  <a href="https://github.com/xXEddieXxx/eddies-map-editor/releases/latest/download/eddies-map-editor-macos.zip"><b>⬇️ Download for macOS</b></a>
+  &nbsp;·&nbsp;
   <a href="https://github.com/xXEddieXxx/eddies-map-editor/releases/latest">All downloads</a>
   &nbsp;·&nbsp;
   <a href="https://buymeacoffee.com/xeddie">☕ Buy me a coffee</a>
@@ -31,12 +33,17 @@ existing map folder. Then change its territories, nations, units and rules, and 
    installed [TripleA](https://triplea-game.org/download/), which it finds by itself or asks for.
    It needs a TripleA from June 2026 or newer (older ones lack the look the editor uses); with an
    older one it says so at its start.
-2. **macOS and Linux:** download `eddies-map-editor-<version>.zip` from the
+2. **macOS (Apple silicon):** download
+   [`eddies-map-editor-macos.zip`](https://github.com/xXEddieXxx/eddies-map-editor/releases/latest/download/eddies-map-editor-macos.zip),
+   unzip it and open `Eddies Map Editor.app`. It brings its own Java and needs TripleA installed.
+   It is not signed: the first time, right-click it and choose *Open*, or allow it under
+   *System Settings › Privacy & Security*.
+3. **Linux and Macs with Intel:** download `eddies-map-editor-<version>.zip` from the
    [latest release](https://github.com/xXEddieXxx/eddies-map-editor/releases/latest), install
    [Java 25](https://adoptium.net/) and TripleA, and start `bin/eddies-map-editor`.
-3. On the start page, open a map folder (or one of the recent maps), or make a new one.
+4. On the start page, open a map folder (or one of the recent maps), or make a new one.
    The editor opens and saves maps in TripleA's maps folder, where TripleA finds them.
-4. **Play (F7)** tries the map. It starts your installed TripleA if the editor finds one, so you
+5. **Play (F7)** tries the map. It starts your installed TripleA if the editor finds one, so you
    test in the version your players use. *File → Play with…* picks another TripleA.
 
 Each release names the TripleA release it was tested with.
@@ -211,8 +218,9 @@ Bug reports, ideas and feedback are just as welcome, see the
 
 Releases are built by the **Release** workflow: *Actions → Release → Run workflow*, enter the
 version (eg `1.2.0`) and, if needed, the TripleA release to build with (default: the newest). It runs the
-tests, builds the Windows program and the zip for every system, and publishes them as release
-`v<version>`. The *Download for Windows* link above always points to the newest one.
+tests, builds the Windows program, the Mac program (Apple silicon, not signed) and the zip for every
+system, and publishes them as release `v<version>`. The *Download* links above always point to
+the newest one.
 
 ### Where things are
 

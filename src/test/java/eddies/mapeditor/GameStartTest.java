@@ -196,7 +196,7 @@ final class GameStartTest {
     final Path xml = folder.resolve("maps/island/games/island.xml");
 
     // when
-    PlayWith.chooseAsLastGame(xml);
+    GameStart.chooseAsLastGame(xml);
 
     // then
     assertThat(ClientSetting.defaultGameUri.getValue())

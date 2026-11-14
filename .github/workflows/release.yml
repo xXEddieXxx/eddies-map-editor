@@ -8,6 +8,9 @@ name: Release
 #      eddies-map-editor-windows.zip           the program with its own Java, for the README's
 #                                              .../releases/latest/download/... link
 #      eddies-map-editor-<version>-windows.zip the same, named by version
+#      eddies-map-editor-macos.zip             the program with its own Java for Macs with Apple
+#                                              silicon, for the README's link; not signed
+#      eddies-map-editor-<version>-macos.zip   the same, named by version
 #      eddies-map-editor-<version>.zip         for every system, needs Java 25 installed
 #    and the TripleA release it was built with in the release notes.
 
@@ -32,7 +35,42 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # the Mac program: built first, so a release never lacks the file the README links to
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: TripleA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.triplea_release }}
+        run: |
+          gh release download $TAG -R triplea-game/triplea -p game-headed.zip
+          unzip -q game-headed.zip -d triplea
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # ditto, not Gradle's zip: it keeps the app's links and its signature whole
+      - name: Package
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          ./gradlew appImage -PtripleaHome=triplea -PappVersion="${VERSION#v}"
+          ditto -c -k --keepParent "build/app-image/Eddies Map Editor.app" eddies-map-editor-macos.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eddies-map-editor-macos
+          path: eddies-map-editor-macos.zip
+
   release:
+    needs: mac
     runs-on: windows-latest
     defaults:
       run:
@@ -76,10 +114,16 @@ jobs:
       - name: Test and package
         run: ./gradlew test appZip distZip -PtripleaHome=triplea -PappVersion=${{ steps.version.outputs.version }}
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: eddies-map-editor-macos
+          path: build/distributions
+
       - name: Name the files
         run: |
           V=${{ steps.version.outputs.version }}
           cd build/distributions
+          cp eddies-map-editor-macos.zip "eddies-map-editor-$V-macos.zip"
           cp eddies-map-editor-windows.zip "eddies-map-editor-$V-windows.zip"
           mv eddies-map-editor.zip "eddies-map-editor-$V.zip"
           ls -l
@@ -95,10 +139,13 @@ jobs:
           make_latest: true
           body: |
             **Windows:** download `eddies-map-editor-windows.zip`, unzip it and start `Eddies Map Editor.exe`. It brings its own Java.
+            **macOS (Apple silicon):** download `eddies-map-editor-macos.zip`, unzip it and open `Eddies Map Editor.app`. It brings its own Java. It is not signed: the first time, right-click it and choose Open, or allow it under System Settings › Privacy & Security.
             **Other systems:** `eddies-map-editor-${{ steps.version.outputs.version }}.zip` needs Java 25; start `bin/eddies-map-editor`.
 
             **Needs TripleA installed** (triplea-game.org): the editor runs with it and finds it by itself, or asks where it is. Built and tested with TripleA ${{ steps.triplea.outputs.release }}.
           files: |
             build/distributions/eddies-map-editor-windows.zip
             build/distributions/eddies-map-editor-${{ steps.version.outputs.version }}-windows.zip
+            build/distributions/eddies-map-editor-macos.zip
+            build/distributions/eddies-map-editor-${{ steps.version.outputs.version }}-macos.zip
             build/distributions/eddies-map-editor-${{ steps.version.outputs.version }}.zip

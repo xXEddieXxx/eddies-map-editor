@@ -106,4 +106,24 @@ final class EddiesMapEditorTest {
     }
     return jar;
   }
+
+  @DisplayName("What runs before TripleA is found loads with the JDK alone")
+  @Test
+  void launcherNeedsNoTripleA() throws Exception {
+    // given: the editor's own classes, without TripleA's jar and what it brings (eg slf4j)
+    final java.net.URL own =
+        EddiesMapEditor.class.getProtectionDomain().getCodeSource().getLocation();
+
+    // when
+    try (java.net.URLClassLoader jdkOnly =
+        new java.net.URLClassLoader(
+            new java.net.URL[] {own}, ClassLoader.getPlatformClassLoader())) {
+      final Class<?> playWith = Class.forName("eddies.mapeditor.PlayWith", true, jdkOnly);
+
+      // then
+      assertThat(playWith.getClassLoader())
+          .as("PlayWith, which main asks for the installed TripleA, starts without TripleA")
+          .isSameAs(jdkOnly);
+    }
+  }
 }
