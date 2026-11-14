@@ -1413,7 +1413,7 @@ final class TerritoriesEditor implements Editor {
         texture,
         "Painting "
             + texture
-            + ": click or drag across territories. Map look's Create relief bakes it in.",
+            + ": click or drag across territories. In the game after Map look's Create relief.",
         Optional.empty(),
         (g, t) -> g,
         Optional.empty(),

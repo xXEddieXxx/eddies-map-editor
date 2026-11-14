@@ -798,7 +798,7 @@ final class MapLookEditor implements Editor {
   }
 
   /** Asks how the relief should look, showing a part of the map, then makes it for the map. */
-  private void createRelief() {
+  void createRelief() {
     final MapFiles files = project.getFiles();
     final Optional<String> noRoom = files.whyNoRoomFor("the relief");
     if (noRoom.isPresent()) {

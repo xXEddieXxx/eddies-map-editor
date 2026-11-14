@@ -1765,6 +1765,14 @@ final class MapProject {
   }
 
   /**
+   * Whether textures were painted since the last save and no relief was made since: the game
+   * shows a texture only in the relief, so a save alone changes nothing a player sees.
+   */
+  boolean hasTexturesNotInRelief() {
+    return !getFiles().textures().equals(saved.files().textures()) && !hasUnsavedRelief();
+  }
+
+  /**
    * The problems {@link MapChecks#quick} finds in the map as it is now, without those marked as
    * fine.
    */

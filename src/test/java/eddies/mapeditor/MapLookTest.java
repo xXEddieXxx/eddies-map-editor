@@ -257,6 +257,27 @@ final class MapLookTest {
     return saved;
   }
 
+  @DisplayName("Painted textures wait for a relief: a save alone shows the game nothing new")
+  @Test
+  void texturesWaitForARelief() throws Exception {
+    // given
+    final MapProject project = givenSavedMapWithRed();
+    final String territory = project.getFiles().polygons().keySet().iterator().next();
+    final Dimension size = project.getFiles().size();
+
+    // when
+    final boolean before = project.hasTexturesNotInRelief();
+    project.editFiles(files -> files.withTexture(territory, Optional.of("Forest")));
+    final boolean painted = project.hasTexturesNotInRelief();
+    project.setRelief(new BufferedImage(size.width, size.height, BufferedImage.TYPE_INT_ARGB));
+    final boolean withRelief = project.hasTexturesNotInRelief();
+
+    // then
+    assertThat(before).as("nothing painted yet").isFalse();
+    assertThat(painted).as("a texture painted, the relief still the old one").isTrue();
+    assertThat(withRelief).as("a relief made since: the save writes it").isFalse();
+  }
+
   @DisplayName("A relief picture is cut into relief tiles on saving; tiles before keep a .bak")
   @Test
   void reliefIsCutIntoTiles() throws Exception {

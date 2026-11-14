@@ -1413,9 +1413,19 @@ public final class MapMakerWindow extends JFrame {
     final boolean smallMapStays =
         project.hasUnsavedRelief()
             && project.getFolder().filter(MapFolder::hasSmallMap).isPresent();
+    final boolean texturesWait = project.hasTexturesNotInRelief();
     try {
       project.save();
-      if (smallMapStays && editors.get("Map look") instanceof MapLookEditor look) {
+      if (texturesWait && editors.get("Map look") instanceof MapLookEditor look) {
+        Dialogs.toast(
+            this,
+            "✓ Saved. The game shows the new textures once the relief is made",
+            "Create relief…",
+            () -> {
+              showTool("Map look");
+              look.createRelief();
+            });
+      } else if (smallMapStays && editors.get("Map look") instanceof MapLookEditor look) {
         Dialogs.toast(
             this,
             "✓ Saved. The small map still shows the map without the new relief",
