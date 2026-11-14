@@ -36,6 +36,8 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    // Java preferences in memory: no test reads or writes what the developer chose here
+    systemProperty("java.util.prefs.PreferencesFactory", "eddies.mapeditor.MemoryPreferencesFactory")
 }
 
 tasks.named<JavaExec>("run") {

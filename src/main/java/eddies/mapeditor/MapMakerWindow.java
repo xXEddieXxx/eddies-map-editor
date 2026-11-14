@@ -149,6 +149,8 @@ public final class MapMakerWindow extends JFrame {
   private boolean mapShown;
   // a file saved in Files does not read: the map in memory is older than its files
   private boolean filesAhead;
+  // Play's check of the saved game is running
+  private boolean playChecking;
 
   MapMakerWindow() {
     super("Eddie's Map Editor");
@@ -489,6 +491,9 @@ public final class MapMakerWindow extends JFrame {
    * the ones there are, then takes them as one step.
    */
   private void findTerritories() {
+    if (refusesWholePicture("Make territories")) {
+      return;
+    }
     final Optional<BufferedImage> picture = project.getFiles().picture();
     if (picture.isEmpty()
         || (project.getFiles().hasOutlines()
@@ -501,12 +506,16 @@ public final class MapMakerWindow extends JFrame {
       return;
     }
     final MapProject findingIn = project;
+    final int edits = findingIn.pictureEdits();
     inBackground(
         "Could not make the territories",
         () -> MapPicture.detect(picture.get()),
         detected -> {
           // a picture loaded meanwhile keeps its territories until Make territories is pressed
-          if (findingIn == project && findingIn.getFiles().picture().equals(picture)) {
+          // nor one a line was drawn into meanwhile
+          if (findingIn == project
+              && findingIn.getFiles().picture().equals(picture)
+              && findingIn.pictureEdits() == edits) {
             findingIn.loadPicture(picture.get(), detected);
             showFound(findingIn.game());
           }
@@ -542,6 +551,9 @@ public final class MapMakerWindow extends JFrame {
    */
   private void redrawFrom(
       final Callable<BufferedImage> picture, final Optional<Rectangle> region) {
+    if (region.isEmpty() && refusesWholePicture("Redraw borders")) {
+      return;
+    }
     final MapProject redrawing = project;
     final MapFiles from = redrawing.getFiles();
     inBackground(
@@ -710,6 +722,28 @@ public final class MapMakerWindow extends JFrame {
         this,
         "Resize map",
         "The map changed while it was resized, so it stays as it is.\nChoose Resize map again.");
+  }
+
+  /**
+   * Whether the map holds a picture so big that it is drawn into in place: looking for
+   * territories in all of it takes several times its memory beside it, so it is refused, told.
+   */
+  private boolean refusesWholePicture(final String title) {
+    if (!project.drawsInPlace()) {
+      return false;
+    }
+    final Dimension size = project.getFiles().size();
+    Dialogs.warn(
+        this,
+        title,
+        "This map's picture is very large ("
+            + size.width
+            + " × "
+            + size.height
+            + "): the editor cannot look for territories in all of it at once.\nDraw or erase"
+            + " the borders in Territories' Draw borders: its Make territories looks only"
+            + " where lines changed.");
+    return true;
   }
 
   private void tellMapChangedWhileRedrawing() {
@@ -1430,19 +1464,25 @@ public final class MapMakerWindow extends JFrame {
     }
     final MapProject checked = project;
     final Game checkedGame = checked.game();
+    // taken here, on the Swing thread: the files or texts may be others when Check ends
+    final MapFiles checkedFiles = checked.getFiles();
+    final MapTexts checkedTexts = checked.texts();
     final HomeEditor shownIn = home;
     check = Check.RUNNING;
     updateState();
     new SwingWorker<List<Problem>, Void>() {
       @Override
       protected List<Problem> doInBackground() {
-        return MapChecks.all(checkedGame, checked.getFiles());
+        return MapChecks.all(checkedGame, checkedFiles);
       }
 
       @Override
       protected void done() {
         // another map was opened or this one changed meanwhile: the result is of an older one
-        if (shownIn != home || checked.game() != checkedGame) {
+        if (shownIn != home
+            || checked.game() != checkedGame
+            || checked.getFiles() != checkedFiles
+            || checked.texts() != checkedTexts) {
           if (shownIn == home) {
             check = Check.NOT_YET;
             updateState();
@@ -1458,7 +1498,7 @@ public final class MapMakerWindow extends JFrame {
           updateState();
           return;
         }
-        shownIn.setValidated(problems);
+        shownIn.setValidated(problems, checkedGame, checkedFiles, checkedTexts);
         Optional.ofNullable(publish).ifPresent(tool -> tool.setChecked(problems));
         check = Check.DONE;
         updateState();
@@ -1474,13 +1514,53 @@ public final class MapMakerWindow extends JFrame {
     return (!filesAhead && !project.hasUnsavedChanges()) || save();
   }
 
+  /**
+   * Saves, then starts the saved game in memory first ({@link MapChecks#playError}): TripleA
+   * opens only a game that starts, else the reason is told here.
+   */
   private void playtest() {
-    if (!savedFor()) {
+    // its check takes seconds: a second press must not start a second check and TripleA
+    if (playChecking || !savedFor()) {
       return;
     }
+    final MapProject played = project;
+    final Path xml = played.getXmlFile().orElseThrow();
+    playChecking = true;
+    Dialogs.toast(this, "Checking that TripleA can start the game…");
+    new SwingWorker<Optional<String>, Void>() {
+      @Override
+      protected Optional<String> doInBackground() {
+        return MapChecks.playError(xml);
+      }
+
+      @Override
+      protected void done() {
+        playChecking = false;
+        // another map was opened meanwhile: its Play was not asked for
+        if (played != project) {
+          return;
+        }
+        Optional<String> whyNot = Optional.empty();
+        try {
+          whyNot = get();
+        } catch (final Exception e) {
+          // the check itself failed: TripleA says what it thinks of the game
+          log.warn("Could not check that the game starts", e);
+        }
+        if (whyNot.isPresent()) {
+          Dialogs.warn(
+              MapMakerWindow.this, "Play", "TripleA would not start this game.\n" + whyNot.get());
+        } else {
+          startTripleA(xml);
+        }
+      }
+    }.execute();
+  }
+
+  private void startTripleA(final Path xml) {
     try {
-      final String tripleA = PlayWith.play(project.getXmlFile().orElseThrow());
-      Dialogs.toast(this, "Starting " + tripleA + ": choose who plays and click Start Game.");
+      final String tripleA = PlayWith.play(xml);
+      Dialogs.toast(this, "Starting " + tripleA + " with this game.");
     } catch (final Exception e) {
       log.warn("Could not start the playtest", e);
       Dialogs.warn(this, "Play", "Could not start TripleA\n" + e.getMessage());

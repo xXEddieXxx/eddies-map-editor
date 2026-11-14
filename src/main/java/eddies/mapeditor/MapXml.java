@@ -136,8 +136,46 @@ class MapXml {
       return game;
     }
     final List<Attachment> all = new ArrayList<>(AttachmentsXml.attachments(game));
-    all.addAll(missing);
+    all.addAll(AttachmentsXml.placeForNew(all, TERRITORY), missing);
     return AttachmentsXml.withAttachments(game, all);
+  }
+
+  /**
+   * The game with every nation that has steps but no capital marked optional in the player list:
+   * TripleA stops a game at such a nation's purchase, technology and end of turn ("Capital not
+   * found for: ..."), unless the nation is optional, which says nothing else. The same game when
+   * none lacks it. A nation that gets a capital later stays optional, which then changes nothing.
+   * A game that names capitals in a loop (foreach) is left alone: whose they are shows only when
+   * TripleA loads it.
+   */
+  static Game withoutCapitalOptional(final Game game) {
+    if (attachments(game).stream()
+        .filter(MapXml::isMadeByForeach)
+        .flatMap(a -> Optional.ofNullable(a.getOptions()).orElse(List.of()).stream())
+        .anyMatch(o -> AttachmentsXml.isOption(o, "capital"))) {
+      return game;
+    }
+    final Set<String> settled = nationsWithCapital(game, Set.copyOf(territories(game)));
+    final Set<String> playing =
+        RulesXml.steps(game).stream().map(Step::getPlayer).collect(Collectors.toSet());
+    final Predicate<Player> stops =
+        p ->
+            !Boolean.TRUE.equals(p.getOptional())
+                && playing.contains(p.getName())
+                && !settled.contains(p.getName());
+    final List<Player> players = playerElements(game);
+    if (players.stream().noneMatch(stops)) {
+      return game;
+    }
+    return game.toBuilder()
+        .playerList(
+            game.getPlayerList().toBuilder()
+                .players(
+                    players.stream()
+                        .map(p -> stops.test(p) ? p.toBuilder().optional(true).build() : p)
+                        .toList())
+                .build())
+        .build();
   }
 
   static boolean isWater(final Game game, final String territory) {
@@ -150,12 +188,12 @@ class MapXml {
    * only when TripleA loads it, so a territory there may have one that is not written for it.
    */
   private static boolean makesTerritoryAttachmentsByForeach(final Game game) {
-    return attachments(game).stream()
-        .anyMatch(
-            a ->
-                AttachmentsXml.isNamed(a, TERRITORY)
-                    && (a.getForeach() != null
-                        || (a.getAttachTo() != null && a.getAttachTo().contains("@"))));
+    return attachments(game).stream().anyMatch(MapXml::isMadeByForeach);
+  }
+
+  private static boolean isMadeByForeach(final Attachment a) {
+    return AttachmentsXml.isNamed(a, TERRITORY)
+        && (a.getForeach() != null || (a.getAttachTo() != null && a.getAttachTo().contains("@")));
   }
 
   /**
@@ -180,7 +218,7 @@ class MapXml {
       return game;
     }
     final List<Attachment> all = new ArrayList<>(attachments(game));
-    all.add(newTerritoryAttachment(territory));
+    all.add(AttachmentsXml.placeForNew(all, TERRITORY), newTerritoryAttachment(territory));
     return AttachmentsXml.withAttachments(game, all);
   }
 
@@ -464,6 +502,28 @@ class MapXml {
         .orElse(false);
   }
 
+  private static Game withVariableElements(final Game game, final UnaryOperator<String> rename) {
+    final VariableList list = game.getVariableList();
+    if (list == null) {
+      return game;
+    }
+    return game.toBuilder()
+        .variableList(
+            list.toBuilder()
+                .variables(
+                    each(
+                        list.getVariables(),
+                        v ->
+                            v.toBuilder()
+                                .elements(
+                                    each(
+                                        v.getElements(),
+                                        e -> e.toBuilder().name(rename.apply(e.getName())).build()))
+                                .build()))
+                .build())
+        .build();
+  }
+
   /** The game with the territory the capital of the nation, of none for null. */
   static Game withCapital(final Game game, final String territory, @Nullable final String nation) {
     return withTerritoryOption(game, territory, "capital", nation);
@@ -471,11 +531,12 @@ class MapXml {
 
   /**
    * The game with the territory renamed wherever the XML names it: the map, its connections, owners
-   * and units at the start, the territory's attachments and the options listing territories (names
-   * between ':').
+   * and units at the start, the territory's attachments, the options listing territories (names
+   * between ':') and the variables' lists, which options and foreach read their territories from.
    */
-  static Game withRenamedTerritory(final Game game, final String old, final String renamed) {
+  static Game withRenamedTerritory(final Game given, final String old, final String renamed) {
     final UnaryOperator<String> rename = name -> old.equals(name) ? renamed : name;
+    final Game game = withVariableElements(given, rename);
     final Map world =
         map(game).toBuilder()
             .territories(
@@ -996,7 +1057,8 @@ class MapXml {
    */
   static Game withNation(final Game game, final String nation) {
     final List<Player> players = new ArrayList<>(playerElements(game));
-    players.add(Player.builder().name(nation).optional(false).build());
+    // optional: it has no capital yet, and TripleA stops at the turn of such a nation otherwise
+    players.add(Player.builder().name(nation).optional(true).build());
     final Game withPlayer =
         game.toBuilder()
             .playerList(
@@ -2014,7 +2076,8 @@ class MapXml {
 
   /**
    * The game with the option set in the attachment, or taken out for null. A missing attachment is
-   * added after the others; options keep their place.
+   * added behind the last of its name ({@link AttachmentsXml#placeForNew}); options keep their
+   * place.
    */
   static Game withOption(
       final Game game, final AttachmentKey key, final String option, @Nullable final String value) {
@@ -2027,6 +2090,7 @@ class MapXml {
     }
     if (!found && value != null) {
       attachments.add(
+          AttachmentsXml.placeForNew(attachments, key.name()),
           Attachment.builder()
               .name(key.name())
               .attachTo(key.attachTo())

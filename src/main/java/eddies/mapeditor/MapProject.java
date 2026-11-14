@@ -1,5 +1,6 @@
 package eddies.mapeditor;
 
+import games.strategy.triplea.Constants;
 import games.strategy.triplea.EngineImageLoader;
 import games.strategy.triplea.image.ImageTransformer;
 import games.strategy.triplea.ui.mapdata.MapData;
@@ -28,6 +29,7 @@ import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -49,6 +51,7 @@ import javax.imageio.ImageIO;
 import org.triplea.generic.xml.reader.XmlMapper;
 import org.triplea.generic.xml.reader.exceptions.XmlParsingException;
 import org.triplea.io.FileUtils;
+import org.triplea.java.ColorUtils;
 import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.Info;
 import eddies.mapeditor.MapChecks.Problem;
@@ -79,6 +82,18 @@ final class MapProject {
           new Color(0x7F8C8D),
           new Color(0xF1C40F));
 
+  // TripleA's colors for nations without one in map.properties, in its order (PlayerColors)
+  private static final List<Color> GAME_COLORS =
+      List.of(
+          Color.RED,
+          Color.MAGENTA,
+          Color.YELLOW,
+          Color.ORANGE,
+          Color.CYAN,
+          Color.GREEN,
+          Color.PINK,
+          Color.GRAY);
+
   // 600 MB: about 60 lines drawn into a 2000x1200 picture, a few into a huge one
   private static final long UNDO_PICTURE_BYTES = 600_000_000L;
   private final Deque<State> undos = new ArrayDeque<>();
@@ -104,6 +119,11 @@ final class MapProject {
   private State current;
   // the quick problems of a step, worked out once for the overview and the map's markers
   private @Nullable State problemsOf;
+  // the colors TripleA shows and the impassable territories, once per step
+  private @Nullable State gameColorsOf;
+  private Map<String, Color> gameColors = Map.of();
+  private Color impassableColor = PlayerColors.DEFAULT_IMPASSABLE_COLOR;
+  private Set<String> impassable = Set.of();
   private List<Problem> problems = List.of();
   private List<Problem> fineProblems = List.of();
   // how many territories changed since the save, worked out once per step and save for the legend
@@ -141,14 +161,72 @@ final class MapProject {
   }
 
   /**
-   * The state with what TripleA needs to start the game, eg a territory attachment for every land
-   * territory; a map opened without it has it as a change to save.
+   * The state with what TripleA needs to start the game: a territory attachment for every land
+   * territory, a nation without capital marked optional, and the nations' colors written as
+   * TripleA reads them; a map opened without it has it as a change to save.
    */
   private static State whole(final State state) {
-    final Game whole = MapXml.withTerritoryAttachments(state.game());
-    return whole == state.game()
+    final Game whole =
+        MapXml.withoutCapitalOptional(MapXml.withTerritoryAttachments(state.game()));
+    final MapFiles files = state.files().withReadableColors();
+    return whole == state.game() && files == state.files()
         ? state
-        : new State(whole, state.files(), state.texts(), state.drawn());
+        : new State(whole, files, state.texts(), state.drawn());
+  }
+
+  /**
+   * The step with a color for land without owner, when it makes the first such land of a map
+   * that had none (so every new map) and map.properties gives it no color: TripleA then takes
+   * the first of its colors for nations without one, a bright red, and there is no tool to
+   * choose another, so the editor's calm one is written. A map opened with such land keeps
+   * TripleA's color, which players know it by. Impassable land has a color of its own.
+   */
+  private State withNeutralColor(final State next) {
+    // only for a map with territories to fill: a game file alone gets no map.properties
+    if (!next.files().hasOutlines()
+        || next.files().nationColor(Constants.PLAYER_NAME_NEUTRAL).isPresent()
+        || !hasLandWithoutOwner(next.game())
+        || (current.files().hasOutlines() && hasLandWithoutOwner(current.game()))) {
+      return next;
+    }
+    return new State(
+        next.game(),
+        next.files().withNationColor(Constants.PLAYER_NAME_NEUTRAL, MapCanvas.NEUTRAL),
+        next.texts(),
+        next.drawn());
+  }
+
+  private static boolean hasLandWithoutOwner(final Game game) {
+    final Map<String, String> owners = MapXml.ownersByTerritory(game);
+    final Set<String> seas = MapXml.seaZones(game);
+    final Set<String> impassable = impassable(game);
+    return MapXml.territories(game).stream()
+        .anyMatch(t -> !owners.containsKey(t) && !impassable.contains(t) && !seas.contains(t));
+  }
+
+  /**
+   * The territories no unit may enter, the attachments read once; of several territory
+   * attachments the last counts, as in TripleA and {@link MapXml#isImpassable}.
+   */
+  private static Set<String> impassable(final Game game) {
+    final Map<String, Boolean> last = new HashMap<>();
+    AttachmentsXml.attachments(game).stream()
+        .filter(a -> AttachmentsXml.isNamed(a, Constants.TERRITORY_ATTACHMENT_NAME))
+        .forEach(
+            a ->
+                last.put(
+                    String.valueOf(a.getAttachTo()),
+                    AttachmentsXml.options(a).stream()
+                        .filter(o -> AttachmentsXml.isOption(o, "isImpassable"))
+                        .map(o -> o.getValue())
+                        .filter(Objects::nonNull)
+                        .findFirst()
+                        .filter(Boolean::parseBoolean)
+                        .isPresent()));
+    return last.entrySet().stream()
+        .filter(Map.Entry::getValue)
+        .map(Map.Entry::getKey)
+        .collect(Collectors.toSet());
   }
 
   /** A step with this game and these files, the texts and the borders drawn as they are. */
@@ -322,7 +400,7 @@ final class MapProject {
   private void step(final State next) {
     undos.push(current);
     redos.clear();
-    current = whole(next);
+    current = whole(withNeutralColor(next));
     forgetOldPictures();
     listeners.forEach(Runnable::run);
   }
@@ -660,16 +738,69 @@ final class MapProject {
   }
 
   /**
-   * The nation's color: from map.properties, else one of the new nations' colors by its place among
-   * the nations, so the map and the unit pictures agree.
+   * The nation's color as TripleA shows it: from map.properties, else the one TripleA gives a
+   * nation without ({@link #gameColors}), so the editor and the game agree.
    */
   Color nationColor(final String nation) {
-    return getFiles()
-        .nationColor(nation)
-        .orElseGet(
-            () ->
-                NATION_COLORS.get(
-                    Math.floorMod(MapXml.nations(game()).indexOf(nation), NATION_COLORS.size())));
+    return Optional.ofNullable(gameColors().get(nation))
+        .or(() -> getFiles().nationColor(nation))
+        .orElseGet(() -> ColorUtils.randomColor(nation.hashCode()));
+  }
+
+  /** The color of land no unit may enter ({@link MapFiles#impassableColor}), read once per step. */
+  Color impassableColor() {
+    gameColors();
+    return impassableColor;
+  }
+
+  /** The color of land without owner, which TripleA takes as that of a nation named Neutral. */
+  Color neutralColor() {
+    return nationColor(Constants.PLAYER_NAME_NEUTRAL);
+  }
+
+  /** Whether no unit may enter the territory, which TripleA fills in a color of its own. */
+  boolean isImpassable(final String territory) {
+    gameColors();
+    return impassable.contains(territory);
+  }
+
+  /**
+   * The colors of the nations and of the owners of land: map.properties' (read here once, as
+   * every filled territory asks), and for those without one the color TripleA gives: the next of
+   * its fixed ones (PlayerColors), then one made from the name, in the order it first asks, which
+   * is the territories' order in the game when it draws its small map: land that is not
+   * impassable, its owner or Neutral. Nations without land are asked later, for their units, so
+   * they follow in the nations' order. Worked out once per step.
+   */
+  private Map<String, Color> gameColors() {
+    if (gameColorsOf != current) {
+      final Game game = game();
+      impassable = impassable(game);
+      impassableColor = getFiles().impassableColor();
+      final Map<String, String> owners = MapXml.ownersByTerritory(game);
+      final Set<String> seas = MapXml.seaZones(game);
+      final Set<String> asked = new LinkedHashSet<>();
+      MapXml.territories(game).stream()
+          .filter(territory -> !seas.contains(territory))
+          .filter(territory -> !impassable.contains(territory))
+          .map(territory -> owners.getOrDefault(territory, Constants.PLAYER_NAME_NEUTRAL))
+          .forEach(asked::add);
+      asked.addAll(MapXml.nations(game));
+      final Iterator<Color> next = GAME_COLORS.iterator();
+      final Map<String, Color> colors = new HashMap<>();
+      for (final String nation : asked) {
+        colors.put(
+            nation,
+            getFiles()
+                .nationColor(nation)
+                .orElseGet(
+                    () ->
+                        next.hasNext() ? next.next() : ColorUtils.randomColor(nation.hashCode())));
+      }
+      gameColors = colors;
+      gameColorsOf = current;
+    }
+    return gameColors;
   }
 
   /**
@@ -680,7 +811,11 @@ final class MapProject {
    */
   List<String> removeNation(final String nation) {
     final Game without = MapXml.withoutNation(game(), nation);
-    final List<String> named = RulesXml.whereNamed(without, nation);
+    final List<String> named =
+        Stream.concat(
+                RulesXml.whereNamed(without, nation).stream(),
+                RulesXml.whereAttachmentsOfNamed(game(), without, nation).stream())
+            .toList();
     if (named.isEmpty()) {
       step(state(without, current.files().withoutNationColor(nation)));
     }
@@ -892,7 +1027,7 @@ final class MapProject {
     }
     if (files.drawsInPlace()) {
       return changeInPlace(
-          boundsOf(border),
+          reachOf(border),
           regionOf(border),
           (part, at) -> Optional.of(withLine(part, moved(border, at), Optional.empty())));
     }
@@ -914,7 +1049,7 @@ final class MapProject {
     if (current.files().drawsInPlace()) {
       final BorderLine band = new BorderLine(stroke, width, Color.BLACK);
       return changeInPlace(
-          boundsOf(band),
+          reachOf(band),
           regionOf(band),
           (part, at) -> MapPicture.withoutLines(part, moved(band, at).line(), width));
     }
@@ -1007,6 +1142,13 @@ final class MapProject {
     return bounds;
   }
 
+  /** What a line or an eraser of its width covers at most. */
+  private static Rectangle reachOf(final BorderLine border) {
+    final Rectangle reach = boundsOf(border);
+    reach.grow(border.width() / 2 + 1, border.width() / 2 + 1);
+    return reach;
+  }
+
   /** The line as it lies in a part of the picture that starts at this point. */
   private static BorderLine moved(final BorderLine border, final Point at) {
     return new BorderLine(
@@ -1032,8 +1174,9 @@ final class MapProject {
   /**
    * Changes the map's big picture itself where a line is drawn or erased: the part around it is
    * cut out, changed as a small picture is, and put back. No step and nothing to undo: every
-   * state holds the one picture. The region counts as drawn in every state, so Make territories
-   * looks there whatever is undone, and the tiles it touches are written by the next save.
+   * state with this picture holds the one. The region counts as drawn in each of them, so Make
+   * territories looks there whatever is undone, and the tiles it touches are written by the
+   * next save.
    *
    * @param around what changes at most, in the picture's pixels
    * @param change the part changed, given the part and where it starts; empty for no change
@@ -1045,7 +1188,7 @@ final class MapProject {
       final BiFunction<BufferedImage, Point, Optional<BufferedImage>> change) {
     final BufferedImage picture = current.files().picture().orElseThrow();
     final Rectangle grown = new Rectangle(around);
-    // room for the line's width and for the colors an eraser takes from beside a line
+    // room for the colors an eraser takes from beside a line
     grown.grow(IN_PLACE_MARGIN, IN_PLACE_MARGIN);
     final Rectangle part =
         grown.intersection(new Rectangle(picture.getWidth(), picture.getHeight()));
@@ -1065,34 +1208,35 @@ final class MapProject {
     }
     final int[] now = changed.get().getRGB(0, 0, part.width, part.height, null, 0, part.width);
     // only the tiles with a pixel that changed are written by the next save
-    final Rectangle differs = new Rectangle(-1, -1);
+    final int size = MapFiles.tileSize();
+    final Set<Point> differing = new HashSet<>();
     for (int p = 0; p < now.length; p++) {
       if (now[p] != was[p]) {
-        differs.add(part.x + p % part.width, part.y + p / part.width);
+        differing.add(
+            new Point((part.x + p % part.width) / size, (part.y + p / part.width) / size));
       }
     }
-    if (differs.width < 0) {
+    if (differing.isEmpty()) {
       return false;
     }
     final Graphics2D into = picture.createGraphics();
     into.setComposite(AlphaComposite.Src);
     into.drawImage(changed.get(), part.x, part.y, null);
     into.dispose();
-    final int size = MapFiles.tileSize();
-    final Set<Point> tiles = unsavedTiles.computeIfAbsent(picture, p -> new HashSet<>());
-    for (int column = differs.x / size; column <= (differs.x + differs.width) / size; column++) {
-      for (int row = differs.y / size; row <= (differs.y + differs.height) / size; row++) {
-        tiles.add(new Point(column, row));
-      }
-    }
+    unsavedTiles.computeIfAbsent(picture, p -> new HashSet<>()).addAll(differing);
     pictureEdits++;
+    // the states with this picture, not one with another, eg before a picture was loaded;
+    // their files as new values, so work in the background on the picture as it was, eg Make
+    // territories, is told that the map changed
     changeEach(
         s ->
-            new State(
-                s.game(),
-                s.files(),
-                s.texts(),
-                Optional.of(s.drawn().map(r -> r.union(region)).orElse(region))));
+            s.files().picture().filter(held -> held == picture).isEmpty()
+                ? s
+                : new State(
+                    s.game(),
+                    s.files().again(),
+                    s.texts(),
+                    Optional.of(s.drawn().map(r -> r.union(region)).orElse(region))));
     listeners.forEach(Runnable::run);
     return true;
   }
@@ -1134,7 +1278,7 @@ final class MapProject {
       // the line into the big picture itself, which no undo takes out; then the split as a step
       final List<Polygon> within = files.polygons().getOrDefault(territory, List.of());
       changeInPlace(
-          boundsOf(drawn.get()),
+          reachOf(drawn.get()),
           regionOf(drawn.get()),
           (part, at) ->
               Optional.of(
@@ -1394,30 +1538,17 @@ final class MapProject {
 
   /**
    * Reads place.txt, the markers' files and decorations.txt again, eg changed by hand while the
-   * map is open, as one step, so an undo brings the places here back. What the files have counts
-   * as saved: a save writes none of it again, and a map without other changes stays saved.
+   * map is open, as one step, so an undo brings the places here back. What was last saved here
+   * stays what it was: the next save writes the reloaded places that differ from it, the values
+   * the files have, and after an undo none of them, so nothing changed by hand is written over.
    *
    * @return how many lines of the files differ from the places here; 0 changes nothing
    */
   int reloadPlaces() {
-    final State before = current;
-    final boolean wasSaved = current == saved;
-    final MapFiles reloaded = current.files().withPlacesReloaded(saved.files());
-    final MapFiles savedFiles = saved.files().withPlacesReloaded(saved.files());
-    if (reloaded == before.files() && savedFiles == saved.files()) {
-      return 0;
-    }
-    final int differing = reloaded.places().differing(before.files().places());
-    if (savedFiles != saved.files()) {
-      saved = new State(saved.game(), savedFiles, saved.texts(), saved.drawn());
-    }
-    if (reloaded != before.files()) {
-      undos.push(before);
-      redos.clear();
-      current = wasSaved ? saved : state(before.game(), reloaded);
-    }
-    listeners.forEach(Runnable::run);
-    return differing;
+    final MapFiles before = current.files();
+    final MapFiles reloaded = before.withPlacesReloaded(saved.files());
+    stepFiles(reloaded);
+    return reloaded.places().differing(before.places());
   }
 
   /**

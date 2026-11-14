@@ -86,6 +86,24 @@ final class HomeEditorTest {
     assertThat(home.checked()).as("back at the checked map by undo").isTrue();
   }
 
+  @DisplayName("A change of the texts alone drops Check's result, and shows its problem")
+  @Test
+  void textsChangeDropsTheCheck() {
+    // given a map checked without problems
+    final MapProject project = givenMinimapWithoutPicture();
+    final HomeEditor home = givenHome(project);
+    home.setValidated(List.of());
+
+    // when an objective text of another game is added: neither game nor files change
+    project.setText(MapTexts.Kind.OBJECTIVES, "Other_Game.Russians;x", "X");
+
+    // then
+    assertThat(home.checked()).as("Check ran on other texts").isFalse();
+    assertThat(home.problems().stream().map(MapChecks.Problem::text))
+        .as("the problem of the new text shows")
+        .anyMatch(text -> text.contains("for another game"));
+  }
+
   @DisplayName("After the wizard, Home tells which nations it left out")
   @Test
   void welcomeShowsRefusedNations() throws Exception {

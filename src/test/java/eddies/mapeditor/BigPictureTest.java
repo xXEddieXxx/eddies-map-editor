@@ -26,13 +26,16 @@ final class BigPictureTest {
   // from the top edge to the picture's border line at y 109, in the tile 1_0 only
   private static final BorderLine LINE =
       new BorderLine(List.of(new Point(300, 0), new Point(300, 109)), 3, Color.BLACK);
-  private static final long USUAL_LIMIT = MapFiles.undoPictureLimit;
 
   @TempDir Path folder;
 
+  private long usualLimit = -1;
+
   @AfterEach
   void usualLimitAgain() {
-    MapFiles.undoPictureLimit = USUAL_LIMIT;
+    if (usualLimit >= 0) {
+      MapFiles.setUndoPictureLimit(usualLimit);
+    }
   }
 
   /** A saved map of 400 x 300, opened again and its picture held from its tiles. */
@@ -45,9 +48,9 @@ final class BigPictureTest {
     return project;
   }
 
-  private static void givenPicturesOverTheLimit() {
+  private void givenPicturesOverTheLimit() {
     // a lowered limit instead of a picture of 136 million pixels
-    MapFiles.undoPictureLimit = 1000;
+    usualLimit = MapFiles.setUndoPictureLimit(1000);
   }
 
   private static List<String> backups(final MapProject project) throws Exception {
@@ -99,6 +102,48 @@ final class BigPictureTest {
     assertThat(erased).as("erased").isTrue();
     assertThat(picture.getRGB(300, 60)).as("the land's color again").isEqualTo(before);
     assertThat(project.canUndo()).as("still no step").isFalse();
+  }
+
+  @DisplayName("Work in the background on the picture as it was is refused after a line")
+  @Test
+  void lineChangesTheMapForBackgroundWork() throws Exception {
+    // given the files a background job, eg a resize or Make territories, started with
+    givenPicturesOverTheLimit();
+    final MapProject project = givenMapWithPictureHeld();
+    final MapFiles from = project.getFiles();
+
+    // when a line is drawn meanwhile
+    project.drawBorder(LINE);
+
+    // then
+    assertThat(project.getFiles()).as("the map has other files now").isNotSameAs(from);
+    assertThat(project.getFiles().picture()).as("with the same picture").isEqualTo(from.picture());
+    assertThat(project.takeResized(from, from, 1))
+        .as("so a result made from the picture before the line is not taken")
+        .isFalse();
+    assertThat(project.canUndo()).as("and no step was made").isFalse();
+  }
+
+  @DisplayName("A line marks its region only in the steps that hold the picture drawn into")
+  @Test
+  void otherPicturesKeepTheirRegion() throws Exception {
+    // given the map with another picture loaded, undone again: a redo holds the other one
+    givenPicturesOverTheLimit();
+    final MapProject project = givenMapWithPictureHeld();
+    final BufferedImage other = MapPictureTest.givenPicture();
+    project.loadPicture(other, MapPicture.detect(other));
+    project.undo();
+
+    // when a line is drawn into the first picture
+    project.drawBorder(LINE);
+    final boolean here = project.drawnRegion().isPresent();
+    project.redo();
+
+    // then
+    assertThat(here).as("drawn in the picture it went into").isTrue();
+    assertThat(project.getFiles().picture().orElseThrow()).as("the other picture").isSameAs(other);
+    assertThat(project.drawnRegion()).as("has no line: nothing drawn there").isEmpty();
+    assertThat(isBlack(other, 300, 60)).as("nor in its pixels").isFalse();
   }
 
   @DisplayName("A save writes only the tiles a line drawn in place touched, each with its .bak")

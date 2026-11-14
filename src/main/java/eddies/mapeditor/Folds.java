@@ -15,18 +15,18 @@ final class Folds {
   // what a click chose, by the row's id (Swing thread); static, so a choice outlives the forms the
   // editors build anew with every pick
   private static final Map<String, Boolean> CHOSEN = new HashMap<>();
-  private static Preferences preferences = Preferences.userNodeForPackage(Folds.class);
+  private static final Preferences PREFERENCES = Preferences.userNodeForPackage(Folds.class);
 
   private Folds() {}
 
   /** Whether "Show all options" is on: fold rows then start open. */
   static boolean showsAll() {
-    return preferences.getBoolean(SHOW_ALL, false);
+    return PREFERENCES.getBoolean(SHOW_ALL, false);
   }
 
   /** Turns "Show all options" on or off; every row is then as the switch says again. */
   static void toggleShowAll() {
-    preferences.putBoolean(SHOW_ALL, !showsAll());
+    PREFERENCES.putBoolean(SHOW_ALL, !showsAll());
     CHOSEN.clear();
   }
 
@@ -36,11 +36,5 @@ final class Folds {
 
   static void toggle(final String id) {
     CHOSEN.put(id, !isOpen(id));
-  }
-
-  /** Keeps the switch in these preferences from now on, forgetting the clicks: for tests. */
-  static void keepIn(final Preferences others) {
-    preferences = others;
-    CHOSEN.clear();
   }
 }

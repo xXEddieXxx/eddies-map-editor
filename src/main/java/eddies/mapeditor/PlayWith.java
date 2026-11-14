@@ -1,5 +1,6 @@
 package eddies.mapeditor;
 
+import games.strategy.triplea.settings.ClientSetting;
 import java.awt.Component;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -13,21 +14,24 @@ import java.util.prefs.Preferences;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import lombok.experimental.UtilityClass;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Which TripleA Play starts: the player's own installation, so a map is tried in the version its
  * players use, found in the usual places or chosen once; else the TripleA the editor runs with.
  */
 @UtilityClass
+@Slf4j
 class PlayWith {
   private static final String KEY = "tripleaProgram";
   // kept as the choice, so "built in" stays even when an installation is found later
   static final String BUILT_IN = "built-in";
 
-  /** Starts TripleA with the game on its setup screen; says which TripleA it is. */
+  /** Starts TripleA with the game, which it launches at once; says which TripleA it is. */
   static String play(final Path gameXml) throws IOException {
     // TripleA reads an argument with '=' as name=value: such a game goes to the built-in one,
     // which gets it as a system property
+    chooseAsLastGame(gameXml);
     final Optional<Path> program =
         program().filter(p -> !gameXml.toAbsolutePath().toString().contains("="));
     if (program.isEmpty()) {
@@ -36,6 +40,23 @@ class PlayWith {
     }
     new ProcessBuilder(command(program.get(), gameXml)).inheritIO().start();
     return program.get().toString();
+  }
+
+  /**
+   * Makes the game TripleA's last chosen one. Started with a game, TripleA loads that game and, on
+   * another thread, the game last chosen, and whichever comes later is the one it launches, with
+   * the players of the first: "gamePlayer is null", or "the return value of Map.get(Object) is
+   * null" when the other game has a nation that can be switched off. With both the same game there
+   * is nothing to mix up. TripleA keeps it in its settings, which every TripleA of this user
+   * reads; without them (a TripleA that keeps them otherwise) Play starts as before.
+   */
+  static void chooseAsLastGame(final Path gameXml) {
+    try {
+      ClientSetting.defaultGameUri.setValue(gameXml.toAbsolutePath().toUri().toString());
+      ClientSetting.flush();
+    } catch (final RuntimeException | LinkageError e) {
+      log.info("Could not make {} TripleA's last game", gameXml, e);
+    }
   }
 
   /** The installed TripleA Play starts, empty for the built-in one. */
@@ -116,7 +137,7 @@ class PlayWith {
         .findFirst();
   }
 
-  /** TripleA reads a single argument as the game to open on its setup screen. */
+  /** TripleA reads a single argument as the game to launch. */
   static List<String> command(final Path program, final Path gameXml) {
     final String game = gameXml.toAbsolutePath().toString();
     return program.toString().endsWith(".app")

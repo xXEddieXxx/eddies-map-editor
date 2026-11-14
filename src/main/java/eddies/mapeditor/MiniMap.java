@@ -8,6 +8,7 @@ import java.awt.Graphics2D;
 import java.awt.Polygon;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
+import java.awt.Shape;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.geom.AffineTransform;
@@ -16,6 +17,7 @@ import java.awt.geom.Point2D;
 import java.awt.image.BufferedImage;
 import java.io.Serial;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -46,6 +48,9 @@ final class MiniMap extends JComponent {
   // the game and files read, compared by identity as each step makes new ones
   private transient @Nullable Game readGame;
   private transient @Nullable MapFiles readFiles;
+  // each territory's area to fill, worked out once for the files
+  private final transient Map<String, Shape> filled = new HashMap<>();
+  private transient @Nullable MapFiles filledOf;
   private transient Map<String, String> owners = Map.of();
   private transient Set<String> seas = Set.of();
   private Rectangle bounds = new Rectangle();
@@ -200,12 +205,18 @@ final class MiniMap extends JComponent {
     final Color color =
         seas.contains(territory)
             ? SEA
-            : Optional.ofNullable(owners.get(territory))
-                .map(project::nationColor)
-                .orElse(MapCanvas.NEUTRAL);
+            : project.isImpassable(territory)
+                ? project.impassableColor()
+                : Optional.ofNullable(owners.get(territory))
+                    .map(project::nationColor)
+                    .orElseGet(project::neutralColor);
     // without the territories inside it, eg a lake in land, which the fill would cover
     g.setColor(color);
-    g.fill(project.getFiles().filled(territory));
+    if (filledOf != readFiles) {
+      filledOf = readFiles;
+      filled.clear();
+    }
+    g.fill(filled.computeIfAbsent(territory, project.getFiles()::filled));
     g.setColor(OUTLINE);
     outlines.forEach(g::draw);
   }

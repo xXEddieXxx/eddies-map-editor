@@ -59,7 +59,6 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.triplea.io.FileUtils;
-import org.triplea.java.ColorUtils;
 import org.triplea.map.data.elements.AttachmentList.Attachment;
 import org.triplea.map.data.elements.Game;
 import org.triplea.util.PointFileReaderWriter;
@@ -117,6 +116,9 @@ record MapFiles(
   // the problems and notes the map maker marked "Fine as it is", which the game does not read
   // either: by the problem's kind and what it is about, eg guide.fine.notConnected.Sahara=true
   static final String FINE = "guide.fine.";
+  // the kinds of marks about a territory and about a nation, as MapChecks makes them markable
+  private static final List<String> FINE_TERRITORY_KINDS = List.of("notConnected");
+  private static final List<String> FINE_NATION_KINDS = List.of("noUnitPictures", "noFlag");
   // a renamed nation's name in the folder, where its flags and unit pictures stay until the next
   // save moves them, eg editor.filesOf.Soviets=Russians; held in memory only, never written
   private static final String FILES_OF = "editor.filesOf.";
@@ -127,7 +129,7 @@ record MapFiles(
           UNIT_TINT,
           "units.transform.brightness.",
           "units.transform.flip.");
-  private static final String POLYGONS = "polygons.txt";
+  static final String POLYGONS = "polygons.txt";
   static final String CENTERS = "centers.txt";
   static final String PLACEMENTS = "place.txt";
   private static final String DECORATIONS = "decorations.txt";
@@ -160,7 +162,7 @@ record MapFiles(
   private static final long MAX_HELD_PICTURE = 50_000_000L;
   // a held picture of more pixels is drawn into itself, with no copy per line for undo
   // ({@link #drawsInPlace}); not final, as tests lower it rather than make such a picture
-  static long undoPictureLimit = MAX_HELD_PICTURE;
+  private static long undoPictureLimit = MAX_HELD_PICTURE;
   // beside a big picture's own bytes: the canvas's smaller copy and squares, tiles being read
   private static final long BESIDE_PICTURE_BYTES = 256_000_000L;
   // a resized map's sides at least: below it territories fall together
@@ -295,18 +297,24 @@ record MapFiles(
       renamed.ifPresent(r -> moved.put(TEXTURE + r, texture));
     }
     renameInList(moved, HIDDEN_NAMES, territory, renamed.stream().toList());
-    moveFine(moved, territory, renamed.stream().toList());
+    moveFine(moved, FINE_TERRITORY_KINDS, territory, renamed.stream().toList());
     return moved;
   }
 
-  /** The marks "Fine as it is" about this territory or nation under these names instead. */
+  /**
+   * The marks "Fine as it is" of these kinds about this territory or nation under these names
+   * instead: the whole key is asked, as a nation and a territory may have one name, and a name
+   * may end with another, eg N.Africa.
+   */
   private static void moveFine(
-      final Properties properties, final String about, final List<String> put) {
-    for (final String key : properties.stringPropertyNames()) {
-      if (key.startsWith(FINE) && key.endsWith("." + about)) {
-        final String kind = key.substring(0, key.length() - about.length());
-        final Object mark = properties.remove(key);
-        put.forEach(name -> properties.put(kind + name, mark));
+      final Properties properties,
+      final List<String> kinds,
+      final String about,
+      final List<String> put) {
+    for (final String kind : kinds) {
+      final Object mark = properties.remove(FINE + kind + "." + about);
+      if (mark != null) {
+        put.forEach(name -> properties.put(FINE + kind + "." + name, mark));
       }
     }
   }
@@ -386,7 +394,7 @@ record MapFiles(
       }
     }
     renameInList(moved, NO_CAPITAL, old, put);
-    moveFine(moved, old, put);
+    moveFine(moved, FINE_NATION_KINDS, old, put);
     final String inFolder = nationFilesName(old);
     moved.remove(FILES_OF + old);
     if (!inFolder.equals(renamed)) {
@@ -1078,7 +1086,7 @@ record MapFiles(
     uncolored.remove(PlayerColors.PROPERTY_COLOR_PREFIX + nation);
     uncolored.remove(FILES_OF + nation);
     renameInList(uncolored, NO_CAPITAL, nation, List.of());
-    moveFine(uncolored, nation, List.of());
+    moveFine(uncolored, FINE_NATION_KINDS, nation, List.of());
     return new MapFiles(
         folder,
         polygons,
@@ -2752,15 +2760,52 @@ record MapFiles(
     }
   }
 
-  /** The nation's color from map.properties, empty when the map gives it none. */
+  /**
+   * The color map.properties gives the nation, or "Neutral" for land without owner; empty when it
+   * gives none or what is no color ({@link MapLookEditor#colorOf}).
+   */
   Optional<Color> nationColor(final String nation) {
-    try {
-      return Optional.ofNullable(
-              properties.getProperty(PlayerColors.PROPERTY_COLOR_PREFIX + nation))
-          .map(ColorUtils::fromHexString);
-    } catch (final IllegalArgumentException e) {
-      return Optional.empty();
+    return MapLookEditor.colorOf(
+        properties.getProperty(PlayerColors.PROPERTY_COLOR_PREFIX + nation, ""));
+  }
+
+  /** The color of land no unit may enter, as TripleA reads it: in either spelling, else its own. */
+  Color impassableColor() {
+    return nationColor(PlayerColors.PLAYER_NAME_IMPASSABLE)
+        .or(() -> nationColor(PlayerColors.PLAYER_NAME_IMPASSABLE_LEGACY_SPELLING))
+        .orElse(PlayerColors.DEFAULT_IMPASSABLE_COLOR);
+  }
+
+  /**
+   * The files with every color of a nation written as TripleA reads it, six hex digits: TripleA
+   * stops where it draws one written otherwise, eg #FF0000 or F00. The same files when all are;
+   * what is no color at all stays, a problem of the map ({@link #unreadColors}).
+   */
+  MapFiles withReadableColors() {
+    MapFiles files = this;
+    for (final String key : colorKeys()) {
+      final String value = properties.getProperty(key);
+      final Optional<String> hex = MapLookEditor.colorOf(value).map(MapLookEditor::hex);
+      if (hex.isPresent() && !hex.get().equalsIgnoreCase(value)) {
+        files = files.withProperty(key, hex.get());
+      }
     }
+    return files;
+  }
+
+  /** The keys of nations' colors and unit tints whose value is no color, eg "red". */
+  List<String> unreadColors() {
+    return colorKeys().stream()
+        .filter(key -> MapLookEditor.colorOf(properties.getProperty(key)).isEmpty())
+        .sorted()
+        .toList();
+  }
+
+  private List<String> colorKeys() {
+    return properties.stringPropertyNames().stream()
+        .filter(
+            key -> key.startsWith(PlayerColors.PROPERTY_COLOR_PREFIX) || key.startsWith(UNIT_TINT))
+        .toList();
   }
 
   /**
@@ -2823,6 +2868,61 @@ record MapFiles(
    */
   static long memoryMissing(final long pixels, final long freeBytes) {
     return Math.max(0, 4 * pixels + BESIDE_PICTURE_BYTES - freeBytes);
+  }
+
+  /**
+   * Sets from how many pixels on a held picture is drawn into itself, for tests, which set it
+   * back.
+   *
+   * @return the limit before
+   */
+  static long setUndoPictureLimit(final long pixels) {
+    final long before = undoPictureLimit;
+    undoPictureLimit = pixels;
+    return before;
+  }
+
+  /**
+   * These files as a value of their own, with all they have: background work tells a change
+   * of the map by the files being others, also after the picture itself was drawn into.
+   */
+  MapFiles again() {
+    return new MapFiles(
+        folder,
+        polygons,
+        centers,
+        properties,
+        picture,
+        unitPictures,
+        nationUnitPictures,
+        relief,
+        places);
+  }
+
+  /**
+   * Why something as big as the map cannot be made beside a picture held to draw into in
+   * place, eg a relief, which takes about twice the picture's memory while it is made: how
+   * much is missing; empty when there is room, or the picture is of usual size.
+   *
+   * @param what what is to be made, eg "the relief"
+   */
+  Optional<String> whyNoRoomFor(final String what) {
+    if (!drawsInPlace()) {
+      return Optional.empty();
+    }
+    final Dimension size = size();
+    final long missing = memoryMissing(2L * size.width * size.height, freeMemory());
+    return missing == 0
+        ? Optional.empty()
+        : Optional.of(
+            "Not enough memory to make "
+                + what
+                + " for a map this big beside its picture, which is held to draw borders"
+                + " into: about "
+                + (missing + 999_999) / 1_000_000
+                + " MB are missing. Save, open the map again and make "
+                + what
+                + " before drawing borders.");
   }
 
   /**

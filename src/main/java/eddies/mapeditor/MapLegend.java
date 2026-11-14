@@ -102,7 +102,7 @@ final class MapLegend extends JPanel {
         allNations.add(all);
         keys.add(moreNations);
         // counted as always shown by doLayout, so fewer nations fit beside it
-        keys.add(chip(MapCanvas.NEUTRAL, "No owner"));
+        keys.add(chip(project.neutralColor(), "No owner"));
         // the game view leaves seas clear over the map's picture
         if (mode == MapMode.OWNERS) {
           keys.add(chip(MapCanvas.SEA, "Sea zone"));

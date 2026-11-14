@@ -61,7 +61,8 @@ class TerritoryXml {
 
   /**
    * The game with the option's values these: the first takes the place of the option's first, the
-   * others follow it; none takes the option out. A missing attachment is added after the others.
+   * others follow it; none takes the option out. A missing attachment is added behind the last of
+   * its name.
    */
   static Game withValues(
       final Game game, final AttachmentKey key, final String option, final List<String> values) {
@@ -72,6 +73,7 @@ class TerritoryXml {
     final int at = AttachmentsXml.lastIndexOf(attachments, key.name(), key.attachTo());
     if (at < 0) {
       attachments.add(
+          AttachmentsXml.placeForNew(attachments, key.name()),
           Attachment.builder()
               .name(key.name())
               .attachTo(key.attachTo())

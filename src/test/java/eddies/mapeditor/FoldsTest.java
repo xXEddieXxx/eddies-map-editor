@@ -8,7 +8,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
-import java.util.prefs.BackingStoreException;
 import java.util.prefs.Preferences;
 import java.util.stream.Stream;
 import javax.swing.AbstractButton;
@@ -16,24 +15,17 @@ import javax.swing.JLabel;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /** "Show all options": every fold row starts open, and can still be closed. */
 final class FoldsTest {
-  private final Preferences preferences =
-      Preferences.userRoot().node("eddies-map-editor-test-" + UUID.randomUUID());
-
-  @BeforeEach
-  void givenOwnPreferences() {
-    Folds.keepIn(preferences);
-  }
-
+  // the tests' preferences are in memory (MemoryPreferencesFactory): off again for the next test
   @AfterEach
-  void removePreferences() throws BackingStoreException {
-    preferences.removeNode();
-    Folds.keepIn(Preferences.userNodeForPackage(Folds.class));
+  void switchOffAgain() {
+    if (Folds.showsAll()) {
+      Folds.toggleShowAll();
+    }
   }
 
   private static Stream<Component> all(final Component in) {
@@ -108,7 +100,12 @@ final class FoldsTest {
 
     // then
     assertThat(before).as("off for a new map maker").isFalse();
-    assertThat(preferences.getBoolean("showAllOptions", false)).as("kept").isTrue();
+    assertThat(Preferences.userRoot().getClass().getName())
+        .as("kept in memory in the tests, not in the developer's preferences")
+        .contains("MemoryPreferencesFactory");
+    assertThat(Preferences.userNodeForPackage(Folds.class).getBoolean("showAllOptions", false))
+        .as("kept")
+        .isTrue();
   }
 
   @DisplayName("With Show all options Units shows every section, Home every step and tool")

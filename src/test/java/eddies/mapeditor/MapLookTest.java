@@ -92,7 +92,7 @@ final class MapLookTest {
             + "odd key\\ of mine : kept   \r\n"
             + Files.readString(file, StandardCharsets.ISO_8859_1)
                 .lines()
-                .filter(line -> line.startsWith("map.width") || line.startsWith("map.height"))
+                .filter(MapLookTest::isOfTheMap)
                 .collect(Collectors.joining("\r\n"))
             + "\r\n";
     Files.writeString(file, byHand, StandardCharsets.ISO_8859_1);
@@ -132,9 +132,17 @@ final class MapLookTest {
   private static String givenSize(final MapProject project) throws Exception {
     return Files.readString(givenFile(project), StandardCharsets.ISO_8859_1)
             .lines()
-            .filter(line -> line.startsWith("map.width") || line.startsWith("map.height"))
+            .filter(MapLookTest::isOfTheMap)
             .collect(Collectors.joining("\n"))
         + "\n";
+  }
+
+  // the lines a file written by hand keeps of the new map's: its size, and the color of land
+  // without owner, which the editor wrote when the map was made
+  private static boolean isOfTheMap(final String line) {
+    return line.startsWith("map.width")
+        || line.startsWith("map.height")
+        || line.startsWith("color.Neutral");
   }
 
   @DisplayName("A new map's first save writes every entry of its map.properties")
@@ -377,7 +385,7 @@ final class MapLookTest {
         .isNull();
   }
 
-  @DisplayName("A color is written as the game reads it, six hex digits; others are not read")
+  @DisplayName("A color is written as the game reads it, six hex digits; what is none is not read")
   @Test
   void colorsAsTheGameReadsThem() {
     final Color color = new Color(0x12, 0xAB, 0xEF);
@@ -386,7 +394,9 @@ final class MapLookTest {
 
     assertThat(written).as("six digits, no #").isEqualTo("12ABEF");
     assertThat(MapLookEditor.colorOf(written)).as("read back").contains(color);
-    assertThat(MapLookEditor.colorOf("#12ABEF")).as("a value the game cannot read").isEmpty();
+    assertThat(MapLookEditor.colorOf(" #12abef ")).as("read, to be written as above").contains(color);
+    assertThat(MapLookEditor.colorOf("1AE")).as("the short form").contains(new Color(0x11AAEE));
+    assertThat(MapLookEditor.colorOf("sky blue")).as("no color").isEmpty();
   }
 
   @DisplayName("A scrolling choice writes both directions as one step")

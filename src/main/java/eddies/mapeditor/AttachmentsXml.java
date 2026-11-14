@@ -171,6 +171,20 @@ class AttachmentsXml {
         .orElseThrow();
   }
 
+  /**
+   * Where a new attachment of the name goes: behind the last one of that name, at the end
+   * without one. TripleA reads the attachments in their order, and one may ask for another when
+   * it is read, eg a unit attachment's option for every territory's attachment.
+   */
+  static int placeForNew(final List<Attachment> attachments, final String name) {
+    for (int i = attachments.size() - 1; i >= 0; i--) {
+      if (isNamed(attachments.get(i), name)) {
+        return i + 1;
+      }
+    }
+    return attachments.size();
+  }
+
   /** Whether TripleA reads the attachment by this name; {@link #readName}. */
   static boolean isNamed(final Attachment attachment, final String name) {
     // the usual case first: this runs for every attachment of a big map

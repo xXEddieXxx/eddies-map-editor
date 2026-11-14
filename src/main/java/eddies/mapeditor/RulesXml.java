@@ -743,6 +743,39 @@ class RulesXml {
   }
 
   /**
+   * Where the attachments that go with a nation are still named once it is removed, eg a
+   * condition attached to it that another nation's trigger asks for, as "name of attachTo:
+   * option": TripleA does not load a game that names a condition it does not have. An attachment
+   * of the same name that stays, eg every nation's playerAttachment, is not missed.
+   *
+   * @param without the game without the nation
+   */
+  static List<String> whereAttachmentsOfNamed(
+      final Game game, final Game without, final String nation) {
+    final Set<String> staying =
+        AttachmentsXml.attachments(without).stream()
+            .map(Attachment::getName)
+            .collect(Collectors.toSet());
+    final Set<String> gone =
+        AttachmentsXml.attachments(game).stream()
+            .filter(a -> nation.equals(a.getAttachTo()))
+            .map(Attachment::getName)
+            .filter(name -> name != null && !staying.contains(name))
+            .collect(Collectors.toSet());
+    if (gone.isEmpty()) {
+      return List.of();
+    }
+    final List<String> places = new ArrayList<>();
+    for (final Attachment a : AttachmentsXml.attachments(without)) {
+      Optional.ofNullable(a.getOptions()).orElse(List.of()).stream()
+          .filter(o -> o.getValue() != null)
+          .filter(o -> Arrays.stream(o.getValue().split(":")).anyMatch(gone::contains))
+          .forEach(o -> places.add(a.getName() + " of " + a.getAttachTo() + ": " + o.getName()));
+    }
+    return places;
+  }
+
+  /**
    * The game without the name in the steps' lists of nations, eg turnSummaryPlayers; a list left
    * empty goes. The engine reads those lists only while playing, so they are safe to shorten.
    */

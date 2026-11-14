@@ -1205,7 +1205,7 @@ class MapFolder {
     return files.size();
   }
 
-  /** Starts TripleA once more with the game on its setup screen, to play it against the AI. */
+  /** Starts TripleA once more with the game, which it launches at once, to play it. */
   static void playtest(final Path gameXml) throws IOException {
     final String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
     final String mainClass = Services.loadAny(ApplicationContext.class).getMainClass().getName();

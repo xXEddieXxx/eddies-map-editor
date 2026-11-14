@@ -74,7 +74,7 @@ final class MapPlacesTest {
         .containsExactly(moved);
   }
 
-  @DisplayName("Places changed in the files are reloaded as one step, and a save leaves the files")
+  @DisplayName("Places changed in the files are reloaded as one step; no save writes over them")
   @Test
   void reloadsPlacesFromTheFiles() throws Exception {
     // given a place moved by hand in place.txt while the map is open, and a change to save
@@ -88,30 +88,39 @@ final class MapPlacesTest {
 
     // when
     final int changed = project.reloadPlaces();
-    final boolean unsaved = project.hasUnsavedChanges();
     final List<Point> reloaded = project.getFiles().unitPlaces(TERRITORY);
-    project.edit(game -> MapXml.withNotes(game, "A note"));
-    project.save();
 
     // then
     assertThat(changed).as("the one line changed by hand").isEqualTo(1);
     assertThat(reloaded).as("the place as the file has it").containsExactly(new Point(3, 4));
-    assertThat(unsaved).as("what the files have is saved").isFalse();
-    assertThat(placeTxt(project)).as("the save left the file as it was").hasContent(byHand);
-    assertThat(placeTxt(project).resolveSibling("place.txt.bak"))
-        .as("it wrote no place, so no .bak")
-        .doesNotExist();
+    assertThat(project.canUndo()).as("a step").isTrue();
 
-    // when the note and the reload are undone
+    // when the reload is undone, as the toast offers, and the map saved with another change
     project.undo();
-    project.undo();
+    final List<Point> undone = project.getFiles().unitPlaces(TERRITORY);
+    project.edit(game -> MapXml.withNotes(game, "A note"));
+    project.save();
 
     // then
-    assertThat(project.getFiles().unitPlaces(TERRITORY))
-        .as("the places the editor had are back")
-        .isEqualTo(shown);
-    assertThat(project.hasUnsavedChanges()).as("and differ from the file's").isTrue();
-    assertThat(project.reloadPlaces()).as("a reload is offered again").isEqualTo(1);
+    assertThat(undone).as("the places the editor had are back").isEqualTo(shown);
+    assertThat(placeTxt(project))
+        .as("the save left the line changed by hand: no place was changed here")
+        .hasContent(byHand);
+
+    // when the places are reloaded again and saved
+    project.reloadPlaces();
+    project.save();
+
+    // then
+    assertThat(
+            PointFileReaderWriter.readOneToManyPlacements(placeTxt(project))
+                .get(TERRITORY)
+                .getFirst())
+        .as("the file still has the place set by hand")
+        .containsExactly(new Point(3, 4));
+    assertThat(PointFileReaderWriter.readOneToManyPlacements(placeTxt(project)))
+        .as("and the line of a territory the map does not have")
+        .containsKey("Atlantis");
   }
 
   @DisplayName("A reload drops places changed here, which the tool asks about first")

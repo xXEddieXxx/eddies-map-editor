@@ -446,9 +446,14 @@ final class MapLookEditor implements Editor {
     };
   }
 
-  /** The color as map.properties holds it, eg FF0011; empty for one the game cannot read. */
+  /**
+   * The color map.properties holds, eg FF0011; empty for what is no color. TripleA reads six hex
+   * digits only and stops at anything else; here blanks around them, a leading # and the short
+   * form (F01) are read too, and {@link MapFiles#withReadableColors} writes them as TripleA does.
+   */
   static Optional<Color> colorOf(final String value) {
-    final String hex = value.strip();
+    final String written = value.strip().replaceFirst("^#", "");
+    final String hex = written.length() == 3 ? written.replaceAll("(.)", "$1$1") : written;
     return hex.matches("[0-9A-Fa-f]{6}")
         ? Optional.of(new Color(Integer.parseInt(hex, 16)))
         : Optional.empty();
@@ -795,6 +800,11 @@ final class MapLookEditor implements Editor {
   /** Asks how the relief should look, showing a part of the map, then makes it for the map. */
   private void createRelief() {
     final MapFiles files = project.getFiles();
+    final Optional<String> noRoom = files.whyNoRoomFor("the relief");
+    if (noRoom.isPresent()) {
+      Dialogs.warn(page, "Create relief", noRoom.get());
+      return;
+    }
     final Game game = project.game();
     final Set<String> water =
         files.polygons().keySet().stream()

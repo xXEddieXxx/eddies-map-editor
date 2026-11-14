@@ -506,11 +506,13 @@ final class MapCanvasTest {
     final Point east = new Point(900, 300);
 
     // when
-    final var wrapped = MapCanvas.connectionLines(west, east, map, true, false);
-    final var notWrapping = MapCanvas.connectionLines(west, east, map, false, false);
-    final var near = MapCanvas.connectionLines(west, new Point(400, 300), map, true, true);
+    final java.awt.Dimension across = new java.awt.Dimension(1000, 0);
+    final java.awt.Dimension none = new java.awt.Dimension();
+    final var wrapped = MapCanvas.connectionLines(west, east, map, across);
+    final var notWrapping = MapCanvas.connectionLines(west, east, map, none);
+    final var near = MapCanvas.connectionLines(west, new Point(400, 300), map, map);
     final var overTheTop =
-        MapCanvas.connectionLines(new Point(500, 50), new Point(500, 350), map, true, true);
+        MapCanvas.connectionLines(new Point(500, 50), new Point(500, 350), map, map);
 
     // then
     assertThat(ends(wrapped))

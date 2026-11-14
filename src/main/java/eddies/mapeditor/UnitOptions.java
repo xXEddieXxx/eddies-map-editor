@@ -57,7 +57,8 @@ class UnitOptions {
           AIR,
           "Anti-air is targeted fire: a unit that \"Fires at planes in battles\" shoots at the"
               + " units of \"Planes it fires at\" (any unit types, not only planes) at the start"
-              + " of a battle round, before bombardment and before first strike. What it hits"
+              + " of a battle (its first round, unless set otherwise), before bombardment and before"
+              + " first strike. What it hits"
               + " is removed at once and does not fire back.");
 
   static final List<Section> SECTIONS =

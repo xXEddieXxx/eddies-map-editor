@@ -742,7 +742,8 @@ final class NationsEditor implements Editor {
         Help.with(
             none,
             "For a nation that has no capital on purpose, eg one that only holds colonies: the"
-                + " steps to a playable map then stop asking for one. TripleA itself needs none."));
+                + " steps to a playable map then stop asking for one. The game file marks a nation"
+                + " without capital as optional, or TripleA would stop at its turn."));
   }
 
   // the same edit as Production's Resources, so both show one value
@@ -793,11 +794,14 @@ final class NationsEditor implements Editor {
         });
     start.field("Played by default", capped(playedBy));
     start.row(
-        playerFlag(
-            nation,
-            "Players may leave it out",
-            player.getOptional(),
-            Player.PlayerBuilder::optional));
+        Help.with(
+            playerFlag(
+                nation,
+                "May have no capital",
+                player.getOptional(),
+                Player.PlayerBuilder::optional),
+            "The player list's \"optional\": TripleA stops at the turn of a nation without"
+                + " capital unless this is on, so it stays on while the nation has none."));
     start.row(
         playerFlag(
             nation,

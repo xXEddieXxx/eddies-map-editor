@@ -101,6 +101,7 @@ final class HomeEditor implements Editor {
   private List<Problem> validated = List.of();
   private transient @Nullable Game validatedGame;
   private transient @Nullable MapFiles validatedFiles;
+  private transient @Nullable MapTexts validatedTexts;
   private boolean allProblemsShown;
   private boolean allNotesShown;
 
@@ -152,6 +153,8 @@ final class HomeEditor implements Editor {
           final MapFiles files = project.getFiles();
           checked =
               project.game() == validatedGame
+                  // a change of the texts alone, eg an objective, leaves game and files
+                  && project.texts() == validatedTexts
                   && validatedFiles != null
                   && (files == validatedFiles || files.differsInFineOnly(validatedFiles));
           problems =
@@ -248,11 +251,24 @@ final class HomeEditor implements Editor {
     return unitRoom;
   }
 
-  /** The problems of Check, including the engine's. */
+  /** The problems of Check, including the engine's, for the map as it is now. */
   void setValidated(final List<Problem> validated) {
+    setValidated(validated, project.game(), project.getFiles(), project.texts());
+  }
+
+  /**
+   * The problems of Check for the map it ran on, which the caller found to be the map still:
+   * taken before Check started, not when it ended.
+   */
+  void setValidated(
+      final List<Problem> validated,
+      final Game game,
+      final MapFiles files,
+      final MapTexts texts) {
     this.validated = validated;
-    validatedGame = project.game();
-    validatedFiles = project.getFiles();
+    validatedGame = game;
+    validatedFiles = files;
+    validatedTexts = texts;
     problems = validated;
     checked = true;
     fill();
@@ -531,24 +547,6 @@ final class HomeEditor implements Editor {
         left.row(row(mark(Status.DONE), note(problem.text(), textWidth), again));
       }
     }
-  }
-
-  /**
-   * The row's action, and before it "Fine as it is" for a problem or note that may be meant so:
-   * none that keeps TripleA from loading or starting the game.
-   */
-  private JComponent withFine(final Problem problem, final JComponent action) {
-    if (problem.key() == null) {
-      return action;
-    }
-    final JButton fine = tertiary("Fine as it is", () -> project.markFine(problem));
-    fine.setToolTipText("Meant so: it no longer shows or counts. Kept with the map.");
-    fine.getAccessibleContext().setAccessibleName("Fine as it is: " + problem.text());
-    final JPanel both = new JPanel(new FlowLayout(FlowLayout.TRAILING, 0, 0));
-    both.setOpaque(false);
-    both.add(fine);
-    both.add(action);
-    return both;
   }
 
   /** The notes shown under "Worth a look", for tests. */
@@ -963,6 +961,24 @@ final class HomeEditor implements Editor {
     final int textWidth =
         LEFT_WIDTH - MARK_WIDTH - 2 * Theme.GAP_S - actions.getPreferredSize().width;
     return row(mark(Status.PROBLEM), wrapped(problem.text(), textWidth), actions);
+  }
+
+  /**
+   * The row's action, and before it "Fine as it is" for a problem or note that may be meant so:
+   * none that keeps TripleA from loading or starting the game.
+   */
+  private JComponent withFine(final Problem problem, final JComponent action) {
+    if (problem.key() == null) {
+      return action;
+    }
+    final JButton fine = tertiary("Fine as it is", () -> project.markFine(problem));
+    fine.setToolTipText("Meant so: it no longer shows or counts. Kept with the map.");
+    fine.getAccessibleContext().setAccessibleName("Fine as it is: " + problem.text());
+    final JPanel both = new JPanel(new FlowLayout(FlowLayout.TRAILING, 0, 0));
+    both.setOpaque(false);
+    both.add(fine);
+    both.add(action);
+    return both;
   }
 
   /** Where the problem is fixed: its territory, else its tool, else the list of problems. */

@@ -9,6 +9,7 @@ import games.strategy.engine.data.gameparser.XmlGameElementMapper;
 import games.strategy.triplea.Constants;
 import games.strategy.triplea.attachments.TerritoryAttachment;
 import games.strategy.triplea.ui.mapdata.MapData;
+import games.strategy.triplea.ui.mapdata.PlayerColors;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Constructor;
@@ -17,16 +18,24 @@ import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.BiFunction;
+import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
 import lombok.experimental.UtilityClass;
+import org.triplea.io.FileUtils;
 import org.triplea.map.data.elements.AttachmentList.Attachment;
 import org.triplea.map.data.elements.Game;
+import org.triplea.map.data.elements.GamePlay;
 import org.triplea.map.data.elements.GamePlay.Sequence.Step;
 import org.triplea.map.data.elements.Initialize.UnitInitialize.HeldUnits;
 import org.triplea.map.data.elements.Initialize.UnitInitialize.UnitPlacement;
@@ -37,6 +46,7 @@ import eddies.mapeditor.MapFiles.NationUnit;
 /** The problems of a map, each with the territory to show for it if there is one. */
 @UtilityClass
 class MapChecks {
+  private static final String NOT_STARTED = "The game does not start: ";
 
   /**
    * A problem, worded for the map maker, and where it is.
@@ -103,9 +113,8 @@ class MapChecks {
     final Set<String> nations = new HashSet<>(MapXml.nations(game));
     for (final String territory : territories) {
       if (files.hasOutlines() && !files.polygons().containsKey(territory)) {
-        problems.add(
-            Problem.at(territory, territory + " has no outline on the map")
-                .markable("noOutline", territory));
+        // not markable: TripleA does not start a game with it (MapData.verify)
+        problems.add(Problem.at(territory, territory + " has no outline on the map"));
       }
       // the engine's owner of neutral land is a player of every game without being listed
       MapXml.owner(game, territory)
@@ -130,6 +139,7 @@ class MapChecks {
                 problems.add(
                     Problem.in("Connections", "A connection leads to " + t + ", no territory")));
     problems.addAll(ofNoNation(game, nations));
+    problems.addAll(stoppingTheGame(game));
     classicWithoutCapital(game)
         .forEach(
             nation ->
@@ -152,6 +162,21 @@ class MapChecks {
                 canal.seaZones().isEmpty() ? null : canal.seaZones().getFirst(),
                 "Canals"));
       }
+    }
+    // TripleA stops where it draws a color it cannot read
+    for (final String key : files.unreadColors()) {
+      final boolean ofUnits = key.startsWith(MapFiles.UNIT_TINT);
+      problems.add(
+          Problem.in(
+              ofUnits ? "Map look" : "Nations",
+              key.substring(
+                      (ofUnits ? MapFiles.UNIT_TINT : PlayerColors.PROPERTY_COLOR_PREFIX).length())
+                  + (ofUnits ? "'s unit color" : "'s color")
+                  + " in map.properties ("
+                  + files.properties().getProperty(key)
+                  + ") is no color TripleA reads, and it stops where it draws it: choose the"
+                  + " color again in "
+                  + (ofUnits ? "Map look" : "Nations")));
     }
     return problems;
   }
@@ -232,6 +257,147 @@ class MapChecks {
     return problems;
   }
 
+  /**
+   * What TripleA's parser takes and its delegates stop the game at, when it begins or in its first
+   * round: land units in a sea zone that no transport there carries, a step that activates
+   * technology without the delegate named "tech", a step that buys by territory without the unit
+   * type infantry, Pacific Theater without the nation Japanese.
+   */
+  private static List<Problem> stoppingTheGame(final Game game) {
+    final List<Problem> problems = new ArrayList<>(landUnitsAtSea(game));
+    final Predicate<String> isOn =
+        option ->
+            MapXml.properties(game).stream()
+                .anyMatch(
+                    p ->
+                        option.equals(p.getName())
+                            && Boolean.parseBoolean(GameRulesXml.value(p)));
+    final boolean hasTech =
+        Optional.ofNullable(game.getGamePlay()).map(GamePlay::getDelegates).orElse(List.of()).stream()
+            .anyMatch(d -> GameRulesXml.TECH_DELEGATE.equals(d.getName()));
+    final boolean infantryByTerritory =
+        isOn.test(Constants.PRODUCTION_PER_VALUED_TERRITORY_RESTRICTED)
+            && !MapXml.unitTypes(game).contains(Constants.UNIT_TYPE_INFANTRY);
+    for (final Step step : RulesXml.steps(game)) {
+      final String delegate =
+          GameRulesXml.kindOf(game, step).map(GameRulesXml.DelegateKind::javaClass).orElse("");
+      if (!hasTech && delegate.endsWith("TechActivationDelegate")) {
+        problems.add(
+            Problem.in(
+                "Turn order",
+                "Step "
+                    + step.getName()
+                    + " activates technology, but the game has no delegate named tech to ask"
+                    + " what was researched: add a step Roll for technology in Turn order"));
+      }
+      if (infantryByTerritory && delegate.endsWith("NoPUPurchaseDelegate")) {
+        problems.add(
+            Problem.in(
+                "Turn order",
+                "Step "
+                    + step.getName()
+                    + " gives an infantry per territory (Production Per Valued Territory"
+                    + " Restricted), but the game has no unit type infantry: TripleA stops there"));
+      }
+    }
+    if (isOn.test(Constants.PACIFIC_THEATER)
+        && !MapXml.nations(game).contains(Constants.PLAYER_NAME_JAPANESE)) {
+      problems.add(
+          Problem.in(
+              "Game options",
+              "With Pacific Theater on, TripleA asks the nation Japanese for its victory points"
+                  + " when a round ends, and stops without it: name a nation Japanese, or turn"
+                  + " the option off in Game options"));
+    }
+    return problems;
+  }
+
+  /**
+   * The sea zones whose land units TripleA cannot load on transports when the game begins, as it
+   * does with every land unit at sea, in the file's order: it stops the game then ("Cannot load
+   * all land units in sea transports"), eg after land with units was made a sea zone.
+   */
+  private static List<Problem> landUnitsAtSea(final Game game) {
+    final Set<String> seas = MapXml.seaZones(game);
+    final Map<String, List<UnitPlacement>> atSea = new LinkedHashMap<>();
+    MapXml.placements(game).stream()
+        .filter(units -> seas.contains(units.getTerritory()))
+        .forEach(
+            units ->
+                atSea.computeIfAbsent(units.getTerritory(), t -> new ArrayList<>()).add(units));
+    if (atSea.isEmpty()) {
+      return List.of();
+    }
+    // each unit type's options, read once: a big map has thousands of attachments
+    final Map<String, Attachment> unitTypes = new HashMap<>();
+    AttachmentsXml.attachments(game).stream()
+        .filter(a -> AttachmentsXml.isNamed(a, Constants.UNIT_ATTACHMENT_NAME))
+        .forEach(a -> unitTypes.put(a.getAttachTo(), a));
+    // a loop (foreach) may make the attachment of a unit type without a written one: not known
+    final boolean byForeach =
+        unitTypes.values().stream()
+            .anyMatch(a -> a.getForeach() != null || String.valueOf(a.getAttachTo()).contains("@"));
+    final BiFunction<String, String, Optional<String>> option =
+        (unit, name) ->
+            Optional.ofNullable(unitTypes.get(unit)).map(AttachmentsXml::options).orElse(List.of())
+                .stream()
+                .filter(o -> AttachmentsXml.isOption(o, name))
+                .map(o -> String.valueOf(o.getValue()))
+                .reduce((first, last) -> last);
+    final List<Problem> problems = new ArrayList<>();
+    atSea.forEach(
+        (sea, placements) -> {
+          final List<Integer> room = new ArrayList<>();
+          final List<UnitPlacement> land = new ArrayList<>();
+          for (final UnitPlacement units : placements) {
+            final String unit = units.getUnitType();
+            if (byForeach && !unitTypes.containsKey(unit)) {
+              continue;
+            }
+            if (option.apply(unit, "isSea").filter(Boolean::parseBoolean).isPresent()) {
+              final int capacity = number(option.apply(unit, "transportCapacity"));
+              for (int i = 0; capacity > 0 && i < units.getQuantity(); i++) {
+                room.add(capacity);
+              }
+            } else if (option.apply(unit, "isAir").filter(Boolean::parseBoolean).isEmpty()) {
+              land.add(units);
+            }
+          }
+          for (final UnitPlacement units : land) {
+            final int cost = number(option.apply(units.getUnitType(), "transportCost"));
+            for (int i = 0; i < units.getQuantity(); i++) {
+              final int transport =
+                  cost < 0
+                      ? -1
+                      : IntStream.range(0, room.size())
+                          .filter(r -> room.get(r) >= cost)
+                          .findFirst()
+                          .orElse(-1);
+              if (transport < 0) {
+                problems.add(
+                    Problem.at(
+                        sea,
+                        sea
+                            + " is a sea zone with land units at the start ("
+                            + units.getUnitType()
+                            + ") that no transport there carries: TripleA stops when the game"
+                            + " begins. Move them, add a transport, or make it land"));
+                return;
+              }
+              room.set(transport, room.get(transport) - cost);
+            }
+          }
+        });
+    return problems;
+  }
+
+  private static int number(final Optional<String> written) {
+    try {
+      return written.map(String::strip).map(Integer::parseInt).orElse(-1);
+    } catch (final NumberFormatException e) {
+      return -1;
+    }
+  }
 
   /**
    * Of the five nations of the classic game, those without a capital, where TripleA looks for
@@ -471,29 +637,32 @@ class MapChecks {
   }
 
   /**
-   * The problems of {@link #quick} and, if the engine does not load the game, why: the check of
-   * Validate, which takes a moment.
+   * The problems of {@link #quick} and, if TripleA does not load the game or does not start it,
+   * why: the check of Validate, which loads the game and plays its first round in memory
+   * ({@link #startError}), so it takes a moment.
    */
   static List<Problem> all(final Game game, final MapFiles files) {
     final List<Problem> problems = new ArrayList<>(quick(game, files));
-    engineError(game)
-        .map(error -> "The game does not load: " + error)
-        .map(Problem::of)
-        .ifPresent(problems::add);
+    engineError(game, files).map(Problem::of).ifPresent(problems::add);
     return problems;
   }
 
-  private static Optional<String> engineError(final Game game) {
+  private static Optional<String> engineError(final Game game, final MapFiles files) {
     try {
       final Path xml = Files.createTempFile("map-maker-check", ".xml");
       try {
         GameXmlWriter.exportXml(game, xml);
-        return findError(xml);
+        // one load for both: what the played game says comes marked as such
+        return findError(
+                xml,
+                data ->
+                    GameStart.whyNot(data, files.folder().orElse(null)).map(e -> NOT_STARTED + e))
+            .map(error -> error.startsWith(NOT_STARTED) ? error : "The game does not load: " + error);
       } finally {
         Files.deleteIfExists(xml);
       }
     } catch (final IOException e) {
-      return Optional.of("could not write it to check it: " + e.getMessage());
+      return Optional.of("The game does not load: could not write it to check it: " + e.getMessage());
     }
   }
 
@@ -502,6 +671,41 @@ class MapChecks {
    * empty when it loads.
    */
   static Optional<String> findError(final Path xml) {
+    return findError(xml, data -> Optional.empty());
+  }
+
+  /**
+   * Why TripleA does not load the game XML or does not start the game: as {@link #findError}, and
+   * then the game is started in memory and plays its first round ({@link GameStart}).
+   *
+   * @param mapFolder the map's folder, for what the game's steps read from it
+   */
+  static Optional<String> startError(final Path xml, @Nullable final Path mapFolder) {
+    return findError(xml, data -> GameStart.whyNot(data, mapFolder));
+  }
+
+  /**
+   * Why TripleA would not play the saved game, for Play: as {@link #startError}, and before it
+   * what TripleA's game window reads of the map's files ({@link GameStart#whyNotShown}).
+   */
+  static Optional<String> playError(final Path xml) {
+    final Optional<Path> folder =
+        FileUtils.findFileInParentFolders(xml, MapFiles.POLYGONS).map(Path::getParent);
+    return findError(
+        xml,
+        data ->
+            folder
+                .map(files -> GameStart.whyNotShown(data, files))
+                .orElseGet(
+                    () ->
+                        Optional.of(
+                            "The map has no territories yet: make them from a picture in"
+                                + " Territories"))
+                .or(() -> GameStart.whyNot(data, folder.orElse(null))));
+  }
+
+  private static Optional<String> findError(
+      final Path xml, final Function<GameData, Optional<String>> whyNotPlayed) {
     // TripleA's public parse only logs the reason; its parser itself throws it
     final Object parser;
     final Method parse;
@@ -520,7 +724,7 @@ class MapChecks {
           : Optional.of("TripleA cannot read it, its log says why");
     }
     try (InputStream in = Files.newInputStream(xml)) {
-      return whyNotStarted(parse.invoke(parser, in));
+      return whyNotStarted(parse.invoke(parser, in), whyNotPlayed);
     } catch (final InvocationTargetException e) {
       return Optional.of(message(e.getCause()));
     } catch (final IOException | IllegalAccessException e) {
@@ -530,9 +734,11 @@ class MapChecks {
 
   /**
    * What stops the loaded game when TripleA starts it, though its parser took it: a land territory,
-   * or a sea zone with an owner, without a territory attachment.
+   * or a sea zone with an owner, without a territory attachment; a nation that is none; at last
+   * what playing it says.
    */
-  private static Optional<String> whyNotStarted(final Object parsed) {
+  private static Optional<String> whyNotStarted(
+      final Object parsed, final Function<GameData, Optional<String>> whyNotPlayed) {
     final Optional<?> loaded =
         parsed instanceof Optional<?> optional ? optional : Optional.of(parsed);
     return loaded
@@ -543,7 +749,8 @@ class MapChecks {
                 landWithoutAttachment(data)
                     .or(() -> unitOfNoNation(data))
                     .or(() -> stepWithoutNation(data))
-                    .or(() -> capitalOfNoNation(data)));
+                    .or(() -> capitalOfNoNation(data))
+                    .or(() -> whyNotPlayed.apply(data)));
   }
 
   /**

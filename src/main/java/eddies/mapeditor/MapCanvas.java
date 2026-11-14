@@ -302,6 +302,7 @@ final class MapCanvas extends JComponent {
   /** What a territory shows, in map coordinates. */
   private record Look(
       boolean water,
+      boolean impassable,
       @Nullable String owner,
       String values,
       List<UnitPlacement> units,
@@ -1380,6 +1381,7 @@ final class MapCanvas extends JComponent {
           final Game game = project.game();
           return new Look(
               MapXml.isWater(game, t),
+              project.isImpassable(t),
               MapXml.owner(game, t).orElse(null),
               values(game, t),
               MapXml.units(game, t),
@@ -1635,9 +1637,13 @@ final class MapCanvas extends JComponent {
     if (look.water()) {
       return SEA;
     }
-    final Color owner = Optional.ofNullable(look.owner())
-            .map(n -> previewColors.getOrDefault(n, project.nationColor(n)))
-            .orElse(NEUTRAL);
+    // as TripleA fills land: impassable in a color of its own, without owner as "Neutral"
+    final Color owner =
+        look.impassable()
+            ? project.impassableColor()
+            : Optional.ofNullable(look.owner())
+                .map(n -> previewColors.getOrDefault(n, project.nationColor(n)))
+                .orElseGet(project::neutralColor);
     return switch (mode) {
       case GAME, OWNERS -> owner;
       case POLITICAL -> {
@@ -1718,13 +1724,13 @@ final class MapCanvas extends JComponent {
   private void paintConnections(final Graphics2D g, final Game game) {
     final MapFiles files = project.getFiles();
     final Dimension map = files.size();
-    final boolean wrapsX = files.wrapsX();
-    final boolean wrapsY = files.wrapsY();
+    final Dimension wrap =
+        new Dimension(files.wrapsX() ? map.width : 0, files.wrapsY() ? map.height : 0);
     final List<List<Line2D>> ofSelected = new ArrayList<>();
     for (final Connection connection : MapXml.connections(game)) {
       final List<Line2D> lines =
           connectionLines(
-              center(connection.getT1()), center(connection.getT2()), map, wrapsX, wrapsY);
+              center(connection.getT1()), center(connection.getT2()), map, wrap);
       if (selected == null) {
         // the overview's lines thick enough not to be missed
         g.setColor(Color.WHITE);
@@ -1768,19 +1774,21 @@ final class MapCanvas extends JComponent {
    * The lines that show a connection between two centers: one between them, or, on a map that
    * goes on at the other side (map.scrollWrapX, map.scrollWrapY) where that way is the shorter
    * one, two, from each center to the edge where the line leaves the map.
+   *
+   * @param wrap after how many pixels the map comes again, across and down; 0 where it does
+   *     not go on
    */
   static List<Line2D> connectionLines(
-      final Point from,
-      final Point to,
-      final Dimension map,
-      final boolean wrapsX,
-      final boolean wrapsY) {
+      final Point from, final Point to, final Dimension map, final Dimension wrap) {
     final int dx = to.x - from.x;
     final int dy = to.y - from.y;
     // where the other center is when the map is laid beside itself, if that is nearer
-    final int shiftX = wrapsX && 2 * Math.abs(dx) > map.width ? -Integer.signum(dx) * map.width : 0;
+    final int shiftX =
+        wrap.width > 0 && 2 * Math.abs(dx) > wrap.width ? -Integer.signum(dx) * wrap.width : 0;
     final int shiftY =
-        wrapsY && 2 * Math.abs(dy) > map.height ? -Integer.signum(dy) * map.height : 0;
+        wrap.height > 0 && 2 * Math.abs(dy) > wrap.height
+            ? -Integer.signum(dy) * wrap.height
+            : 0;
     if (shiftX == 0 && shiftY == 0) {
       return List.of(new Line2D.Double(from, to));
     }

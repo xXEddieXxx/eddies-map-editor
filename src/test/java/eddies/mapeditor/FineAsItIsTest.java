@@ -7,45 +7,47 @@ import java.awt.Container;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.UUID;
-import java.util.prefs.Preferences;
 import java.util.stream.Stream;
 import javax.swing.AbstractButton;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.triplea.map.data.elements.Game;
 import eddies.mapeditor.MapChecks.Problem;
 
 /** A problem or note the map maker means so is marked "Fine as it is" and counts no more. */
 final class FineAsItIsTest {
-  private static final String DIAL = "Dial";
-  private static final String NO_OUTLINE = "Dial has no outline on the map";
+  private static final String APART = "Territory 4";
+  private static final String NOT_CONNECTED = "Territory 4 is not connected to any territory";
 
   @TempDir Path folder;
-  private final Preferences preferences =
-      Preferences.userRoot().node("eddies-map-editor-test-" + UUID.randomUUID());
 
-  @BeforeEach
-  void givenFoldsClosed() {
-    Folds.keepIn(preferences);
-  }
-
-  @AfterEach
-  void removePreferences() throws Exception {
-    preferences.removeNode();
-    Folds.keepIn(Preferences.userNodeForPackage(Folds.class));
-  }
-
-  /** A saved map with a territory that has no outline, eg a dial that only triggers use. */
-  private MapProject givenMapWithDial() throws Exception {
+  /** A saved map with a territory that has no neighbour, eg one only triggers use. */
+  private MapProject givenMapWithTerritoryApart() throws Exception {
     final MapProject project =
         MapProject.newMap("Island Wars", MapPictureTest.givenPicture(), List.of("Red"), folder)
             .project();
-    project.edit(game -> MapXml.withTerritory(game, DIAL, List.of("Territory 1")));
+    project.edit(
+        game -> {
+          Game apart = game;
+          for (final String neighbour : MapXml.neighbors(game, APART)) {
+            apart = MapXml.withoutConnection(apart, APART, neighbour);
+          }
+          return apart;
+        });
     project.save();
     return project;
+  }
+
+  private static Problem givenNote(final MapProject project) {
+    return MapChecks.notes(project.game()).stream()
+        .filter(note -> note.text().endsWith("is not connected to any territory"))
+        .findFirst()
+        .orElseThrow();
+  }
+
+  private static HomeEditor givenHome(final MapProject project) {
+    return new HomeEditor(project, t -> {}, t -> {}, s -> {}, () -> {}, () -> {}, () -> {});
   }
 
   private static List<String> texts(final List<Problem> problems) {
@@ -67,106 +69,149 @@ final class FineAsItIsTest {
         .orElseThrow(() -> new AssertionError("No button " + name));
   }
 
-  @DisplayName("A problem marked as fine counts nowhere, is kept with the map and follows a rename")
+  @DisplayName("A note marked as fine is kept with the map and follows a rename")
   @Test
-  void markedProblemCountsNoMore() throws Exception {
+  void markIsKeptAndFollowsARename() throws Exception {
     // given
-    final MapProject project = givenMapWithDial();
-    final Problem problem =
-        project.problems().stream().filter(p -> p.text().equals(NO_OUTLINE)).findFirst().orElseThrow();
+    final MapProject project = givenMapWithTerritoryApart();
+    final Problem note = givenNote(project);
 
     // when
-    project.markFine(problem);
-    final List<String> quick = texts(project.problems());
-    final List<String> checked = texts(MapChecks.all(project.game(), project.getFiles()));
-    project.rename(DIAL, "Clock");
+    project.markFine(note);
+    final boolean fine = project.getFiles().isFine(note);
+    project.rename(APART, "Clock");
     project.save();
     final MapProject again = MapProject.open(project.getXmlFile().orElseThrow());
 
     // then
-    assertThat(quick).as("not among the quick problems").doesNotContain(NO_OUTLINE);
-    assertThat(checked).as("nor among Check's").doesNotContain(NO_OUTLINE);
+    assertThat(note.text()).as("the note of the territory apart").isEqualTo(NOT_CONNECTED);
+    assertThat(fine).as("marked").isTrue();
     assertThat(Files.readString(project.getFolder().orElseThrow().resolve("map.properties")))
         .as("kept in map.properties by its kind and territory, under the new name")
-        .contains("guide.fine.noOutline.Clock=true")
-        .doesNotContain("noOutline.Dial");
-    assertThat(texts(again.problems())).as("opened again: still fine").noneMatch(t -> t.contains("outline"));
-    assertThat(texts(again.fineProblems()))
-        .as("and listed as marked")
-        .containsExactly("Clock has no outline on the map");
+        .contains("guide.fine.notConnected.Clock=true")
+        .doesNotContain("notConnected.Territory");
+    assertThat(again.getFiles().isFine(givenNote(again))).as("opened again: still fine").isTrue();
     assertThat(MapChecks.findError(again.getXmlFile().orElseThrow()))
         .as("TripleA loads the map with the editor's key")
         .isEmpty();
 
     // when
-    again.countAgain(again.fineProblems().getFirst());
+    again.countAgain(givenNote(again));
 
     // then
-    assertThat(texts(again.problems())).as("it counts again").contains("Clock has no outline on the map");
-    assertThat(again.fineProblems()).as("nothing marked").isEmpty();
+    assertThat(again.getFiles().isFine(givenNote(again))).as("it counts again").isFalse();
+    assertThat(again.canUndo()).as("a mark is a step").isTrue();
   }
 
-  @DisplayName("What keeps TripleA from loading or starting the game cannot be marked")
+  @DisplayName("A mark names its kind and all of its name: a nation and a territory of one name,"
+      + " or a name that ends with another, keep theirs")
   @Test
-  void fatalProblemsCannotBeMarked() throws Exception {
-    // given a territory of a nation the game does not have
-    final MapProject project = givenMapWithDial();
-    project.edit(game -> MapXml.withOwner(game, "Territory 1", "Nobody"));
-    final Problem fatal =
-        project.problems().stream().filter(p -> p.text().contains("no nation")).findFirst().orElseThrow();
-    final HomeEditor home =
-        new HomeEditor(project, t -> {}, t -> {}, s -> {}, () -> {}, () -> {}, () -> {});
+  void marksOfOtherNamesStay() {
+    // given marks of a nation and a territory both named China, and of N.Africa
+    final MapFiles files =
+        MapFiles.none()
+            .withProperty(MapFiles.FINE + "noFlag.China", "true")
+            .withProperty(MapFiles.FINE + "notConnected.China", "true")
+            .withProperty(MapFiles.FINE + "notConnected.N.Africa", "true");
 
     // when
-    project.markFine(fatal);
+    final List<String> nationRenamed =
+        files.withRenamedNation("China", "PRC").properties().stringPropertyNames().stream()
+            .filter(key -> key.startsWith(MapFiles.FINE))
+            .sorted()
+            .toList();
+    final List<String> territoryRenamed =
+        files.withRenamed("Africa", "Afrika").properties().stringPropertyNames().stream()
+            .filter(key -> key.startsWith(MapFiles.FINE))
+            .sorted()
+            .toList();
+    final List<String> territoryChinaRenamed =
+        files.withRenamed("China", "Zhongguo").properties().stringPropertyNames().stream()
+            .filter(key -> key.startsWith(MapFiles.FINE))
+            .sorted()
+            .toList();
 
     // then
-    assertThat(fatal.key()).as("no key to mark it by").isNull();
-    assertThat(project.problems()).as("it stays a problem").contains(fatal);
+    assertThat(nationRenamed)
+        .as("the nation's mark moves, the territory's of the same name stays")
+        .containsExactly(
+            "guide.fine.noFlag.PRC",
+            "guide.fine.notConnected.China",
+            "guide.fine.notConnected.N.Africa");
+    assertThat(territoryRenamed)
+        .as("Africa is not N.Africa: nothing moves")
+        .containsExactly(
+            "guide.fine.noFlag.China",
+            "guide.fine.notConnected.China",
+            "guide.fine.notConnected.N.Africa");
+    assertThat(territoryChinaRenamed)
+        .as("the territory's mark moves, the nation's stays")
+        .containsExactly(
+            "guide.fine.noFlag.China",
+            "guide.fine.notConnected.N.Africa",
+            "guide.fine.notConnected.Zhongguo");
+  }
+
+  @DisplayName("What keeps TripleA from loading or starting the game cannot be marked:"
+      + " a territory without outline, an owner that is no nation")
+  @Test
+  void fatalProblemsCannotBeMarked() throws Exception {
+    // given a territory the map's files have no outline of, and land of no nation
+    final MapProject project = givenMapWithTerritoryApart();
+    project.edit(game -> MapXml.withTerritory(game, "Dial", List.of("Territory 1")));
+    project.edit(game -> MapXml.withOwner(game, "Territory 1", "Nobody"));
+    final List<Problem> fatal = project.problems();
+    final HomeEditor home = givenHome(project);
+
+    // when
+    fatal.forEach(project::markFine);
+
+    // then
+    assertThat(texts(fatal))
+        .as("TripleA starts neither")
+        .contains("Dial has no outline on the map")
+        .anyMatch(text -> text.contains("no nation"));
+    assertThat(fatal).as("no key to mark them by").allMatch(problem -> problem.key() == null);
+    assertThat(project.problems()).as("they stay problems").isEqualTo(fatal);
     assertThat(buttons(home.page()).map(b -> b.getAccessibleContext().getAccessibleName()))
-        .as("Home offers the mark for the outline only")
-        .contains("Fine as it is: " + NO_OUTLINE)
-        .doesNotContain("Fine as it is: " + fatal.text());
+        .as("Home offers the mark for the note only")
+        .contains("Fine as it is: " + NOT_CONNECTED)
+        .noneMatch(name -> name != null && name.startsWith("Fine as it is: Dial"));
   }
 
   @DisplayName("A mark keeps Check's result: the guide does not ask for a Check again")
   @Test
   void markKeepsTheCheck() throws Exception {
-    // given a map checked, with the outline as its one problem
-    final MapProject project = givenMapWithDial();
-    final HomeEditor home =
-        new HomeEditor(project, t -> {}, t -> {}, s -> {}, () -> {}, () -> {}, () -> {});
+    // given a map checked
+    final MapProject project = givenMapWithTerritoryApart();
+    final HomeEditor home = givenHome(project);
     home.setValidated(MapChecks.all(project.game(), project.getFiles()));
-    final Problem outline = home.problems().getFirst();
+    final Problem note = givenNote(project);
 
     // when
-    project.markFine(outline);
+    project.markFine(note);
     final boolean afterMark = home.checked();
-    final List<String> marked = texts(home.problems());
-    project.countAgain(outline);
+    project.countAgain(note);
 
     // then
     assertThat(afterMark).as("the mark changes nothing Check looked at").isTrue();
-    assertThat(marked).as("Check's problem is fine now").doesNotContain(NO_OUTLINE);
     assertThat(home.checked()).as("nor does taking it back").isTrue();
-    assertThat(texts(home.problems())).as("which counts it again").contains(NO_OUTLINE);
   }
 
   @DisplayName("Home: Fine as it is takes a row away; Marked as fine lists it with Count again")
   @Test
   void homeMarksAndCountsAgain() throws Exception {
     // given
-    final MapProject project = givenMapWithDial();
-    final HomeEditor home =
-        new HomeEditor(project, t -> {}, t -> {}, s -> {}, () -> {}, () -> {}, () -> {});
+    final MapProject project = givenMapWithTerritoryApart();
+    final HomeEditor home = givenHome(project);
 
     // when
-    button(home, "Fine as it is: " + NO_OUTLINE).doClick();
+    button(home, "Fine as it is: " + NOT_CONNECTED).doClick();
     // Home fills when it shows: here it is on no screen
     home.showing();
 
     // then
-    assertThat(texts(home.problems())).as("no problem of Home").doesNotContain(NO_OUTLINE);
+    assertThat(texts(home.notes())).as("no note of Home").doesNotContain(NOT_CONNECTED);
     assertThat(buttons(home.page()).map(AbstractButton::getText))
         .as("one fold row for what is marked")
         .contains("▸ Marked as fine (1)");
@@ -177,11 +222,11 @@ final class FineAsItIsTest {
         .findFirst()
         .orElseThrow()
         .doClick();
-    button(home, "Count again: " + NO_OUTLINE).doClick();
+    button(home, "Count again: " + NOT_CONNECTED).doClick();
     home.showing();
 
     // then
-    assertThat(texts(home.problems())).as("a problem again").contains(NO_OUTLINE);
+    assertThat(texts(home.notes())).as("a note again").contains(NOT_CONNECTED);
     assertThat(buttons(home.page()).map(AbstractButton::getText))
         .as("nothing marked, no row")
         .noneMatch(text -> text.contains("Marked as fine"));

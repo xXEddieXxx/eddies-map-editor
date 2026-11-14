@@ -363,6 +363,9 @@ class GameRulesXml {
   private static final Set<String> ROUND_ENDINGS =
       Set.of("InitDelegate", "EndRoundStep", "RandomStartDelegate");
 
+  // the name TripleA looks its technology delegate up by (GameData.getTechDelegate)
+  static final String TECH_DELEGATE = "tech";
+
   /** TripleA's delegates, as maps name them and their steps. */
   static final List<DelegateKind> DELEGATE_KINDS =
       List.of(
@@ -678,7 +681,40 @@ class GameRulesXml {
   /** The game with a delegate of the kind, its name, and whether it shows the kind's display. */
   private record DelegateOf(Game game, String name, boolean shownAsKind) {}
 
-  private static DelegateOf withDelegate(final Game game, final DelegateKind kind) {
+  /**
+   * The game with a delegate named "tech": TripleA's technology activation asks the delegate of
+   * that very name what the nation researched, and stops the game where there is none.
+   */
+  private static Game withTechDelegate(final Game game) {
+    final List<Delegate> delegates =
+        new ArrayList<>(
+            Optional.ofNullable(game.getGamePlay())
+                .map(GamePlay::getDelegates)
+                .orElse(List.of()));
+    if (delegates.stream().anyMatch(d -> TECH_DELEGATE.equals(d.getName()))) {
+      return game;
+    }
+    final DelegateKind tech =
+        DELEGATE_KINDS.stream()
+            .filter(k -> TECH_DELEGATE.equals(k.name()))
+            .findFirst()
+            .orElseThrow();
+    delegates.add(
+        Delegate.builder()
+            .name(TECH_DELEGATE)
+            .javaClass(tech.javaClass())
+            .display(tech.display())
+            .build());
+    final GamePlay gamePlay =
+        Optional.ofNullable(game.getGamePlay()).orElseGet(() -> GamePlay.builder().build());
+    return game.toBuilder()
+        .gamePlay(gamePlay.toBuilder().delegates(List.copyOf(delegates)).build())
+        .build();
+  }
+
+  private static DelegateOf withDelegate(final Game given, final DelegateKind kind) {
+    final Game game =
+        kind.javaClass().endsWith("TechActivationDelegate") ? withTechDelegate(given) : given;
     final List<Delegate> delegates =
         new ArrayList<>(
             Optional.ofNullable(game.getGamePlay())
