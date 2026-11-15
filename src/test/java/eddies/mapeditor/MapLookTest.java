@@ -2,6 +2,7 @@ package eddies.mapeditor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import games.strategy.triplea.ui.mapdata.MapData;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
@@ -276,6 +277,73 @@ final class MapLookTest {
     assertThat(before).as("nothing painted yet").isFalse();
     assertThat(painted).as("a texture painted, the relief still the old one").isTrue();
     assertThat(withRelief).as("a relief made since: the save writes it").isFalse();
+  }
+
+  @DisplayName("A save of new picture tiles without new relief tiles leaves the relief behind")
+  @Test
+  void pictureTilesLeaveTheReliefBehind() throws Exception {
+    // given
+    final MapProject project = givenSavedMapWithReliefTiles();
+    final Path folder = project.getFolder().orElseThrow();
+    final List<Path> tile = List.of(folder.resolve("baseTiles").resolve("0_0.png"));
+    final List<Path> both =
+        List.of(tile.getFirst(), folder.resolve("reliefTiles").resolve("0_0.png"));
+
+    // when
+    final boolean pictureOnly = project.leftReliefBehind(tile);
+    final boolean reliefWritten = project.leftReliefBehind(both);
+    final boolean noTiles = project.leftReliefBehind(List.of(folder.resolve("map.properties")));
+    project.editFiles(files -> files.withProperty(MapData.PROPERTY_MAP_HASRELIEF, "false"));
+    final boolean reliefOff = project.leftReliefBehind(tile);
+
+    // then
+    assertThat(pictureOnly).as("the relief still shows the old borders").isTrue();
+    assertThat(reliefWritten).as("a new relief was saved with the picture").isFalse();
+    assertThat(noTiles).as("the picture did not change").isFalse();
+    assertThat(reliefOff).as("the game does not draw the relief").isFalse();
+  }
+
+  @DisplayName("A map without relief has none to leave behind")
+  @Test
+  void noReliefNoneLeftBehind() throws Exception {
+    // given
+    final MapProject project = givenSavedMapWithRed();
+    final Path folder = project.getFolder().orElseThrow();
+
+    // when
+    final boolean left =
+        project.leftReliefBehind(List.of(folder.resolve("baseTiles").resolve("0_0.png")));
+
+    // then
+    assertThat(left).as("no reliefTiles folder").isFalse();
+  }
+
+  @DisplayName("Only a relief Create relief made is made anew; another stays as it is")
+  @Test
+  void reliefWithoutLookStays() throws Exception {
+    // given
+    final MapProject project = givenSavedMapWithRed();
+    final Dimension size = project.getFiles().size();
+    final BufferedImage relief =
+        new BufferedImage(size.width, size.height, BufferedImage.TYPE_INT_ARGB);
+
+    // when
+    final boolean none = project.getFiles().reliefStaysAsItIs();
+    project.setRelief(relief);
+    final boolean fromFile = project.getFiles().reliefStaysAsItIs();
+    project.setRelief(relief, new ReliefMaker.Look(50, Set.of(ReliefMaker.Touch.WAVES)));
+    final boolean madeHere = project.getFiles().reliefStaysAsItIs();
+
+    // then
+    assertThat(none).as("no relief to leave behind").isFalse();
+    assertThat(fromFile).as("no Look kept, so not made anew").isTrue();
+    assertThat(madeHere).as("made anew where borders were drawn").isFalse();
+  }
+
+  private MapProject givenSavedMapWithReliefTiles() throws Exception {
+    final MapProject project = givenSavedMapWithRed();
+    Files.createDirectories(project.getFolder().orElseThrow().resolve("reliefTiles"));
+    return project;
   }
 
   @DisplayName("A relief picture is cut into relief tiles on saving; tiles before keep a .bak")

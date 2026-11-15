@@ -941,7 +941,7 @@ final class MapLookEditor implements Editor {
           Dialogs.toast(page, "! The map changed while the relief was made. Create it again.");
           return;
         }
-        project.setRelief(relief);
+        project.setRelief(relief, new ReliefMaker.Look(strength, touches));
       }
     }.execute();
   }

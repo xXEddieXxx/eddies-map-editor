@@ -3301,6 +3301,16 @@ record MapFiles(
         properties.getProperty(MapData.PROPERTY_MAP_HASRELIEF, "true").strip());
   }
 
+  /**
+   * Whether a relief shows that borders drawn cannot make anew: not made by Create relief (eg
+   * made before it kept its {@link ReliefMaker.Look}), or over a picture drawn in place.
+   */
+  boolean reliefStaysAsItIs() {
+    return showsRelief()
+        && (relief.isPresent() || reliefTile(0, 0).isPresent())
+        && (ReliefMaker.Look.of(properties).isEmpty() || drawsInPlace());
+  }
+
   /** Whether the game's map goes on at the other side, left and right: so unless set to false. */
   boolean wrapsX() {
     return Boolean.parseBoolean(

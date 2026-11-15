@@ -37,6 +37,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
@@ -555,6 +556,58 @@ public final class MapMakerWindow extends JFrame {
     redrawFrom(() -> MapPicture.read(file.get()), Optional.empty());
   }
 
+  /** Tells, after the news, that the relief still shows the old borders, with Create relief. */
+  private void offerCreateRelief(final String news) {
+    if (editors.get("Map look") instanceof MapLookEditor look) {
+      Dialogs.toast(
+          this,
+          news + ". The relief still shows the old borders",
+          "Create relief…",
+          () -> {
+            showTool("Map look");
+            look.createRelief();
+          });
+    }
+  }
+
+  /**
+   * Makes a relief made here anew in the region borders were drawn in, in the background, into
+   * the step that made the territories, so an erased line leaves no shadow. Not for a relief
+   * made elsewhere or for a picture drawn in place; a toast offers Create relief for those.
+   */
+  private void remakeRelief(final MapProject remaking, final Rectangle region) {
+    final MapFiles files = remaking.getFiles();
+    final Optional<ReliefMaker.Look> look = ReliefMaker.Look.of(files.properties());
+    if (look.isEmpty() || !files.showsRelief() || files.drawsInPlace()) {
+      return;
+    }
+    final Game game = remaking.game();
+    final Set<String> water =
+        files.polygons().keySet().stream()
+            .filter(t -> MapXml.isWater(game, t))
+            .collect(Collectors.toUnmodifiableSet());
+    inBackground(
+        "Could not make the relief anew",
+        () ->
+            files
+                .relief()
+                .or(files::reliefTilesPicture)
+                .map(
+                    old ->
+                        ReliefMaker.remade(
+                            old,
+                            region,
+                            files.polygons(),
+                            water,
+                            look.get(),
+                            Textures.fills(files))),
+        remade ->
+            remade
+                .filter(relief -> remaking == project)
+                .filter(relief -> !remaking.takeRemadeRelief(files, relief))
+                .ifPresent(relief -> offerCreateRelief("The map changed meanwhile")));
+  }
+
   /**
    * The map's borders as the picture shows them: new areas, merged ones and moved borders; within
    * the region only, if one is given.
@@ -596,6 +649,9 @@ public final class MapMakerWindow extends JFrame {
             tellMapChangedWhileRedrawing();
             return;
           }
+          final boolean reliefStays =
+              region.isPresent() && redrawing.getFiles().reliefStaysAsItIs();
+          region.ifPresent(r -> remakeRelief(redrawing, r));
           final List<String> territories = MapXml.territories(redrawing.game());
           // a removed territory takes the canals through it along
           final List<CanalXml.Canal> canalsAfter = CanalXml.canals(redrawing.game());
@@ -647,6 +703,9 @@ public final class MapMakerWindow extends JFrame {
                           + names(kept)
                           + ".")
                   + "\n\nLook at them on the map; Undo takes it all back.");
+          if (reliefStays) {
+            offerCreateRelief("Territories made");
+          }
         });
   }
 
@@ -1439,6 +1498,8 @@ public final class MapMakerWindow extends JFrame {
               showTool("Map look");
               look.createRelief();
             });
+      } else if (project.leftReliefBehind(written) && editors.get("Map look") != null) {
+        offerCreateRelief(saved);
       } else if (smallMapStays && editors.get("Map look") instanceof MapLookEditor look) {
         Dialogs.toast(
             this,

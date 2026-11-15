@@ -1000,7 +1000,8 @@ final class MapProject {
     step(
         new State(
             game(),
-            resized,
+            // a scaled relief is no longer as made here: a part made anew would not fit
+            resized.withProperty(ReliefMaker.Look.KEY, ""),
             current.texts(),
             current
                 .drawn()
@@ -1414,10 +1415,21 @@ final class MapProject {
 
   /**
    * The relief picture, drawn over the map, cut into relief tiles on the next save; one step. A
-   * map told not to show its relief shows it again, as a new one is meant to be seen.
+   * map told not to show its relief shows it again, as a new one is meant to be seen. One made
+   * elsewhere: its parts are not made again where borders are drawn.
    */
   void setRelief(final BufferedImage relief) {
-    final MapFiles files = current.files().withRelief(relief);
+    setRelief(relief, "");
+  }
+
+  /** As {@link #setRelief(BufferedImage)} for one made here, remade where borders are drawn. */
+  void setRelief(final BufferedImage relief, final ReliefMaker.Look look) {
+    setRelief(relief, look.text());
+  }
+
+  private void setRelief(final BufferedImage relief, final String look) {
+    final MapFiles files =
+        current.files().withRelief(relief).withProperty(ReliefMaker.Look.KEY, look);
     step(
         state(
             game(),
@@ -1686,6 +1698,21 @@ final class MapProject {
   }
 
   /**
+   * The relief made anew where borders were drawn ({@link ReliefMaker#remade}, in the background
+   * after {@link #takeRedrawn}) into that step, no step of its own: an undo of the territories
+   * takes it back too. False, changing nothing, when the files are no longer the map's.
+   */
+  boolean takeRemadeRelief(final MapFiles from, final BufferedImage relief) {
+    if (getFiles() != from) {
+      return false;
+    }
+    current = new State(game(), from.withRelief(relief), current.texts(), current.drawn());
+    forgetOldPictures();
+    listeners.forEach(Runnable::run);
+    return true;
+  }
+
+  /**
    * What the map maker chose for borders redrawn with new or merged areas.
    *
    * @param added the new areas to add, each as detected and as named in the dialog, its name and
@@ -1796,6 +1823,23 @@ final class MapProject {
    */
   boolean hasTexturesNotInRelief() {
     return !getFiles().textures().equals(saved.files().textures()) && !hasUnsavedRelief();
+  }
+
+  /**
+   * Whether a save that wrote these files changed the picture's tiles but not the relief over
+   * them: the game then still draws the old borders' shading, and a line erased in the picture
+   * can stay in the relief.
+   */
+  boolean leftReliefBehind(final List<Path> written) {
+    return folder != null
+        && getFiles().showsRelief()
+        && Files.isDirectory(folder.resolve("reliefTiles"))
+        && written.stream().anyMatch(p -> inFolder(p, "baseTiles"))
+        && written.stream().noneMatch(p -> inFolder(p, "reliefTiles"));
+  }
+
+  private static boolean inFolder(final Path file, final String name) {
+    return file.getParent() != null && file.getParent().endsWith(name);
   }
 
   /**

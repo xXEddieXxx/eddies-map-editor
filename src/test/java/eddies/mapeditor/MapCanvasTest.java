@@ -624,6 +624,51 @@ final class MapCanvasTest {
     return canvas;
   }
 
+  @DisplayName("The relief hides while borders are drawn and shows again after")
+  @Test
+  void reliefHidesWhileDrawing() throws Exception {
+    // given
+    final List<Integer> pixels = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapCanvas canvas = givenCanvasWithMagentaRelief();
+          pixels.add(shown(canvas).getRGB(10, 10) & 0xFFFFFF);
+          canvas.hideRelief();
+          pixels.add(shown(canvas).getRGB(10, 10) & 0xFFFFFF);
+          canvas.showRelief();
+          pixels.add(shown(canvas).getRGB(10, 10) & 0xFFFFFF);
+        });
+
+    // then
+    // the territory's color lies lightly over both
+    assertThat(new Color(pixels.get(0)).getGreen())
+        .as("the magenta relief over the picture")
+        .isLessThan(100);
+    assertThat(pixels.get(1)).as("the picture alone while drawing").isNotEqualTo(pixels.get(0));
+    assertThat(pixels.get(2)).as("the relief again after").isEqualTo(pixels.get(0));
+  }
+
+  /** At zoom 1, as below 0.6 the smaller copy is made in the background. */
+  private static MapCanvas givenCanvasWithMagentaRelief() {
+    final MapProject project = MapProject.newEmpty();
+    final BufferedImage picture = MapPictureTest.givenPicture();
+    project.loadPicture(picture, MapPicture.detect(picture));
+    final BufferedImage relief =
+        new BufferedImage(picture.getWidth(), picture.getHeight(), BufferedImage.TYPE_INT_ARGB);
+    final Graphics2D g = relief.createGraphics();
+    g.setColor(Color.MAGENTA);
+    g.fillRect(0, 0, relief.getWidth(), relief.getHeight());
+    g.dispose();
+    project.setRelief(relief);
+    final MapCanvas canvas = new MapCanvas(project);
+    canvas.setSize(400, 300);
+    canvas.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 12));
+    canvas.zoomBy(2);
+    return canvas;
+  }
+
   @DisplayName("With an effect brush the map shows the effect's picture where the game draws it")
   @Test
   void effectBrushShowsEffectPictures() throws Exception {

@@ -219,6 +219,8 @@ final class MapCanvas extends JComponent {
   // change and drawn into the squares
   private boolean showingTextures;
   private transient @Nullable Map<String, Textures.Fill> textureFills;
+  // while borders are drawn: the picture without the relief, as lines go into the picture alone
+  private boolean hidingRelief;
   // what a left drag paints, while a brush is chosen, and the territories its stroke passed
   private transient Optional<Consumer<List<String>>> onStroke = Optional.empty();
   private transient Set<String> stroke = new LinkedHashSet<>();
@@ -729,6 +731,28 @@ final class MapCanvas extends JComponent {
   void hideTextures() {
     showingTextures = false;
     repaint();
+  }
+
+  /** Shows the picture without the relief, as drawn lines and the eraser change only it. */
+  void hideRelief() {
+    if (!hidingRelief) {
+      hidingRelief = true;
+      changes++;
+      repaint();
+    }
+  }
+
+  void showRelief() {
+    if (hidingRelief) {
+      hidingRelief = false;
+      changes++;
+      repaint();
+    }
+  }
+
+  /** Whether the relief is drawn over the picture: as the game does, unless hidden. */
+  private boolean drawsRelief() {
+    return !hidingRelief && project.getFiles().showsRelief();
   }
 
   /**
@@ -1461,7 +1485,7 @@ final class MapCanvas extends JComponent {
     g.translate(-square.x * LAYER_SIZE, -square.y * LAYER_SIZE);
     g.scale(zoom, zoom);
     final boolean picture = showPicture && paintPicture(g);
-    if (picture && project.getFiles().showsRelief()) {
+    if (picture && drawsRelief()) {
       paintRelief(g);
     }
     final Map<String, List<Polygon>> polygons = project.getFiles().polygons();
@@ -1615,21 +1639,25 @@ final class MapCanvas extends JComponent {
   /** The smaller picture once it is made; starts making it for a new picture or folder. */
   private Optional<BufferedImage> overview() {
     final MapFiles files = project.getFiles();
+    final boolean relief = drawsRelief();
     final List<Object> source =
         List.of(
             files.picture(),
             files.folder(),
             files.relief(),
-            files.showsRelief(),
+            relief,
             // lines drawn into a big picture itself leave it the same picture
             project.pictureEdits());
     if (!source.equals(overviewOf)) {
+      // for the same picture the old one stays until the new one is made: no flash to colors
+      if (overviewOf.isEmpty() || !source.subList(0, 2).equals(overviewOf.subList(0, 2))) {
+        overview = null;
+      }
       overviewOf = source;
-      overview = null;
       new SwingWorker<BufferedImage, Void>() {
         @Override
         protected BufferedImage doInBackground() {
-          return newOverview(files);
+          return newOverview(files, relief);
         }
 
         @Override
@@ -1652,7 +1680,7 @@ final class MapCanvas extends JComponent {
   }
 
   /** The picture or the tiles drawn smaller, at most {@link #OVERVIEW_WIDTH} wide. */
-  private static BufferedImage newOverview(final MapFiles files) {
+  private static BufferedImage newOverview(final MapFiles files, final boolean relief) {
     final Dimension map = files.size();
     final double scale = Math.min(OVERVIEW_ZOOM, OVERVIEW_WIDTH / (double) Math.max(1, map.width));
     final BufferedImage small =
@@ -1679,7 +1707,7 @@ final class MapCanvas extends JComponent {
         }
       }
     }
-    if (files.showsRelief()) {
+    if (relief) {
       if (files.relief().isPresent()) {
         g.drawImage(files.relief().get(), 0, 0, null);
       } else {

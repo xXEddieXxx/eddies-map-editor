@@ -9,11 +9,17 @@ import java.awt.image.DataBufferByte;
 import java.awt.image.DataBufferInt;
 import java.awt.image.IndexColorModel;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Properties;
 import java.util.Set;
 import java.util.function.ToIntFunction;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 /**
  * A relief made from the territories' outlines, for a map maker without a paint program: a dark
@@ -52,6 +58,75 @@ final class ReliefMaker {
   private static final int MAX_FILLS = 255;
 
   private ReliefMaker() {}
+
+  /**
+   * How a relief was made here, kept in map.properties (which the game does not read there) so a
+   * part of it can be made again; eg relief.made=50,waves,texture.
+   */
+  record Look(int strength, Set<Touch> touches) {
+    static final String KEY = "relief.made";
+
+    /** The look the map's relief was made with; empty for one made elsewhere. */
+    static Optional<Look> of(final Properties properties) {
+      final String[] parts = properties.getProperty(KEY, "").split(",");
+      try {
+        final Set<Touch> touches = EnumSet.noneOf(Touch.class);
+        for (int i = 1; i < parts.length; i++) {
+          touches.add(Touch.valueOf(parts[i].strip().toUpperCase(Locale.ROOT)));
+        }
+        return Optional.of(new Look(Integer.parseInt(parts[0].strip()), touches));
+      } catch (final IllegalArgumentException e) {
+        return Optional.empty();
+      }
+    }
+
+    String text() {
+      return Stream.concat(
+              Stream.of(String.valueOf(strength)),
+              touches.stream().map(t -> t.name().toLowerCase(Locale.ROOT)))
+          .collect(Collectors.joining(","));
+    }
+  }
+
+  /**
+   * The relief with the region made anew from the outlines, the rest as it was: for a relief made
+   * here with the look, its pixels there are those a whole new relief would have.
+   */
+  static BufferedImage remade(
+      final BufferedImage relief,
+      final Rectangle region,
+      final Map<String, List<Polygon>> polygons,
+      final Set<String> water,
+      final Look look,
+      final Map<String, Textures.Fill> fills) {
+    final Rectangle map = new Rectangle(relief.getWidth(), relief.getHeight());
+    // a pixel's look depends on the outlines up to FAR away: what changed reaches that far, and
+    // what is made needs that much around it
+    final int reach = FAR / UNIT + 1;
+    final Rectangle patch = grown(region, reach).intersection(map);
+    final Rectangle area = grown(patch, reach).intersection(map);
+    final BufferedImage made =
+        make(area, polygons, water, look.strength(), look.touches(), fills);
+    final BufferedImage copy =
+        new BufferedImage(
+            relief.getColorModel(), relief.copyData(null), relief.isAlphaPremultiplied(), null);
+    copy.setRGB(
+        patch.x,
+        patch.y,
+        patch.width,
+        patch.height,
+        made.getRGB(
+            patch.x - area.x, patch.y - area.y, patch.width, patch.height, null, 0, patch.width),
+        0,
+        patch.width);
+    return copy;
+  }
+
+  private static Rectangle grown(final Rectangle r, final int by) {
+    final Rectangle grown = new Rectangle(r);
+    grown.grow(by, by);
+    return grown;
+  }
 
   /**
    * The relief of the area of the map; for the whole map the area is its size.

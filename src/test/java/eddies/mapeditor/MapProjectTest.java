@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import games.strategy.triplea.attachments.RulesAttachment;
 import java.awt.Color;
+import java.awt.Dimension;
 import java.awt.Image;
 import java.awt.Point;
 import java.awt.Polygon;
@@ -12,6 +13,7 @@ import java.awt.image.BufferedImage;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -495,6 +497,41 @@ final class MapProjectTest {
         .as("the far area bottom left left out before, and the two in the corner")
         .hasSize(3)
         .anyMatch(a -> a.center().x < 200 && a.center().y > 110);
+  }
+
+  @DisplayName("A relief made anew after Make territories joins its step; undo takes both back")
+  @Test
+  void remadeReliefJoinsTheTerritoriesStep() throws Exception {
+    // given
+    final MapProject project = givenSavedMapWithRed();
+    final BufferedImage old = givenRelief(project);
+    project.setRelief(old, new ReliefMaker.Look(50, EnumSet.noneOf(ReliefMaker.Touch.class)));
+    project.eraseBorders(List.of(new Point(200, 20), new Point(200, 90)), 9);
+    final MapFiles drawn = project.getFiles();
+    project.takeRedrawn(
+        drawn,
+        drawn.withBordersFrom(drawn.picture().orElseThrow(), project.drawnRegion().orElseThrow()),
+        RedrawChoices.none());
+    final MapFiles made = project.getFiles();
+    final BufferedImage remade = givenRelief(project);
+
+    // when
+    final boolean taken = project.takeRemadeRelief(made, remade);
+    final boolean late = project.takeRemadeRelief(made, givenRelief(project));
+    final Optional<BufferedImage> shown = project.getFiles().relief();
+    project.undo();
+
+    // then
+    assertThat(taken).as("the files it was made for").isTrue();
+    assertThat(late).as("the map changed since").isFalse();
+    assertThat(shown).as("the remade relief").containsSame(remade);
+    assertThat(project.getFiles()).as("one undo: the territories and the relief").isSameAs(drawn);
+    assertThat(project.getFiles().relief()).as("the old relief again").containsSame(old);
+  }
+
+  private static BufferedImage givenRelief(final MapProject project) {
+    final Dimension size = project.getFiles().size();
+    return new BufferedImage(size.width, size.height, BufferedImage.TYPE_INT_ARGB);
   }
 
   @DisplayName("Undo of a drawn line shrinks where Make territories looks; making them resets it")

@@ -11,6 +11,7 @@ import java.awt.image.BufferedImage;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.DisplayName;
@@ -136,6 +137,68 @@ final class ReliefMakerTest {
     assertThat(new Color(textured.getRGB(65, 70), true).getRed())
         .as("x 65 is the red pixel")
         .isGreaterThan(200);
+  }
+
+  @DisplayName("A relief remade where a border was erased is the one made anew for the new outlines")
+  @Test
+  void remadeRegionMatchesWholeRelief() {
+    // given
+    final Rectangle map = new Rectangle(400, 150);
+    final Map<String, List<Polygon>> before =
+        Map.of(
+            "Sea", List.of(rectangle(0, 0, 400, 150)),
+            "West", List.of(rectangle(40, 30, 90, 110)),
+            "East", List.of(rectangle(90, 30, 140, 110)),
+            "Far", List.of(rectangle(300, 30, 360, 110)));
+    final Map<String, List<Polygon>> merged =
+        Map.of(
+            "Sea", List.of(rectangle(0, 0, 400, 150)),
+            "West", List.of(rectangle(40, 30, 140, 110)),
+            "Far", List.of(rectangle(300, 30, 360, 110)));
+    final Set<Touch> touches = EnumSet.allOf(Touch.class);
+    final BufferedImage old = ReliefMaker.make(map, before, Set.of("Sea"), 50, touches, Map.of());
+
+    // when
+    final BufferedImage remade =
+        ReliefMaker.remade(
+            old,
+            new Rectangle(85, 25, 10, 90),
+            merged,
+            Set.of("Sea"),
+            new ReliefMaker.Look(50, touches),
+            Map.of());
+
+    // then
+    final BufferedImage anew = ReliefMaker.make(map, merged, Set.of("Sea"), 50, touches, Map.of());
+    assertThat(old.getRGB(90, 70))
+        .as("the border's shading was there")
+        .isNotEqualTo(anew.getRGB(90, 70));
+    for (int y = 0; y < map.height; y++) {
+      for (int x = 0; x < map.width; x++) {
+        assertThat(remade.getRGB(x, y)).as("pixel %d, %d", x, y).isEqualTo(anew.getRGB(x, y));
+      }
+    }
+  }
+
+  @DisplayName("How a relief was made reads back from its text; another text is none")
+  @Test
+  void lookReadsBack() {
+    // given
+    final ReliefMaker.Look look = new ReliefMaker.Look(70, EnumSet.of(Touch.WAVES));
+    final Properties properties = new Properties();
+    properties.setProperty(ReliefMaker.Look.KEY, look.text());
+    final Properties byHand = new Properties();
+    byHand.setProperty(ReliefMaker.Look.KEY, "strong");
+
+    // when
+    final var read = ReliefMaker.Look.of(properties);
+    final var none = ReliefMaker.Look.of(new Properties());
+    final var unread = ReliefMaker.Look.of(byHand);
+
+    // then
+    assertThat(read).as("as written").contains(look);
+    assertThat(none).as("a relief made elsewhere").isEmpty();
+    assertThat(unread).as("a value that does not read").isEmpty();
   }
 
   private static BufferedImage givenTexturedRelief(final BufferedImage texture, final Point at) {

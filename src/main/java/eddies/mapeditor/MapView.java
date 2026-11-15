@@ -671,6 +671,7 @@ final class MapView extends JPanel {
     canvas.showPlaces(MapCanvas.ShownPlaces.NONE);
     canvas.hideEffects();
     canvas.hideTextures();
+    canvas.showRelief();
     hideBanner();
   }
 
@@ -861,6 +862,15 @@ final class MapView extends JPanel {
 
   void hideTextures() {
     canvas.hideTextures();
+  }
+
+  /** Shows the picture without the relief, until showRelief or another editor takes the map. */
+  void hideRelief() {
+    canvas.hideRelief();
+  }
+
+  void showRelief() {
+    canvas.showRelief();
   }
 
   /** A left drag paints the territories it passes, given at its end; until stopEditingPlaces. */

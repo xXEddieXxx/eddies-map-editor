@@ -445,8 +445,8 @@ final class TerritoriesEditor implements Editor {
           paintMenu().show(paint, 0, paint.getHeight());
         });
     drawBorders.setToolTipText(
-        "Draw borders: changes the map's picture. Draw border lines into it by hand, then make"
-            + " territories of them");
+        "Draw borders: changes the map's picture; make territories of the lines after. The"
+            + " relief is hidden meanwhile");
     drawBorders.addActionListener(e -> startMode(Mode.DRAW));
     // by its name; short of room the pin alone
     Theme.setNamedMapToolStyle(places, Glyph.PLACES);
@@ -1258,6 +1258,12 @@ final class TerritoriesEditor implements Editor {
       map.showTextures();
     } else {
       map.hideTextures();
+    }
+    // lines go into the picture alone: the relief over it would hide what changed
+    if (mode == Mode.DRAW) {
+      map.hideRelief();
+    } else {
+      map.showRelief();
     }
   }
 
