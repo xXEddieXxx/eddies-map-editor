@@ -56,8 +56,9 @@ import org.triplea.swing.SwingComponents;
 @Slf4j
 final class PublishEditor implements Editor {
   static final String TITLE = "Publish";
-  private static final int MAX_WIDTH = 1100;
-  private static final int TEXT_WIDTH = 480;
+  // a wide screen fills; the texts stay readable at their own width
+  private static final int MAX_WIDTH = 1600;
+  private static final int TEXT_WIDTH = 640;
   private static final int HINT_WIDTH = 400;
   private static final int DESCRIPTION_HEIGHT = 260;
   private static final int PREVIEW_WIDTH = 240;
@@ -188,6 +189,11 @@ final class PublishEditor implements Editor {
     return "What your map needs before players can download it in TripleA: its name and version,"
         + " the description and picture the list of maps shows, and the steps to upload it."
         + " Written at once into the map's folder.";
+  }
+
+  @Override
+  public String files() {
+    return "map.yml and description.html";
   }
 
   @Override

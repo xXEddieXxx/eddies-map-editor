@@ -171,7 +171,12 @@ final class SoundsEditor implements Editor {
   @Override
   public String hint() {
     return "The sounds the game plays, eg for a land battle or a nation's turn. Choose mp3 files"
-        + " for a sound, or leave it to the game's own. Saved in sounds.properties.";
+        + " for a sound, or leave it to the game's own.";
+  }
+
+  @Override
+  public String files() {
+    return "sounds.properties";
   }
 
   @Override

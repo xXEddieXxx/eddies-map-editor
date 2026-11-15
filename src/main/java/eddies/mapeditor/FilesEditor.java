@@ -8,6 +8,7 @@ import java.awt.Component;
 import java.awt.Desktop;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
@@ -284,6 +285,11 @@ final class FilesEditor implements Editor {
   public String hint() {
     return "The map's files as on disk. Open one to change it; the game's files are checked as you"
         + " type. Save file keeps the first version as .bak and reads the map again.";
+  }
+
+  @Override
+  public String files() {
+    return "";
   }
 
   @Override
@@ -943,6 +949,9 @@ final class FilesEditor implements Editor {
       final Optional<JButton> link) {
     final JLabel markLabel = new JLabel(mark.mark());
     markLabel.setForeground(mark.color());
+    // bold and a little bigger: the marks are what the eye looks for
+    markLabel.setFont(
+        markLabel.getFont().deriveFont(Font.BOLD, markLabel.getFont().getSize2D() + 2));
     markLabel.getAccessibleContext().setAccessibleName(
         switch (mark) {
           case DONE -> "there";
@@ -968,8 +977,9 @@ final class FilesEditor implements Editor {
     final GridBagConstraints at = new GridBagConstraints();
     at.gridy = row;
     at.anchor = GridBagConstraints.WEST;
-    at.insets = new Insets(1, 0, 1, Theme.GAP_L);
-    at.ipady = 4;
+    // tight rows: many files, read at a glance
+    at.insets = new Insets(0, 0, 0, Theme.GAP_L);
+    at.ipady = 2;
     rows.add(nameCell, at);
     at.weightx = 1;
     at.fill = GridBagConstraints.HORIZONTAL;
@@ -977,7 +987,7 @@ final class FilesEditor implements Editor {
     at.weightx = 0;
     at.fill = GridBagConstraints.NONE;
     at.anchor = GridBagConstraints.EAST;
-    at.insets = new Insets(1, 0, 1, 0);
+    at.insets = new Insets(0, 0, 0, 0);
     rows.add(link.<JComponent>map(b -> b).orElseGet(JLabel::new), at);
   }
 

@@ -199,6 +199,11 @@ final class HomeEditor implements Editor {
   }
 
   @Override
+  public String files() {
+    return "";
+  }
+
+  @Override
   public JComponent page() {
     return page;
   }

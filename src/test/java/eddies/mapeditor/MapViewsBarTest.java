@@ -42,7 +42,7 @@ final class MapViewsBarTest {
     // then
     assertThat(toggles.stream().map(JToggleButton::getText))
         .as("short plain names, the views in their order")
-        .containsExactly("Game", "Owners", "Political", "Values", "Units", "Neighbours");
+        .containsExactly("Game", "Owners", "Political", "Values", "Units", "Connections");
     assertThat(toggles.stream().map(JToggleButton::getToolTipText))
         .as("each says what it shows, without HTML")
         .containsExactly(
@@ -75,7 +75,7 @@ final class MapViewsBarTest {
     assertThat(reported).as("only the click reports").containsExactly(MapMode.VALUES);
     assertThat(selected)
         .as("the clicked view, then the one a tool chose")
-        .containsExactly(List.of("Values"), List.of("Neighbours"));
+        .containsExactly(List.of("Values"), List.of("Connections"));
   }
 
   @DisplayName("Short of room the views are one button, \"View: Game ▾\"; its menu chooses a view")
@@ -115,7 +115,7 @@ final class MapViewsBarTest {
             1L,
             List.of("View: Values ▾"),
             List.of("Values"),
-            List.of("Game", "Owners", "Political", "Values", "Units", "Neighbours"));
+            List.of("Game", "Owners", "Political", "Values", "Units", "Connections"));
     assertThat(reported).as("the menu's choice reports").containsExactly(MapMode.VALUES);
   }
 
@@ -153,6 +153,6 @@ final class MapViewsBarTest {
 
     // then
     assertThat(chosenPixels.get(0)).as("the chosen Units in the chosen color").isPositive();
-    assertThat(chosenPixels.get(1)).as("Neighbours, not chosen, in the text's color").isZero();
+    assertThat(chosenPixels.get(1)).as("Connections, not chosen, in the text's color").isZero();
   }
 }

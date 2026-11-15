@@ -11,6 +11,7 @@ import games.strategy.triplea.Constants;
 import games.strategy.triplea.attachments.PlayerAttachment;
 import games.strategy.triplea.attachments.RulesAttachment;
 import games.strategy.triplea.attachments.TerritoryAttachment;
+import games.strategy.triplea.attachments.UnitAttachment;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.stream.IntStream;
@@ -204,6 +205,49 @@ final class RulesXmlTest {
         .satisfies(p -> assertThat(p.getValue()).as("without the Italians").isEqualTo("Russians"));
     assertThat(RulesXml.stepProperties(step(without, "russianCombatMove")))
         .as("a list left empty goes")
+        .isEmpty();
+    assertThat(RulesXml.whereNamed(without, "Italians")).as("named nowhere").isEmpty();
+    givenLoaded(without, folder);
+  }
+
+  @DisplayName("A removed nation leaves the unit options that list nations")
+  @Test
+  void removedNationLeavesUnitLists(@TempDir final Path folder) {
+    final MapXml.AttachmentKey infantry =
+        new MapXml.AttachmentKey(
+            Constants.UNIT_ATTACHMENT_NAME, UnitAttachment.class.getName(), "unitType", "infantry");
+    final MapXml.AttachmentKey armour =
+        new MapXml.AttachmentKey(
+            Constants.UNIT_ATTACHMENT_NAME, UnitAttachment.class.getName(), "unitType", "armour");
+    final Game named =
+        MapXml.withOption(
+            MapXml.withOption(
+                MapXml.withOption(
+                    minimap, infantry, "canBeCapturedOnEnteringBy", "Italians:Russians"),
+                infantry,
+                "destroyedWhenCapturedBy",
+                "BY:Italians"),
+            armour,
+            "canBeGivenByTerritoryTo",
+            "Italians");
+    final MapProject project = new MapProject(Path.of("minimap.xml"), named, MapFiles.none());
+
+    assertThat(RulesXml.unitListsNaming(named, "Italians"))
+        .as("told before the removal")
+        .containsExactly(
+            "unitAttachment of infantry: canBeCapturedOnEnteringBy",
+            "unitAttachment of infantry: destroyedWhenCapturedBy",
+            "unitAttachment of armour: canBeGivenByTerritoryTo");
+    assertThat(project.removeNation("Italians")).as("removed").isEmpty();
+    final Game without = project.game();
+    assertThat(MapXml.option(without, "unitAttachment", "infantry", "canBeCapturedOnEnteringBy"))
+        .as("the other nation stays")
+        .contains("Russians");
+    assertThat(MapXml.option(without, "unitAttachment", "infantry", "destroyedWhenCapturedBy"))
+        .as("BY: alone would not load: the option goes")
+        .isEmpty();
+    assertThat(MapXml.option(without, "unitAttachment", "armour", "canBeGivenByTerritoryTo"))
+        .as("a list of it alone goes")
         .isEmpty();
     assertThat(RulesXml.whereNamed(without, "Italians")).as("named nowhere").isEmpty();
     givenLoaded(without, folder);

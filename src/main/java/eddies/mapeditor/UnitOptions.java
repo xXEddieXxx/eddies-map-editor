@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import lombok.experimental.UtilityClass;
 
 /**
@@ -393,6 +394,19 @@ class UnitOptions {
           entry("placementLimit", limit("placing")),
           entry("movementLimit", limit("moving")),
           entry("attackingLimit", limit("attacking")));
+
+  /**
+   * The options that list nations and nothing else, eg canBeCapturedOnEnteringBy; a nation removed
+   * from the game is taken out of them. destroyedWhenCapturedBy lists them after BY: or FROM:.
+   */
+  static final Set<String> NATION_LISTS =
+      Stream.concat(
+              SECTIONS.stream()
+                  .flatMap(s -> s.options().stream())
+                  .filter(o -> o.kind() == Kind.NATIONS)
+                  .map(UnitOption::name),
+              Stream.of("destroyedWhenCapturedBy"))
+          .collect(Collectors.toUnmodifiableSet());
 
   /** The names of the options shown in the sections. */
   static final Set<String> NAMES =

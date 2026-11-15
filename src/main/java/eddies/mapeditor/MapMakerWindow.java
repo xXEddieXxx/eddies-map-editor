@@ -1141,7 +1141,7 @@ public final class MapMakerWindow extends JFrame {
     final JPanel titleRow = new JPanel(new FlowLayout(FlowLayout.LEADING, 0, 0));
     titleRow.add(Theme.newTitle(editor.title()));
     titleRow.add(Box.createHorizontalStrut(Theme.GAP_XS));
-    titleRow.add(Help.button(editor.title(), editor.hint()));
+    titleRow.add(Help.button(editor.title(), editor.hint(), editor.files()));
     final JPanel top = new JPanel();
     top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
     for (final JComponent part : List.of(titleRow, Help.intro(editor.title(), editor.hint()))) {

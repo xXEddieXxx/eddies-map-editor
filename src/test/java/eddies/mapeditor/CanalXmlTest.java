@@ -138,8 +138,11 @@ final class CanalXmlTest {
         RulesXmlTest.givenLoaded(CanalXml.withCanal(global, NEW.name(), NEW), folder);
 
     for (final String seaZone : NEW.seaZones()) {
+      // by the territory's attachments: CanalAttachment.get(Territory) went in TripleA 2026-09
       final CanalAttachment canal =
-          CanalAttachment.get(data.getMap().getTerritoryOrNull(seaZone)).stream()
+          data.getMap().getTerritoryOrNull(seaZone).getAttachments().values().stream()
+              .filter(CanalAttachment.class::isInstance)
+              .map(CanalAttachment.class::cast)
               .filter(c -> NEW.name().equals(c.getCanalName()))
               .findFirst()
               .orElseThrow();

@@ -4,6 +4,9 @@ import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Component;
 import java.awt.Dimension;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.Insets;
 import java.awt.FlowLayout;
 import java.awt.event.ActionEvent;
 import java.awt.event.FocusAdapter;
@@ -85,12 +88,12 @@ final class AttachmentsEditor implements Editor {
   AttachmentsEditor(final MapProject project) {
     this.project = project;
     list =
+        // rows of one line, "Germans · unitAttachment · 12 options": a big map has thousands
         new SearchList(
                 "attachment",
                 "attachments",
                 this::shownKeys,
-                this::titleOf,
-                this::detailOf,
+                key -> titleOf(key) + SEPARATOR + detailOf(key),
                 this::choose)
             .withAdd(
                 "Add attachment…", "Adds an attachment of a kind you choose", this::addAttachment);
@@ -286,6 +289,31 @@ final class AttachmentsEditor implements Editor {
         : rest;
   }
 
+  /** "Name [field]  Attached to [combo]" on one line, so the options start higher. */
+  private JComponent nameAndTarget() {
+    final JPanel line = new JPanel(new GridBagLayout());
+    line.setOpaque(false);
+    final GridBagConstraints at = new GridBagConstraints();
+    at.anchor = GridBagConstraints.WEST;
+    at.insets = new Insets(0, 0, 0, Theme.GAP_S);
+    final JLabel nameLabel = new JLabel("Name");
+    nameLabel.setLabelFor(name);
+    line.add(nameLabel, at);
+    at.weightx = 1;
+    at.fill = GridBagConstraints.HORIZONTAL;
+    at.insets = new Insets(0, 0, 0, Theme.GAP_L);
+    line.add(name, at);
+    at.weightx = 0;
+    at.fill = GridBagConstraints.NONE;
+    at.insets = new Insets(0, 0, 0, Theme.GAP_S);
+    final JLabel targetLabel = new JLabel("Attached to");
+    targetLabel.setLabelFor(attachTo);
+    line.add(targetLabel, at);
+    at.insets = new Insets(0, 0, 0, 0);
+    line.add(attachToRow, at);
+    return line;
+  }
+
   private static String detail(final Attachment attachment) {
     final int count = AttachmentsXml.options(attachment).size();
     return (AttachmentsXml.hasDefaultName(attachment)
@@ -434,7 +462,7 @@ final class AttachmentsEditor implements Editor {
     attachTo.setSelectedItem(attachment.getAttachTo());
     optionNames.removeAllItems();
     AttachmentsXml.knownOptions(game, kind).forEach(optionNames::addItem);
-    inspector.field("Name", name).field("Attached to", attachToRow).end();
+    inspector.row(nameAndTarget()).end();
     final List<Option> shown = AttachmentsXml.options(attachment);
     optionsTitle.setText("Options (" + shown.size() + ")");
     options.show(shown);

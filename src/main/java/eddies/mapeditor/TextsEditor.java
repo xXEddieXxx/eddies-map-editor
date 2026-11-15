@@ -225,6 +225,11 @@ final class TextsEditor implements Editor {
   }
 
   @Override
+  public String files() {
+    return "the game's .properties file in games/";
+  }
+
+  @Override
   public JComponent page() {
     return page;
   }

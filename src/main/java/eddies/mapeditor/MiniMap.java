@@ -38,6 +38,7 @@ final class MiniMap extends JComponent {
   @Serial private static final long serialVersionUID = 1L;
   private static final int MAX_HEIGHT = 360;
   private static final Color SEA = new Color(0xC6DAE8);
+  private static final Color IMPASSABLE_SEA = new Color(0x8DA6BA);
   // the map's own colors, not the theme's: a strong red on a white halo shows on every owner's
   static final Color PROBLEM = new Color(0xE0150B);
   private static final Color OUTLINE = new Color(0, 0, 0, 70);
@@ -204,7 +205,8 @@ final class MiniMap extends JComponent {
   private void fill(final Graphics2D g, final String territory, final List<Polygon> outlines) {
     final Color color =
         seas.contains(territory)
-            ? SEA
+            // an impassable sea zone darker, as the map hatches it
+            ? project.isImpassable(territory) ? IMPASSABLE_SEA : SEA
             : project.isImpassable(territory)
                 ? project.impassableColor()
                 : Optional.ofNullable(owners.get(territory))

@@ -83,6 +83,8 @@ final class MapCanvas extends JComponent {
   // shared with the legend below the map
   static final Color SEA = new Color(0x3E6A8A);
   static final Color NEUTRAL = new Color(0xA89F86);
+  /** The stripes over an impassable sea zone: dark, as the sea's color stays underneath. */
+  static final Color IMPASSABLE_SEA = new Color(0x1B2F40);
   // the Political view's hues, one per alliance in its order: Okabe-Ito's, told apart also by the
   // color-blind, their shades too; no blue, which would read as sea; from the seventh alliance on
   // the hues repeat
@@ -1762,6 +1764,12 @@ final class MapCanvas extends JComponent {
     if (!(asPlayed && look.water())) {
       final Color fill = fill(look);
       g.setColor(overPicture ? withAlpha(fill, asPlayed ? 0x59 : political ? 0xE0 : 0x8C) : fill);
+      g.fill(area);
+    }
+    // impassable land has a color of its own; an impassable sea zone, which the game draws like
+    // any other, is hatched so it reads apart
+    if (look.water() && look.impassable()) {
+      g.setPaint(hatch(10 / zoom, withAlpha(IMPASSABLE_SEA, 0xB0)));
       g.fill(area);
     }
     if (showingTextures) {

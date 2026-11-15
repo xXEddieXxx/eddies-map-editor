@@ -821,7 +821,9 @@ final class MapProject {
    * @return where it is still named, empty when it was removed
    */
   List<String> removeNation(final String nation) {
-    final Game without = MapXml.withoutNation(game(), nation);
+    // the unit options that only list nations let it go; the rest must be changed first
+    final Game without =
+        RulesXml.withoutNationInUnitLists(MapXml.withoutNation(game(), nation), nation);
     final List<String> named =
         Stream.concat(
                 RulesXml.whereNamed(without, nation).stream(),

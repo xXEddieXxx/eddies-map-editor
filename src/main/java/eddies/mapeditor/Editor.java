@@ -13,6 +13,14 @@ interface Editor {
   /** What the tool does, shown by its "?" and as its icon's tool tip. */
   String hint();
 
+  /**
+   * The map's files the tool reads and writes, the first line of its "?"; empty for a tool that
+   * changes none itself.
+   */
+  default String files() {
+    return "the game file (games/*.xml)";
+  }
+
   /** The tool's icon in the sidebar. */
   Glyph glyph();
 

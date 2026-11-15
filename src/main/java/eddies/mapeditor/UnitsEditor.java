@@ -201,6 +201,11 @@ final class UnitsEditor implements Editor {
   }
 
   @Override
+  public String files() {
+    return "the game file (games/*.xml); pictures in units/";
+  }
+
+  @Override
   public JComponent page() {
     return page;
   }

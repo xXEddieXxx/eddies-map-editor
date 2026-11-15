@@ -266,7 +266,7 @@ final class MapViewTest {
             "Political",
             "Values",
             "Units",
-            "Neighbours",
+            "Connections",
             "Select",
             "Paint ▾",
             "Places ▾",
@@ -446,7 +446,7 @@ final class MapViewTest {
     assertThat(rowHeight.getFirst()).as("more than one line").isGreaterThan(48);
   }
 
-  @DisplayName("The Neighbours view starts with no territory chosen; another view shows it again")
+  @DisplayName("The Connections view starts with no territory chosen; another view shows it again")
   @Test
   void neighboursViewStartsUnchosen() throws Exception {
     // given
@@ -467,7 +467,7 @@ final class MapViewTest {
 
     // then
     assertThat(selected)
-        .as("none in Neighbours, the tool's again in Game")
+        .as("none in Connections, the tool's again in Game")
         .containsExactly(Optional.empty(), Optional.of("Territory 1"));
   }
 

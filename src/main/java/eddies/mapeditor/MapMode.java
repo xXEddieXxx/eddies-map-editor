@@ -15,7 +15,8 @@ enum MapMode {
   POLITICAL("Political", "Each territory in its owner's alliance color", Glyph.POLITICAL),
   VALUES("Values", "What each territory gives per turn, capitals and victory cities", Glyph.VALUES),
   UNITS("Units", "The units each territory starts with", Glyph.UNITS),
-  CONNECTIONS("Neighbours", "Which territories are neighbours", Glyph.CONNECTIONS);
+  CONNECTIONS(
+      "Connections", "Which territories are neighbours, as the Connections tool", Glyph.CONNECTIONS);
 
   private final String title;
   @Getter private final String description;

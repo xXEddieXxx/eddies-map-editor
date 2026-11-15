@@ -68,6 +68,7 @@ import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
+import javax.swing.JRadioButtonMenuItem;
 import javax.swing.JRadioButton;
 import javax.swing.JScrollPane;
 import javax.swing.JSeparator;
@@ -213,6 +214,7 @@ final class TerritoriesEditor implements Editor {
           Optional.empty(),
           // the field's value when painted
           (g, t) -> MapXml.withProduction(g, t, (Integer) paintedPus.getValue()));
+  private Order sort = Order.NAME;
   private Mode mode = Mode.SELECT;
   private Optional<Brush> brush = Optional.empty();
   // the territory whose units the copy brush copies, taken when the brush is chosen
@@ -273,7 +275,7 @@ final class TerritoriesEditor implements Editor {
         new SearchList(
             "territory",
             "territories",
-            () -> MapXml.territories(project.game()),
+            this::territoriesInOrder,
             t -> t,
             this::detail,
             this::chooseInList);
@@ -364,6 +366,24 @@ final class TerritoriesEditor implements Editor {
     removeMany.setToolTipText(
         "Tick the territories to remove, the smallest first, eg islands found by mistake");
     removeMany.addActionListener(e -> removeTerritories());
+    final JPopupMenu sortMenu = new JPopupMenu();
+    final ButtonGroup sortGroup = new ButtonGroup();
+    final JButton sortButton = new JButton();
+    Theme.setTertiaryButtonStyle(sortButton);
+    for (final Order order : Order.values()) {
+      final JRadioButtonMenuItem item = new JRadioButtonMenuItem(order.title, order == sort);
+      item.addActionListener(
+          e -> {
+            sort = order;
+            sortButton.setText("Sort: " + order.title + " ▾");
+            list.refresh();
+          });
+      sortGroup.add(item);
+      sortMenu.add(item);
+    }
+    sortButton.setText("Sort: " + sort.title + " ▾");
+    sortButton.setToolTipText("The order of the list: by name, by owner or by PUs");
+    sortButton.addActionListener(e -> sortMenu.show(sortButton, 0, sortButton.getHeight()));
     final JButton names = new JButton("⋯");
     Theme.setTertiaryButtonStyle(names);
     final String manyTip = "Many territories at once: names and pictures as files, remove";
@@ -380,6 +400,12 @@ final class TerritoriesEditor implements Editor {
             list.setBounds(0, 0, getWidth(), getHeight());
             final Dimension size = names.getPreferredSize();
             names.setBounds(getWidth() - size.width - Theme.GAP_S, -2, size.width, size.height);
+            final Dimension sortSize = sortButton.getPreferredSize();
+            sortButton.setBounds(
+                getWidth() - size.width - Theme.GAP_S - sortSize.width,
+                -2,
+                sortSize.width,
+                sortSize.height);
           }
 
           @Override
@@ -392,9 +418,48 @@ final class TerritoriesEditor implements Editor {
             return false;
           }
         };
+    listCard.add(sortButton);
     listCard.add(names);
     listCard.add(list);
     return listCard;
+  }
+
+  /** The order of the list, chosen by "Sort ▾" over it. */
+  private enum Order {
+    NAME("Name"),
+    OWNER("Owner"),
+    PUS("PUs");
+
+    private final String title;
+
+    Order(final String title) {
+      this.title = title;
+    }
+  }
+
+  /** The territories as the game lists them, or by owner (sea zones last) or by PUs, most first. */
+  private List<String> territoriesInOrder() {
+    final Game game = project.game();
+    final List<String> territories = MapXml.territories(game);
+    return switch (sort) {
+      case NAME -> territories;
+      case OWNER ->
+          territories.stream()
+              .sorted(
+                  Comparator.comparing(
+                          (String t) ->
+                              MapXml.isWater(game, t)
+                                  ? "￿"
+                                  : MapXml.owner(game, t).orElse("￾"))
+                      .thenComparing(t -> t))
+              .toList();
+      case PUS ->
+          territories.stream()
+              .sorted(
+                  Comparator.comparingInt((String t) -> -MapXml.production(game, t))
+                      .thenComparing(t -> t))
+              .toList();
+    };
   }
 
   /** "← All territories" over the chosen territory's form; Esc goes back too. */
@@ -906,6 +971,11 @@ final class TerritoriesEditor implements Editor {
   public String hint() {
     return "Click a territory to change it. Use Paint to give many territories an owner, a value"
         + " or units at once.";
+  }
+
+  @Override
+  public String files() {
+    return "the game file (games/*.xml); centers.txt, polygons.txt and the place files";
   }
 
   @Override

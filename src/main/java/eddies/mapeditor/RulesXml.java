@@ -705,6 +705,60 @@ class RulesXml {
   }
 
   /**
+   * The unit options that list nations alone ({@link UnitOptions#NATION_LISTS}) and name the
+   * nation, as "unitAttachment of infantry: canBeCapturedOnEnteringBy".
+   */
+  static List<String> unitListsNaming(final Game game, final String nation) {
+    return AttachmentsXml.attachments(game).stream()
+        .filter(a -> "UnitAttachment".equals(AttachmentsXml.kind(a)))
+        .flatMap(
+            a ->
+                AttachmentsXml.options(a).stream()
+                    .filter(o -> UnitOptions.NATION_LISTS.contains(o.getName()))
+                    .filter(o -> parts(o).contains(nation))
+                    .map(o -> a.getName() + " of " + a.getAttachTo() + ": " + o.getName()))
+        .toList();
+  }
+
+  /**
+   * The game with the nation taken out of the unit options that list nations alone, unlike a
+   * trigger or condition, which a nation cut out could change the meaning of. An option left with
+   * no nation goes, as "BY:" alone would not load.
+   */
+  static Game withoutNationInUnitLists(final Game game, final String nation) {
+    boolean changed = false;
+    final List<Attachment> attachments = new ArrayList<>();
+    for (final Attachment a : AttachmentsXml.attachments(game)) {
+      if (!"UnitAttachment".equals(AttachmentsXml.kind(a))) {
+        attachments.add(a);
+        continue;
+      }
+      final List<Option> options = new ArrayList<>();
+      for (final Option o : AttachmentsXml.options(a)) {
+        final List<String> parts = parts(o);
+        if (!UnitOptions.NATION_LISTS.contains(o.getName()) || !parts.contains(nation)) {
+          options.add(o);
+          continue;
+        }
+        changed = true;
+        final List<String> rest = parts.stream().filter(p -> !nation.equals(p)).toList();
+        if (rest.stream().anyMatch(p -> !NATION_LIST_PREFIXES.contains(p))) {
+          options.add(o.toBuilder().value(String.join(":", rest)).build());
+        }
+      }
+      attachments.add(a.toBuilder().options(List.copyOf(options)).build());
+    }
+    return changed ? AttachmentsXml.withAttachments(game, attachments) : game;
+  }
+
+  // destroyedWhenCapturedBy says who captures it, or who it is captured from, before the nations
+  private static final Set<String> NATION_LIST_PREFIXES = Set.of("BY", "FROM");
+
+  private static List<String> parts(final Option option) {
+    return option.getValue() == null ? List.of() : Arrays.asList(option.getValue().split(":"));
+  }
+
+  /**
    * Where attachments or variables name it, eg "triggerAttachment1 of Germans: players", for the
    * map maker to change there first.
    */

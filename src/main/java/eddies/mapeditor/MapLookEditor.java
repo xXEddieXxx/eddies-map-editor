@@ -152,7 +152,12 @@ final class MapLookEditor implements Editor {
   @Override
   public String hint() {
     return "How the game draws your map: the size of the units, whether it scrolls around, what"
-        + " it shows on the territories, and a relief picture over it. Saved in map.properties.";
+        + " it shows on the territories, and a relief picture over it.";
+  }
+
+  @Override
+  public String files() {
+    return "map.properties";
   }
 
   @Override

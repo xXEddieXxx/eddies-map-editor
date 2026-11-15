@@ -43,13 +43,18 @@ class Help {
     return button(subject, explanation, List.of());
   }
 
-  /** A "?" whose bubble also says where the map keeps it, eg "Saved in sounds.properties". */
+  /**
+   * A "?" whose bubble says first which files it reads and writes, eg "Reads and writes
+   * sounds.properties"; none for an empty where.
+   */
   static JButton button(final String subject, final String explanation, final String where) {
-    return button(subject, explanation, List.of(Theme.newSecondaryLabel("Saved in " + where)));
+    final List<JLabel> files =
+        where.isEmpty() ? List.of() : List.of(Theme.newSecondaryLabel("Reads and writes " + where));
+    return button(subject, explanation, files);
   }
 
   private static JButton button(
-      final String subject, final String explanation, final List<JLabel> below) {
+      final String subject, final String explanation, final List<JLabel> above) {
     final JButton help = new JButton("?");
     help.putClientProperty(
         FlatClientProperties.BUTTON_TYPE, FlatClientProperties.BUTTON_TYPE_BORDERLESS);
@@ -70,11 +75,11 @@ class Help {
       content.add(Theme.newSectionLabel(subject));
       content.add(Box.createVerticalStrut(Theme.GAP_XS));
     }
-    content.add(wrapping(explanation));
-    for (final JLabel label : below) {
-      content.add(Box.createVerticalStrut(Theme.GAP_S));
+    for (final JLabel label : above) {
       content.add(label);
+      content.add(Box.createVerticalStrut(Theme.GAP_S));
     }
+    content.add(wrapping(explanation));
     // a click keeps the bubble open below the "?" until a click elsewhere or Esc
     final JPopupMenu bubble = new JPopupMenu();
     bubble.add(content);

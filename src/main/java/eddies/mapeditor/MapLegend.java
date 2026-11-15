@@ -105,7 +105,9 @@ final class MapLegend extends JPanel {
         keys.add(chip(project.neutralColor(), "No owner"));
         // the game view leaves seas clear over the map's picture
         if (mode == MapMode.OWNERS) {
-          keys.add(chip(MapCanvas.SEA, "Sea zone"));
+          final JLabel sea = chip(MapCanvas.SEA, "Sea zone");
+          sea.setToolTipText("A sea zone no unit may enter is hatched");
+          keys.add(sea);
         }
         // last, as no owner and sea have no nation's color
         if (nationsLink) {

@@ -294,6 +294,11 @@ final class NationsEditor implements Editor {
   }
 
   @Override
+  public String files() {
+    return "the game file (games/*.xml); colors in map.properties, flags in flags/";
+  }
+
+  @Override
   public JComponent page() {
     return page;
   }
@@ -1818,14 +1823,21 @@ final class NationsEditor implements Editor {
   // ---- remove
 
   private void removeNation(final String nation) {
+    // eg "unitAttachment of factory: canBeCapturedOnEnteringBy", which lose the nation with it
+    final List<String> unitLists = RulesXml.unitListsNaming(project.game(), nation);
     if (!Dialogs.confirmRemove(
         page,
         "Remove nation",
         "Remove "
             + nation
-            + "?\nIts turn, the territories it owns at the start and its units go too. Undo"
-            + " brings them back.",
-        List.of(),
+            + "?\nIts turn, the territories it owns at the start and its units go too."
+            + (unitLists.isEmpty()
+                ? ""
+                : " It is taken out of "
+                    + unitLists.size()
+                    + (unitLists.size() == 1 ? " unit option:" : " unit options:"))
+            + " Undo brings them back.",
+        unitLists,
         "Remove")) {
       return;
     }
