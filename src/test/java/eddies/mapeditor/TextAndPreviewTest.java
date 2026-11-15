@@ -24,13 +24,13 @@ final class TextAndPreviewTest {
     final MapProject project = givenMinimapProject();
     final String before = MapXml.notes(project.game());
     final NotesEditor notes = new NotesEditor(project);
-    final XmlTextArea text = find(notes.page(), XmlTextArea.class).orElseThrow();
+    final CodeArea text = find(notes.page(), CodeArea.class).orElseThrow();
 
     text.setText("<p>Hello marker</p>");
     notes.commit();
 
     final JSplitPane split = find(notes.page(), JSplitPane.class).orElseThrow();
-    assertThat(find((Container) split.getLeftComponent(), XmlTextArea.class))
+    assertThat(find((Container) split.getLeftComponent(), CodeArea.class))
         .as("the text on the left")
         .isPresent();
     assertThat(find((Container) split.getRightComponent(), GameNotesView.class))
@@ -66,7 +66,7 @@ final class TextAndPreviewTest {
         find((Container) htmlSplit.getRightComponent(), GameNotesView.class)
             .map(GameNotesView::getText)
             .orElse("");
-    find(files.page(), XmlTextArea.class).orElseThrow().setText("<p>Typed</p>");
+    find(files.page(), CodeArea.class).orElseThrow().setText("<p>Typed</p>");
     files.previewHtml();
     final String previewTyped =
         find((Container) htmlSplit.getRightComponent(), GameNotesView.class)
@@ -89,7 +89,7 @@ final class TextAndPreviewTest {
             c ->
                 c instanceof JSplitPane split
                         && split.getLeftComponent() instanceof Container left
-                        && find(left, XmlTextArea.class).isPresent()
+                        && find(left, CodeArea.class).isPresent()
                     ? Stream.of(split)
                     : c instanceof Container inner
                         ? findTextAndPreview(inner).stream()

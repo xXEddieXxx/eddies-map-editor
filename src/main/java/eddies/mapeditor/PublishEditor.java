@@ -109,7 +109,7 @@ final class PublishEditor implements Editor {
   private final JLabel ready = Theme.newSecondaryLabel("");
   private final Map<Id, Row> rows = new EnumMap<>(Id.class);
   private final Map<Id, Item> items = new EnumMap<>(Id.class);
-  private final XmlTextArea description = new XmlTextArea();
+  private final CodeArea description = new CodeArea();
   private final GameNotesView preview = new GameNotesView();
   private final JLabel descriptionLength = Theme.newSecondaryLabel("");
   private final JComponent descriptionPanes;
@@ -137,7 +137,7 @@ final class PublishEditor implements Editor {
     version.addActionListener(e -> writeVersion(version.getText()));
     description.setLineWrap(true);
     description.setWrapStyleWord(true);
-    description.colorAsXml();
+    description.colorAsHtml();
     description.getAccessibleContext().setAccessibleName("Description");
     OnTyping.attach(description, this::showDescription);
     onLeaving(description, this::writeDescription);

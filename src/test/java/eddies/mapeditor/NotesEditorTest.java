@@ -8,9 +8,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.function.Predicate;
+import java.util.prefs.Preferences;
 import java.util.stream.Stream;
 import javax.swing.AbstractButton;
+import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
 import javax.swing.JRootPane;
 import javax.swing.SwingUtilities;
@@ -26,7 +29,7 @@ final class NotesEditorTest {
   void boldWrapsTheSelection() {
     final MapProject project = givenMinimap("<p>Hello  world</p>");
     final NotesEditor notes = new NotesEditor(project);
-    final XmlTextArea text = find(notes.page(), XmlTextArea.class).orElseThrow();
+    final CodeArea text = find(notes.page(), CodeArea.class).orElseThrow();
 
     text.select(10, 15);
     button(notes, b -> "Bold (Ctrl+B)".equals(b.getToolTipText())).doClick();
@@ -49,7 +52,7 @@ final class NotesEditorTest {
     final NotesEditor[] notes = new NotesEditor[1];
 
     SwingUtilities.invokeAndWait(() -> notes[0] = new NotesEditor(project));
-    final XmlTextArea text = find(notes[0].page(), XmlTextArea.class).orElseThrow();
+    final CodeArea text = find(notes[0].page(), CodeArea.class).orElseThrow();
 
     assertThat(text.getCaretPosition())
         .as("the caret, and so the view, at the first line, not the last")
@@ -61,7 +64,7 @@ final class NotesEditorTest {
   void commitTakesTextTypedJustBefore() {
     final MapProject project = givenMinimap("");
     final NotesEditor notes = new NotesEditor(project);
-    final XmlTextArea text = find(notes.page(), XmlTextArea.class).orElseThrow();
+    final CodeArea text = find(notes.page(), CodeArea.class).orElseThrow();
 
     text.setText("<p>Our story</p>");
     final boolean templateShown =
@@ -123,23 +126,28 @@ final class NotesEditorTest {
     assertThat(both).as("Split: the HTML and the preview").containsExactly(true, true);
   }
 
-  @DisplayName("Line numbers stand where lines start, so a wrapped line keeps one number")
+  @DisplayName("The notes are colored as HTML, numbered by line, and a text size chosen reaches every text")
   @Test
-  void lineNumbersFollowWrapping() {
-    final XmlTextArea text = new XmlTextArea();
-    text.setLineWrap(true);
-    text.setWrapStyleWord(true);
-    text.setText("word ".repeat(200) + "\nsecond line");
-    text.setSize(400, 400);
-    final LineNumbers numbers = new LineNumbers(text);
-    final int lineHeight = text.getFontMetrics(text.getFont()).getHeight();
+  void notesAreHtmlWithLineNumbersAndOneTextSize() {
+    final Preferences preferences =
+        Preferences.userRoot().node("eddies-map-editor-test-" + UUID.randomUUID());
+    final CodeArea notes = new CodeArea(preferences);
+    notes.colorAsHtml();
+    final JScrollPane scroll = CodeArea.scrolled(notes, true);
+    final CodeArea other = new CodeArea(preferences);
+    final int before = notes.getFont().getSize();
 
-    final List<Integer> tops = numbers.lineTops();
+    notes.setTextSize(before + 3);
 
-    assertThat(tops).as("one top per line").hasSize(2);
-    assertThat(tops.get(1) - tops.get(0))
-        .as("the long first line wraps over several rows")
-        .isGreaterThan(lineHeight);
+    assertThat(notes.isColored()).as("HTML is colored").isTrue();
+    assertThat(scroll.getRowHeader().getView())
+        .as("the line numbers are the scroll pane's row header")
+        .isInstanceOf(org.fife.ui.rtextarea.Gutter.class);
+    assertThat(notes.getFont().getSize()).as("the size chosen").isEqualTo(before + 3);
+    assertThat(other.getFont().getSize()).as("in the other text too").isEqualTo(before + 3);
+    assertThat(preferences.getInt(CodeArea.TEXT_SIZE, -1)).as("kept").isEqualTo(before + 3);
+    notes.setTextSize(before);
+    assertThat(preferences.get(CodeArea.TEXT_SIZE, null)).as("the default is not kept").isNull();
   }
 
   @DisplayName("The preview finds a picture as the game does, in doc/images; the notes keep it")

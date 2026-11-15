@@ -169,15 +169,6 @@ class Theme {
     return luminance < 0.5 ? new Color(0xB0B0B0) : new Color(0x505050);
   }
 
-  /** An XML file's tags, attribute names, values and comments, for a light or dark theme. */
-  static List<Color> getXmlColors() {
-    return FlatLaf.isLafDark()
-        ? List.of(
-            new Color(0x79b8ff), new Color(0xffab70), new Color(0x85e89d), new Color(0x6a737d))
-        : List.of(
-            new Color(0x0550ae), new Color(0x953800), new Color(0x116329), new Color(0x6e7781));
-  }
-
   private static Color themeColor(final String key) {
     return themeColor(key, Color.GRAY);
   }

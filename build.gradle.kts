@@ -23,6 +23,8 @@ val triplea = fileTree(tripleaHome) { include("bin/game-headed-*.jar") }
 dependencies {
     compileOnly(triplea)
     testImplementation(triplea)
+    // the text editors: coloring for XML, HTML and properties, line numbers, find, themes
+    implementation("com.fifesoft:rsyntaxtextarea:3.6.0")
     compileOnly("org.projectlombok:lombok:1.18.48")
     annotationProcessor("org.projectlombok:lombok:1.18.48")
 

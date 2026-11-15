@@ -62,7 +62,7 @@ final class NotesEditor implements Editor {
 
   private final MapProject project;
   private final JPanel page = new JPanel(new BorderLayout());
-  private final XmlTextArea text = new XmlTextArea();
+  private final CodeArea text = new CodeArea();
   private final GameNotesView preview = new GameNotesView();
   private final CardLayout previewCards = new CardLayout();
   private final JPanel previewPanel = new JPanel(previewCards);
@@ -76,7 +76,7 @@ final class NotesEditor implements Editor {
     this.project = project;
     text.setLineWrap(true);
     text.setWrapStyleWord(true);
-    text.colorAsXml();
+    text.colorAsHtml();
     text.setText(MapXml.notes(project.game()));
     // on Swing's thread the caret follows the text to its end, and the view with it
     text.setCaretPosition(0);
@@ -99,8 +99,7 @@ final class NotesEditor implements Editor {
     bindKey(KeyStroke.getKeyStroke(KeyEvent.VK_I, InputEvent.CTRL_DOWN_MASK), this::italic);
     bindKey(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.SHIFT_DOWN_MASK), this::lineBreak);
 
-    final JScrollPane textScroll = SwingComponents.newJScrollPane(text);
-    textScroll.setRowHeaderView(new LineNumbers(text));
+    final JScrollPane textScroll = CodeArea.scrolled(text, true);
     previewPanel.add(SwingComponents.newJScrollPane(preview), NOTES_CARD);
     previewPanel.add(
         Panels.empty(

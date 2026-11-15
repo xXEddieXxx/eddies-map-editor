@@ -72,8 +72,8 @@ final class FilesEditorTest {
     final AbstractButton save = button(files, "Save file");
     final boolean shownBefore = save.isVisible();
 
-    find(files.page(), XmlTextArea.class::isInstance)
-        .map(XmlTextArea.class::cast)
+    find(files.page(), CodeArea.class::isInstance)
+        .map(CodeArea.class::cast)
         .orElseThrow()
         .setText("changed");
 
@@ -87,8 +87,8 @@ final class FilesEditorTest {
   void wrapKeepsLineNumbers() throws Exception {
     final FilesEditor files = givenFilesOfMinimap(new ArrayList<>(), () -> true, () -> {});
     files.reveal(folder.resolve("notes.txt"));
-    final XmlTextArea text =
-        find(files.page(), XmlTextArea.class::isInstance).map(XmlTextArea.class::cast).orElseThrow();
+    final CodeArea text =
+        find(files.page(), CodeArea.class::isInstance).map(CodeArea.class::cast).orElseThrow();
     final JScrollPane scroll = (JScrollPane) text.getParent().getParent();
 
     button(files, "Wrap lines").doClick();
@@ -96,7 +96,7 @@ final class FilesEditorTest {
     assertThat(text.getLineWrap()).as("the lines wrap").isTrue();
     assertThat(scroll.getRowHeader().getView())
         .as("line numbers while wrapping too")
-        .isInstanceOf(LineNumbers.class);
+        .isInstanceOf(org.fife.ui.rtextarea.Gutter.class);
   }
 
   @DisplayName("A first version revealed, eg by the toast after a save, shows its text read only")
@@ -108,9 +108,9 @@ final class FilesEditorTest {
 
     files.reveal(backup);
 
-    final XmlTextArea text =
-        find(files.page(), XmlTextArea.class::isInstance)
-            .map(XmlTextArea.class::cast)
+    final CodeArea text =
+        find(files.page(), CodeArea.class::isInstance)
+            .map(CodeArea.class::cast)
             .orElseThrow();
     assertThat(text.getText()).as("its text, read as the XML file it was").isEqualTo("<game/>");
     assertThat(text.isEditable()).as("a first version is kept as it is").isFalse();
@@ -205,8 +205,8 @@ final class FilesEditorTest {
     final FilesEditor files =
         givenFilesOfMinimap(new ArrayList<>(), mayWrite::get, () -> reloaded.set(true));
     files.reveal(folder.resolve("notes.txt"));
-    find(files.page(), XmlTextArea.class::isInstance)
-        .map(XmlTextArea.class::cast)
+    find(files.page(), CodeArea.class::isInstance)
+        .map(CodeArea.class::cast)
         .orElseThrow()
         .setText("typed");
 

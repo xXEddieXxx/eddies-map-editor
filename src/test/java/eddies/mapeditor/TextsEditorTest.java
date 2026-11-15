@@ -102,7 +102,7 @@ final class TextsEditorTest {
     // given
     final TextsEditor texts = new TextsEditor(givenMinimapWithTexts());
     choose(texts, 0, FOREIGN + "TABLEGROUP.01;Russians");
-    final XmlTextArea raw = all(texts.page(), XmlTextArea.class).getFirst();
+    final CodeArea raw = all(texts.page(), CodeArea.class).getFirst();
 
     // when
     final boolean rawAtFirst = isShowing(raw, texts.page());

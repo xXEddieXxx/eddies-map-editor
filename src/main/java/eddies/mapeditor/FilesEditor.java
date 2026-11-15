@@ -121,8 +121,8 @@ final class FilesEditor implements Editor {
   private final JLabel changed = new JLabel("• Changed");
   private final JButton save = new JButton("Save file");
   private final JButton revert = new JButton("Revert");
-  private final XmlTextArea text = new XmlTextArea();
-  private final JScrollPane textScroll = SwingComponents.newJScrollPane(text);
+  private final CodeArea text = new CodeArea();
+  private final JScrollPane textScroll = CodeArea.scrolled(text, true);
   private final JCheckBox wrap = new JCheckBox("Wrap lines");
   // an HTML file as the game shows it, right of its text
   private final GameNotesView htmlPreview = new GameNotesView();
@@ -253,7 +253,6 @@ final class FilesEditor implements Editor {
     changed.setForeground(Theme.getWarningColor());
     wrap.setToolTipText("Long lines wrap at the edge");
     wrap.addActionListener(e -> text.setLineWrap(wrap.isSelected()));
-    textScroll.setRowHeaderView(new LineNumbers(text));
     Theme.setBorderlessButtonStyle(status);
     status.addActionListener(e -> toggleProblems());
     problemList.setCellRenderer(new LintRenderer());
@@ -476,11 +475,7 @@ final class FilesEditor implements Editor {
       filling = true;
       final String name = typeName(file);
       html = name.matches(".*\\.html?");
-      if (html || name.endsWith(".xml")) {
-        text.colorAsXml();
-      } else {
-        text.colorAsPlain();
-      }
+      text.colorAs(name);
       text.setText(MapFolder.readText(file));
       text.setCaretPosition(0);
       text.setEditable(editable);

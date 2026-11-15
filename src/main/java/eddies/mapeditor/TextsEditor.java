@@ -59,7 +59,7 @@ final class TextsEditor implements Editor {
   private final JLabel bannerText = Theme.newSecondaryLabel("");
   // narrower than the design's 680: a row wider than the column shrinks every field to its least
   private final Form inspector = new Form(NOTE_WIDTH);
-  private final XmlTextArea text = new XmlTextArea();
+  private final CodeArea text = new CodeArea();
   private final GameNotesView preview = new GameNotesView();
   private final Timer pause = new Timer(PAUSE_MILLIS, e -> commit());
   private @Nullable String selected;
@@ -81,7 +81,7 @@ final class TextsEditor implements Editor {
     this.openTool = openTool;
     text.setLineWrap(true);
     text.setWrapStyleWord(true);
-    text.colorAsXml();
+    text.colorAsHtml();
     text.setRows(8);
     pause.setRepeats(false);
     OnTyping.attach(text, pause::restart);
