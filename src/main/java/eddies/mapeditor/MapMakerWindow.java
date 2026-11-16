@@ -414,15 +414,21 @@ public final class MapMakerWindow extends JFrame {
         .chooseFile();
   }
 
+  /** Opens the game, the mouse waiting meanwhile: a big map takes a moment to read. */
   private void openProject(final Path xml) {
+    setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
     try {
       showProject(MapProject.open(xml));
       RecentMaps.add(xml);
     } catch (final Exception e) {
       log.warn("Could not open {} in the map maker", xml, e);
       Dialogs.warn(
-          this, "Open", "Could not read " + xml.getFileName() + " as a game\n" + e.getMessage());
+          this, "Open", "Could not read " + xml.getFileName() + " as a game
+" + e.getMessage());
+    } finally {
+      setCursor(Cursor.getDefaultCursor());
     }
+  }
   }
 
   /** A copy of the saved game under a new name beside it, opened. */
