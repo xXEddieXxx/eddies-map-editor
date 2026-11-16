@@ -30,6 +30,14 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
   the map by. Publish keeps its Map name field.
 - The message after the **save of a resized map** ends with the map's new size (#6).
 - The **list of unit types** shows each unit's picture before its name, at most 32 px (#8).
+- **Resize map at any size** (#1). A saved map is resized tile by tile from its tiles on disk,
+  never holding the whole picture, so 1941 Global Command Decision (16816 × 8085) can be made
+  bigger. The new tiles show at once, undo is free, and a save moves them into the map, keeping the
+  old ones aside so an undo after the save still has them. A picture not saved yet is still held
+  whole, up to 50 million pixels. A big map takes a few minutes; there is no progress bar yet.
+- **Save the map's picture or relief as one PNG at any size** (#13). The map picture menu writes
+  the tiles into one file row by row, so a map too big to hold still comes out whole, for a paint
+  program. New: the relief the same way.
 
 ### Tried, taken out again
 

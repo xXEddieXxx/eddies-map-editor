@@ -405,7 +405,12 @@ final class MapView extends JPanel {
     saveAs.setToolTipText(
         "The whole picture, without the relief, put together from its tiles in baseTiles: to"
             + " change it in a paint program, then Load another picture or Redraw borders");
-    saveAs.addActionListener(e -> savePicture());
+    saveAs.addActionListener(e -> savePicture(false));
+    final JMenuItem saveRelief = pictureMenu.add("Save the relief as a file…");
+    saveRelief.setToolTipText(
+        "The whole relief drawn over the picture, put together from its tiles in reliefTiles:"
+            + " to change it in a paint program, then put the tiles back with Map look");
+    saveRelief.addActionListener(e -> savePicture(true));
     final JButton picture = Theme.newIconButton(Glyph.PICTURE, "Map picture", () -> {});
     picture.setText("▾");
     picture.setIcon(new MakerIcon(Glyph.PICTURE, Theme.MAP_TOOL_ICON));
@@ -417,20 +422,31 @@ final class MapView extends JPanel {
     return picture;
   }
 
-  /** Asks where to, then writes the map's picture there in the background, as it may be big. */
-  private void savePicture() {
+  /**
+   * Asks where to, then writes the map's picture or its relief there in the background, as it may
+   * be big: one in tiles is written from them row by row, at any size.
+   */
+  private void savePicture(final boolean relief) {
     final MapFiles files = project.getFiles();
-    if (files.picture().isEmpty() && files.folder().isEmpty()) {
-      Dialogs.toast(this, "! The map has no picture yet");
+    final String what = relief ? "relief" : "picture";
+    final boolean has =
+        relief
+            ? files.relief().isPresent() || files.reliefTile(0, 0).isPresent()
+            : files.picture().isPresent() || files.tile(0, 0).isPresent();
+    if (!has) {
+      Dialogs.toast(this, "! The map has no " + what + " yet");
       return;
     }
     final Optional<Path> chosen =
         FileChooser.builder()
             .parent((Frame) SwingUtilities.getAncestorOfClass(Frame.class, this))
-            .title("Save the map's picture")
+            .title("Save the map's " + what)
             .mode(FileDialog.SAVE)
             .directory(Path.of(System.getProperty("user.home")))
-            .fileName(project.name().replaceAll("[^A-Za-z0-9_-]+", "_") + ".png")
+            .fileName(
+                project.name().replaceAll("[^A-Za-z0-9_-]+", "_")
+                    + (relief ? "-relief" : "")
+                    + ".png")
             .fileExtension(".png")
             .build()
             .chooseFile();
@@ -440,7 +456,11 @@ final class MapView extends JPanel {
     new SwingWorker<Void, Void>() {
       @Override
       protected Void doInBackground() throws IOException {
-        MapFolder.savePicture(files, chosen.get());
+        if (relief) {
+          MapFolder.saveRelief(files, chosen.get());
+        } else {
+          MapFolder.savePicture(files, chosen.get());
+        }
         return null;
       }
 
@@ -448,12 +468,12 @@ final class MapView extends JPanel {
       protected void done() {
         try {
           get();
-          Dialogs.toast(MapView.this, "✓ Saved the map's picture as " + chosen.get());
+          Dialogs.toast(MapView.this, "✓ Saved the map's " + what + " as " + chosen.get());
         } catch (final InterruptedException | ExecutionException e) {
           Dialogs.warn(
               MapView.this,
-              "Save the map's picture",
-              "Could not save the picture.\n"
+              "Save the map's " + what,
+              "Could not save the " + what + ".\n"
                   + Optional.ofNullable(e.getCause()).orElse(e).getMessage());
         }
       }

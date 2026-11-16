@@ -39,6 +39,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.WeakHashMap;
+import java.util.function.BiFunction;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -731,12 +732,40 @@ class MapFolder {
    * @throws IOException also for a map without a picture, or one too big to hold in memory
    */
   static void savePicture(final MapFiles files, final Path file) throws IOException {
-    final BufferedImage picture =
-        files
-            .basePicture()
-            .orElseThrow(
-                () -> new IOException("The map has no picture in baseTiles, or it is too big."));
-    replace(file, to -> ImageIO.write(picture, "png", to.toFile()));
+    saveWhole(files.picture(), files::tile, files, file, "The map has no picture in baseTiles.");
+  }
+
+  /** As {@link #savePicture} for the relief, the one loaded or put together from reliefTiles. */
+  static void saveRelief(final MapFiles files, final Path file) throws IOException {
+    saveWhole(
+        files.relief(), files::reliefTile, files, file, "The map has no relief in reliefTiles.");
+  }
+
+  // the picture held, else its tiles read row by row as the png is written: any size
+  private static void saveWhole(
+      final Optional<BufferedImage> held,
+      final BiFunction<Integer, Integer, Optional<Path>> tileAt,
+      final MapFiles files,
+      final Path file,
+      final String none)
+      throws IOException {
+    final Dimension size = files.size();
+    if (held.isPresent()) {
+      replace(file, to -> ImageIO.write(held.get(), "png", to.toFile()));
+      return;
+    }
+    if (tileAt.apply(0, 0).isEmpty() || size.width <= 0 || size.height <= 0) {
+      throw new IOException(none);
+    }
+    replace(
+        file,
+        to -> {
+          try {
+            ImageIO.write(new TiledPicture(tileAt, size), "png", to.toFile());
+          } catch (final UncheckedIOException e) {
+            throw e.getCause();
+          }
+        });
   }
 
   /**

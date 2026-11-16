@@ -592,6 +592,43 @@ final class PublishTest {
         .isInstanceOf(IOException.class);
   }
 
+  @DisplayName("A picture in tiles is written row by row, so a map too big to hold is saved whole;"
+      + " the relief the same way")
+  @Test
+  void savesPictureOfAnySizeFromTiles() throws Exception {
+    final MapProject project = givenSavedMap();
+    final MapFiles files = project.getFiles();
+    final BufferedImage first = MapPictureTest.givenPicture();
+    final TiledPicture tiled = new TiledPicture(files::tile, files.size());
+    final Path file = maps.resolve("streamed.png");
+    final Path reliefFile = maps.resolve("relief.png");
+    // a relief of one tile: the top left, one pixel half see-through
+    final BufferedImage reliefTile = new BufferedImage(256, 256, BufferedImage.TYPE_INT_ARGB);
+    reliefTile.setRGB(10, 10, 0x80FF0000);
+    final Path reliefTiles = project.getFolder().orElseThrow().resolve("reliefTiles");
+    Files.createDirectories(reliefTiles);
+    ImageIO.write(reliefTile, "png", reliefTiles.resolve("0_0.png").toFile());
+
+    ImageIO.write(tiled, "png", file.toFile());
+    MapFolder.saveRelief(files, reliefFile);
+
+    final BufferedImage saved = ImageIO.read(file.toFile());
+    assertThat(List.of(saved.getWidth(), saved.getHeight()))
+        .as("the whole picture")
+        .containsExactly(first.getWidth(), first.getHeight());
+    assertThat(saved.getRGB(300, 150))
+        .as("a pixel of the second tile column")
+        .isEqualTo(first.getRGB(300, 150));
+    assertThat(saved.getRGB(399, 299)).as("the last pixel").isEqualTo(first.getRGB(399, 299));
+    assertThat(tiled.rowsAskedAtMost())
+        .as("the writer took the picture in strips, never whole")
+        .isLessThan(first.getHeight());
+    final BufferedImage relief = ImageIO.read(reliefFile.toFile());
+    assertThat(relief.getWidth()).as("the relief at the map's size").isEqualTo(400);
+    assertThat(relief.getRGB(10, 10)).as("its pixel, with its alpha").isEqualTo(0x80FF0000);
+    assertThat(relief.getRGB(300, 150) >>> 24).as("where no tile is: see-through").isZero();
+  }
+
   @DisplayName("A save that writes a new relief leaves a small map there, and makes a missing one")
   @Test
   void savedReliefKeepsSmallMap() throws Exception {
