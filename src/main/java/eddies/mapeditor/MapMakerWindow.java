@@ -246,6 +246,7 @@ public final class MapMakerWindow extends JFrame {
     if (!mayLeaveProject()) {
       return;
     }
+    project.close();
     project = MapProject.newEmpty();
     editors.clear();
     mapSlots.clear();
@@ -792,6 +793,12 @@ public final class MapMakerWindow extends JFrame {
       return;
     }
     final double factor = request.get().factor();
+    final Dimension now = asked.size();
+    final long pixels = Math.round(now.width * factor) * Math.round(now.height * factor);
+    if (pixels > MapFiles.MAX_HELD_PICTURE) {
+      resizeInTiles(resizing, asked, request.get());
+      return;
+    }
     inBackground(
         "Could not read the map's picture.",
         () ->
@@ -840,6 +847,55 @@ public final class MapMakerWindow extends JFrame {
                         resizing.undo();
                       }
                     });
+              });
+        });
+  }
+
+  /**
+   * A resize too big to hold the picture: tile by tile from the tiles on disk ({@link
+   * MapFiles#resizedInTiles}), in the background; a picture held with changes the tiles do not
+   * have would be resized without them, so the map is saved first.
+   */
+  private void resizeInTiles(
+      final MapProject resizing, final MapFiles asked, final ResizeDialog.Request request) {
+    if (resizing.hasUnsavedPicture()) {
+      Dialogs.warn(
+          this,
+          "Resize map",
+          "The map's picture is too big to hold at that size, so it is resized from its tiles"
+              + " on disk. Save the map first, so they have the lines drawn into it.");
+      return;
+    }
+    final double factor = request.factor();
+    Dialogs.toast(this, "Resizing the map tile by tile; a big map takes a few minutes…");
+    inBackground(
+        "Could not resize the map.",
+        () -> {
+          final MapFiles from = asked.withPicturesDropped();
+          final MapFiles resized =
+              from.resizedInTiles(factor, resizing.newStagingFolder(), all -> {});
+          return request.unitsFullSize()
+              ? resized.withProperty(MapData.PROPERTY_UNITS_SCALE, "")
+              : resized;
+        },
+        resized -> {
+          if (project != resizing || !resizing.takeResized(asked, resized, factor)) {
+            tellMapChangedWhileResizing();
+            return;
+          }
+          final Dimension size = resized.size();
+          Dialogs.toast(
+              this,
+              "✓ The map is "
+                  + size.width
+                  + " × "
+                  + size.height
+                  + " pixels now, in new tiles. Save moves them into the map.",
+              "Undo",
+              () -> {
+                if (resizing.getFiles() == resized) {
+                  resizing.undo();
+                }
               });
         });
   }
@@ -936,6 +992,9 @@ public final class MapMakerWindow extends JFrame {
     check = Check.NOT_YET;
     // typed text of the map left was dropped when the player agreed to leave it
     files.forgetText();
+    if (project != opened) {
+      project.close();
+    }
     project = opened;
     openedFromFile = opened.getXmlFile().isPresent();
     gameName = gameNameOf(opened);

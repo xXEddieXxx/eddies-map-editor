@@ -236,6 +236,66 @@ final class ResizeMapTest {
         .isEqualTo(400);
   }
 
+  @DisplayName("Resized from its tiles: shown from new tiles, undone for free; saved, the tiles move"
+      + " into the map, the old ones aside, so undo and save bring them back")
+  @Test
+  void resizesFromTiles() throws Exception {
+    // given: a saved map, its picture not held
+    final MapProject project = givenSavedMap();
+    final Path map = project.getFolder().orElseThrow();
+    final byte[] firstTile = Files.readAllBytes(map.resolve("baseTiles/0_0.png"));
+    final MapFiles from = project.getFiles();
+    assertThat(from.picture()).as("nothing held").isEmpty();
+
+    // when: 200 %, in tiles
+    final Path staging = project.newStagingFolder();
+    final MapFiles resized = from.withPicturesDropped().resizedInTiles(2, staging, all -> {});
+    assertThat(project.takeResized(from, resized, 2)).isTrue();
+
+    // then
+    assertThat(project.getFiles().tile(3, 2))
+        .as("800x600 in 4 by 3 tiles, read from the resize's folder")
+        .hasValueSatisfying(tile -> assertThat(tile).startsWith(staging));
+    assertThat(project.getFiles().tilesPicture().orElseThrow().getWidth())
+        .as("the picture put together from the new tiles")
+        .isEqualTo(800);
+    assertThat(map.resolve("baseTiles/3_2.png")).as("nothing written to the map yet").doesNotExist();
+
+    // when: undone, then done again and saved
+    project.undo();
+    assertThat(project.getFiles().tile(3, 2)).as("undone: the map's own tiles").isEmpty();
+    project.redo();
+    final List<Path> written = project.save();
+
+    // then
+    assertThat(written).as("the save lists the tiles").contains(map.resolve("baseTiles/3_2.png"));
+    assertThat(map.resolve("baseTiles/3_2.png")).exists();
+    assertThat(map.resolve("baseTiles/0_0.png.bak"))
+        .as("the first tile as it was before the resize")
+        .hasBinaryContent(firstTile);
+    assertThat(staging.resolve("baseTiles")).as("the resize's folder is taken").doesNotExist();
+    assertThat(project.getFiles().tile(3, 2))
+        .as("read from the map now")
+        .hasValueSatisfying(tile -> assertThat(tile).startsWith(map));
+    assertThat(MapProject.open(project.getXmlFile().orElseThrow()).getFiles().size().width)
+        .isEqualTo(800);
+
+    // when: undone after the save, and saved again
+    project.undo();
+    assertThat(project.getFiles().tilesPicture().orElseThrow().getWidth())
+        .as("the old tiles, moved aside by the save, are shown")
+        .isEqualTo(400);
+    project.save();
+
+    // then
+    assertThat(map.resolve("baseTiles/3_2.png")).as("the tile beyond 400x300 is gone").doesNotExist();
+    assertThat(map.resolve("baseTiles/0_0.png")).as("the first tile is back").hasBinaryContent(firstTile);
+    assertThat(MapProject.open(project.getXmlFile().orElseThrow()).getFiles().size().width)
+        .isEqualTo(400);
+    project.close();
+    assertThat(staging).as("closed, the folders go").doesNotExist();
+  }
+
   @DisplayName("A relief held from its tiles is resized and saved with the map")
   @Test
   void resizesRelief() throws Exception {

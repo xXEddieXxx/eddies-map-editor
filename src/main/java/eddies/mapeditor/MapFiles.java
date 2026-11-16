@@ -3498,6 +3498,21 @@ record MapFiles(
         .or(() -> folder.map(f -> f.resolve(kind)));
   }
 
+  /**
+   * Whether the picture and relief are read from the map's own tiles: none held, and none a
+   * resize wrote that a save has not moved there yet.
+   */
+  boolean readsOwnTiles() {
+    return picture.isEmpty()
+        && relief.isEmpty()
+        && tiles
+            .filter(
+                t ->
+                    Files.isDirectory(t.resolve("baseTiles"))
+                        || Files.isDirectory(t.resolve("reliefTiles")))
+            .isEmpty();
+  }
+
   /** The files with their tiles read from the folder, eg the old ones a save moved aside. */
   MapFiles withTiles(final Optional<Path> staged) {
     return new MapFiles(

@@ -38,6 +38,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.WeakHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.BiFunction;
@@ -124,6 +125,18 @@ final class MapProject {
   private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
   private @Nullable Path xmlFile;
   private @Nullable Path folder;
+  // the folders a resize of a picture too big to hold writes its tiles into, and a save moves the
+  // tiles there were aside into, for undo; deleted when the map is closed or the editor ends
+  private @Nullable Path staging;
+  private int stagingCount;
+  // where the last save moved the tiles there were, for the states that showed them
+  private @Nullable Path tilesAside;
+  private static final Set<Path> STAGING_ROOTS = ConcurrentHashMap.newKeySet();
+
+  static {
+    Runtime.getRuntime()
+        .addShutdownHook(new Thread(() -> STAGING_ROOTS.forEach(MapProject::deleteQuietly)));
+  }
   // the name of a map made here, written into its game whenever that is written
   private @Nullable String mapName;
   private State saved;
@@ -1827,6 +1840,42 @@ final class MapProject {
   }
 
   /** Whether a relief picture was loaded since the last save, so the next one writes it. */
+  /**
+   * A new empty folder of this map's own for the tiles of a resize ({@link
+   * MapFiles#resizedInTiles}); gone with {@link #close}.
+   */
+  Path newStagingFolder() throws IOException {
+    if (staging == null) {
+      staging = Files.createTempDirectory("eddies-map-editor-tiles-");
+      STAGING_ROOTS.add(staging);
+    }
+    return Files.createDirectories(staging.resolve("resize-" + ++stagingCount));
+  }
+
+  /** Whether the picture held in memory has changes its tiles on disk do not, eg lines drawn. */
+  boolean hasUnsavedPicture() {
+    final MapFiles files = current.files();
+    return files.picture().isPresent()
+        && (!files.picture().equals(saved.files().picture()) || !unsavedTilesOf(files).isEmpty());
+  }
+
+  /** Deletes the tiles a resize wrote and a save moved aside; the map is left. */
+  void close() {
+    if (staging != null) {
+      STAGING_ROOTS.remove(staging);
+      deleteQuietly(staging);
+      staging = null;
+    }
+  }
+
+  private static void deleteQuietly(final Path folder) {
+    try {
+      FileUtils.deleteDirectory(folder);
+    } catch (final IOException | RuntimeException e) {
+      // a folder in the system's temp that could not go: the system cleans it in time
+    }
+  }
+
   /** The map's size when it was resized since the last save; empty when it is as saved. */
   Optional<java.awt.Dimension> unsavedResize() {
     final java.awt.Dimension now = getFiles().size();
@@ -2200,6 +2249,16 @@ final class MapProject {
     current = saved;
     // the same step writes other files now
     findFilesToSaveAgain();
+    if (tilesAside != null) {
+      // every other state that showed the tiles there were finds them where the save moved them
+      final Path aside = tilesAside;
+      tilesAside = null;
+      holdEach(
+          state ->
+              state != saving && state.files().readsOwnTiles()
+                  ? state.files().withTiles(Optional.of(aside))
+                  : state.files());
+    }
     if (!movedNations.isEmpty()) {
       // every step finds its nations' pictures where they are now, eg after an undo of the rename
       holdEach(
@@ -2286,6 +2345,26 @@ final class MapProject {
       MapFolder.writeTiles(mapFolder, files.picture().orElseThrow(), drawnTiles);
     }
 
+    // tiles a resize wrote for a picture or relief too big to hold: moved into the map's folder,
+    // the tiles there were moved aside, so an undo after the save still shows them
+    tilesAside = null;
+    if (files.tiles().isPresent() && !files.tiles().equals(saved.files().tiles())) {
+      final Path staged = files.tiles().get();
+      final Path aside = newStagingFolder();
+      if (files.picture().isEmpty()) {
+        MapFolder.takeTiles(mapFolder, "baseTiles", staged.resolve("baseTiles"), aside.resolve("baseTiles"));
+      }
+      if (files.relief().isEmpty()) {
+        MapFolder.takeTiles(
+            mapFolder, "reliefTiles", staged.resolve("reliefTiles"), aside.resolve("reliefTiles"));
+      }
+      if (Files.isDirectory(aside.resolve("baseTiles")) || Files.isDirectory(aside.resolve("reliefTiles"))) {
+        tilesAside = aside;
+      }
+      if (!hadSmallMap) {
+        MapFolder.writeSmallMap(mapFolder, files::shownPicture);
+      }
+    }
     if (files.relief().isPresent() && !files.relief().equals(saved.files().relief())) {
       MapFolder.writeRelief(mapFolder, files.relief().get());
       // a map without a small map gets one with the relief; one there may be made by hand and
