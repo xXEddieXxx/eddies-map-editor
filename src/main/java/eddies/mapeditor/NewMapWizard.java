@@ -581,6 +581,8 @@ final class NewMapWizard extends JPanel {
   private void working(final boolean now) {
     busy = now;
     setCursor(now ? Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR) : Cursor.getDefaultCursor());
+    // the bar beside the status while a picture is read or the map is written
+    progress.setVisible(now);
     updateButtons();
   }
 
@@ -601,7 +603,6 @@ final class NewMapWizard extends JPanel {
     // the map is written whole or not at all: no closing halfway
     window()
         .ifPresent(dialog -> dialog.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE));
-    progress.setVisible(true);
     showStatus(Theme.Status.TODO, "Creating the map: writing its files…");
     new SwingWorker<NewMap, Void>() {
       @Override
@@ -615,7 +616,6 @@ final class NewMapWizard extends JPanel {
             .ifPresent(dialog -> dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE));
         // the buttons come back whatever happened, so the wizard is never stuck
         working(false);
-        progress.setVisible(false);
         showStatus(Theme.Status.TODO, " ");
         try {
           created.accept(get());

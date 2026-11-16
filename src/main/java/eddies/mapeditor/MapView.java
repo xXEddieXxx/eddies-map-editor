@@ -134,6 +134,23 @@ final class MapView extends JPanel {
     this.choosePicture = choosePicture;
     this.findTerritories = findTerritories;
     canvas = new MapCanvas(project);
+    canvas.onLoading(
+        new MapCanvas.Loading() {
+          @Override
+          public void started(final String what) {
+            progress.start(what);
+          }
+
+          @Override
+          public void progressed(final int done, final int all) {
+            progress.setDone(done, all);
+          }
+
+          @Override
+          public void ended() {
+            progress.end();
+          }
+        });
     scroll = SwingComponents.newJScrollPane(canvas);
     scroll.getVerticalScrollBar().setUnitIncrement(24);
     scroll.getHorizontalScrollBar().setUnitIncrement(24);

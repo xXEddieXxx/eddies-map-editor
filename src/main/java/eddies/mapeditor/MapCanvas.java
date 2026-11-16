@@ -47,6 +47,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
@@ -160,6 +161,21 @@ final class MapCanvas extends JComponent {
   // the picture made smaller once, for a zoom at which the screen holds more tiles than are kept
   private transient @Nullable BufferedImage overview;
   private transient List<Object> overviewOf = List.of();
+  // told while the map's picture is read from its tiles for the small zooms, eg for a bar
+  private transient Loading loading = new Loading() {};
+
+  /** What a long read of the map's tiles tells, eg a progress bar: nothing by default. */
+  interface Loading {
+    default void started(final String what) {}
+
+    default void progressed(final int done, final int all) {}
+
+    default void ended() {}
+  }
+
+  void onLoading(final Loading told) {
+    loading = told;
+  }
   private MapMode mode = MapMode.GAME;
   // the size of a unit on the map, as the files have it
   private Dimension unitSize = new Dimension();
@@ -1739,14 +1755,31 @@ final class MapCanvas extends JComponent {
         overview = null;
       }
       overviewOf = source;
-      new SwingWorker<BufferedImage, Void>() {
+      // a picture held is drawn at once; one in tiles is read tile by tile, which takes a while
+      final boolean fromTiles =
+          files.picture().isEmpty() || (relief && files.relief().isEmpty());
+      if (fromTiles) {
+        loading.started("Loading the map's picture…");
+      }
+      new SwingWorker<BufferedImage, int[]>() {
         @Override
         protected BufferedImage doInBackground() {
-          return newOverview(files, relief);
+          return newOverview(files, relief, (done, all) -> publish(new int[] {done, all}));
+        }
+
+        @Override
+        protected void process(final List<int[]> counts) {
+          if (fromTiles && source.equals(overviewOf)) {
+            final int[] last = counts.getLast();
+            loading.progressed(last[0], last[1]);
+          }
         }
 
         @Override
         protected void done() {
+          if (fromTiles) {
+            loading.ended();
+          }
           try {
             if (source.equals(overviewOf)) {
               overview = get();
@@ -1765,8 +1798,15 @@ final class MapCanvas extends JComponent {
   }
 
   /** The picture or the tiles drawn smaller, at most {@link #OVERVIEW_WIDTH} wide. */
-  private static BufferedImage newOverview(final MapFiles files, final boolean relief) {
+  private static BufferedImage newOverview(
+      final MapFiles files, final boolean relief, final BiConsumer<Integer, Integer> progress) {
     final Dimension map = files.size();
+    final int size = MapFiles.tileSize();
+    final int columns = (map.width + size - 1) / size;
+    final int rows = (map.height + size - 1) / size;
+    // the picture's tiles, then the relief's: counted as one
+    final int all = columns * rows * (relief && files.relief().isEmpty() ? 2 : 1);
+    final int[] done = {0};
     final double scale = Math.min(OVERVIEW_ZOOM, OVERVIEW_WIDTH / (double) Math.max(1, map.width));
     final BufferedImage small =
         new BufferedImage(
@@ -1780,7 +1820,6 @@ final class MapCanvas extends JComponent {
     if (files.picture().isPresent()) {
       g.drawImage(files.picture().get(), 0, 0, null);
     } else {
-      final int size = MapFiles.tileSize();
       for (int column = 0; column * size < map.width; column++) {
         for (int row = 0; row * size < map.height; row++) {
           final int x = column * size;
@@ -1789,6 +1828,7 @@ final class MapCanvas extends JComponent {
               .tile(column, row)
               .flatMap(MapCanvas::read)
               .ifPresent(t -> g.drawImage(t, x, y, null));
+          progress.accept(++done[0], all);
         }
       }
     }
@@ -1796,7 +1836,6 @@ final class MapCanvas extends JComponent {
       if (files.relief().isPresent()) {
         g.drawImage(files.relief().get(), 0, 0, null);
       } else {
-        final int size = MapFiles.tileSize();
         for (int column = 0; column * size < map.width; column++) {
           for (int row = 0; row * size < map.height; row++) {
             final int x = column * size;
@@ -1805,6 +1844,7 @@ final class MapCanvas extends JComponent {
                 .reliefTile(column, row)
                 .flatMap(MapCanvas::read)
                 .ifPresent(t -> g.drawImage(t, x, y, null));
+            progress.accept(++done[0], all);
           }
         }
       }

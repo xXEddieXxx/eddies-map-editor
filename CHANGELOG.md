@@ -35,8 +35,9 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
   bigger. The new tiles show at once, undo is free, and a save moves them into the map, keeping the
   old ones aside so an undo after the save still has them. A picture not saved yet is still held
   whole, up to 50 million pixels. A bar under the map's toolbar shows how far a resize is.
-- **A loading bar** while a map opens, which now reads in the background, so a big map no longer
-  freezes the window.
+- **Loading bars** where a big map makes you wait: while it opens (which now reads in the
+  background, so the window no longer freezes), under the map's toolbar while its picture is read
+  from the tiles for the small zooms, and in the New map wizard while the picture is read.
 - **Save the map's picture or relief as one PNG at any size** (#13). The map picture menu writes
   the tiles into one file row by row, so a map too big to hold still comes out whole, for a paint
   program. New: the relief the same way.
