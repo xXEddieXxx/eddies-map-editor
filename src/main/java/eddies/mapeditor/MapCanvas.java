@@ -115,6 +115,9 @@ final class MapCanvas extends JComponent {
   // the radius of a marker's dot while places are edited, in pixels of the screen
   private static final int PLACE_DOT = 8;
   private static final Color CAPITAL_STAR = new Color(0xFFD400);
+  // the selected territory's unit places and units, so it shows which belong to it among the
+  // places of all territories
+  private static final Color SELECTED_PLACE = new Color(0xFF8C00);
   private static final Color CAPITAL_STAR_LINE = new Color(0x4D3B00);
   // how many pixels of the map an arrow key with Shift moves a place
   private static final int NUDGE_FAR = 10;
@@ -1457,9 +1460,10 @@ final class MapCanvas extends JComponent {
       g.setColor(accent);
       g.draw(shown);
     } else if (place.marker().isEmpty() && !place.center()) {
-      g.setColor(withAlpha(Color.WHITE, 0x66));
+      final boolean ofSelected = place.territory().equals(selected);
+      g.setColor(ofSelected ? withAlpha(SELECTED_PLACE, 0x80) : withAlpha(Color.WHITE, 0x66));
       g.fill(shown);
-      g.setColor(accent);
+      g.setColor(ofSelected ? SELECTED_PLACE : accent);
       g.draw(shown);
       // in the middle: markers often sit at a square's corner
       if (isNumbered(shown)) {
@@ -2258,7 +2262,9 @@ final class MapCanvas extends JComponent {
     }
     final List<Point> places = unitPlacesOf(territory);
     final int beyond = project.getFiles().overflowsToLeft(territory) ? -size : size;
-    final boolean highlighted = editingPlaces && territory.equals(selected);
+    // while places show, a shade over the units of the selected territory too
+    final boolean highlighted =
+        territory.equals(selected) && (editingPlaces || everywhere.shows(PlaceKind.UNITS));
     // how many in a stack, growing with the units, so it stays readable zoomed in
     g.setFont(getFont().deriveFont(Font.BOLD, Math.clamp(size / 4f, 11f, 28f)));
     final FontMetrics metrics = g.getFontMetrics();
@@ -2272,9 +2278,9 @@ final class MapCanvas extends JComponent {
               picture -> g.drawImage(picture, x, y, size, size, null),
               () -> paintBadge(g, stack.getUnitType(), x + size / 2, y + size / 2));
       if (highlighted) {
-        // a shade in the accent color over the units of the territory whose places are edited,
+        // an orange shade over the selected territory's units, like its places,
         // so it shows which units belong to it
-        g.setColor(withAlpha(Theme.getAccentColor(), 0x60));
+        g.setColor(withAlpha(SELECTED_PLACE, 0x60));
         g.fillRect(x, y, size, size);
       }
       if (stack.getQuantity() > 1) {
