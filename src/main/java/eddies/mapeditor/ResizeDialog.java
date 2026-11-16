@@ -27,11 +27,12 @@ final class ResizeDialog {
       "Make the whole map bigger or smaller\n"
           + "The picture, the borders and every place are resized with it. Units keep their size, so a"
           + " bigger map gives them more room.\n"
-          + "From 25 % to 400 %, up to "
-          + MapFiles.MAX_HELD_PICTURE / 1_000_000
-          + " million pixels in all (eg 8000 × 6000), each side at least "
+          + "From 25 % to 400 %, each side at least "
           + MapFiles.MIN_RESIZED_SIDE
-          + " pixels.";
+          + " pixels. A saved map is resized tile by tile, at any size; a picture not saved yet"
+          + " is held whole, up to "
+          + MapFiles.MAX_HELD_PICTURE / 1_000_000
+          + " million pixels.";
   private static final int MIN_PERCENT = 25;
   private static final int MAX_PERCENT = 400;
   private static final int STEP = 5;

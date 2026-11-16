@@ -48,6 +48,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.function.BiFunction;
+import java.util.function.IntConsumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.ToIntFunction;
@@ -94,7 +95,36 @@ record MapFiles(
     Map<String, UnitPicture> unitPictures,
     Map<NationUnit, BufferedImage> nationUnitPictures,
     Optional<BufferedImage> relief,
-    Places places) {
+    Places places,
+    Optional<Path> tiles) {
+
+  /**
+   * The map's files with their tiles in the map's folder; {@code tiles} is a folder holding
+   * baseTiles and reliefTiles written by a resize of a picture too big to hold, read in place of
+   * the map's own until a save moves them there ({@link #tile}).
+   */
+  MapFiles(
+      final Optional<Path> folder,
+      final Map<String, List<Polygon>> polygons,
+      final Map<String, Point> centers,
+      final Properties properties,
+      final Optional<BufferedImage> picture,
+      final Map<String, UnitPicture> unitPictures,
+      final Map<NationUnit, BufferedImage> nationUnitPictures,
+      final Optional<BufferedImage> relief,
+      final Places places) {
+    this(
+        folder,
+        polygons,
+        centers,
+        properties,
+        picture,
+        unitPictures,
+        nationUnitPictures,
+        relief,
+        places,
+        Optional.empty());
+  }
 
   // map.properties: the color the game tints a nation's unit pictures in, eg ...color.Germans
   static final String UNIT_TINT = "units.transform.color.";
@@ -193,7 +223,8 @@ record MapFiles(
         Map.of(),
         Map.of(),
         Optional.empty(),
-        Places.none());
+        Places.none(),
+        Optional.empty());
   }
 
   private static MapFiles read(final Path folder) {
@@ -208,7 +239,8 @@ record MapFiles(
           Map.of(),
           Map.of(),
           Optional.empty(),
-          Places.read(folder));
+          Places.read(folder),
+          Optional.empty());
     } catch (final IOException e) {
       log.warn("Could not read the outlines of the map in {}", folder, e);
       return none();
@@ -238,7 +270,8 @@ record MapFiles(
         unitPictures,
         nationUnitPictures,
         relief,
-        places.renamed(old, renamed));
+        places.renamed(old, renamed),
+        tiles);
   }
 
   /**
@@ -259,7 +292,8 @@ record MapFiles(
         unitPictures,
         nationUnitPictures,
         relief,
-        places.without(List.of(territory)));
+        places.without(List.of(territory)),
+        tiles);
   }
 
   /**
@@ -288,7 +322,8 @@ record MapFiles(
         unitPictures,
         nationUnitPictures,
         relief,
-        places.without(List.of(territory)));
+        places.without(List.of(territory)),
+        tiles);
   }
 
   /**
@@ -344,7 +379,8 @@ record MapFiles(
         unitPictures,
         nationUnitPictures,
         relief,
-        places);
+        places,
+        tiles);
   }
 
   /** Whether the map maker marked the problem "Fine as it is": it then counts nowhere. */
@@ -411,7 +447,8 @@ record MapFiles(
             pictures.put(
                 key.nation().equals(old) ? new NationUnit(renamed, key.unit()) : key, image));
     return new MapFiles(
-        folder, polygons, centers, moved, picture, unitPictures, pictures, relief, places);
+        folder, polygons, centers, moved, picture, unitPictures, pictures, relief, places,
+        tiles);
   }
 
   /**
@@ -461,7 +498,8 @@ record MapFiles(
             unitPictures,
             nationUnitPictures,
             relief,
-            places);
+            places,
+            tiles);
   }
 
   /** The nations that have no capital on purpose, so the guide asks for none. */
@@ -504,7 +542,8 @@ record MapFiles(
         unitPictures,
         nationUnitPictures,
         relief,
-        places);
+        places,
+        tiles);
   }
 
   /** The files with the picture and the outlines and centers found in it, the map of its size. */
@@ -526,7 +565,8 @@ record MapFiles(
         unitPictures,
         nationUnitPictures,
         relief,
-        places);
+        places,
+        tiles);
   }
 
   /**
@@ -852,7 +892,8 @@ record MapFiles(
             nationUnitPictures,
             relief,
             // places the old border held may lie outside the new one: found again in it
-            places.without(changed)),
+            places.without(changed),
+            tiles),
         changed,
         List.copyOf(kept),
         detected,
@@ -1012,7 +1053,8 @@ record MapFiles(
         unitPictures,
         nationUnitPictures,
         relief,
-        places);
+        places,
+        tiles);
   }
 
   /** The files in this folder, eg once a new map is saved. */
@@ -1026,7 +1068,8 @@ record MapFiles(
         unitPictures,
         nationUnitPictures,
         relief,
-        places);
+        places,
+        tiles);
   }
 
   MapFiles withNationColor(final String nation, final Color color) {
@@ -1043,7 +1086,8 @@ record MapFiles(
         unitPictures,
         nationUnitPictures,
         relief,
-        places);
+        places,
+        tiles);
   }
 
   MapFiles withRelief(final BufferedImage image) {
@@ -1056,7 +1100,8 @@ record MapFiles(
         unitPictures,
         nationUnitPictures,
         Optional.of(image),
-        places);
+        places,
+        tiles);
   }
 
   /** With the map.properties entry set, or removed for an empty value, eg units.scale. */
@@ -1076,7 +1121,8 @@ record MapFiles(
         unitPictures,
         nationUnitPictures,
         relief,
-        places);
+        places,
+        tiles);
   }
 
   /** The files with the territory's texture, or with none. */
@@ -1101,7 +1147,8 @@ record MapFiles(
         unitPictures,
         nationUnitPictures,
         relief,
-        places);
+        places,
+        tiles);
   }
 
   MapFiles withUnitPicture(final String unitType, final UnitPicture unitPicture) {
@@ -1116,7 +1163,8 @@ record MapFiles(
         pictures,
         nationUnitPictures,
         relief,
-        places);
+        places,
+        tiles);
   }
 
   /** The files without the unit type's uploaded picture: its units look as the game draws them. */
@@ -1132,7 +1180,8 @@ record MapFiles(
         pictures,
         nationUnitPictures,
         relief,
-        places);
+        places,
+        tiles);
   }
 
   /**
@@ -1154,7 +1203,8 @@ record MapFiles(
         unitPictures,
         pictures,
         relief,
-        places);
+        places,
+        tiles);
   }
 
   /** A unit type as one nation's units show it. */
@@ -1204,7 +1254,7 @@ record MapFiles(
     }
     final long width = Math.round(size.width * factor);
     final long height = Math.round(size.height * factor);
-    if (width * height > MAX_HELD_PICTURE) {
+    if (width * height > MAX_HELD_PICTURE && !resizesInTiles()) {
       final int most =
           (int) (100 * Math.sqrt(MAX_HELD_PICTURE / ((double) size.width * size.height)));
       // a map already bigger than the editor holds can only be made smaller
@@ -1216,7 +1266,7 @@ record MapFiles(
               + " pixels. This map can be made "
               + (most < 100 ? "smaller, to " : "bigger, to ")
               + most
-              + " % at most.");
+              + " % at most. Saved, the map is resized from its tiles at any size.");
     }
     if (Math.min(width, height) < MIN_RESIZED_SIDE) {
       return Optional.of(
@@ -1264,6 +1314,73 @@ record MapFiles(
     final Dimension size = size();
     final int width = (int) Math.round(size.width * factor);
     final int height = (int) Math.round(size.height * factor);
+    return resizedTo(
+        width,
+        height,
+        picture.map(p -> scaled(p, width, height, factor > 1 && isFlat(p))),
+        relief.map(r -> scaled(r, width, height, false)),
+        tiles);
+  }
+
+  /**
+   * As {@link #resized}, a picture or relief that is not held but lies in tiles resized tile by
+   * tile ({@link TileScaler}) into the folder, where the files then read them from, so a map of
+   * any size can be resized; one held is scaled in memory as before.
+   *
+   * @param staging an empty folder of this resize's own, for baseTiles and reliefTiles
+   * @param onTile told each tile written, with how many there are in all
+   */
+  MapFiles resizedInTiles(final double factor, final Path staging, final IntConsumer onTile)
+      throws IOException {
+    final Dimension size = size();
+    final int width = (int) Math.round(size.width * factor);
+    final int height = (int) Math.round(size.height * factor);
+    final Dimension to = new Dimension(width, height);
+    if (picture.isEmpty() && tile(0, 0).isPresent()) {
+      TileScaler.scale(
+          this::tile, size, to, factor > 1 && isFlatInTiles(), staging.resolve("baseTiles"), onTile);
+    }
+    if (relief.isEmpty() && reliefTile(0, 0).isPresent()) {
+      TileScaler.scale(this::reliefTile, size, to, false, staging.resolve("reliefTiles"), onTile);
+    }
+    return resizedTo(
+        width,
+        height,
+        picture.map(p -> scaled(p, width, height, factor > 1 && isFlat(p))),
+        relief.map(r -> scaled(r, width, height, false)),
+        Optional.of(staging));
+  }
+
+  /** Whether the picture in tiles is flat, by its first tiles: most are, where one is. */
+  private boolean isFlatInTiles() {
+    int flat = 0;
+    int looked = 0;
+    for (int column = 0; column < 2; column++) {
+      for (int row = 0; row < 2; row++) {
+        try {
+          final Optional<Path> file = tile(column, row);
+          if (file.isPresent()) {
+            final BufferedImage read = ImageIO.read(file.get().toFile());
+            if (read != null) {
+              looked++;
+              flat += isFlat(read) ? 1 : 0;
+            }
+          }
+        } catch (final IOException e) {
+          log.info("Could not read a tile to tell whether the picture is flat", e);
+        }
+      }
+    }
+    return looked > 0 && 2 * flat >= looked;
+  }
+
+  private MapFiles resizedTo(
+      final int width,
+      final int height,
+      final Optional<BufferedImage> scaledPicture,
+      final Optional<BufferedImage> scaledRelief,
+      final Optional<Path> readFrom) {
+    final Dimension size = size();
     // by the sizes in whole pixels, so the coordinates end where the picture does
     final double fx = width / (double) size.width;
     final double fy = height / (double) size.height;
@@ -1365,21 +1482,22 @@ record MapFiles(
             points ->
                 sized.setProperty(
                     MapData.PROPERTY_SCREENSHOT_TITLE_FONT_SIZE,
-                    String.valueOf(Math.max(1, Math.round(points * factor)))));
+                    String.valueOf(Math.max(1, Math.round(points * fy)))));
     return new MapFiles(
         folder,
         Collections.unmodifiableMap(outlines),
         Collections.unmodifiableMap(middles),
         sized,
-        picture.map(p -> scaled(p, width, height, factor > 1 && isFlat(p))),
+        scaledPicture,
         unitPictures,
         nationUnitPictures,
-        relief.map(r -> scaled(r, width, height, false)),
+        scaledRelief,
         new Places(
             Collections.unmodifiableMap(units),
             markers.isEmpty() ? Map.of() : Map.copyOf(markers),
             Collections.unmodifiableMap(decorations),
-            places.unread()));
+            places.unread()),
+        readFrom);
   }
 
   /**
@@ -2106,7 +2224,8 @@ record MapFiles(
         unitPictures,
         nationUnitPictures,
         relief,
-        laidOut);
+        laidOut,
+        tiles);
   }
 
   /**
@@ -2675,7 +2794,8 @@ record MapFiles(
         unitPictures,
         nationUnitPictures,
         relief,
-        changed);
+        changed,
+        tiles);
   }
 
   /** The size of a unit on the map as the game draws it: units.width and height by units.scale. */
@@ -3095,6 +3215,15 @@ record MapFiles(
   }
 
   /**
+   * Whether a resize can work tile by tile, with no cap on the size: the picture and relief lie
+   * in tiles, and none is held in memory with changes the tiles do not have.
+   */
+  boolean resizesInTiles() {
+    return (tile(0, 0).isPresent() || reliefTile(0, 0).isPresent())
+        && (picture.isEmpty() || tile(0, 0).isPresent());
+  }
+
+  /**
    * As {@link #tilesPicture} to draw borders into, also a picture too big for the other uses,
    * which make copies of it, while the memory Java may take has room for it ({@link
    * #memoryMissing}); lines are then drawn into it without undo ({@link #drawsInPlace}).
@@ -3174,7 +3303,8 @@ record MapFiles(
         unitPictures,
         nationUnitPictures,
         relief,
-        places);
+        places,
+        tiles);
   }
 
   /**
@@ -3347,16 +3477,58 @@ record MapFiles(
 
   /** The tile of the map's picture at the column and row, as the game cuts it; empty if missing. */
   Optional<Path> tile(final int column, final int row) {
-    return folder
-        .map(f -> f.resolve("baseTiles").resolve(column + "_" + row + ".png"))
-        .filter(Files::exists);
+    return tilesIn("baseTiles").map(t -> t.resolve(column + "_" + row + ".png")).filter(Files::exists);
   }
 
   /** The tile of the relief drawn over the picture at the column and row; empty if missing. */
   Optional<Path> reliefTile(final int column, final int row) {
-    return folder
-        .map(f -> f.resolve("reliefTiles").resolve(column + "_" + row + ".png"))
+    return tilesIn("reliefTiles")
+        .map(t -> t.resolve(column + "_" + row + ".png"))
         .filter(Files::exists);
+  }
+
+  /**
+   * Where the tiles of the kind lie: those a resize wrote, while they are there (a save moves
+   * them into the map's folder and takes their folder away), else the map's own.
+   */
+  private Optional<Path> tilesIn(final String kind) {
+    return tiles
+        .map(t -> t.resolve(kind))
+        .filter(Files::isDirectory)
+        .or(() -> folder.map(f -> f.resolve(kind)));
+  }
+
+  /** The files with their tiles read from the folder, eg the old ones a save moved aside. */
+  MapFiles withTiles(final Optional<Path> staged) {
+    return new MapFiles(
+        folder,
+        polygons,
+        centers,
+        properties,
+        picture,
+        unitPictures,
+        nationUnitPictures,
+        relief,
+        places,
+        staged);
+  }
+
+  /**
+   * The files without the picture and relief held in memory, read from their tiles again, eg
+   * before a resize too big to hold.
+   */
+  MapFiles withPicturesDropped() {
+    return new MapFiles(
+        folder,
+        polygons,
+        centers,
+        properties,
+        Optional.empty(),
+        unitPictures,
+        nationUnitPictures,
+        Optional.empty(),
+        places,
+        tiles);
   }
 
   /** Whether the game draws the relief, as map.properties says; it does unless told not to. */

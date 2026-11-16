@@ -284,7 +284,10 @@ final class ResizeMapTest {
     // then
     assertThat(files.whyNotResized(1.5)).as("150 % is fine").isEmpty();
     assertThat(files.whyNotResized(40))
-        .as("16000x12000 is more than is held")
+        .as("16000x12000 is more than is held, but the map's tiles are resized tile by tile")
+        .isEmpty();
+    assertThat(MapFiles.none().withPicture(MapPictureTest.givenPicture()).whyNotResized(40))
+        .as("a picture held with no tiles to resize from is capped")
         .hasValueSatisfying(why -> assertThat(why).startsWith("Too big"));
     assertThat(files.whyNotResized(0.25))
         .as("100x75 leaves no room")
@@ -352,23 +355,25 @@ final class ResizeMapTest {
     assertThat(resized.size().width).isEqualTo(460);
   }
 
-  @DisplayName("A map too big to hold says it can only be made smaller, and the bigger sizes are off")
+  @DisplayName("A map too big to hold is resized from its tiles: every size can be done; a picture"
+      + " held with no tiles can only be made smaller")
   @Test
-  void dialogRefusesGrowingAMapTooBigToHold() throws Exception {
-    // given: a map of 10000 x 6000 by its properties, 60 million pixels: 50 million is the most
+  void dialogGrowsAMapTooBigToHoldFromItsTiles() throws Exception {
+    // given: a map of 10000 x 6000 by its properties, 60 million pixels: 50 million is held
     final MapProject project = givenSavedMap();
     project.setMapProperty("map.width", "10000");
     project.setMapProperty("map.height", "6000");
     final ResizeDialog dialog = new ResizeDialog(project.getFiles());
+    // a picture held with no folder: 400 x 300, at 40 times 16000 x 12000
+    final MapFiles held = MapFiles.none().withPicture(MapPictureTest.givenPicture());
 
     // then
-    assertThat(project.getFiles().whyNotResized(1.5))
+    assertThat(project.getFiles().whyNotResized(1.5)).as("from its tiles").isEmpty();
+    assertThat(dialog.usualEnabled()).as("every usual size").containsExactly(true, true, true, true);
+    assertThat(held.whyNotResized(40))
         .hasValueSatisfying(
-            why -> assertThat(why).contains("can be made smaller, to 91 % at most"));
-    assertThat(dialog.usualEnabled())
-        .as("50 and 75 % can be done, 150 and 200 % not")
-        .containsExactly(true, true, false, false);
-    assertThat(ResizeDialog.TEXT).as("the limits are said").contains("50 million", "25 % to 400 %");
+            why -> assertThat(why).startsWith("Too big").contains("Saved, the map is resized"));
+    assertThat(ResizeDialog.TEXT).as("the limits are said").contains("tile by tile", "25 % to 400 %");
   }
 
   @DisplayName("Home notes units too big for most land territories, and not once they fit")

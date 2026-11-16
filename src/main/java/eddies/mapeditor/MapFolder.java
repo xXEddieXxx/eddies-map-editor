@@ -366,6 +366,53 @@ class MapFolder {
   }
 
   /**
+   * Takes the tiles a resize wrote ({@link MapFiles#resizedInTiles}) into the map's folder as its
+   * tiles of the kind, eg baseTiles: each file is moved into place, the one there before moved
+   * into the folder kept aside (so an undo after the save has it), its first version kept as
+   * ".bak" as {@link #replace} keeps it; tiles there were beyond the new picture go aside too.
+   * The staged folder of the kind is removed, so the files read the map's own tiles again.
+   *
+   * @param staged the folder with the tiles written, eg …/baseTiles; nothing without it
+   * @param aside where the tiles there were go, made as needed
+   */
+  static void takeTiles(final Path folder, final String kind, final Path staged, final Path aside)
+      throws IOException {
+    if (!Files.isDirectory(staged)) {
+      return;
+    }
+    final Path tiles = made(folder.resolve(kind));
+    final Set<Path> written = new HashSet<>();
+    for (final String name : names(staged)) {
+      final Path file = tiles.resolve(name);
+      written.add(file);
+      if (!writes(file)) {
+        continue;
+      }
+      backUp(file);
+      if (Files.exists(file)) {
+        Files.move(file, Files.createDirectories(aside).resolve(name), StandardCopyOption.REPLACE_EXISTING);
+      }
+      Files.move(staged.resolve(name), file);
+    }
+    if (listsOnly()) {
+      names(tiles).stream().map(tiles::resolve).filter(f -> !written.contains(f)).forEach(MapFolder::writes);
+      return;
+    }
+    try (Stream<Path> files = Files.list(tiles)) {
+      for (final Path stale : files.sorted().toList()) {
+        if (stale.getFileName().toString().endsWith(".png") && !written.contains(stale)) {
+          backUp(stale);
+          Files.move(
+              stale,
+              Files.createDirectories(aside).resolve(stale.getFileName().toString()),
+              StandardCopyOption.REPLACE_EXISTING);
+        }
+      }
+    }
+    FileUtils.deleteDirectory(staged);
+  }
+
+  /**
    * The relief picture cut into the game's relief tiles, drawn over the base tiles; tiles there
    * were before keep their first version as ".bak", as relief is drawn by hand.
    */
