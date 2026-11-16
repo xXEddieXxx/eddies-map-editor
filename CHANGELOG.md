@@ -31,12 +31,15 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 - The message after the **save of a resized map** ends with the map's new size (#6).
 - The **list of unit types** shows each unit's picture before its name, at most 32 px (#8).
 
-### Tried, not confirmed
+### Tried, did not help
 
-- A picture made bigger is drawn **bicubic** instead of bilinear (#7). This should sharpen a
-  painted picture. A flat-coloured picture is still snapped to its own colours afterwards so border
-  lines stay one colour, which at 120 % makes thin lines one and two pixels wide by turns. Not yet
-  compared on Settlers: Fallen Empire, the map it was reported on. The issue stays open.
+- A picture made bigger is drawn **bicubic** instead of bilinear (#7). Compared on Settlers:
+  Fallen Empire at 120 %: no visible gain. The editor's way of enlarging, resampling and then
+  snapping a flat-coloured picture back to its own colours so border lines stay one colour,
+  cannot enlarge by an odd factor well; thin lines come out one and two pixels wide by turns.
+  Doing it well needs another method (redrawing the borders as curves, or an edge-preserving
+  upscaler), which is open. Resize in whole steps, or enlarge the picture in an image editor and
+  import it.
 
 ### Known, not fixed
 
