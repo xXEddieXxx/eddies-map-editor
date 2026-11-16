@@ -405,11 +405,12 @@ final class UnitsEditorTest {
         .contains("no limit");
   }
 
-  @DisplayName("The list shows a row for each unit, its name as the row's title")
+  @DisplayName("The list shows a row for each unit, its name as the row's title, its picture before")
   @Test
   void listShowsEveryUnit() throws Exception {
     final MapProject project = givenG40();
     final List<String> titles = new ArrayList<>();
+    final List<Integer> iconHeights = new ArrayList<>();
 
     SwingUtilities.invokeAndWait(
         () -> {
@@ -424,8 +425,17 @@ final class UnitsEditorTest {
                     .getListCellRendererComponent(
                         list, list.getModel().getElementAt(i), i, false, false);
             titles.add(collect(row, JLabel.class).getFirst().getText());
+            collect(row, JLabel.class).stream()
+                .filter(label -> label.getIcon() != null)
+                .findFirst()
+                .ifPresent(label -> iconHeights.add(label.getIcon().getIconHeight()));
           }
         });
+
+    assertThat(iconHeights)
+        .as("each row has its picture, or a blank of the size, at most 32 px high")
+        .hasSize(19)
+        .allMatch(height -> height > 0 && height <= 32);
 
     assertThat(titles)
         .as("every G40 unit, by name, in the game's order")

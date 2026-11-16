@@ -74,6 +74,8 @@ final class SearchList extends JPanel {
   private final transient Optional<Function<String, String>> detail;
   // a small picture before a row's lines, eg a nation's color
   private transient Optional<Function<String, Icon>> icons = Optional.empty();
+  // the icons' height when they are taller than a row's lines, eg unit pictures
+  private int iconHeight;
   // the group a name is listed under, behind a header row that folds it
   private transient Optional<Function<String, String>> groups = Optional.empty();
   private final Set<String> folded = new HashSet<>();
@@ -246,7 +248,13 @@ final class SearchList extends JPanel {
 
   /** A small icon before each row's lines, eg a nation's color. */
   SearchList withIcons(final Function<String, Icon> icon) {
+    return withIcons(icon, 0);
+  }
+
+  /** As withIcons, the rows at least as high as the icons, eg for unit pictures. */
+  SearchList withIcons(final Function<String, Icon> icon, final int height) {
     icons = Optional.of(icon);
+    iconHeight = height;
     return this;
   }
 
@@ -637,12 +645,12 @@ final class SearchList extends JPanel {
       return getFontMetrics(line.getFont()).getHeight();
     }
 
-    /** The height of its lines in their fonts, with the padding. */
+    /** The height of its lines in their fonts, or of its icon when taller, with the padding. */
     int height() {
       final int lines =
           getFontMetrics(first.getFont()).getHeight()
               + (detail.isPresent() ? getFontMetrics(second.getFont()).getHeight() : 0);
-      return lines + UIScale.scale(2 * PAD_Y);
+      return Math.max(lines, UIScale.scale(iconHeight)) + UIScale.scale(2 * PAD_Y);
     }
 
     @Override

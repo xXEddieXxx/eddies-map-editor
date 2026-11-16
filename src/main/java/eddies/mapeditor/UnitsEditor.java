@@ -44,6 +44,7 @@ import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.ButtonGroup;
 import javax.swing.DefaultListCellRenderer;
+import javax.swing.Icon;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
@@ -86,6 +87,8 @@ final class UnitsEditor implements Editor {
   private static final String TRIPLEA_NAME = "In the game's XML: ";
   private static final int STACKING_LABEL_WIDTH = 110;
   private static final int PICTURE_SIZE = 48;
+  // the picture in the unit's row of the list: a unit's size, so an odd shape stays whole
+  private static final int LIST_PICTURE_SIZE = 32;
   private static final int NUMBER_WIDTH = 96;
   // the numbers beside the picture: narrower, so the kind fits beside them
   private static final int ESSENTIAL_WIDTH = 72;
@@ -108,6 +111,8 @@ final class UnitsEditor implements Editor {
   private final MapProject project;
   private final JPanel page = new JPanel(new BorderLayout(8, 0));
   private final SearchList list;
+  // the list's pictures, read once per change of the map: the renderer asks at every repaint
+  private final Map<String, Icon> listIcons = new HashMap<>();
   private final Form inspector = new Form(280).dense();
   // the sections, side by side when wide enough
   private final Form grid = new Form(280).dense();
@@ -133,6 +138,7 @@ final class UnitsEditor implements Editor {
                 unit -> unit,
                 this::detail,
                 this::choose)
+            .withIcons(this::listIcon, LIST_PICTURE_SIZE)
             .withAdd("Add unit…", "Add a unit", this::addUnit)
             .withEmpty(
                 Panels.empty(
@@ -175,6 +181,7 @@ final class UnitsEditor implements Editor {
         Panels.sideBySide(list, SwingComponents.newJScrollPane(inspector)), BorderLayout.CENTER);
     project.onChange(
         () -> {
+          listIcons.clear();
           list.refresh();
           if (!editingHere) {
             showInspector();
@@ -544,17 +551,41 @@ final class UnitsEditor implements Editor {
 
   /** At most 48 px, never blown up, so a small picture stays sharp. */
   private static JComponent newPicture(final Image image) {
+    return new JLabel(scaledIcon(image, PICTURE_SIZE));
+  }
+
+  /** The picture at most so many px wide and high, never blown up, so a small one stays sharp. */
+  private static ImageIcon scaledIcon(final Image image, final int most) {
     final int width = image.getWidth(null);
     final int height = image.getHeight(null);
-    final double scale = Math.min(1, (double) PICTURE_SIZE / Math.max(width, height));
-    return new JLabel(
-        new ImageIcon(
-            scale == 1
-                ? image
-                : image.getScaledInstance(
-                    (int) Math.round(width * scale),
-                    (int) Math.round(height * scale),
-                    Image.SCALE_SMOOTH)));
+    final double scale = Math.min(1, (double) most / Math.max(1, Math.max(width, height)));
+    return new ImageIcon(
+        scale == 1
+            ? image
+            : image.getScaledInstance(
+                (int) Math.round(width * scale),
+                (int) Math.round(height * scale),
+                Image.SCALE_SMOOTH));
+  }
+
+  /**
+   * The unit's picture for its row of the list, as the first nation shows it; a blank of the same
+   * width for a unit type without one, so the names stay in line.
+   */
+  private Icon listIcon(final String unit) {
+    return listIcons.computeIfAbsent(
+        unit,
+        u ->
+            project
+                .unitPicture(u)
+                .<Icon>map(image -> scaledIcon(image, LIST_PICTURE_SIZE))
+                .orElseGet(
+                    () ->
+                        new ImageIcon(
+                            new BufferedImage(
+                                LIST_PICTURE_SIZE,
+                                LIST_PICTURE_SIZE,
+                                BufferedImage.TYPE_INT_ARGB))));
   }
 
   private static JButton newLink(final String text, final Runnable action) {
