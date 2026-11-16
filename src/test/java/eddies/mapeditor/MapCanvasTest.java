@@ -109,6 +109,50 @@ final class MapCanvasTest {
     return canvas;
   }
 
+  @DisplayName("The arrow keys move the place under the mouse a pixel, with Shift ten")
+  @Test
+  void arrowKeysNudgeThePlaceUnderTheMouse() throws Exception {
+    // given
+    final MapProject project = MapProject.newEmpty();
+    final List<Point> seen = new ArrayList<>();
+    final List<Boolean> enabled = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapCanvas canvas = givenCanvasShowingPlaces(project);
+          final double z = canvas.getZoom();
+          final Point unit = project.getFiles().unitPlaces(EFFECT_LAND).getFirst();
+          seen.add(unit);
+          final Point onUnit = new Point((int) (unit.x * z) + 3, (int) (unit.y * z) + 3);
+          final Action right = canvas.getActionMap().get("nudgeRight");
+          final Action downFar = canvas.getActionMap().get("nudgeDownFar");
+          enabled.add(right.isEnabled());
+          canvas.dispatchEvent(mouse(canvas, MouseEvent.MOUSE_MOVED, onUnit));
+          enabled.add(right.isEnabled());
+          right.actionPerformed(new ActionEvent(canvas, 0, ""));
+          right.actionPerformed(new ActionEvent(canvas, 0, ""));
+          downFar.actionPerformed(new ActionEvent(canvas, 0, ""));
+          seen.add(project.getFiles().unitPlaces(EFFECT_LAND).getFirst());
+          project.undo();
+          seen.add(project.getFiles().unitPlaces(EFFECT_LAND).getFirst());
+          enabled.add(
+              canvas.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
+                      .get(KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, InputEvent.SHIFT_DOWN_MASK))
+                  != null);
+        });
+
+    // then
+    assertThat(enabled)
+        .as("off without the mouse over a place, on over one; Shift+Down is bound")
+        .containsExactly(false, true, true);
+    final Point unit = seen.getFirst();
+    assertThat(seen.get(1))
+        .as("two to the right, then ten down")
+        .isEqualTo(new Point(unit.x + 2, unit.y + 10));
+    assertThat(seen.get(2)).as("each key one step").isEqualTo(new Point(unit.x + 2, unit.y));
+  }
+
   @DisplayName("Places shown on every territory drag there, each move one step, centers too")
   @Test
   void shownPlacesDragOnAnyTerritory() throws Exception {

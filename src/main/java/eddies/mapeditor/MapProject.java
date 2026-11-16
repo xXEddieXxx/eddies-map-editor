@@ -2095,9 +2095,9 @@ final class MapProject {
 
   /**
    * The files as a line's end, eg "3 files: 300BC.xml, place.txt, map.properties": pictures the
-   * save writes many of as their number (tiles, relief tiles, flags, unit pictures), at most
-   * {@value #FILES_NAMED} entries, then "and 4 more". Only their path in the map's folder counts,
-   * so a map in a folder named eg "units" is no unit picture.
+   * save writes many of as their number (tiles, relief tiles, flags, unit pictures), always, and
+   * at most {@value #FILES_NAMED} other files by name, then "and 4 more". Only their path in the
+   * map's folder counts, so a map in a folder named eg "units" is no unit picture.
    */
   // shortcut: a file the save removes (eg emptied notes, a renamed nation's old pictures) is
   // listed like a written one; say "removes" if map makers ask which
@@ -2118,8 +2118,18 @@ final class MapProject {
           1,
           Integer::sum);
     }
-    final List<Map.Entry<String, Integer>> named =
-        counts.entrySet().stream().limit(FILES_NAMED).toList();
+    // every kind of picture, as a map maker asks whether all tiles were written, then the first
+    // files by name
+    final List<Map.Entry<String, Integer>> named = new ArrayList<>();
+    int byName = 0;
+    for (final Map.Entry<String, Integer> entry : counts.entrySet()) {
+      if (PICTURES_COUNTED.containsValue(entry.getKey())) {
+        named.add(entry);
+      } else if (byName < FILES_NAMED) {
+        named.add(entry);
+        byName++;
+      }
+    }
     final int more = files.size() - named.stream().mapToInt(Map.Entry::getValue).sum();
     return files.size()
         + (files.size() == 1 ? " file: " : " files: ")

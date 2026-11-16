@@ -598,6 +598,14 @@ final class TerritoriesEditor implements Editor {
       return;
     }
     final int changed = project.reloadPlaces();
+    // the reloaded unit places show, else a map maker sees nothing of them
+    if (!shownPlaces.shows(PlaceKind.UNITS)
+        && !project.getFiles().places().units().isEmpty()
+        && !project.getFiles().placesUnread(MapFiles.PLACEMENTS)) {
+      shownPlaces = shownPlaces.with(PlaceKind.UNITS);
+      showModeButtons();
+      map.showPlaces(shownPlaces);
+    }
     if (changed == 0) {
       Dialogs.toast(page, "The files have the places shown here");
     } else {
@@ -1248,8 +1256,8 @@ final class TerritoriesEditor implements Editor {
         decorationPicture.setToolTipText(
             "The picture a click places: " + decorationPicture.getSelectedItem());
         map.showBanner(
-            "Placing decorations: click the map to place the picture chosen here. Drag one to"
-                + " move it; right-click or Delete removes it.",
+            "Placing decorations: click the map to place the picture chosen here. Drag one or"
+                + " press the arrow keys to move it; right-click or Delete removes it.",
             Optional.of(decorationPicture),
             "Done",
             this::endMode);

@@ -4,6 +4,7 @@ import com.formdev.flatlaf.FlatClientProperties;
 import com.formdev.flatlaf.util.SystemFileChooser;
 import games.strategy.engine.ClientFileSystemHelper;
 import games.strategy.triplea.EngineImageLoader;
+import games.strategy.triplea.ui.mapdata.MapData;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Component;
@@ -730,10 +731,11 @@ public final class MapMakerWindow extends JFrame {
       Dialogs.toast(this, "! The map has no picture to resize yet");
       return;
     }
-    final Optional<Double> factor = ResizeDialog.ask(this, asked);
-    if (factor.isEmpty()) {
+    final Optional<ResizeDialog.Request> request = ResizeDialog.ask(this, asked);
+    if (request.isEmpty()) {
       return;
     }
+    final double factor = request.get().factor();
     inBackground(
         "Could not read the map's picture.",
         () ->
@@ -758,10 +760,13 @@ public final class MapMakerWindow extends JFrame {
           final MapFiles from = resizing.getFiles();
           inBackground(
               "Could not resize the map.",
-              () -> from.resized(factor.get()),
+              () ->
+                  request.get().unitsFullSize()
+                      // units drawn at their pictures' size, the map big enough for them
+                      ? from.resized(factor).withProperty(MapData.PROPERTY_UNITS_SCALE, "")
+                      : from.resized(factor),
               resized -> {
-                if (project != resizing
-                    || !resizing.takeResized(from, resized, factor.get())) {
+                if (project != resizing || !resizing.takeResized(from, resized, factor)) {
                   tellMapChangedWhileResizing();
                   return;
                 }

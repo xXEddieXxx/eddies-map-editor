@@ -212,7 +212,10 @@ final class SaveFilesTest {
             map.resolve("flags").resolve("Red.png"),
             map.resolve("units").resolve("Red").resolve("infantry.png"),
             map.resolve("map.properties"),
-            map.resolve("games").resolve("island.xml"));
+            map.resolve("games").resolve("island.xml"),
+            map.resolve("polygons.txt"),
+            map.resolve("centers.txt"),
+            map.resolve("map.yml"));
 
     // when
     final String many = MapProject.filesLine(map, files);
@@ -220,8 +223,10 @@ final class SaveFilesTest {
 
     // then
     assertThat(many)
-        .as("the first four in the save's order, the rest counted")
-        .isEqualTo("8 files: place.txt, 2 tiles, 1 relief tile, 1 flag and 3 more");
+        .as("every kind of picture counted, the first four files by name, the rest counted")
+        .isEqualTo(
+            "11 files: place.txt, 2 tiles, 1 relief tile, 1 flag, 1 unit picture, map.properties,"
+                + " island.xml, polygons.txt and 2 more");
     assertThat(one).as("a single file").isEqualTo("1 file: island.xml");
   }
 

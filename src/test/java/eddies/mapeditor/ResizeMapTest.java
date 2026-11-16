@@ -145,6 +145,9 @@ final class ResizeMapTest {
     assertThat(colors(bigger))
         .as("no color between two others: each pixel is one of the picture's")
         .isSubsetOf(colors(picture));
+    assertThat(Stream.iterate(0, x -> x + 1).limit(300))
+        .as("the 3 px line across the picture at y 110 is still dark all along at y 165")
+        .allMatch(x -> new Color(bigger.getRGB(x, 165)).getRed() < 120);
     assertThat(Stream.iterate(0, x -> x + 1).limit(200))
         .as("the 3 px line across the picture at y 110 is still dark all along at y 55")
         .allMatch(x -> new Color(smaller.getRGB(x, 55)).getRed() < 120);
@@ -313,6 +316,59 @@ final class ResizeMapTest {
 
     // then
     assertThat(dialog.isValid()).as("the size it has is no resize").isFalse();
+    assertThat(dialog.usualEnabled())
+        .as("50 % of 400x300 leaves a side under 200 pixels, so its button is off; the rest on")
+        .containsExactly(false, true, true, true);
+    assertThat(dialog.fullSizeText()).as("units are drawn at their size: nothing to offer").isEmpty();
+  }
+
+  @DisplayName("The dialog offers the size at which units drawn at their pictures' size fit as now")
+  @Test
+  void dialogOffersFullSizeUnits() throws Exception {
+    // given: units at 0.875, so 1 / 0.875 = 114.3 %, rounded up to the spinner's 5
+    final MapProject project = givenMapWithPlaces();
+    project.setMapProperty("units.scale", "0.875");
+    final ResizeDialog dialog = new ResizeDialog(project.getFiles());
+
+    // then
+    assertThat(dialog.percentForFullSizeUnits()).as("115 %").contains(115);
+    assertThat(dialog.fullSizeText()).as("said in the check box").contains("115 %", "0.875");
+    assertThat(dialog.request().unitsFullSize()).as("not checked to start with").isFalse();
+
+    // when
+    dialog.setFullSize(true);
+
+    // then
+    assertThat(dialog.factor()).as("the check sets the size").isEqualTo(1.15);
+    assertThat(dialog.request()).isEqualTo(new ResizeDialog.Request(1.15, true));
+    assertThat(dialog.isValid()).isTrue();
+
+    // when: as the window does it
+    final MapFiles resized =
+        project.getFiles().resized(1.15).withProperty("units.scale", "");
+
+    // then
+    assertThat(resized.unitScale()).as("units at their pictures' size").isEqualTo(1);
+    assertThat(resized.size().width).isEqualTo(460);
+  }
+
+  @DisplayName("A map too big to hold says it can only be made smaller, and the bigger sizes are off")
+  @Test
+  void dialogRefusesGrowingAMapTooBigToHold() throws Exception {
+    // given: a map of 10000 x 6000 by its properties, 60 million pixels: 50 million is the most
+    final MapProject project = givenSavedMap();
+    project.setMapProperty("map.width", "10000");
+    project.setMapProperty("map.height", "6000");
+    final ResizeDialog dialog = new ResizeDialog(project.getFiles());
+
+    // then
+    assertThat(project.getFiles().whyNotResized(1.5))
+        .hasValueSatisfying(
+            why -> assertThat(why).contains("can be made smaller, to 91 % at most"));
+    assertThat(dialog.usualEnabled())
+        .as("50 and 75 % can be done, 150 and 200 % not")
+        .containsExactly(true, true, false, false);
+    assertThat(ResizeDialog.TEXT).as("the limits are said").contains("50 million", "25 % to 400 %");
   }
 
   @DisplayName("Home notes units too big for most land territories, and not once they fit")

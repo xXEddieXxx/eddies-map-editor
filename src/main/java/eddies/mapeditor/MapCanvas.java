@@ -116,6 +116,8 @@ final class MapCanvas extends JComponent {
   private static final int PLACE_DOT = 8;
   private static final Color CAPITAL_STAR = new Color(0xFFD400);
   private static final Color CAPITAL_STAR_LINE = new Color(0x4D3B00);
+  // how many pixels of the map an arrow key with Shift moves a place
+  private static final int NUDGE_FAR = 10;
   // a unit place narrower on screen gets no number: zoomed out they would run into each other
   private static final int NUMBERED_PLACE = 24;
   // the size of a decoration whose picture is missing, so it can still be moved or removed
@@ -178,6 +180,8 @@ final class MapCanvas extends JComponent {
   private Point draggedBy = new Point();
   // where the mouse is over the map, for the Delete key; empty once it left or the map moved
   private Optional<Point> hovered = Optional.empty();
+  // the place the arrow keys moved last, which they go on moving until the mouse moves
+  private transient @Nullable Place nudged;
   private transient Optional<Place> hoveredPlace = Optional.empty();
   // the misc picture a click places while decorations are edited
   private Optional<String> decorating = Optional.empty();
@@ -356,6 +360,12 @@ final class MapCanvas extends JComponent {
                     .ifPresent(MapCanvas.this::remove);
               }
             });
+    // the arrow keys move the place under the mouse a pixel of the map, with Shift ten, for the
+    // fine placing a drag is too coarse for
+    bindNudge(KeyEvent.VK_LEFT, "nudgeLeft", -1, 0);
+    bindNudge(KeyEvent.VK_RIGHT, "nudgeRight", 1, 0);
+    bindNudge(KeyEvent.VK_UP, "nudgeUp", 0, -1);
+    bindNudge(KeyEvent.VK_DOWN, "nudgeDown", 0, 1);
     // like Delete, wherever the focus is in the window; without a mode Esc stays free for others
     getInputMap(WHEN_IN_FOCUSED_WINDOW)
         .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "escape");
@@ -381,6 +391,65 @@ final class MapCanvas extends JComponent {
             });
     bindWhileSettingPoints(KeyEvent.VK_ENTER, "finishLine", this::finishLine);
     bindWhileSettingPoints(KeyEvent.VK_BACK_SPACE, "dropPoint", this::dropPoint);
+  }
+
+  /**
+   * An arrow key that moves the place under the mouse by a pixel of the map, with Shift by
+   * {@value #NUDGE_FAR}; while no place is under the mouse the key stays free, eg for a list.
+   */
+  private void bindNudge(final int key, final String name, final int dx, final int dy) {
+    getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(key, 0), name);
+    getInputMap(WHEN_IN_FOCUSED_WINDOW)
+        .put(KeyStroke.getKeyStroke(key, InputEvent.SHIFT_DOWN_MASK), name + "Far");
+    for (final int far : new int[] {1, NUDGE_FAR}) {
+      getActionMap()
+          .put(
+              far == 1 ? name : name + "Far",
+              new AbstractAction() {
+                @Serial private static final long serialVersionUID = 1L;
+
+                @Override
+                public boolean isEnabled() {
+                  return placeToNudge().isPresent();
+                }
+
+                @Override
+                public void actionPerformed(final ActionEvent e) {
+                  placeToNudge().ifPresent(place -> nudge(place, dx * far, dy * far));
+                }
+              });
+    }
+  }
+
+  /** The place the arrow keys move: the one moved last while the mouse stays, else under it. */
+  private Optional<Place> placeToNudge() {
+    if (nudged != null) {
+      return Optional.of(nudged);
+    }
+    return hovered.flatMap(this::placeAt);
+  }
+
+  /** The place moved by so many pixels of the map, as one step; it follows further arrow keys. */
+  private void nudge(final Place place, final int dx, final int dy) {
+    final Point to = new Point(place.at().x + dx, place.at().y + dy);
+    if (moveTo(place, to)) {
+      nudged =
+          new Place(
+              place.marker(),
+              place.decoration(),
+              place.index(),
+              to,
+              place.territory(),
+              place.center());
+    }
+  }
+
+  /**
+   * Moves the place under the point on the screen by so many pixels of the map, as the arrow keys
+   * do; nothing without a place there.
+   */
+  void nudgePlaceAt(final Point onScreen, final int dx, final int dy) {
+    placeAt(onScreen).ifPresent(place -> nudge(place, dx, dy));
   }
 
   /** A key for a line being set point by point; else the key stays free for others. */
@@ -792,11 +861,11 @@ final class MapCanvas extends JComponent {
         .map(
             place ->
                 place.marker().isPresent() || place.center()
-                    ? label(place) + ": drag to move"
+                    ? label(place) + ": drag or arrow keys to move"
                     : place
                             .decoration()
                             .orElse("Units " + (place.index() + 1) + " · " + place.territory())
-                        + ": drag to move, Delete removes, right-click for more")
+                        + ": drag or arrow keys to move, Delete removes, right-click for more")
         .or(() -> territoryAt(event.getPoint()))
         .orElse(null);
   }
@@ -1183,11 +1252,16 @@ final class MapCanvas extends JComponent {
 
   /** Moves the place by so many pixels of the screen, as one step. */
   private void move(final Place place, final Point by) {
-    final String territory = place.territory();
-    final Point to =
+    moveTo(
+        place,
         new Point(
             place.at().x + (int) Math.round(by.x / zoom),
-            place.at().y + (int) Math.round(by.y / zoom));
+            place.at().y + (int) Math.round(by.y / zoom)));
+  }
+
+  /** The place at this point of the map, as one step; false when its file does not read. */
+  private boolean moveTo(final Place place, final Point to) {
+    final String territory = place.territory();
     if (place.decoration().isPresent()) {
       final String picture = place.decoration().get();
       final List<Point> moved = new ArrayList<>(decorations(picture));
@@ -1196,14 +1270,19 @@ final class MapCanvas extends JComponent {
     } else if (place.center()) {
       project.setCenter(territory, to);
     } else if (place.marker().isPresent()) {
-      if (!refusesPlaces(place.marker().get().getFile())) {
-        project.setMarkerPlace(place.marker().get(), territory, place.index(), to);
+      if (refusesPlaces(place.marker().get().getFile())) {
+        return false;
       }
-    } else if (!refusesPlaces(MapFiles.PLACEMENTS)) {
+      project.setMarkerPlace(place.marker().get(), territory, place.index(), to);
+    } else {
+      if (refusesPlaces(MapFiles.PLACEMENTS)) {
+        return false;
+      }
       final List<Point> moved = new ArrayList<>(unitPlacesOf(territory));
       moved.set(place.index(), to);
       project.setUnitPlaces(territory, moved);
     }
+    return true;
   }
 
   /**
@@ -2179,6 +2258,7 @@ final class MapCanvas extends JComponent {
     }
     final List<Point> places = unitPlacesOf(territory);
     final int beyond = project.getFiles().overflowsToLeft(territory) ? -size : size;
+    final boolean highlighted = editingPlaces && territory.equals(selected);
     // how many in a stack, growing with the units, so it stays readable zoomed in
     g.setFont(getFont().deriveFont(Font.BOLD, Math.clamp(size / 4f, 11f, 28f)));
     final FontMetrics metrics = g.getFontMetrics();
@@ -2191,6 +2271,12 @@ final class MapCanvas extends JComponent {
           .ifPresentOrElse(
               picture -> g.drawImage(picture, x, y, size, size, null),
               () -> paintBadge(g, stack.getUnitType(), x + size / 2, y + size / 2));
+      if (highlighted) {
+        // a shade in the accent color over the units of the territory whose places are edited,
+        // so it shows which units belong to it
+        g.setColor(withAlpha(Theme.getAccentColor(), 0x60));
+        g.fillRect(x, y, size, size);
+      }
       if (stack.getQuantity() > 1) {
         final String count = String.valueOf(stack.getQuantity());
         final int textX = x + size - metrics.stringWidth(count) / 2;
@@ -2455,6 +2541,7 @@ final class MapCanvas extends JComponent {
     @Override
     public void mouseMoved(final MouseEvent e) {
       hovered = Optional.of(e.getPoint());
+      nudged = null;
       if (onBorder.isPresent()) {
         hoverBorder(onMap(e.getPoint()));
       }

@@ -162,16 +162,18 @@ record MapFiles(
   // nor one whose bounds moved this few pixels, as found outlines reach into the border line
   private static final int SAME_BORDER_PIXELS = 3;
   // 50 million pixels, 200 MB: a picture in tiles bigger than this is not held to draw into
-  private static final long MAX_HELD_PICTURE = 50_000_000L;
+  static final long MAX_HELD_PICTURE = 50_000_000L;
   // a held picture of more pixels is drawn into itself, with no copy per line for undo
   // ({@link #drawsInPlace}); not final, as tests lower it rather than make such a picture
   private static long undoPictureLimit = MAX_HELD_PICTURE;
   // beside a big picture's own bytes: the canvas's smaller copy and squares, tiles being read
   private static final long BESIDE_PICTURE_BYTES = 256_000_000L;
   // a resized map's sides at least: below it territories fall together
-  private static final int MIN_RESIZED_SIDE = 200;
+  static final int MIN_RESIZED_SIDE = 200;
   // a picture counts as drawn in flat colors when this share of its pixels equals its neighbour
   private static final double FLAT_SHARE = 0.75;
+  // a flat picture of more colors than this is made bigger pixel by pixel, not in its own colors
+  static final int MOST_OWN_COLORS = 4096;
 
   /** The files of the map that the game XML belongs to, found in the folders above it. */
   static MapFiles of(final Path gameXml) {
@@ -1205,12 +1207,14 @@ record MapFiles(
     if (width * height > MAX_HELD_PICTURE) {
       final int most =
           (int) (100 * Math.sqrt(MAX_HELD_PICTURE / ((double) size.width * size.height)));
+      // a map already bigger than the editor holds can only be made smaller
       return Optional.of(
           "Too big: "
               + width
               + " × "
               + height
-              + " pixels. This map can grow to "
+              + " pixels. This map can be made "
+              + (most < 100 ? "smaller, to " : "bigger, to ")
               + most
               + " % at most.");
     }
@@ -1250,10 +1254,11 @@ record MapFiles(
    * middle of what the game draws there. The caller holds a picture or relief that is only in
    * tiles first ({@link MapProject#holdPicture}); takes long for a big picture.
    *
-   * <p>A picture made bigger keeps each pixel as it is (nearest neighbour) when it is drawn in
-   * flat colors, so its border lines stay crisp and one color, as Redraw borders needs them; a
-   * painted one, every relief and every picture made smaller are smoothed, as leaving pixels out
-   * would break thin lines.
+   * <p>A picture made bigger keeps its colors when it is drawn in flat colors, so its border lines
+   * stay one color, as Redraw borders needs them: it is smoothed, then each pixel takes the
+   * nearest of the picture's own colors, which keeps curves even where repeating pixels would
+   * make steps. A painted one, every relief and every picture made smaller are smoothed, as
+   * leaving pixels out would break thin lines.
    */
   MapFiles resized(final double factor) {
     final Dimension size = size();
@@ -1396,15 +1401,74 @@ record MapFiles(
     return all > 0 && same >= FLAT_SHARE * all;
   }
 
-  /** The picture at this size: crisp, each pixel as it is, or smoothed, halved step by step. */
+  /**
+   * The picture at this size: flat, smoothed and then in the picture's own colors only, or
+   * smoothed, halved step by step.
+   */
   private static BufferedImage scaled(
-      final BufferedImage image, final int width, final int height, final boolean crisp) {
+      final BufferedImage image, final int width, final int height, final boolean flat) {
+    if (flat) {
+      return inOwnColors(image, drawnAt(image, width, height, false));
+    }
     BufferedImage from = image;
     // a smoothing step looks at 2 by 2 pixels only: halve until the last step is less than half
-    while (!crisp && from.getWidth() >= 2 * width && from.getHeight() >= 2 * height) {
+    while (from.getWidth() >= 2 * width && from.getHeight() >= 2 * height) {
       from = drawnAt(from, from.getWidth() / 2, from.getHeight() / 2, false);
     }
-    return drawnAt(from, width, height, crisp);
+    return drawnAt(from, width, height, false);
+  }
+
+  /**
+   * The smoothed picture with each pixel the nearest of the original's colors, so a blend at an
+   * edge becomes the color on its side: a line stays one color and at least as wide, as the
+   * smoothing sees it at every pixel it covers half of. A picture of more than {@value
+   * #MOST_OWN_COLORS} colors, eg with anti-aliased text, is scaled pixel by pixel instead, as
+   * finding the nearest among so many takes too long.
+   */
+  static BufferedImage inOwnColors(final BufferedImage original, final BufferedImage smoothed) {
+    final Set<Integer> own = new HashSet<>();
+    final int[] row = new int[original.getWidth()];
+    for (int y = 0; y < original.getHeight(); y++) {
+      original.getRGB(0, y, row.length, 1, row, 0, row.length);
+      for (final int color : row) {
+        if (own.add(color) && own.size() > MOST_OWN_COLORS) {
+          return drawnAt(original, smoothed.getWidth(), smoothed.getHeight(), true);
+        }
+      }
+    }
+    final int[] palette = own.stream().mapToInt(Integer::intValue).toArray();
+    // a blend between the same two colors comes up along the whole edge: found once
+    final Map<Integer, Integer> nearest = new HashMap<>();
+    final int[] line = new int[smoothed.getWidth()];
+    for (int y = 0; y < smoothed.getHeight(); y++) {
+      smoothed.getRGB(0, y, line.length, 1, line, 0, line.length);
+      for (int x = 0; x < line.length; x++) {
+        final int color = line[x];
+        if (!own.contains(color)) {
+          line[x] = nearest.computeIfAbsent(color, c -> nearestOf(palette, c));
+        }
+      }
+      smoothed.setRGB(0, y, line.length, 1, line, 0, line.length);
+    }
+    return smoothed;
+  }
+
+  /** The palette's color nearest the color, by the distance of alpha, red, green and blue. */
+  private static int nearestOf(final int[] palette, final int color) {
+    int best = palette[0];
+    long least = Long.MAX_VALUE;
+    for (final int candidate : palette) {
+      long distance = 0;
+      for (int shift = 0; shift < 32; shift += 8) {
+        final int difference = ((color >>> shift) & 0xFF) - ((candidate >>> shift) & 0xFF);
+        distance += (long) difference * difference;
+      }
+      if (distance < least) {
+        least = distance;
+        best = candidate;
+      }
+    }
+    return best;
   }
 
   private static BufferedImage drawnAt(
