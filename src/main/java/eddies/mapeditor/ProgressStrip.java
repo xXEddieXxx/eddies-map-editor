@@ -19,6 +19,7 @@ final class ProgressStrip extends JPanel {
 
   private final JLabel text = Theme.newSecondaryLabel(" ");
   private final JProgressBar bar = new JProgressBar();
+  private boolean running;
 
   ProgressStrip() {
     super(new BorderLayout(0, Theme.GAP_XS));
@@ -28,7 +29,8 @@ final class ProgressStrip extends JPanel {
     bar.setBorderPainted(false);
     add(text, BorderLayout.NORTH);
     add(bar, BorderLayout.CENTER);
-    setVisible(false);
+    text.setVisible(false);
+    bar.setVisible(false);
   }
 
   /** Shows the strip, moving, until {@link #setDone} says how far the work is. */
@@ -36,7 +38,9 @@ final class ProgressStrip extends JPanel {
     text.setText(what);
     bar.setIndeterminate(true);
     bar.setValue(0);
-    setVisible(true);
+    running = true;
+    text.setVisible(true);
+    bar.setVisible(true);
     revalidate();
     repaint();
   }
@@ -52,14 +56,21 @@ final class ProgressStrip extends JPanel {
 
   void end() {
     bar.setIndeterminate(false);
-    setVisible(false);
+    running = false;
+    text.setVisible(false);
+    bar.setVisible(false);
     revalidate();
     repaint();
   }
 
-  /** The text shown, for tests; empty while hidden. */
+  /** Whether work is shown running. */
+  boolean isRunning() {
+    return running;
+  }
+
+  /** The text shown, for tests; empty while none runs. */
   String text() {
-    return isVisible() ? text.getText() : "";
+    return running ? text.getText() : "";
   }
 
   /** How far the bar is, 0 to 1, for tests; -1 while it moves without a measure. */

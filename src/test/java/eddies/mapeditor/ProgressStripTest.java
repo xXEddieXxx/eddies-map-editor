@@ -25,7 +25,7 @@ final class ProgressStripTest {
           seen.add(strip.fraction());
           strip.end();
           seen.add(strip.text());
-          seen.add(strip.isVisible());
+          seen.add(strip.isRunning());
         });
 
     assertThat(seen)
@@ -33,7 +33,7 @@ final class ProgressStripTest {
         .containsExactly("", "Resizing the map tile by tile…", -1.0, 0.5, "", false);
   }
 
-  @DisplayName("The map view shows the strip under its toolbar")
+  @DisplayName("The map view shows the strip in the banner's row")
   @Test
   void mapViewShowsIt() throws Exception {
     final MapProject project = MapProject.newEmpty();

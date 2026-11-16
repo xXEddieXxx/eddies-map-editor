@@ -131,6 +131,8 @@ final class MapProject {
   private int stagingCount;
   // where the last save moved the tiles there were, for the states that showed them
   private @Nullable Path tilesAside;
+  // while Resize map works in the background: the tools show it, eg a spinner beside the button
+  private boolean resizing;
   private static final Set<Path> STAGING_ROOTS = ConcurrentHashMap.newKeySet();
 
   static {
@@ -1840,6 +1842,19 @@ final class MapProject {
   }
 
   /** Whether a relief picture was loaded since the last save, so the next one writes it. */
+  /** Whether Resize map is working on the map in the background. */
+  boolean isResizing() {
+    return resizing;
+  }
+
+  /** Tells the tools that a resize started or ended, so they show it, eg a spinner. */
+  void setResizing(final boolean now) {
+    if (resizing != now) {
+      resizing = now;
+      listeners.forEach(Runnable::run);
+    }
+  }
+
   /**
    * A new empty folder of this map's own for the tiles of a resize ({@link
    * MapFiles#resizedInTiles}); gone with {@link #close}.

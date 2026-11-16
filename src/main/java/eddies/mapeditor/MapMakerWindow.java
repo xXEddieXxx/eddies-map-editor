@@ -1,7 +1,6 @@
 package eddies.mapeditor;
 
 import com.formdev.flatlaf.FlatClientProperties;
-import com.formdev.flatlaf.util.UIScale;
 import com.formdev.flatlaf.util.SystemFileChooser;
 import games.strategy.engine.ClientFileSystemHelper;
 import games.strategy.triplea.EngineImageLoader;
@@ -12,7 +11,6 @@ import java.awt.Component;
 import java.awt.Cursor;
 import java.awt.Desktop;
 import java.awt.Dimension;
-import java.awt.GridBagLayout;
 import java.awt.FileDialog;
 import java.awt.FlowLayout;
 import java.awt.Frame;
@@ -416,50 +414,15 @@ public final class MapMakerWindow extends JFrame {
         .chooseFile();
   }
 
-  /** Opens the game in the background, a loading bar over the window while it reads. */
   private void openProject(final Path xml) {
-    final ProgressStrip loading = new ProgressStrip();
-    final JPanel box = new JPanel(new BorderLayout());
-    box.setBackground(Theme.getSelectionColor());
-    box.setBorder(BorderFactory.createEmptyBorder(Theme.GAP_M, Theme.GAP_L, Theme.GAP_M, Theme.GAP_L));
-    box.add(loading);
-    final JPanel over = new JPanel(new GridBagLayout());
-    over.setOpaque(false);
-    over.add(box);
-    // the glass pane takes the clicks too: nothing to do with the map until it is read
-    over.addMouseListener(new MouseAdapter() {});
-    final Component glassBefore = getGlassPane();
-    setGlassPane(over);
-    over.setVisible(true);
-    loading.setPreferredSize(new Dimension(UIScale.scale(320), loading.getPreferredSize().height));
-    loading.start("Loading " + xml.getFileName() + "…");
-    setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-    new SwingWorker<MapProject, Void>() {
-      @Override
-      protected MapProject doInBackground() throws Exception {
-        return MapProject.open(xml);
-      }
-
-      @Override
-      protected void done() {
-        setCursor(Cursor.getDefaultCursor());
-        over.setVisible(false);
-        setGlassPane(glassBefore);
-        try {
-          showProject(get());
-          RecentMaps.add(xml);
-        } catch (final InterruptedException | ExecutionException e) {
-          log.warn("Could not open {} in the map maker", xml, e);
-          Dialogs.warn(
-              MapMakerWindow.this,
-              "Open",
-              "Could not read "
-                  + xml.getFileName()
-                  + " as a game\n"
-                  + Optional.ofNullable(e.getCause()).orElse(e).getMessage());
-        }
-      }
-    }.execute();
+    try {
+      showProject(MapProject.open(xml));
+      RecentMaps.add(xml);
+    } catch (final Exception e) {
+      log.warn("Could not open {} in the map maker", xml, e);
+      Dialogs.warn(
+          this, "Open", "Could not read " + xml.getFileName() + " as a game\n" + e.getMessage());
+    }
   }
 
   /** A copy of the saved game under a new name beside it, opened. */
@@ -837,6 +800,7 @@ public final class MapMakerWindow extends JFrame {
       return;
     }
     showProgress("Resizing the map…");
+    resizing.setResizing(true);
     inBackground(
         "Could not read the map's picture.",
         () ->
@@ -846,12 +810,14 @@ public final class MapMakerWindow extends JFrame {
         held -> {
           if (project != resizing || resizing.getFiles() != asked) {
             endProgress();
+            resizing.setResizing(false);
             tellMapChangedWhileResizing();
             return;
           }
           if ((held.picture().isEmpty() && asked.tile(0, 0).isPresent())
               || (held.relief().isEmpty() && asked.reliefTile(0, 0).isPresent())) {
             endProgress();
+            resizing.setResizing(false);
             Dialogs.warn(
                 this,
                 "Resize map",
@@ -870,6 +836,7 @@ public final class MapMakerWindow extends JFrame {
                       : from.resized(factor),
               resized -> {
                 endProgress();
+                resizing.setResizing(false);
                 if (project != resizing || !resizing.takeResized(from, resized, factor)) {
                   tellMapChangedWhileResizing();
                   return;
@@ -909,6 +876,7 @@ public final class MapMakerWindow extends JFrame {
     }
     final double factor = request.factor();
     showProgress("Resizing the map tile by tile…");
+    resizing.setResizing(true);
     setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
     new SwingWorker<MapFiles, Integer>() {
       private int done;
@@ -941,6 +909,7 @@ public final class MapMakerWindow extends JFrame {
       protected void done() {
         setCursor(Cursor.getDefaultCursor());
         endProgress();
+        resizing.setResizing(false);
         final MapFiles resized;
         try {
           resized = get();

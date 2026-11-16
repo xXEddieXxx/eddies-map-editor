@@ -251,16 +251,26 @@ final class MapLookEditor implements Editor {
     resize.setToolTipText(
         "Makes the whole map bigger or smaller: picture, borders and places. Units keep their"
             + " size");
-    resize.setEnabled(files.hasOutlines() || files.hasPictureOrRelief());
+    resize.setEnabled(
+        !project.isResizing() && (files.hasOutlines() || files.hasPictureOrRelief()));
     resize.addActionListener(e -> MapMakerWindow.resizeMap(page));
     final Dimension mapSize = files.size();
-    cards.row(
-        fitting(
-            resize,
-            Theme.newSecondaryLabel(
-                resize.isEnabled()
-                    ? "now " + mapSize.width + " × " + mapSize.height + " pixels"
-                    : "once the map has a picture")));
+    if (project.isResizing()) {
+      // a spinner beside the button while the resize works in the background
+      final JProgressBar spinner = new JProgressBar();
+      spinner.setIndeterminate(true);
+      spinner.setPreferredSize(new Dimension(UIScale.scale(80), spinner.getPreferredSize().height));
+      spinner.getAccessibleContext().setAccessibleName("Resizing the map");
+      cards.row(fitting(resize, spinner, Theme.newSecondaryLabel("Resizing…")));
+    } else {
+      cards.row(
+          fitting(
+              resize,
+              Theme.newSecondaryLabel(
+                  resize.isEnabled()
+                      ? "now " + mapSize.width + " × " + mapSize.height + " pixels"
+                      : "once the map has a picture")));
+    }
     // label above, as Size's: both fields in one column
     cards.field(
         "Stack up to",

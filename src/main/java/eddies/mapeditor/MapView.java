@@ -3,6 +3,7 @@ package eddies.mapeditor;
 import com.formdev.flatlaf.util.UIScale;
 import eddies.mapeditor.MakerIcon.Glyph;
 import java.awt.BorderLayout;
+import java.awt.CardLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
@@ -104,8 +105,13 @@ final class MapView extends JPanel {
   private final JButton bannerDone = new JButton("Done");
   private final JScrollPane scroll;
   private final GoalStrip goal;
-  // work on the map that takes a while, eg a resize tile by tile, under the toolbar
+  // work on the map that takes a while, eg a resize tile by tile, in the banner's row while no
+  // banner shows: the row has its height anyway, so nothing jumps
   private final ProgressStrip progress = new ProgressStrip();
+  private final CardLayout bannerCards = new CardLayout();
+  private final JPanel bannerOrProgress = new JPanel(bannerCards);
+  private static final String BANNER_CARD = "banner";
+  private static final String PROGRESS_CARD = "progress";
   private transient Consumer<MapGuide.Step.Id> followStep = step -> {};
   private final JMenuItem findAgain = new JMenuItem("Make territories again…");
   // what the middle shows: "" the map, PICTURE_ONLY, else the number of territories without map;
@@ -208,15 +214,7 @@ final class MapView extends JPanel {
               }
             });
     top.add(newToolbar(tools), BorderLayout.NORTH);
-    final JPanel under = new JPanel();
-    under.setLayout(new BoxLayout(under, BoxLayout.Y_AXIS));
-    under.setOpaque(false);
-    progress.setAlignmentX(LEFT_ALIGNMENT);
-    under.add(progress);
-    final JPanel bannerRow = newBanner();
-    bannerRow.setAlignmentX(LEFT_ALIGNMENT);
-    under.add(bannerRow);
-    top.add(under, BorderLayout.SOUTH);
+    top.add(newBanner(), BorderLayout.SOUTH);
     add(top, BorderLayout.NORTH);
     add(legend, BorderLayout.SOUTH);
     showMapOrEmptyState();
@@ -546,8 +544,17 @@ final class MapView extends JPanel {
     row.setBackground(Theme.getMapToolbarColor());
     row.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Theme.getMapToolbarLineColor()));
     row.setPreferredSize(new Dimension(0, BANNER_HEIGHT));
-    row.add(banner);
+    bannerOrProgress.setOpaque(false);
+    bannerOrProgress.add(banner, BANNER_CARD);
+    bannerOrProgress.add(progress, PROGRESS_CARD);
+    row.add(bannerOrProgress);
+    showBannerOrProgress();
     return row;
+  }
+
+  // a goal's banner comes first; the progress takes the row while none shows
+  private void showBannerOrProgress() {
+    bannerCards.show(bannerOrProgress, banner.isVisible() ? BANNER_CARD : PROGRESS_CARD);
   }
 
   /**
@@ -837,6 +844,7 @@ final class MapView extends JPanel {
   /** Shows the bar under the toolbar for work that takes a while, moving until told how far. */
   void showProgress(final String what) {
     progress.start(what);
+    showBannerOrProgress();
   }
 
   void setProgress(final int done, final int all) {
@@ -845,6 +853,7 @@ final class MapView extends JPanel {
 
   void endProgress() {
     progress.end();
+    showBannerOrProgress();
   }
 
   /** The progress bar's text, for tests; empty while none shows. */
@@ -873,6 +882,7 @@ final class MapView extends JPanel {
   }
 
   private void fitBanner() {
+    showBannerOrProgress();
     revalidate();
     repaint();
   }
