@@ -63,7 +63,7 @@ final class PublishEditor implements Editor {
   private static final int DESCRIPTION_HEIGHT = 260;
   private static final int PREVIEW_WIDTH = 240;
   // MapDescriptionYaml.MAX_MAP_NAME_LENGTH
-  private static final int NAME_MAX_LENGTH = 70;
+  private static final int NAME_MAX_LENGTH = MapFolder.MAP_NAME_MAX_LENGTH;
   private static final String GUIDE =
       "https://github.com/triplea-game/triplea/blob/main/docs/map-making/how-to/"
           + "uploading-a-map-to-triplea.md";

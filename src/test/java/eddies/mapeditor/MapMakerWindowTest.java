@@ -128,7 +128,8 @@ final class MapMakerWindowTest {
         .containsExactly("Check true true", "Play true false", "Save false false", true, false);
   }
 
-  @DisplayName("The File menu: open, new, recent, new game, export, publish, folder, close, version")
+  @DisplayName(
+      "The File menu: open, new, recent, new game, rename, export, publish, folder, close, version")
   @Test
   void fileMenuHoldsTheMapsActions() throws Exception {
     assumeFalse(GraphicsEnvironment.isHeadless(), "the window needs a screen");
@@ -179,6 +180,7 @@ final class MapMakerWindowTest {
             "New map… " + KeyEvent.VK_N,
             "Recent maps",
             "New game from this one…",
+            "Rename map…",
             "Export as zip… " + KeyEvent.VK_F8,
             "Publish…",
             "Play with…",

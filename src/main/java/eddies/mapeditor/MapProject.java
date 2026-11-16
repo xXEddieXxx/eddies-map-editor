@@ -369,6 +369,19 @@ final class MapProject {
         .orElse(UNTITLED);
   }
 
+  /**
+   * Gives the map the name: the game's name, as players choose it, one step like any edit. A map
+   * made here keeps the folder's name the game finds its files by, in the game from now on.
+   */
+  void rename(final String newName) {
+    final String folderName = mapName;
+    mapName = null;
+    edit(
+        g ->
+            MapXml.withGameName(
+                folderName == null ? g : MapXml.withMapName(g, folderName), newName));
+  }
+
   Game game() {
     return current.game();
   }

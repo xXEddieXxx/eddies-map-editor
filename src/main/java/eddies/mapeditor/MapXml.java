@@ -1973,6 +1973,11 @@ class MapXml {
     return withProperties(game, properties);
   }
 
+  /** The game with the name players choose it by; the map's folder stays the one it finds. */
+  static Game withGameName(final Game game, final String name) {
+    return game.toBuilder().info(Info.builder().name(name.strip()).build()).build();
+  }
+
   /** The game named after its map, by which the game finds the map's files. */
   static Game withMapName(final Game game, final String mapName) {
     return withPropertyValue(game, Constants.MAP_NAME, mapName).toBuilder()

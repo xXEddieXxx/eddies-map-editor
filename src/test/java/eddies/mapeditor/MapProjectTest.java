@@ -164,6 +164,28 @@ final class MapProjectTest {
         .isNotEqualTo(5);
   }
 
+  @DisplayName("Rename gives the game the name, one step; the folder's name stays in the saved game")
+  @Test
+  void renameIsAStep() throws Exception {
+    // given: a map made here, saved once under its name
+    final MapProject project = givenSavedMapWithRed();
+
+    // when
+    project.rename(" Island Wars II ");
+    final String renamed = project.name();
+    project.save();
+    final String xml = Files.readString(project.getXmlFile().orElseThrow());
+    project.undo();
+
+    // then
+    assertThat(renamed).as("the name as typed, trimmed").isEqualTo("Island Wars II");
+    assertThat(xml)
+        .as("the game's name, and still the folder the game finds the map by")
+        .contains("name=\"Island Wars II\"")
+        .contains("value=\"Island Wars\"");
+    assertThat(project.name()).as("undone, the name before").isEqualTo("Island Wars");
+  }
+
   @DisplayName("A picture in the units folder itself is shown for every nation, as the game does")
   @Test
   void sharedUnitPictureInTheUnitsFolder() throws Exception {

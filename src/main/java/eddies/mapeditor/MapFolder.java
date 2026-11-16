@@ -77,6 +77,9 @@ class MapFolder {
   // as the faded flags of the maps that have them, eg Big World 1940's Japanese_fade.png
   private static final float FADE_ALPHA = 0.4f;
   private static final String MAP_NAME_KEY = "map_name";
+
+  /** The most characters the list of maps to download shows of a map's name. */
+  static final int MAP_NAME_MAX_LENGTH = 70;
   private static final String VERSION_KEY = "version";
   private static final Pattern WHOLE_NUMBER = Pattern.compile("\\d{1,9}");
   static final String PREVIEW_FILE = "preview.png";
@@ -1219,6 +1222,42 @@ class MapFolder {
   /** Gives the map a new name in its map.yml; every other entry of the file stays. */
   static void setMapName(final Path root, final String name) throws IOException {
     setMapDetail(root, MAP_NAME_KEY, name.strip());
+  }
+
+  /**
+   * Renames the map in its map.yml, as Rename map does with the game: the map's name when it was
+   * the old name or the map has this one game, and the game's entry when it was the old name.
+   * A map without a map.yml is left as it is.
+   *
+   * @param xmlFileName the game's file, as map.yml lists it; empty for a game not saved yet
+   */
+  static void renameMap(
+      final Path root,
+      final Optional<String> xmlFileName,
+      final String oldName,
+      final String newName)
+      throws IOException {
+    final Path yamlFile = root.resolve(MapDescriptionYaml.MAP_YAML_FILE_NAME);
+    if (!Files.isRegularFile(yamlFile)) {
+      return;
+    }
+    final Map<String, Object> yaml = readYaml(yamlFile);
+    final List<?> games = yaml.get("games") instanceof List<?> listed ? listed : List.of();
+    final String before = oldName.strip();
+    final String after = newName.strip();
+    if (games.size() <= 1 || Objects.toString(yaml.get(MAP_NAME_KEY), "").strip().equals(before)) {
+      yaml.put(MAP_NAME_KEY, after);
+    }
+    for (final Object game : games) {
+      if (game instanceof Map<?, ?> entry
+          && xmlFileName.map(name -> name.equals(entry.get("file_name"))).orElse(false)
+          && Objects.toString(entry.get("game_name"), "").strip().equals(before)) {
+        @SuppressWarnings("unchecked")
+        final Map<String, Object> named = (Map<String, Object>) entry;
+        named.put("game_name", after);
+      }
+    }
+    replaceText(yamlFile, YamlWriter.writeToString(yaml));
   }
 
   /**

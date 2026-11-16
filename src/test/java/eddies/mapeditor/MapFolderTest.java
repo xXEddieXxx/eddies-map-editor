@@ -16,6 +16,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -359,6 +360,50 @@ games:
         .containsEntry("version", 3);
     assertThat(Files.readString(yml)).as("an entry of a game stays").contains("note: keep me");
     assertThat(yml.resolveSibling("map.yml.bak")).as("the first version kept").hasContent(before);
+  }
+
+  @DisplayName("Rename map renames the map in map.yml where the old name stands, and its game's entry")
+  @Test
+  void renameMapInYaml(@TempDir final Path root) throws Exception {
+    final Path two = Files.createDirectories(root.resolve("two")).resolve("map.yml");
+    Files.writeString(
+        two,
+"""
+map_name: My Map
+version: 3
+games:
+- game_name: My Map
+  file_name: first.xml
+- {game_name: Second, file_name: second.xml}
+""");
+    final Path one = Files.createDirectories(root.resolve("one")).resolve("map.yml");
+    Files.writeString(
+        one,
+"""
+map_name: Listed Apart
+games:
+- {game_name: Only Game, file_name: only.xml}
+""");
+
+    MapFolder.renameMap(two.getParent(), Optional.of("first.xml"), "My Map", " My Map II ");
+    MapFolder.renameMap(one.getParent(), Optional.of("only.xml"), "Only Game", "Renamed");
+    MapFolder.renameMap(root.resolve("none"), Optional.empty(), "My Map", "Nothing");
+
+    final MapDescriptionYaml renamedTwo = MapDescriptionYaml.fromFile(two).orElseThrow();
+    assertThat(renamedTwo.getMapName()).as("the map's name was the old name").isEqualTo("My Map II");
+    assertThat(renamedTwo.getMapGameList())
+        .as("the game of the file renamed, the other as it was")
+        .extracting(MapGame::getGameName, MapGame::getXmlFileName)
+        .containsExactly(tuple("My Map II", "first.xml"), tuple("Second", "second.xml"));
+    assertThat(YamlReader.readMap(Files.readString(two)))
+        .as("the version stays")
+        .containsEntry("version", 3);
+    final MapDescriptionYaml renamedOne = MapDescriptionYaml.fromFile(one).orElseThrow();
+    assertThat(renamedOne.getMapName())
+        .as("a map with one game is listed by the new name, whatever it was listed by")
+        .isEqualTo("Renamed");
+    assertThat(renamedOne.getMapGameList().getFirst().getGameName()).isEqualTo("Renamed");
+    assertThat(root.resolve("none")).as("no map.yml, nothing written").doesNotExist();
   }
 
   @DisplayName("An imported picture is written as the folder's picture wants, the one before as .bak")

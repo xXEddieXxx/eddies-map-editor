@@ -329,7 +329,13 @@ final class HomeEditor implements Editor {
     final JLabel name = Theme.newTitle(project.name());
     // a long name is cut at the end; the tool tip has all of it
     name.setToolTipText(project.name());
-    form.row(name);
+    final JButton rename = tertiary("Rename…", () -> MapMakerWindow.renameMap(page));
+    rename.setToolTipText("The name players choose the map and its game by");
+    final JPanel titled = new JPanel(new BorderLayout(Theme.GAP_S, 0));
+    titled.setOpaque(false);
+    titled.add(name, BorderLayout.CENTER);
+    titled.add(rename, BorderLayout.EAST);
+    form.row(titled);
     form.subtitle(stats(game));
     final List<Step> steps =
         checked && problems.isEmpty()

@@ -710,6 +710,62 @@ public final class MapMakerWindow extends JFrame {
         });
   }
 
+  /** Rename map, from the window the component is in, eg from Home; outside it nothing happens. */
+  static void renameMap(final Component inWindow) {
+    if (SwingUtilities.getWindowAncestor(inWindow) instanceof MapMakerWindow window) {
+      window.renameMap();
+    }
+  }
+
+  /**
+   * Asks for the map's new name and gives it to the game as one step, and to map.yml where the
+   * old name stands. The folder keeps its name: the game finds the map's files by it.
+   */
+  private void renameMap() {
+    final String before = project.name();
+    final Optional<String> typed =
+        Dialogs.askName(
+            this,
+            "Rename map",
+            "The name players choose the map and its game by",
+            before,
+            "Rename",
+            name ->
+                name.length() > MapFolder.MAP_NAME_MAX_LENGTH
+                    ? Optional.of(
+                        "TripleA takes a name of at most "
+                            + MapFolder.MAP_NAME_MAX_LENGTH
+                            + " characters")
+                    : Optional.empty());
+    if (typed.isEmpty() || typed.get().equals(before)) {
+      return;
+    }
+    editors.values().forEach(Editor::commit);
+    project.rename(typed.get());
+    final Optional<Path> root = project.getFolder().map(MapFolder::rootOf);
+    if (root.isPresent()) {
+      try {
+        MapFolder.renameMap(
+            root.get(),
+            project.getXmlFile().map(xml -> xml.getFileName().toString()),
+            before,
+            typed.get());
+      } catch (final IOException e) {
+        log.warn("Could not rename the map in map.yml", e);
+        Dialogs.warn(
+            this, "Rename map", "The game is renamed, but not in map.yml\n" + e.getMessage());
+      }
+    }
+    gameName = gameNameOf(project);
+    updateState();
+    Dialogs.toast(
+        this,
+        "✓ "
+            + typed.get()
+            + ". Save writes it to the game. The folder keeps its name, which the game finds the"
+            + " map by.");
+  }
+
   /**
    * Resize map, from the window the component is in, eg from Map look or the picture menu; outside
    * the editor's window nothing happens.
@@ -1308,6 +1364,7 @@ public final class MapMakerWindow extends JFrame {
             ? "Another game of this map, eg a shorter one, started as a copy of this one"
             : "Save the map first");
     newGame.addActionListener(e -> newGame());
+    menu.add("Rename map…").addActionListener(e -> renameMap());
     menu.addSeparator();
     menu.add(menuItem("Export as zip…", KeyEvent.VK_F8, 0)).addActionListener(e -> export());
     menu.add("Publish…").addActionListener(e -> showTool(PublishEditor.TITLE));
