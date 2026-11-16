@@ -164,6 +164,25 @@ final class MapProjectTest {
         .isNotEqualTo(5);
   }
 
+  @DisplayName("A picture in the units folder itself is shown for every nation, as the game does")
+  @Test
+  void sharedUnitPictureInTheUnitsFolder() throws Exception {
+    // given: a unit type the game has no picture of, drawn alike for all nations, eg a bunker
+    final MapProject project = givenSavedMapWithRed();
+    final Path shared = project.getFolder().orElseThrow().resolve("units/Industry-Hvy.png");
+    Files.createDirectories(shared.getParent());
+    ImageIO.write(new BufferedImage(9, 7, BufferedImage.TYPE_INT_ARGB), "png", shared.toFile());
+
+    // when
+    final Optional<Integer> width =
+        project
+            .unitPicture("Red", project.nationColor("Red"), "Industry-Hvy")
+            .map(image -> image.getWidth(null));
+
+    // then
+    assertThat(width).as("the shared picture, not a badge").contains(9);
+  }
+
   @DisplayName("A unit type's picture is the map's of the first nation with one, before TripleA's")
   @Test
   void unitPictureOfTheFirstNationWithOne() throws Exception {

@@ -2020,14 +2020,17 @@ final class MapProject {
     final boolean takenBack =
         saved.files().nationUnitPictures().containsKey(new NationUnit(inFolder, unit))
             || saved.files().unitPictures().containsKey(unit);
-    final Optional<Path> own =
-        getFolder()
-            .filter(f -> !takenBack)
-            .map(f -> f.resolve("units").resolve(inFolder).resolve(unit + ".png"))
-            .filter(Files::exists);
-    if (own.isPresent()) {
+    // the nation's own picture, else one shared by every nation in the units folder itself, as
+    // the game looks for them: maps keep eg factories and bunkers there
+    final Optional<Path> units = getFolder().filter(f -> !takenBack).map(f -> f.resolve("units"));
+    for (final Path own :
+        units.stream()
+            .flatMap(
+                u -> Stream.of(u.resolve(inFolder).resolve(unit + ".png"), u.resolve(unit + ".png")))
+            .filter(Files::exists)
+            .toList()) {
       try {
-        final Optional<Image> read = Optional.ofNullable(ImageIO.read(own.get().toFile()));
+        final Optional<Image> read = Optional.ofNullable(ImageIO.read(own.toFile()));
         if (read.isPresent()) {
           return read;
         }
