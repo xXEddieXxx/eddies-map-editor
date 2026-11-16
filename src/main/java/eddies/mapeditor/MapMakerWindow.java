@@ -423,12 +423,10 @@ public final class MapMakerWindow extends JFrame {
     } catch (final Exception e) {
       log.warn("Could not open {} in the map maker", xml, e);
       Dialogs.warn(
-          this, "Open", "Could not read " + xml.getFileName() + " as a game
-" + e.getMessage());
+          this, "Open", "Could not read " + xml.getFileName() + " as a game\n" + e.getMessage());
     } finally {
       setCursor(Cursor.getDefaultCursor());
     }
-  }
   }
 
   /** A copy of the saved game under a new name beside it, opened. */
