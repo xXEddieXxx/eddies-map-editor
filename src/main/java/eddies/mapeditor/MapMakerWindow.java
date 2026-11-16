@@ -1546,11 +1546,16 @@ public final class MapMakerWindow extends JFrame {
         project.hasUnsavedRelief()
             && project.getFolder().filter(MapFolder::hasSmallMap).isPresent();
     final boolean texturesWait = project.hasTexturesNotInRelief();
+    final Optional<Dimension> resized = project.unsavedResize();
     try {
       final List<Path> written = project.save();
-      // with news and an action after it only the count, so the toast stays short
+      // with news and an action after it only the count, so the toast stays short; a resized
+      // map's new size is the news a map maker waits for, as the resize said it before the save
       final String saved =
-          "✓ Saved " + written.size() + (written.size() == 1 ? " file" : " files");
+          "✓ Saved "
+              + written.size()
+              + (written.size() == 1 ? " file" : " files")
+              + resized.map(MapMakerWindow::sizeNews).orElse("");
       if (texturesWait && editors.get("Map look") instanceof MapLookEditor look) {
         Dialogs.toast(
             this,
@@ -1578,7 +1583,7 @@ public final class MapMakerWindow extends JFrame {
               files.reveal(backup);
             });
       } else {
-        Dialogs.toast(this, savedNews(project.getFolder().orElseThrow(), written));
+        Dialogs.toast(this, savedNews(project.getFolder().orElseThrow(), written, resized));
       }
       return true;
     } catch (final Exception e) {
@@ -1589,10 +1594,18 @@ public final class MapMakerWindow extends JFrame {
   }
 
   /** The toast after a save: the files it wrote, or that there was nothing to write. */
-  static String savedNews(final Path mapFolder, final List<Path> written) {
+  static String savedNews(
+      final Path mapFolder, final List<Path> written, final Optional<Dimension> resized) {
     return written.isEmpty()
         ? "✓ Nothing to save"
-        : "✓ Saved " + MapProject.filesLine(mapFolder, written);
+        : "✓ Saved "
+            + MapProject.filesLine(mapFolder, written)
+            + resized.map(MapMakerWindow::sizeNews).orElse("");
+  }
+
+  /** eg ". The map is 4800 × 3000 pixels now", after the save of a resized map. */
+  private static String sizeNews(final Dimension size) {
+    return ". The map is " + size.width + " × " + size.height + " pixels now";
   }
 
   /**

@@ -1827,6 +1827,12 @@ final class MapProject {
   }
 
   /** Whether a relief picture was loaded since the last save, so the next one writes it. */
+  /** The map's size when it was resized since the last save; empty when it is as saved. */
+  Optional<java.awt.Dimension> unsavedResize() {
+    final java.awt.Dimension now = getFiles().size();
+    return now.equals(saved.files().size()) ? Optional.empty() : Optional.of(now);
+  }
+
   boolean hasUnsavedRelief() {
     return getFiles().relief().isPresent()
         && !getFiles().relief().equals(saved.files().relief());

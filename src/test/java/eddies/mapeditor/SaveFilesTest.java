@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import eddies.mapeditor.MapProject.BorderLine;
 import java.awt.Color;
 import java.awt.Point;
+import java.awt.Dimension;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -12,6 +13,7 @@ import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Stream;
@@ -156,19 +158,25 @@ final class SaveFilesTest {
         .isEqualTo("Island Wars");
   }
 
-  @DisplayName("A save that wrote nothing says so, not 'Saved 0 files'")
+  @DisplayName("A save that wrote nothing says so, not 'Saved 0 files'; a resized map its size")
   @Test
   void savedNothing() {
     // given
     final Path map = Path.of("maps", "island");
+    final List<Path> properties = List.of(map.resolve("map.properties"));
 
     // when
-    final String nothing = MapMakerWindow.savedNews(map, List.of());
-    final String one = MapMakerWindow.savedNews(map, List.of(map.resolve("map.properties")));
+    final String nothing = MapMakerWindow.savedNews(map, List.of(), Optional.empty());
+    final String one = MapMakerWindow.savedNews(map, properties, Optional.empty());
+    final String resized =
+        MapMakerWindow.savedNews(map, properties, Optional.of(new Dimension(4800, 3000)));
 
     // then
     assertThat(nothing).as("an empty save").isEqualTo("✓ Nothing to save");
     assertThat(one).as("a save of one file").isEqualTo("✓ Saved 1 file: map.properties");
+    assertThat(resized)
+        .as("the new size, as the resize said it before the save")
+        .isEqualTo("✓ Saved 1 file: map.properties. The map is 4800 × 3000 pixels now");
   }
 
   @DisplayName("A renamed nation's pictures, copied and taken away, are told before the save")
