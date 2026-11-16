@@ -34,7 +34,9 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
   never holding the whole picture, so 1941 Global Command Decision (16816 × 8085) can be made
   bigger. The new tiles show at once, undo is free, and a save moves them into the map, keeping the
   old ones aside so an undo after the save still has them. A picture not saved yet is still held
-  whole, up to 50 million pixels. A big map takes a few minutes; there is no progress bar yet.
+  whole, up to 50 million pixels. A bar under the map's toolbar shows how far a resize is.
+- **A loading bar** while a map opens, which now reads in the background, so a big map no longer
+  freezes the window.
 - **Save the map's picture or relief as one PNG at any size** (#13). The map picture menu writes
   the tiles into one file row by row, so a map too big to hold still comes out whole, for a paint
   program. New: the relief the same way.

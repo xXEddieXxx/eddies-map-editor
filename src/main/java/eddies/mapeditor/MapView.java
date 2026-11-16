@@ -104,6 +104,8 @@ final class MapView extends JPanel {
   private final JButton bannerDone = new JButton("Done");
   private final JScrollPane scroll;
   private final GoalStrip goal;
+  // work on the map that takes a while, eg a resize tile by tile, under the toolbar
+  private final ProgressStrip progress = new ProgressStrip();
   private transient Consumer<MapGuide.Step.Id> followStep = step -> {};
   private final JMenuItem findAgain = new JMenuItem("Make territories again…");
   // what the middle shows: "" the map, PICTURE_ONLY, else the number of territories without map;
@@ -189,7 +191,15 @@ final class MapView extends JPanel {
               }
             });
     top.add(newToolbar(tools), BorderLayout.NORTH);
-    top.add(newBanner(), BorderLayout.SOUTH);
+    final JPanel under = new JPanel();
+    under.setLayout(new BoxLayout(under, BoxLayout.Y_AXIS));
+    under.setOpaque(false);
+    progress.setAlignmentX(LEFT_ALIGNMENT);
+    under.add(progress);
+    final JPanel bannerRow = newBanner();
+    bannerRow.setAlignmentX(LEFT_ALIGNMENT);
+    under.add(bannerRow);
+    top.add(under, BorderLayout.SOUTH);
     add(top, BorderLayout.NORTH);
     add(legend, BorderLayout.SOUTH);
     showMapOrEmptyState();
@@ -805,6 +815,24 @@ final class MapView extends JPanel {
   void endGoal() {
     goal.end();
     fitBanner();
+  }
+
+  /** Shows the bar under the toolbar for work that takes a while, moving until told how far. */
+  void showProgress(final String what) {
+    progress.start(what);
+  }
+
+  void setProgress(final int done, final int all) {
+    progress.setDone(done, all);
+  }
+
+  void endProgress() {
+    progress.end();
+  }
+
+  /** The progress bar's text, for tests; empty while none shows. */
+  String progressText() {
+    return progress.text();
   }
 
   Optional<MapGuide.Step.Id> goalStep() {
