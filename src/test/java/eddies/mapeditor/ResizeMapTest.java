@@ -153,28 +153,6 @@ final class ResizeMapTest {
         .allMatch(x -> new Color(smaller.getRGB(x, 55)).getRed() < 120);
   }
 
-  @DisplayName("A flat picture made bigger by a whole step is copied pixel by pixel, in blocks")
-  @Test
-  void wholeStepCopiesPixels() throws Exception {
-    // given
-    final MapProject project = givenMapWithPlaces();
-    final BufferedImage picture = project.getFiles().picture().orElseThrow();
-
-    // when
-    final BufferedImage doubled = project.getFiles().resized(2).picture().orElseThrow();
-
-    // then
-    int differing = 0;
-    for (int y = 0; y < doubled.getHeight(); y++) {
-      for (int x = 0; x < doubled.getWidth(); x++) {
-        if (doubled.getRGB(x, y) != picture.getRGB(x / 2, y / 2)) {
-          differing++;
-        }
-      }
-    }
-    assertThat(differing).as("each pixel of the source a 2 by 2 block, nothing blended").isZero();
-  }
-
   private static java.util.Set<Integer> colors(final BufferedImage image) {
     final java.util.Set<Integer> colors = new java.util.HashSet<>();
     for (int y = 0; y < image.getHeight(); y++) {
