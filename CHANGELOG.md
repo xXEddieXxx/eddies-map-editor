@@ -33,6 +33,9 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 
 ### Tried, did not help
 
+- A flat picture made bigger by a **whole step** (200 %, 300 %, 400 %) is copied pixel by pixel:
+  nothing blends, every line keeps one width (#7). Relief pictures are painted and still resampled.
+
 - A picture made bigger is drawn **bicubic** instead of bilinear (#7). Compared on Settlers:
   Fallen Empire at 120 %: no visible gain. The editor's way of enlarging, resampling and then
   snapping a flat-coloured picture back to its own colours so border lines stay one colour,

@@ -1407,6 +1407,10 @@ record MapFiles(
    */
   private static BufferedImage scaled(
       final BufferedImage image, final int width, final int height, final boolean flat) {
+    if (flat && isWholeStep(image, width, height)) {
+      // every pixel becomes a block: nothing blends, every line keeps one width
+      return drawnAt(image, width, height, true);
+    }
     if (flat) {
       return inOwnColors(image, drawnAt(image, width, height, false));
     }
@@ -1416,6 +1420,14 @@ record MapFiles(
       from = drawnAt(from, from.getWidth() / 2, from.getHeight() / 2, false);
     }
     return drawnAt(from, width, height, false);
+  }
+
+  /** Whether the size is the picture's a whole number of times, eg 200 %, the same both ways. */
+  private static boolean isWholeStep(final BufferedImage image, final int width, final int height) {
+    return width > image.getWidth()
+        && width % image.getWidth() == 0
+        && height % image.getHeight() == 0
+        && width / image.getWidth() == height / image.getHeight();
   }
 
   /**
