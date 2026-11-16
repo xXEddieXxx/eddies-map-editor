@@ -30,6 +30,8 @@ class UnitOptions {
     NATIONS,
     /** territories joined by colons */
     TERRITORIES,
+    /** a count and a resource, eg 2:PUs; a minus count for upkeep */
+    RESOURCE,
     TEXT
   }
 
@@ -209,6 +211,14 @@ class UnitOptions {
                       "Units it produces",
                       -1,
                       "Per turn; empty for the territory's production."),
+                  new UnitOption(
+                      "createsResourcesList",
+                      "Resources it makes each turn",
+                      Kind.RESOURCE,
+                      "",
+                      0,
+                      "Its owner gets them each turn, eg 2 PUs. A minus number is upkeep, eg"
+                          + " -1 PUs. More than one resource: add the option again below."),
                   flag("canBeDamaged", "Can be damaged by bombing", ""),
                   number("maxDamage", "Most damage", 2, "Damage it takes at most."),
                   number(
@@ -258,7 +268,8 @@ class UnitOptions {
                       "tuv",
                       "Value",
                       -1,
-                      "What it is worth for the battle calculator."),
+                      "What it is worth to the AI and the battle calculator; empty for its cost."
+                          + " Set it for a unit that is free or cheap but strong."),
                   number(
                       "whenCapturedSustainsDamage",
                       "Damage when captured",
@@ -274,7 +285,8 @@ class UnitOptions {
                       "Nations it goes to with its territory."))));
 
   /** With the cost, the numbers in the row at the top, out of their sections. */
-  static final List<String> ESSENTIALS = List.of("attack", "defense", "movement", "hitPoints");
+  static final List<String> ESSENTIALS =
+      List.of("tuv", "attack", "defense", "movement", "hitPoints");
 
   /** What a unit is: TripleA's isSea and isAir, both false for land. */
   enum UnitKind {
@@ -309,8 +321,7 @@ class UnitOptions {
           "canProduceUnits",
           "canBeDamaged",
           "maxDamage",
-          "isStrategicBomber",
-          "tuv");
+          "isStrategicBomber");
 
   /**
    * The word an empty number field shows instead of -1, which TripleA takes as "none" or "all";
@@ -365,9 +376,6 @@ class UnitOptions {
           entry(
               "createsUnitsList",
               new Hint("units it creates each turn", "Count and unit, eg 1:infantry")),
-          entry(
-              "createsResourcesList",
-              new Hint("resources it makes each turn", "Count and resource, eg 2:PUs")),
           entry("fuelCost", new Hint("resources each move costs", "Count and resource, eg 1:Fuel")),
           entry(
               "fuelFlatCost",

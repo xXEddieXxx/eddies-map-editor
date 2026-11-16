@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.UnaryOperator;
 import javax.swing.AbstractButton;
 import javax.swing.JFormattedTextField;
@@ -23,11 +24,13 @@ import javax.swing.JRadioButton;
 import javax.swing.JList;
 import javax.swing.JSpinner;
 import javax.swing.JCheckBox;
+import javax.swing.JComboBox;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.triplea.map.data.elements.AttachmentList.Attachment.Option;
 
 final class UnitsEditorTest {
   @TempDir Path folder;
@@ -488,5 +491,90 @@ final class UnitsEditorTest {
         givenLaidOut(child);
       }
     }
+  }
+  @DisplayName("Value (tuv) sits in the top row beside Cost, blank for its cost")
+  @Test
+  void valueBesideCost() throws Exception {
+    final MapProject project = givenG40();
+    final List<String> labels = new ArrayList<>();
+    final List<String> shown = new ArrayList<>();
+
+    SwingUtilities.invokeAndWait(
+        () -> {
+          try {
+            final Component page = givenEditor(project, "fighter", "none").page();
+            labels.addAll(givenLabels(page));
+            final JLabel value =
+                collect(page, JLabel.class).stream()
+                    .filter(l -> "Value".equals(l.getText()))
+                    .findFirst()
+                    .orElseThrow();
+            final JTextField text =
+                ((JSpinner.DefaultEditor) ((JSpinner) value.getLabelFor()).getEditor())
+                    .getTextField();
+            shown.add(text.getText());
+            shown.add(
+                String.valueOf(text.getClientProperty(FlatClientProperties.PLACEHOLDER_TEXT)));
+            ((JSpinner) value.getLabelFor()).setValue(12);
+          } catch (final Exception e) {
+            throw new IllegalStateException(e);
+          }
+        });
+
+    assertThat(labels.indexOf("Value"))
+        .as("right after Cost")
+        .isEqualTo(labels.indexOf("Cost") + 1);
+    assertThat(shown).as("empty, with the word for -1").containsExactly("", "its cost");
+    assertThat(MapXml.option(project.game(), "unitAttachment", "fighter", "tuv"))
+        .as("typed, the unit's tuv")
+        .contains("12");
+  }
+
+  private static Optional<String> givenResources(final MapProject project) {
+    return MapXml.option(project.game(), "unitAttachment", "factory_major", "createsResourcesList");
+  }
+
+  @DisplayName("Resources it makes each turn: a count and a resource under Production, 0 for none")
+  @Test
+  void resourcesItMakes() throws Exception {
+    final MapProject project = givenG40();
+    project.edit(
+        g ->
+            UnitsXml.withNewOption(
+                g,
+                "factory_major",
+                Option.builder().name("createsResourcesList").value("-1:PUs").build()));
+    final List<String> labels = new ArrayList<>();
+    final List<Object> shown = new ArrayList<>();
+
+    SwingUtilities.invokeAndWait(
+        () -> {
+          try {
+            final Component page = givenEditor(project, "factory_major", "none").page();
+            labels.addAll(givenLabels(page));
+            final JLabel label =
+                collect(page, JLabel.class).stream()
+                    .filter(l -> "Resources it makes each turn".equals(l.getText()))
+                    .findFirst()
+                    .orElseThrow();
+            final JSpinner count = collect(label.getLabelFor(), JSpinner.class).getFirst();
+            final JComboBox<?> resource = collect(label.getLabelFor(), JComboBox.class).getFirst();
+            shown.add(count.getValue());
+            shown.add(resource.getSelectedItem());
+            count.setValue(2);
+            shown.add(givenResources(project));
+            count.setValue(0);
+            shown.add(givenResources(project));
+          } catch (final Exception e) {
+            throw new IllegalStateException(e);
+          }
+        });
+
+    assertThat(labels)
+        .as("the stacking limits under Miscellaneous")
+        .contains("Miscellaneous", "Stacking limits");
+    assertThat(shown)
+        .as("-1 PUs of upkeep; 2 PUs typed; 0 leaves the option out")
+        .containsExactly(-1, "PUs", Optional.of("2:PUs"), Optional.empty());
   }
 }

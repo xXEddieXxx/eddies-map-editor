@@ -580,9 +580,9 @@ final class UnitsEditor implements Editor {
     inspector.row(leftAligned(perNation, asIs));
   }
 
-  /** Cost, attack, defense, movement and hit points in one row, labels above. */
+  /** Cost, value, attack, defense, movement and hit points in one row, labels above. */
   private JComponent newEssentials(final Game game, final String unit) {
-    final JPanel cells = new JPanel(new GridLayout(2, 5, Theme.GAP_M, Theme.GAP_XS));
+    final JPanel cells = new JPanel(new GridLayout(2, 6, Theme.GAP_M, Theme.GAP_XS));
     cells.setOpaque(false);
     final List<JComponent> fields = new ArrayList<>();
     final Optional<Integer> cost = MapXml.unitCost(game, unit);
@@ -599,7 +599,8 @@ final class UnitsEditor implements Editor {
     }
     UnitOptions.ESSENTIALS.forEach(
         name -> fields.add(newEssential(game, unit, UnitOptions.named(name))));
-    final List<String> labels = List.of("Cost", "Attack", "Defense", "Movement", "Hit points");
+    final List<String> labels =
+        List.of("Cost", "Value", "Attack", "Defense", "Movement", "Hit points");
     for (int i = 0; i < labels.size(); i++) {
       final JLabel label = new JLabel(labels.get(i));
       label.setLabelFor(fields.get(i));
@@ -625,12 +626,15 @@ final class UnitsEditor implements Editor {
       return Theme.newSecondaryLabel("In More options");
     }
     final Consumer<String> set = v -> quietly(g -> UnitsXml.withValue(g, unit, option, v));
+    final IntConsumer setNumber = v -> set.accept(String.valueOf(v));
+    // the value (tuv) is blank for "its cost", as TripleA takes -1
     final JComponent field =
         parseInt(UnitsXml.value(game, unit, option))
             .<JComponent>map(
                 number ->
-                    Form.newNumber(
-                        number, option.minimum(), 9999, v -> set.accept(String.valueOf(v))))
+                    UnitOptions.blankWord(option)
+                        .map(word -> Form.newBlankNumber(number, option.minimum(), word, setNumber))
+                        .orElseGet(() -> Form.newNumber(number, option.minimum(), 9999, setNumber)))
             .orElseGet(() -> newTextField(() -> UnitsXml.value(project.game(), unit, option), set));
     field.setToolTipText(option.help());
     return field;
@@ -799,7 +803,10 @@ final class UnitsEditor implements Editor {
         IntStream.range(0, RulesXml.STACKING_LIMITS.size())
             .filter(
                 i ->
-                    (STACKING_LABELS.get(i) + "\n" + RulesXml.STACKING_LIMITS.get(i))
+                    ("Miscellaneous\nStacking limits\n"
+                            + STACKING_LABELS.get(i)
+                            + "\n"
+                            + RulesXml.STACKING_LIMITS.get(i))
                         .toLowerCase(Locale.ROOT)
                         .contains(filter))
             .boxed()
@@ -807,7 +814,8 @@ final class UnitsEditor implements Editor {
     if (shown.isEmpty()) {
       return 0;
     }
-    grid.section("Stacking limits", STACKING_HELP);
+    grid.section("Miscellaneous");
+    grid.row(Help.with(new JLabel("Stacking limits"), STACKING_HELP));
     grid.note("A limit holds in every territory alike.");
     for (final int i : shown) {
       final String name = RulesXml.STACKING_LIMITS.get(i);
@@ -906,6 +914,9 @@ final class UnitsEditor implements Editor {
               .map(word -> Form.newBlankNumber(number.get(), option.minimum(), word, setNumber))
               .orElseGet(() -> Form.newNumber(number.get(), option.minimum(), 9999, setNumber));
       form.number(option.label(), withTip(spinner, option.help()));
+    } else if (option.kind() == Kind.RESOURCE) {
+      form.field(
+          option.label(), withTip(newResourceField(game, unit, option, value, set), option.help()));
     } else {
       form.field(
           option.label(),
@@ -917,6 +928,55 @@ final class UnitsEditor implements Editor {
                   set),
               option.help()));
     }
+  }
+
+  /**
+   * A count and a resource, eg 2 PUs, as TripleA reads "2:PUs"; a count of 0 leaves the option
+   * out, as 0 of a resource is nothing. A resource the game does not list is kept as a choice, so
+   * the value stays readable.
+   */
+  private JComponent newResourceField(
+      final Game game,
+      final String unit,
+      final UnitOptions.UnitOption option,
+      final String value,
+      final Consumer<String> set) {
+    final String[] parts = value.strip().split(":", 2);
+    final int count = parseInt(parts[0]).orElse(0);
+    final String named = parts.length > 1 ? parts[1].strip() : "";
+    final List<String> resources = new ArrayList<>(ProductionXml.resources(game));
+    if (!named.isEmpty() && !resources.contains(named)) {
+      resources.add(named);
+    }
+    if (resources.isEmpty()) {
+      resources.add(MapXml.PUS);
+    }
+    final JComboBox<String> resource = new JComboBox<>(resources.toArray(String[]::new));
+    resource.setSelectedItem(named.isEmpty() ? resources.getFirst() : named);
+    resource.setEnabled(count != 0);
+    resource.setToolTipText("Which resource; a minus number is upkeep");
+    resource.getAccessibleContext().setAccessibleName(option.label() + ", resource");
+    final int[] number = {count};
+    final Runnable write =
+        () ->
+            set.accept(
+                number[0] == 0
+                    ? ""
+                    : number[0] + ":" + String.valueOf(resource.getSelectedItem()).strip());
+    final JSpinner spinner =
+        Form.newNumber(
+            count,
+            -9999,
+            9999,
+            v -> {
+              number[0] = v;
+              resource.setEnabled(v != 0);
+              write.run();
+            });
+    spinner.setToolTipText(option.help());
+    spinner.setPreferredSize(new Dimension(NUMBER_WIDTH, spinner.getPreferredSize().height));
+    resource.addActionListener(e -> write.run());
+    return leftAligned(spinner, resource);
   }
 
   private static <T extends JComponent> T withTip(final T component, final String tip) {
