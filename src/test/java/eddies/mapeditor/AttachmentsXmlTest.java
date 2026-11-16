@@ -1,6 +1,7 @@
 package eddies.mapeditor;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -39,6 +40,77 @@ final class AttachmentsXmlTest {
 
   private static Option option(final String name, final String value) {
     return Option.builder().name(name).value(value).build();
+  }
+
+  @DisplayName("An attachment written for each element of a variable reads as one per element")
+  @Test
+  void expandsForEach() throws Exception {
+    // given: a support for each land unit, and a trigger for each pair of nation and unit
+    final Game withVariables =
+        GameRulesXml.withVariable(
+            GameRulesXml.withVariable(
+                GameRulesXml.withVariable(
+                    givenMinimap().game(), "Land", List.of("infantry", "armour")),
+                "Planes",
+                List.of("fighter", "$Land$")),
+            "Sides",
+            List.of("Russians", "Italians"));
+    final Game withSupport =
+        AttachmentsXml.withNewAttachment(
+            withVariables, "UnitSupportAttachment", "supportAttachment_@Land@", "@Land@");
+    final int support = AttachmentsXml.attachments(withSupport).size() - 1;
+    final Game forEach =
+        AttachmentsXml.withAttachment(
+            withSupport,
+            support,
+            Builders.toBuilder(AttachmentsXml.attachments(withSupport).get(support))
+                .foreach("$Land$")
+                .options(
+                    List.of(
+                        option("unitType", "$Planes$"),
+                        Option.builder().name("bonus").count("@Land@").value("1").build()))
+                .build());
+    final Game pairs =
+        AttachmentsXml.withNewAttachment(
+            forEach, "TriggerAttachment", "trigger_@Sides@_@Land@", "@Sides@");
+    final int trigger = AttachmentsXml.attachments(pairs).size() - 1;
+    final Game game =
+        AttachmentsXml.withAttachment(
+            pairs,
+            trigger,
+            Builders.toBuilder(AttachmentsXml.attachments(pairs).get(trigger))
+                .foreach("$Sides$^$Land$")
+                .build());
+
+    // when
+    final List<Attachment> expanded = AttachmentsXml.expanded(game);
+    final List<Attachment> made =
+        expanded.stream().filter(AttachmentsXml::isForEach).toList();
+
+    // then
+    assertThat(expanded).as("the ones written as they are").hasSize(
+        AttachmentsXml.attachments(game).size() - 2 + 2 + 4);
+    assertThat(made.subList(0, 2))
+        .as("one support per land unit, @Land@ its unit, $Planes$ the planes' units joined")
+        .extracting(
+            Attachment::getName,
+            Attachment::getAttachTo,
+            a -> a.getOptions().get(0).getValue(),
+            a -> a.getOptions().get(1).getCount())
+        .containsExactly(
+            tuple("supportAttachment_infantry", "infantry", "fighter:infantry:armour", "infantry"),
+            tuple("supportAttachment_armour", "armour", "fighter:infantry:armour", "armour"));
+    assertThat(made.subList(2, 6))
+        .as("two variables joined by ^: one per pair")
+        .extracting(Attachment::getName)
+        .containsExactly(
+            "trigger_Russians_infantry",
+            "trigger_Russians_armour",
+            "trigger_Italians_infantry",
+            "trigger_Italians_armour");
+    assertThat(made).as("each keeps its foreach, the mark of where it is changed")
+        .allMatch(AttachmentsXml::isForEach);
+    assertThat(AttachmentsXml.expanded(game)).as("the same game reads once").isSameAs(expanded);
   }
 
   @DisplayName("The option names TripleA's attachment classes take are offered")

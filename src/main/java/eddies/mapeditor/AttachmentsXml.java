@@ -6,6 +6,7 @@ import games.strategy.engine.data.gameparser.XmlGameElementMapper;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -13,7 +14,9 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -144,6 +147,111 @@ class AttachmentsXml {
 
   static List<Option> options(final Attachment attachment) {
     return Optional.ofNullable(attachment.getOptions()).map(List::copyOf).orElse(List.of());
+  }
+
+  /** Whether the attachment is written once for each element of a variable ("foreach"). */
+  static boolean isForEach(final Attachment attachment) {
+    return attachment.getForeach() != null && !attachment.getForeach().isBlank();
+  }
+
+  /**
+   * The attachments as TripleA reads them (GameParser): one written for each element of a
+   * variable, foreach="$Planes$", stands for one per element, "@Planes@" in its name, in what it
+   * attaches to and in its options replaced by the element; two variables joined by "^" give one
+   * per pair. "$Planes$" in an option's value is the variable's elements joined by colons. Those
+   * made keep their foreach, the mark that they are changed at the one written, in Attachments.
+   */
+  static List<Attachment> expanded(final Game game) {
+    synchronized (EXPANDED) {
+      return EXPANDED.computeIfAbsent(game, AttachmentsXml::expand);
+    }
+  }
+
+  // by the game, which every change makes anew; kept while it is: a map like 1941 Global Command
+  // Decision has hundreds, asked for at every support's sentence and every nation's limits
+  private static final Map<Game, List<Attachment>> EXPANDED = new WeakHashMap<>();
+
+  private static List<Attachment> expand(final Game game) {
+    final Map<String, List<String>> variables = variables(game);
+    final List<Attachment> all = new ArrayList<>();
+    for (final Attachment attachment : attachments(game)) {
+      if (!isForEach(attachment)) {
+        all.add(attachment);
+        continue;
+      }
+      List<Map<String, String>> each = List.of(Map.of());
+      for (final String part : attachment.getForeach().split("\\^")) {
+        final String variable = part.strip().replaceAll("^\\$|\\$$", "");
+        final List<Map<String, String>> more = new ArrayList<>();
+        for (final Map<String, String> sofar : each) {
+          for (final String element : variables.getOrDefault(variable, List.of())) {
+            final Map<String, String> with = new LinkedHashMap<>(sofar);
+            with.put(variable, element);
+            more.add(with);
+          }
+        }
+        each = more;
+      }
+      for (final Map<String, String> elements : each) {
+        all.add(made(attachment, elements, variables));
+      }
+    }
+    return all;
+  }
+
+  // the attachment for these elements of its variables, as GameParser replaces them
+  private static Attachment made(
+      final Attachment attachment,
+      final Map<String, String> elements,
+      final Map<String, List<String>> variables) {
+    final UnaryOperator<String> each =
+        text -> {
+          String made = text;
+          for (final Map.Entry<String, String> element : elements.entrySet()) {
+            made = made.replace("@" + element.getKey() + "@", element.getValue());
+          }
+          return made;
+        };
+    final UnaryOperator<String> all =
+        text -> {
+          String made = each.apply(text);
+          for (final Map.Entry<String, List<String>> variable : variables.entrySet()) {
+            made = made.replace("$" + variable.getKey() + "$", String.join(":", variable.getValue()));
+          }
+          return made;
+        };
+    return attachment.toBuilder()
+        .name(attachment.getName() == null ? null : each.apply(attachment.getName()))
+        .attachTo(attachment.getAttachTo() == null ? null : each.apply(attachment.getAttachTo()))
+        .options(
+            options(attachment).stream()
+                .map(
+                    o ->
+                        Option.builder()
+                            .name(o.getName() == null ? null : each.apply(o.getName()))
+                            .value(o.getValue() == null ? null : all.apply(o.getValue()))
+                            .count(o.getCount() == null ? null : each.apply(o.getCount()))
+                            .build())
+                .toList())
+        .build();
+  }
+
+  /** Each variable's elements; an element naming another variable, "$Land$", is its elements. */
+  private static Map<String, List<String>> variables(final Game game) {
+    final Map<String, List<String>> resolved = new LinkedHashMap<>();
+    for (final String name : GameRulesXml.variableNames(game)) {
+      final List<String> elements = new ArrayList<>();
+      for (final String element : GameRulesXml.elements(game, name)) {
+        final String text = element.strip();
+        if (text.length() > 2 && text.startsWith("$") && text.endsWith("$")) {
+          elements.addAll(resolved.getOrDefault(text.substring(1, text.length() - 1), List.of()));
+        } else {
+          elements.add(element);
+        }
+      }
+      resolved.put(name, elements);
+    }
+    return resolved;
   }
 
   /** The attachment's kind, eg "TriggerAttachment", from its Java class. */

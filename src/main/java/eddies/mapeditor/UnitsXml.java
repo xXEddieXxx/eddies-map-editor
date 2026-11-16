@@ -3,6 +3,7 @@ package eddies.mapeditor;
 import games.strategy.triplea.Constants;
 import games.strategy.triplea.attachments.UnitSupportAttachment;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.function.UnaryOperator;
@@ -240,18 +241,49 @@ class UnitsXml {
 
   /** The names of the unit type's support attachments, which TripleA finds by their start. */
   static List<String> supports(final Game game, final String unit) {
-    return AttachmentsXml.attachments(game).stream()
+    return supportAttachments(game, unit).stream().map(Attachment::getName).toList();
+  }
+
+  /**
+   * The unit's supports as TripleA reads them (UnitSupportAttachment.get): the attachments of the
+   * kind on it, named supportAttachment…, also those written once for each unit of a variable.
+   */
+  private static List<Attachment> supportAttachments(final Game game, final String unit) {
+    return AttachmentsXml.expanded(game).stream()
         .filter(a -> unit.equals(a.getAttachTo()) && SUPPORT_KIND.equals(AttachmentsXml.kind(a)))
-        .map(Attachment::getName)
-        .filter(name -> name != null
-                    && AttachmentsXml.readName(name)
+        .filter(
+            a ->
+                a.getName() != null
+                    && AttachmentsXml.readName(a.getName())
                         .startsWith(Constants.SUPPORT_ATTACHMENT_PREFIX))
         .toList();
   }
 
+  /**
+   * The variable the support is written once for each unit of, eg "$Planes$"; empty for one
+   * written for the unit itself, which is changed in Units.
+   */
+  static Optional<String> supportForEach(
+      final Game game, final String unit, final String support) {
+    return supportAttachments(game, unit).stream()
+        .filter(a -> support.equals(a.getName()))
+        .reduce((first, last) -> last)
+        .map(Attachment::getForeach)
+        .filter(each -> !each.isBlank());
+  }
+
+  /** The support's option, of the last attachment of the name, as the game takes it. */
   static Optional<String> supportOption(
       final Game game, final String unit, final String support, final String option) {
-    return MapXml.option(game, support, unit, option);
+    return supportAttachments(game, unit).stream()
+        .filter(a -> support.equals(a.getName()))
+        .reduce((first, last) -> last)
+        .stream()
+        .flatMap(a -> AttachmentsXml.options(a).stream())
+        .filter(o -> AttachmentsXml.isOption(o, option))
+        .map(Option::getValue)
+        .filter(Objects::nonNull)
+        .findFirst();
   }
 
   /** The game with the support's option set; set to nothing, it is left out. */

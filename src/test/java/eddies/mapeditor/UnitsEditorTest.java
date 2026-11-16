@@ -502,6 +502,61 @@ final class UnitsEditorTest {
       }
     }
   }
+  @DisplayName("A support written for each unit of a variable shows for each, read-only")
+  @Test
+  void supportForEachUnit() throws Exception {
+    // given: as 1941 Global Command Decision gives every fighter a support
+    final MapProject project = givenG40();
+    project.edit(g -> GameRulesXml.withVariable(g, "Planes", List.of("fighter", "bomber")));
+    project.edit(
+        g ->
+            AttachmentsXml.withNewAttachment(
+                g, "UnitSupportAttachment", "supportAttachment_@Planes@_Escort", "@Planes@"));
+    project.edit(
+        g -> {
+          final int last = AttachmentsXml.attachments(g).size() - 1;
+          return AttachmentsXml.withAttachment(
+              g,
+              last,
+              Builders.toBuilder(AttachmentsXml.attachments(g).get(last))
+                  .foreach("$Planes$")
+                  .options(
+                      List.of(
+                          Option.builder().name("unitType").value("infantry").build(),
+                          Option.builder().name("side").value("offence").build(),
+                          Option.builder().name("faction").value("allied").build(),
+                          Option.builder().name("bonus").value("2").build(),
+                          Option.builder().name("number").value("1").build(),
+                          Option.builder().name("dice").value("strength").build()))
+                  .build());
+        });
+    final List<String> labels = new ArrayList<>();
+    final List<String> buttons = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          try {
+            final Component page = givenEditor(project, "bomber", "none").page();
+            labels.addAll(givenLabels(page));
+            buttons.addAll(givenButtonTexts(page));
+          } catch (final Exception e) {
+            throw new IllegalStateException(e);
+          }
+        });
+
+    // then
+    assertThat(UnitsXml.supports(project.game(), "bomber"))
+        .as("the bomber's support, as the game reads it")
+        .containsExactly("supportAttachment_bomber_Escort");
+    assertThat(labels)
+        .as("its sentence, and where it is changed")
+        .anyMatch(
+            text -> text != null && text.contains("+2 attack to 1 allied infantry when attacking"))
+        .anyMatch(text -> text != null && text.contains("Written for each unit of $Planes$ in"));
+    assertThat(buttons).as("not edited or removed here").doesNotContain("Edit", "Close");
+  }
+
   @DisplayName("Value (tuv) sits in the top row beside Cost, blank for its cost")
   @Test
   void valueBesideCost() throws Exception {

@@ -1500,6 +1500,18 @@ final class NationsEditor implements Editor {
     inspector.section("Stacking limits", STACKING_HELP);
     inspector.note("A limit holds in every territory alike.");
     final List<Option> options = RulesXml.playerOptions(game, nation);
+    final Optional<String> each = RulesXml.playerForEach(game, nation);
+    if (each.isPresent()) {
+      // written once for every nation of a variable: read here, changed at the one written
+      options.stream()
+          .filter(RulesXml::isGroupLimit)
+          .map(NationsEditor::limitSentence)
+          .forEach(inspector::note);
+      inspector.row(
+          Help.link(
+              "Written for each nation of " + each.get() + " in", "Attachments"));
+      return;
+    }
     for (int row = 0; row < options.size(); row++) {
       if (RulesXml.isGroupLimit(options.get(row))) {
         newLimitRows(nation, row, options.get(row)).forEach(inspector::row);
@@ -1525,6 +1537,23 @@ final class NationsEditor implements Editor {
     line.setOpaque(false);
     line.add(add);
     inspector.row(line);
+  }
+
+  /** eg "At most 10 Fighter, Bomber when attacking, counting its owner's", read-only. */
+  private static String limitSentence(final Option option) {
+    final RulesXml.StackingLimit limit = RulesXml.StackingLimit.read(option).orElseThrow();
+    final int when = RulesXml.STACKING_LIMITS.indexOf(AttachmentsXml.optionName(option.getName()));
+    final int counting = RulesXml.STACKING_COUNTS.indexOf(limit.counting());
+    return "At most "
+        + limit.most()
+        + " "
+        + (limit.units().stream().anyMatch("all"::equalsIgnoreCase)
+            ? "units"
+            : String.join(", ", limit.units()))
+        + " "
+        + List.of("when placing", "when moving in", "when attacking").get(Math.max(0, when))
+        + ", counting "
+        + List.of("its own", "its own and allies'", "everyone's").get(Math.max(0, counting));
   }
 
   /** The unit types of a limit, "All units" for all; empty when cancelled or none is ticked. */

@@ -267,6 +267,57 @@ final class StackingLimitsTest {
         .isTrue();
   }
 
+  @DisplayName("Limits written once for each nation read in Nations and in Units, changed in"
+      + " Attachments")
+  @Test
+  void limitsForEachNation() {
+    // given: a playerAttachment for each nation, as 1941 Global Command Decision writes it
+    final Game named = GameRulesXml.withVariable(minimap, "Players", MapXml.nations(minimap));
+    final Game added =
+        AttachmentsXml.withNewAttachment(named, "PlayerAttachment", "playerAttachment", "@Players@");
+    final int last = AttachmentsXml.attachments(added).size() - 1;
+    final Game game =
+        AttachmentsXml.withAttachment(
+            added,
+            last,
+            Builders.toBuilder(AttachmentsXml.attachments(added).get(last))
+                .foreach("$Players$")
+                .options(
+                    List.of(
+                        givenOption("attackingLimit", "10", "owned:fighter"),
+                        givenOption("placementLimit", "1", "allied:factory:aaGun")))
+                .build());
+    final String nation = MapXml.nations(game).getFirst();
+
+    // when
+    final List<Option> options = RulesXml.playerOptions(game, nation);
+    final NationsEditor editor =
+        new NationsEditor(new MapProject(Path.of("minimap.xml"), game, MapFiles.none()));
+    editor.choose(nation);
+    final List<String> shown =
+        givenAll(editor.page(), JLabel.class)
+            .map(JLabel::getText)
+            .filter(java.util.Objects::nonNull)
+            .toList();
+
+    // then
+    assertThat(options).as("the nation's options, from the one written for each").hasSize(2);
+    assertThat(RulesXml.playerForEach(game, nation)).contains("$Players$");
+    assertThat(shown)
+        .as("each limit as a sentence, and where it is changed")
+        .anyMatch(text -> text.contains("At most 10 fighter when attacking, counting its own"))
+        .anyMatch(text -> text.contains("At most 1 factory, aaGun when placing"))
+        .anyMatch(text -> text.contains("Written for each nation of $Players$ in"));
+    assertThat(givenAll(editor.page(), JButton.class).map(JButton::getText))
+        .as("nothing to add to what is written elsewhere")
+        .doesNotContain("+ Add limit");
+    assertThat(UnitsEditor.nationsLimits(game, "aaGun"))
+        .as("Units says what the nations' limits mean for the unit, once for all of them")
+        .containsExactly(
+            "At most 1 with factory when placing, counting its owner's and allies': every nation");
+    assertThat(UnitsEditor.nationsLimits(game, "infantry")).as("none counts infantry").isEmpty();
+  }
+
   @DisplayName("The Nations tool offers + Add limit, and no limit among the rules to add")
   @Test
   void nationsEditorOffersAddLimit() {

@@ -848,6 +848,11 @@ final class UnitsEditor implements Editor {
     grid.section("Miscellaneous");
     grid.row(Help.with(new JLabel("Stacking limits"), STACKING_HELP));
     grid.note("A limit holds in every territory alike.");
+    final List<String> byNations = nationsLimits(game, unit);
+    if (!byNations.isEmpty()) {
+      byNations.forEach(grid::note);
+      grid.row(Help.link("Limits of several unit types together are set per nation in", "Nations"));
+    }
     for (final int i : shown) {
       final String name = RulesXml.STACKING_LIMITS.get(i);
       final String label = STACKING_LABELS.get(i);
@@ -899,6 +904,54 @@ final class UnitsEditor implements Editor {
       grid.row(leftAligned(text, number, new JLabel("counting"), counting));
     }
     return shown.size();
+  }
+
+  /**
+   * The nations' limits that count the unit type, eg "At most 10 when attacking, counting its
+   * owner's: every nation" or "… with Fighter, Bomber: Germans, Italians", each once with the
+   * nations it holds for, so a unit whose own limits are blank still shows what limits it.
+   */
+  static List<String> nationsLimits(final Game game, final String unit) {
+    final List<String> nations = MapXml.nations(game);
+    final Map<String, List<String>> holders = new LinkedHashMap<>();
+    for (final String nation : nations) {
+      for (final Option option : RulesXml.playerOptions(game, nation)) {
+        if (!RulesXml.isGroupLimit(option)) {
+          continue;
+        }
+        final RulesXml.StackingLimit limit = RulesXml.StackingLimit.read(option).orElseThrow();
+        final boolean all = limit.units().stream().anyMatch("all"::equalsIgnoreCase);
+        if (!all && !limit.units().contains(unit)) {
+          continue;
+        }
+        final List<String> others = limit.units().stream().filter(u -> !u.equals(unit)).toList();
+        final int when = RulesXml.STACKING_LIMITS.indexOf(AttachmentsXml.optionName(option.getName()));
+        final String sentence =
+            "At most "
+                + limit.most()
+                + (all ? " units" : others.isEmpty() ? "" : " with " + String.join(", ", others))
+                + " "
+                + STACKING_LABELS.get(Math.max(0, when)).toLowerCase(Locale.ROOT)
+                + ", counting "
+                + STACKING_COUNT_LABELS.get(
+                    Math.max(0, RulesXml.STACKING_COUNTS.indexOf(limit.counting())));
+        holders.computeIfAbsent(sentence, s -> new ArrayList<>()).add(nation);
+      }
+    }
+    return holders.entrySet().stream()
+        .map(
+            e ->
+                e.getKey()
+                    + ": "
+                    + (e.getValue().size() == nations.size() && nations.size() > 1
+                        ? "every nation"
+                        : e.getValue().size() <= 3
+                            ? String.join(", ", e.getValue())
+                            : String.join(", ", e.getValue().subList(0, 2))
+                                + " and "
+                                + (e.getValue().size() - 2)
+                                + " more"))
+        .toList();
   }
 
   /** Whether the section is for every unit of the kind, set or not. */
@@ -1152,6 +1205,15 @@ final class UnitsEditor implements Editor {
       sentence.setToolTipText(support);
       // green for a help to allies, red for a harm to enemies; the sentence says which, too
       supportColor(game, unit, support).ifPresent(sentence::setForeground);
+      final Optional<String> each = UnitsXml.supportForEach(game, unit, support);
+      if (each.isPresent()) {
+        // written once for every unit of a variable: read here, changed at the one written
+        grid.row(sentence);
+        grid.row(
+            Help.link(
+                "Written for each unit of " + each.get() + " in", "Attachments"));
+        continue;
+      }
       final JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, Theme.GAP_XS, 0));
       buttons.setOpaque(false);
       buttons.add(

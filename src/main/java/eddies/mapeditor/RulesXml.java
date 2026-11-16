@@ -430,11 +430,22 @@ class RulesXml {
 
   /** All options of the nation's playerAttachment in their order. */
   static List<Option> playerOptions(final Game game, final String nation) {
-    return AttachmentsXml.attachments(game).stream()
-        .filter(playerKey(nation)::matches)
-        .findFirst()
-        .map(AttachmentsXml::options)
-        .orElse(List.of());
+    return playerAttachment(game, nation).map(AttachmentsXml::options).orElse(List.of());
+  }
+
+  /**
+   * The variable the nation's playerAttachment is written once for each nation of, eg
+   * "$Players$": its options are read here but changed in Attachments, at the one written.
+   */
+  static Optional<String> playerForEach(final Game game, final String nation) {
+    return playerAttachment(game, nation)
+        .map(Attachment::getForeach)
+        .filter(each -> !each.isBlank());
+  }
+
+  // as TripleA reads it: also one written for each nation of a variable
+  private static Optional<Attachment> playerAttachment(final Game game, final String nation) {
+    return AttachmentsXml.expanded(game).stream().filter(playerKey(nation)::matches).findFirst();
   }
 
   /**
