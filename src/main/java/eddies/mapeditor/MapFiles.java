@@ -1484,9 +1484,8 @@ record MapFiles(
   }
 
   /**
-   * The picture drawn at the size: crisp pixel by pixel; else smoothed, bicubic when made
-   * bigger, which keeps edges sharper than bilinear, and bilinear when made smaller, which
-   * averages the pixels left out.
+   * The picture drawn at the size: crisp pixel by pixel, else bilinear. Not bicubic: it overshoots
+   * at a hard edge, which colors the pixels beside a black line on a light ground blue and yellow.
    */
   private static BufferedImage drawnAt(
       final BufferedImage image, final int width, final int height, final boolean crisp) {
@@ -1496,9 +1495,7 @@ record MapFiles(
         RenderingHints.KEY_INTERPOLATION,
         crisp
             ? RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR
-            : width > image.getWidth() || height > image.getHeight()
-                ? RenderingHints.VALUE_INTERPOLATION_BICUBIC
-                : RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            : RenderingHints.VALUE_INTERPOLATION_BILINEAR);
     g.drawImage(image, 0, 0, width, height, null);
     g.dispose();
     return drawn;
