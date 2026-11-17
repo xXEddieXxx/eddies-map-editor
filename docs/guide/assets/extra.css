@@ -1,0 +1,127 @@
+/* The guide's look on top of Material: the editor's colours, pictures as cards, numbered
+   callouts that match the red badges in the pictures. */
+
+:root {
+  --md-primary-fg-color: #1f2a3a;
+  --md-primary-fg-color--light: #2c3a4f;
+  --md-primary-fg-color--dark: #141c27;
+  --guide-badge: #e63c32;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #161c26;
+  --md-default-bg-color: #1a1f28;
+  --md-code-bg-color: #232a36;
+}
+
+.md-header,
+.md-tabs {
+  box-shadow: none;
+}
+
+.md-tabs {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.md-typeset h1 {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.md-typeset h2 {
+  font-weight: 650;
+  margin-top: 2.2em;
+}
+
+/* a picture is a card: rounded, with a shadow, never wider than the text */
+.md-typeset img {
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+  margin: 0.6em 0 1.4em;
+}
+
+[data-md-color-scheme="default"] .md-typeset img {
+  box-shadow: 0 6px 22px rgba(20, 28, 39, 0.18);
+  border: 1px solid rgba(20, 28, 39, 0.08);
+}
+
+/* the numbered list after a picture: red badges like the callouts in the picture */
+.md-typeset img + ol,
+.md-typeset p:has(> img) + ol {
+  list-style: none;
+  counter-reset: callout;
+  margin-left: 0;
+  padding-left: 0;
+}
+
+.md-typeset img + ol > li,
+.md-typeset p:has(> img) + ol > li {
+  counter-increment: callout;
+  position: relative;
+  padding-left: 2.4em;
+  margin-bottom: 0.55em;
+}
+
+.md-typeset img + ol > li::before,
+.md-typeset p:has(> img) + ol > li::before {
+  content: counter(callout);
+  position: absolute;
+  left: 0;
+  top: 0.1em;
+  width: 1.7em;
+  height: 1.7em;
+  border-radius: 50%;
+  background: var(--guide-badge);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.85em;
+  line-height: 1.7em;
+  text-align: center;
+}
+
+/* the start page's tiles */
+.md-typeset .grid.cards > ul > li {
+  border-radius: 10px;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.md-typeset .grid.cards > ul > li:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+}
+
+.md-typeset .grid.cards > ul > li > p:first-child {
+  font-weight: 650;
+  font-size: 1.02em;
+}
+
+/* the key table and others: tighter, with a soft header */
+.md-typeset table:not([class]) {
+  font-size: 0.8rem;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.md-typeset table:not([class]) th {
+  background: rgba(127, 127, 127, 0.12);
+  font-weight: 650;
+}
+
+/* the "← Guide" line under a page's title */
+.md-typeset h1 + p a[href="README.md"],
+.md-typeset h1 + p a[href="../"],
+.md-typeset h1 + p a[href="index.html"] {
+  font-size: 0.8rem;
+  opacity: 0.75;
+}
+
+.hero {
+  padding: 1.2rem 1.4rem;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(0, 188, 212, 0.14), rgba(31, 42, 58, 0.14));
+  margin-bottom: 1.6rem;
+}
+
+.hero p {
+  margin: 0.3em 0;
+}

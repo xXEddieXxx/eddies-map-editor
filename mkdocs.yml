@@ -12,42 +12,61 @@ site_dir: build/site
 theme:
   name: material
   language: en
+  logo: img/icon.png
+  favicon: img/icon.png
+  font:
+    text: Inter
+    code: JetBrains Mono
   features:
+    - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.sections
     - navigation.top
     - navigation.footer
+    - navigation.instant
+    - navigation.tracking
     - search.suggest
     - search.highlight
     - content.action.edit
-    - toc.integrate
+    - content.code.copy
   palette:
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: blue grey
-      accent: light blue
+      primary: custom
+      accent: cyan
       toggle:
         icon: material/weather-sunny
         name: Light
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: blue grey
-      accent: light blue
+      primary: custom
+      accent: cyan
       toggle:
         icon: material/weather-night
         name: Dark
+
+extra_css:
+  - assets/extra.css
 
 markdown_extensions:
   - tables
   - attr_list
   - md_in_html
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - toc:
       permalink: true
 
 nav:
-  - Guide: README.md
-  - Menus: menus.md
-  - New map: new-map.md
-  - Home: home.md
+  - Start: README.md
+  - Basics:
+      - Menus: menus.md
+      - New map: new-map.md
+      - Home: home.md
   - Map:
       - Territories: territories.md
       - Connections: connections.md
@@ -71,8 +90,7 @@ nav:
       - Game notes: game-notes.md
       - Texts: texts.md
       - Sounds: sounds.md
-  - Share:
+  - Share & advanced:
       - Publish: publish.md
-  - Advanced:
       - Attachments: attachments.md
       - Files: files.md

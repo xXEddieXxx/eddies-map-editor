@@ -1,42 +1,83 @@
 # Eddie's Map Editor: user guide
 
-How to make and change a TripleA map with the editor, tool by tool and control by control. For
-installing it see the [README on GitHub](https://github.com/xXEddieXxx/eddies-map-editor#get-started). The pages use the editor's own words: a heading
-is a tool or a control as you see it on screen, and the numbers in a picture are explained below
-it.
+<div class="hero" markdown>
+
+**How to make and change a TripleA map with the editor, tool by tool and control by control.**
+The pages use the editor's own words: a heading is a tool or a control as you see it on screen,
+and the numbers in a picture are explained below it. For installing the editor see the
+[README on GitHub](https://github.com/xXEddieXxx/eddies-map-editor#get-started).
+
+</div>
 
 The pictures show the dark theme. The editor follows TripleA's look: with a light TripleA it is
 light, with the same controls in the same places.
 
-## Pages
+## Start here
 
-| Group | Tool | What it is for |
-| --- | --- | --- |
-| | [The window](#the-window) | The header, the sidebar, the map, keys |
-| | [Menus](menus.md) | The File menu and the map's own menus |
-| | [New map](new-map.md) | The wizard that starts a map from a picture |
-| Home | [Home](home.md) | What to do next, problems, the overview |
-| Map | [Territories](territories.md) | Owners, PUs, units, places, borders |
-| Map | [Connections](connections.md) | Which territories are neighbours |
-| Map | [Canals](canals.md) | Canals and straits |
-| Map | [Terrain effects](terrain-effects.md) | Forests, mountains and what they do |
-| Map | [Map look](map-look.md) | Unit size, markers, relief, scrolling, Resize map |
-| Players | [Nations](nations.md) | Alliance, colour, flag, PUs, rules per nation |
-| Players | [Politics](politics.md) | How pairs of nations start |
-| Players | [Objectives](objectives.md) | National objectives |
-| Players | [Technology](technology.md) | Technologies and research charts |
-| Units & economy | [Units](units.md) | Every unit type, every option |
-| Units & economy | [Production](production.md) | What nations buy, repair, resources, buy window tabs |
-| Game flow | [Turn order](turn-order.md) | The steps of a round |
-| Game flow | [Game options](game-options.md) | The options players see before a game |
-| Game flow | [Actions](actions.md) | Political and user actions |
-| Game flow | [Triggers](triggers.md) | Triggers and the trigger assistant |
-| Texts & sound | [Game notes](game-notes.md) | The notes players read |
-| Texts & sound | [Texts](texts.md) | Objective texts, messages, tool tips |
-| Texts & sound | [Sounds](sounds.md) | The sounds the game plays |
-| Share | [Publish](publish.md) | Name, version, description, upload |
-| Advanced | [Attachments](attachments.md) | Every attachment as the game file has it |
-| Advanced | [Files](files.md) | The map's files on disk |
+<div class="grid cards" markdown>
+
+- [**The window**](#the-window)
+
+    The header, the sidebar, the map beside the tools, the keys, saving and undo.
+
+- [**Menus**](menus.md)
+
+    The File menu, the map picture menu, View, Paint, Places, Sort and the ⋯ list.
+
+- [**New map**](new-map.md)
+
+    The wizard that starts a map from a picture in three steps.
+
+- [**Home**](home.md)
+
+    What to do next, the problems, the overview and a tile per tool.
+
+</div>
+
+## The tools
+
+<div class="grid cards" markdown>
+
+- **Map**
+
+    [Territories](territories.md) owners, PUs, units, places, borders ·
+    [Connections](connections.md) ·
+    [Canals](canals.md) ·
+    [Terrain effects](terrain-effects.md) ·
+    [Map look](map-look.md) unit size, markers, relief, Resize map
+
+- **Players**
+
+    [Nations](nations.md) alliance, colour, flag, PUs, rules ·
+    [Politics](politics.md) how pairs start ·
+    [Objectives](objectives.md) ·
+    [Technology](technology.md)
+
+- **Units & economy**
+
+    [Units](units.md) every unit type, every option ·
+    [Production](production.md) what nations buy and repair, resources, buy window tabs
+
+- **Game flow**
+
+    [Turn order](turn-order.md) the steps of a round ·
+    [Game options](game-options.md) ·
+    [Actions](actions.md) political and user actions ·
+    [Triggers](triggers.md) and the trigger assistant
+
+- **Texts & sound**
+
+    [Game notes](game-notes.md) ·
+    [Texts](texts.md) objective texts, messages, tool tips ·
+    [Sounds](sounds.md)
+
+- **Share & advanced**
+
+    [Publish](publish.md) name, version, description, upload ·
+    [Attachments](attachments.md) every attachment as the game file has it ·
+    [Files](files.md) the map's files on disk
+
+</div>
 
 ## The window
 
@@ -108,17 +149,24 @@ field above it. Type a part of a name. Where the list has groups, a header row f
 Click a row to choose it; the right side then shows what it has, with "← All …" at the top to go
 back to the list.
 
-### When something goes wrong
+## When something goes wrong
 
-- **A unit shows as a name badge on the map.** The editor found no picture for it: none in
-  `units/<nation>/`, none in `units/` itself, and none among the game's own. Upload one in Units.
-- **Gives support says None, stacking limits are blank.** The support or limit may be written in
-  Attachments for every unit or nation of a variable (`foreach`); the tools show those read-only.
-- **A size in Resize map is greyed out.** The picture is not saved yet: save first, then it is
-  resized from its tiles at any size.
-- **The game does not start.** Check (F6) says why and links the tool.
-- **The toolbar's words are cut** ("Draw bord…"). The window is narrow for the inspector shown;
-  widen it, or hide the sidebar's words with «.
+!!! tip "A unit shows as a name badge on the map"
+    The editor found no picture for it: none in `units/<nation>/`, none in `units/` itself, and
+    none among the game's own. Upload one in Units.
+
+!!! tip "Gives support says None, stacking limits are blank"
+    The support or limit may be written in Attachments for every unit or nation of a variable
+    (`foreach`); the tools show those read-only.
+
+!!! tip "A size in Resize map is greyed out"
+    The picture is not saved yet: save first, then it is resized from its tiles at any size.
+
+!!! tip "The game does not start"
+    Check (F6) says why and links the tool.
+
+!!! tip "The toolbar's words are cut, like \"Draw bord…\""
+    The window is narrow for the inspector shown; widen it, or hide the sidebar's words with «.
 
 Found a bug or miss a feature? Open an issue at
-https://github.com/xXEddieXxx/eddies-map-editor/issues.
+[github.com/xXEddieXxx/eddies-map-editor/issues](https://github.com/xXEddieXxx/eddies-map-editor/issues).
