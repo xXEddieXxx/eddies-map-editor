@@ -2,8 +2,8 @@
 
 [← Guide](README.md)
 
-A small map from a picture to a game you can play, in about twenty minutes. The picture below
-is the example: two islands, each cut into three territories, in a sea. Save it to your
+A small map from a picture to a game two players can play, in about half an hour. The picture
+below is the example: two islands, each cut into three territories, in one sea. Save it to your
 computer to follow along, or draw one like it in any paint program.
 
 ![The example picture: two islands with black borders in a blue sea](img/first-map.png)
@@ -25,16 +25,20 @@ letters with underscores, inside TripleA's maps folder, which **Saved in** shows
 
 Drop the picture on the frame or click **Choose picture…**. The editor reads it and looks for the
 territories at once; the line at the bottom says "Reading … and finding its territories" with a
-bar, then what it found: here 800 × 600, 7 territories and 1 sea zone. If the count surprises
+bar, then what it found: here 800 × 600, 6 territories and 1 sea zone. If the count surprises
 you, a border is not closed or not dark enough: fix the picture and choose it again. Click
 **Next**.
 
 ![New map, step 3: the nations](img/dialog-new-map-3.png)
 
 One nation per line: "Red" and "Blue". Each gets a colour, a flag and the unit pictures of a
-standard nation tinted in its colour, so the map plays at once. Click **Create map**. The map is
-written as a folder with map.yml, the game, the outlines, the picture cut into tiles, the flags
-and the unit pictures; the editor opens it on Home.
+standard nation tinted in its colour. Click **Create map**. The map is written as a folder with
+map.yml, the game, the outlines, the picture cut into tiles, the flags and the unit pictures,
+and the editor opens it on Home.
+
+What the new map already has: TripleA's thirteen standard unit types, from infantry to
+battleship and factory, and one purchase list with a rule for each, used by both nations. So
+once a nation has PUs and a factory, it can buy.
 
 ## 2. Follow Home's guide
 
@@ -45,29 +49,29 @@ with the step as a goal in the row above the map, and the tool is set up for it.
 ### Give every nation its land
 
 The step opens Territories with the Paint brush set to Red's colour. Click or drag across the
-west island's three territories: they turn red. Now pick Blue in the row above the map, or in
-Paint → Owner, and paint the east island. The sea zone stays without owner. Finish with
-**Done** in the row above the map, or go on with the next step on Home.
+west island's three territories: they turn red. Then pick Blue in the row above the map, or in
+Paint → Owner, and paint the east island. The sea zone stays without owner. Finish with **Done**
+in the row above the map, or go on with the next step on Home.
 
 ### Mark each nation's capital
 
-The brush is now Paint → Capital. Click one territory of Red and one of Blue. A capital flag
-appears where the game will draw it. A nation without a capital cannot collect its PUs, so the
-guide insists on this step.
+The brush is now Paint → Capital. Click one territory of Red and one of Blue, say the biggest of
+each island. A capital flag appears where the game will draw it. A nation without a capital
+cannot collect its PUs, so the guide insists on this step.
 
 ### Give the territories a value
 
-Choose Paint → PUs per turn → 2 and drag across all six land territories; make the two capitals
-worth 3 with Paint → PUs per turn → 3. The Values view shows the numbers. A nation's income is
-the sum of its land, so Red and Blue each start with 7 PUs a turn.
+Choose Paint → PUs per turn → 2 and drag across all six land territories; then Paint → PUs per
+turn → 4 and click the two capitals. The Values view shows the numbers. A nation's income is the
+sum of its land, so Red and Blue each earn 8 PUs a turn.
 
 ### Place the units each territory starts with
 
 The step opens the first territory without units. In **Units at the start** click **+ Add units**,
-pick infantry and type 2. Do that for each territory, or do one and paint the rest: Paint → Units
-→ Copy units of the chosen one, then drag across the others; the units turn to each territory's
-owner. The sea zone gets nothing. Where the game draws them is a place; drag a unit place with
-Places → Units if it sits badly.
+pick infantry and type 2. Do that for each land territory, or do one and paint the rest: Paint →
+Units → Copy units of the chosen one, then drag across the others; the units turn to each
+territory's owner. Where the game draws them is a place; drag a unit place with Places → Units
+if it sits badly.
 
 ### Check which territories border each other
 
@@ -76,29 +80,62 @@ touches the sea zone, and the three of each island touch each other. Click a ter
 its lines in red; click a neighbour to connect or part. Nothing should be missing here, but
 **Find neighbours again…** says so when it is.
 
-## 3. Check and play
+## 3. Make it a game
+
+The steps above satisfy Check. For two players to actually fight across the sea, each nation
+needs three more things.
+
+### A factory in each capital
+
+Purchased units are placed where a factory stands. In Territories click Red's capital, **+ Add
+units**, pick factory, 1. The same for Blue's capital. A factory places as many units per turn as
+the territory's PUs, here 4, unless Territories → Rules → Units its factories place per turn says
+otherwise.
+
+### A transport and a warship at sea
+
+Units in a sea zone belong to a nation, so the sea zone can hold both fleets. Click the sea zone,
+**+ Add units**, pick transport, 1, and choose Red as the owner in the row; again for Blue. Add
+a destroyer each the same way, so a landing can be covered. A transport carries two infantry, or
+an infantry and a tank, from one island to the other.
+
+### Starting PUs
+
+In Nations click Red: **PUs at the start** is what it may spend in its first purchase; the line
+below says what its land is worth per turn. Set 10 for both nations, enough for three infantry.
+
+### Have a look at the rules
+
+- **Turn order** already has, for each nation, the steps of a round: buy, combat move, battles,
+  non-combat move, place, collect income. Nothing to do.
+- **Game options** has the usual options, each with its lock; leave them for now.
+- **Units** shows the standard values: infantry 1-2-1 for 3 PUs, armour 3-3-2 for 6, and so on.
+  Change them later if the map wants it.
+
+## 4. Check, save and play
 
 Click **Check (F6)**. The editor loads the map as TripleA does and plays the first round in
 memory. With the steps above done it finds no problems; otherwise the list names each one with
 the tool that fixes it, for example a nation without a capital or a territory without a
 connection.
 
+Click **Save (Ctrl+S)**. The Save button's tool tip lists what it writes: the game file, the
+place files, map.properties.
+
 Click **Play (F7)**. The map is saved, the check runs on the saved files, and TripleA starts with
-your map in its game chooser: Island Wars, Red against Blue, two turns of buying infantry and
-moving across the sea once you add a transport.
+your map in its game chooser: Island Wars, Red against Blue. Each buys infantry with its 10 PUs,
+places them at the factory, loads two onto the transport, sails across the sea under the
+destroyer's cover and lands on the other island. The first simple version of your map plays.
 
-## 4. The usual next things
+## 5. The usual next things
 
-- **Units.** The map starts with TripleA's standard unit types. In [Units](units.md) remove what
-  the map does not need and change the numbers; in [Production](production.md) set what each
-  nation may buy and for how much.
-- **A transport.** Red and Blue cannot reach each other without one: give both a transport in a
-  sea zone with Nations → Units it holds at the start, or a factory in the capital and a rule
-  that sells transports.
 - **Names on the map.** [Map look](map-look.md) → Territory names draws them; the places are
-  made by the wizard and moved with Places → Names in Territories.
+  made by the wizard and moved with Places → Names in Territories. The territories are named by
+  number so far; rename them in the Territories list.
 - **A relief.** [Map look](map-look.md) → Create relief… makes coasts and raised land from the
   outlines, so the flat picture looks like a map.
+- **Fewer units.** In [Units](units.md) remove what the map does not need, for example bombers
+  and carriers on a map this small; in [Production](production.md) the rules follow.
 - **Notes.** [Game notes](game-notes.md) is what players read before they start.
 - **Publish.** [Publish](publish.md) lists what the map still needs to be downloadable in TripleA
   and the steps to upload it.
