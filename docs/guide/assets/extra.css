@@ -2,16 +2,7 @@
    callouts that match the red badges in the pictures. */
 
 :root {
-  --md-primary-fg-color: #1f2a3a;
-  --md-primary-fg-color--light: #2c3a4f;
-  --md-primary-fg-color--dark: #141c27;
   --guide-badge: #e63c32;
-}
-
-[data-md-color-scheme="slate"] {
-  --md-primary-fg-color: #161c26;
-  --md-default-bg-color: #1a1f28;
-  --md-code-bg-color: #232a36;
 }
 
 .md-header,

@@ -461,16 +461,11 @@ final class GuideScreenshots {
           () -> {
             try {
               shootComponent(new ResizeDialog(project.getFiles()).content(), "dialog-resize", 520);
-              shootComponent(
-                  new NewMapWizard(
-                      Path.of(System.getProperty("user.home"), "triplea", "downloadedMaps"),
-                      made -> {}),
-                  "dialog-new-map",
-                  760);
             } catch (final IOException e) {
               throw new IllegalStateException(e);
             }
           });
+      shootWizard();
     } finally {
       SwingUtilities.invokeAndWait(window[0]::dispose);
     }
@@ -546,6 +541,138 @@ final class GuideScreenshots {
     } catch (final IOException | InterruptedException e) {
       throw new IllegalStateException(e);
     }
+  }
+
+  /**
+   * The New map wizard's three steps with the guide's example picture, which is written beside
+   * the pictures for readers to follow the Getting started page with.
+   */
+  private static void shootWizard() throws Exception {
+    final Path example = IMAGES.resolve("first-map.png");
+    ImageIO.write(examplePicture(), "png", example.toFile());
+    final NewMapWizard[] wizard = new NewMapWizard[1];
+    final JFrame holder = new JFrame();
+    SwingUtilities.invokeAndWait(
+        () -> {
+          wizard[0] =
+              new NewMapWizard(
+                  Path.of(System.getProperty("user.home"), "triplea", "downloadedMaps"),
+                  made -> {});
+          holder.setUndecorated(true);
+          holder.getContentPane().add(wizard[0]);
+          holder.setSize(760, 560);
+          holder.setLocation(0, 0);
+          holder.setVisible(true);
+        });
+    try {
+      onSwing(() -> set(wizard[0], "name", "Island Wars"));
+      onSwing(() -> shootShown(holder, "dialog-new-map"));
+      onSwing(() -> wizard[0].next.doClick());
+      onSwing(() -> call(wizard[0], "readPicture", Path.class, example));
+      final java.lang.reflect.Field progress = NewMapWizard.class.getDeclaredField("progress");
+      progress.setAccessible(true);
+      final long until = System.currentTimeMillis() + 30_000;
+      Thread.sleep(500);
+      while (System.currentTimeMillis() < until
+          && ((Component) progress.get(wizard[0])).isVisible()) {
+        Thread.sleep(200);
+      }
+      Thread.sleep(500);
+      onSwing(() -> shootShown(holder, "dialog-new-map-2"));
+      onSwing(() -> wizard[0].next.doClick());
+      Thread.sleep(300);
+      onSwing(() -> set(wizard[0], "nations", "Red\nBlue"));
+      Thread.sleep(300);
+      onSwing(() -> shootShown(holder, "dialog-new-map-3"));
+    } finally {
+      SwingUtilities.invokeAndWait(holder::dispose);
+    }
+  }
+
+  /** Work that may fail, run on the Swing thread. */
+  @FunctionalInterface
+  private interface Work {
+    void run() throws Exception;
+  }
+
+  private static void onSwing(final Work work) throws Exception {
+    final Exception[] failed = new Exception[1];
+    SwingUtilities.invokeAndWait(
+        () -> {
+          try {
+            work.run();
+          } catch (final Exception e) {
+            failed[0] = e;
+          }
+        });
+    if (failed[0] != null) {
+      throw failed[0];
+    }
+  }
+
+  private static void shootShown(final JFrame holder, final String slug) throws IOException {
+    holder.validate();
+    holder.repaint();
+    final JComponent content = (JComponent) holder.getContentPane();
+    final BufferedImage image =
+        new BufferedImage(content.getWidth(), content.getHeight(), BufferedImage.TYPE_INT_RGB);
+    final Graphics2D g = image.createGraphics();
+    content.printAll(g);
+    g.dispose();
+    ImageIO.write(image, "png", IMAGES.resolve(slug + ".png").toFile());
+    Files.writeString(DUMP.resolve(slug + ".txt"), dump(content));
+  }
+
+  private static void set(final Object target, final String field, final String text)
+      throws ReflectiveOperationException {
+    final java.lang.reflect.Field f = target.getClass().getDeclaredField(field);
+    f.setAccessible(true);
+    ((javax.swing.text.JTextComponent) f.get(target)).setText(text);
+  }
+
+  private static void call(
+      final Object target, final String method, final Class<?> type, final Object argument)
+      throws ReflectiveOperationException {
+    final java.lang.reflect.Method m = target.getClass().getDeclaredMethod(method, type);
+    m.setAccessible(true);
+    m.invoke(target, argument);
+  }
+
+  /**
+   * The guide's example picture: an island world of 800 x 600 with two islands of three land
+   * territories each, drawn in flat colors with black borders, as a map picture is drawn.
+   */
+  private static BufferedImage examplePicture() {
+    final BufferedImage image = new BufferedImage(800, 600, BufferedImage.TYPE_INT_RGB);
+    final Graphics2D g = image.createGraphics();
+    g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+    g.setColor(new Color(70, 120, 200));
+    g.fillRect(0, 0, 800, 600);
+    // two islands, each a rounded shape cut into three by lines
+    final Color land = new Color(236, 224, 190);
+    final int[][] west = {{80, 120}, {340, 90}, {380, 300}, {300, 480}, {110, 450}, {60, 280}};
+    final int[][] east = {{450, 150}, {720, 110}, {760, 330}, {680, 520}, {470, 480}, {420, 320}};
+    for (final int[][] island : List.of(west, east)) {
+      final java.awt.Polygon shape = new java.awt.Polygon();
+      for (final int[] point : island) {
+        shape.addPoint(point[0], point[1]);
+      }
+      g.setColor(land);
+      g.fillPolygon(shape);
+      g.setColor(Color.BLACK);
+      g.setStroke(new BasicStroke(3f));
+      g.drawPolygon(shape);
+    }
+    g.setColor(Color.BLACK);
+    g.setStroke(new BasicStroke(3f));
+    // the west island: a line across and one down from it
+    g.drawLine(60, 280, 380, 300);
+    g.drawLine(220, 290, 210, 470);
+    // the east island: a line down and one across the lower part
+    g.drawLine(590, 110, 580, 500);
+    g.drawLine(420, 320, 760, 330);
+    g.dispose();
+    return image;
   }
 
   /** A component on its own, eg a dialog's content, laid out at the width. */

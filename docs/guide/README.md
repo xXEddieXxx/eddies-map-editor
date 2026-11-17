@@ -16,6 +16,10 @@ light, with the same controls in the same places.
 
 <div class="grid cards" markdown>
 
+- [**Getting started: your first map**](getting-started.md)
+
+    A small map from a picture to a game you can play, step by step, with an example picture.
+
 - [**The window**](#the-window)
 
     The header, the sidebar, the map beside the tools, the keys, saving and undo.

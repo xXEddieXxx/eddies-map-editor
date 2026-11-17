@@ -32,14 +32,14 @@ theme:
   palette:
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: custom
+      primary: black
       accent: cyan
       toggle:
         icon: material/weather-sunny
         name: Light
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: custom
+      primary: blue grey
       accent: cyan
       toggle:
         icon: material/weather-night
@@ -63,6 +63,7 @@ markdown_extensions:
 
 nav:
   - Start: README.md
+  - Getting started: getting-started.md
   - Basics:
       - Menus: menus.md
       - New map: new-map.md
