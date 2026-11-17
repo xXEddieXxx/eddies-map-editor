@@ -667,9 +667,9 @@ final class GuideScreenshots {
     g.setStroke(new BasicStroke(3f));
     // the west island: a line across and one down from it
     g.drawLine(60, 280, 380, 300);
-    g.drawLine(220, 290, 212, 464);
+    g.drawLine(220, 290, 212, 468);
     // the east island: a line down, and one across its eastern half only: three territories
-    g.drawLine(590, 126, 581, 496);
+    g.drawLine(590, 126, 581, 503);
     g.drawLine(585, 320, 760, 330);
     g.dispose();
     return image;
