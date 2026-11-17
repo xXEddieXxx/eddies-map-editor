@@ -1,16 +1,30 @@
-# Eddie's Map Editor: user guide
+# Eddie's Map Editor
 
 <div class="hero" markdown>
 
-**How to make and change a TripleA map with the editor, tool by tool and control by control.**
-The pages use the editor's own words: a heading is a tool or a control as you see it on screen,
-and the numbers in a picture are explained below it. For installing the editor see the
-[README on GitHub](https://github.com/xXEddieXxx/eddies-map-editor#get-started).
+**A map editor for TripleA.** Turn a picture into territories, give nations their land, units
+and rules, and play the map in TripleA, without writing XML by hand. This site is the user
+guide: a page for every tool, with pictures.
+
+[Download the editor](https://github.com/xXEddieXxx/eddies-map-editor/releases/latest){ .md-button .md-button--primary }
+[Make your first map](getting-started.md){ .md-button }
 
 </div>
 
-The pictures show the dark theme. The editor follows TripleA's look: with a light TripleA it is
-light, with the same controls in the same places.
+## What you can do with it
+
+- **Territories from a picture.** Draw borders as dark lines, the editor finds the territories,
+  sea zones and neighbours. Draw, erase, split and merge later.
+- **Owners, values and units** one territory at a time or with a paint brush. Capitals, victory
+  cities, places for names and flags.
+- **Nations** with alliance, colour, flag, starting PUs and their own rules. Diplomacy,
+  objectives, technologies.
+- **Units** with cost, combat values and every ability in plain words, and what each nation can
+  buy.
+- **The round**: the turn order, game options, political actions, and a trigger assistant that
+  builds triggers step by step.
+- **Check and Play.** Check loads the map as TripleA does and says what stops the game; Play
+  starts TripleA with your map.
 
 ## Start here
 
@@ -24,10 +38,6 @@ light, with the same controls in the same places.
 
     The header, the sidebar, the map beside the tools, the keys, saving and undo.
 
-- [**Menus**](menus.md)
-
-    The File menu, the map picture menu, View, Paint, Places, Sort and the ⋯ list.
-
 - [**New map**](new-map.md)
 
     The wizard that starts a map from a picture in three steps.
@@ -36,9 +46,15 @@ light, with the same controls in the same places.
 
     What to do next, the problems, the overview and a tile per tool.
 
+- [**Menus**](menus.md)
+
+    The File menu, the map picture menu, View, Paint, Places, Sort and the ⋯ list.
+
 </div>
 
 ## The tools
+
+Every tool has a page that describes each of its controls.
 
 <div class="grid cards" markdown>
 
@@ -174,3 +190,12 @@ back to the list.
 
 Found a bug or miss a feature? Open an issue at
 [github.com/xXEddieXxx/eddies-map-editor/issues](https://github.com/xXEddieXxx/eddies-map-editor/issues).
+
+## About this guide
+
+The pages use the editor's own words: a heading is a tool or a control as you see it on screen.
+A picture has red numbers at the controls, and the list below the picture explains them in that
+order. The pictures show the dark theme; the editor follows TripleA's look, so with a light
+TripleA it is light, with the same controls in the same places. For installing the editor see the
+[README on GitHub](https://github.com/xXEddieXxx/eddies-map-editor#get-started); each release
+names the TripleA release it was tested with.
