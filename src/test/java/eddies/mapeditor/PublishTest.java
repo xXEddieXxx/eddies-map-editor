@@ -120,6 +120,31 @@ final class PublishTest {
         .containsEntry("map_name", "Island Wars");
   }
 
+  @DisplayName("The list says where the version lives and what it is: a whole number in map.yml,"
+      + " not the game file's version; one with a point is to do")
+  @Test
+  void versionItemTellsTheFormat() throws Exception {
+    givenSavedMap();
+    final Path xml = MapFolder.gamesOf(givenRoot()).values().iterator().next();
+    Files.writeString(
+        xml, Files.readString(xml).replaceFirst("<info\\b", "<info version=\"0.020\""));
+
+    final Item none = PublishEditor.versionItem(givenRoot(), "");
+    final Item point = PublishEditor.versionItem(givenRoot(), "0.020");
+    final Item whole = PublishEditor.versionItem(givenRoot(), "3");
+
+    assertThat(none.text()).isEqualTo("No version in map.yml yet");
+    assertThat(none.hint())
+        .as("the whole number asked for, and the game file's version named as not it")
+        .contains("whole number")
+        .contains("version=\"0.020\" in the game file is not it");
+    assertThat(point)
+        .as("a version with a point is to do, and told why")
+        .returns(Status.TODO, Item::status)
+        .returns("Version 0.020 is no whole number", Item::text);
+    assertThat(whole).returns(Status.DONE, Item::status).returns("Version 3", Item::text);
+  }
+
   @DisplayName("Raise makes the version one higher, 1 for a map without one")
   @Test
   void raisesVersion() {

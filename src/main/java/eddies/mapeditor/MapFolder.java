@@ -1465,6 +1465,11 @@ class MapFolder {
   }
 
   /** The version after this one: its whole number raised by one, 1 for none. */
+  /** Whether the version is what TripleA's guide asks for: a whole number, eg 1. */
+  static boolean isWholeNumber(final String version) {
+    return WHOLE_NUMBER.matcher(version.strip()).matches();
+  }
+
   static String raised(final String version) {
     final Matcher number = WHOLE_NUMBER.matcher(version.strip());
     return String.valueOf(number.lookingAt() ? Integer.parseInt(number.group()) + 1 : 1);

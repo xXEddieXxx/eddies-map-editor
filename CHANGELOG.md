@@ -9,6 +9,14 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 
 ### Fixed
 
+- **Production > Resources cut off headings and values** (#23). The table of starting resources
+  sizes each column to its heading and its widest number, at least five figures, takes the
+  window's width when its columns need more than the cards above, and scrolls sideways only
+  beyond that.
+- **Publish said "No version yet" with a version in the game file** (#25). The list now says
+  that the version lives in map.yml, that TripleA's guide asks for a whole number raised with
+  each update, and that the game file's own version is not it. A version with a point or
+  letters is listed as to do, and typing one is refused with a word on the format.
 - **Backup files in the map's folder** (#15). The first version of each file a save changes is no
   longer kept as `.bak` beside it, but in the editor's own Backups folder, `eddies-map-editor/Backups`
   in your home folder, a folder per map with the map's paths below it. A copied or uploaded map

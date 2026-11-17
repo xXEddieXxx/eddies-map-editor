@@ -328,9 +328,10 @@ final class PublishEditor implements Editor {
     raise.setToolTipText("One higher, for an update you upload");
     cards.field(
         "Version",
-        "A simple number, raised with each update you upload (map.yml version). TripleA's guide"
-            + " asks for it; today's TripleA tells players that their map is out of date by the"
-            + " day of your last upload.",
+        "A whole number, raised with each update you upload (map.yml version): 1, then 2."
+            + " TripleA's guide asks for it; today's TripleA tells players that their map is out"
+            + " of date by the day of your last upload. The version in the game file is another"
+            + " thing, which TripleA 2.6 and later read no more.",
         leftAligned(version, Box.createHorizontalStrut(Theme.GAP_S), raise));
     inGameFile().ifPresent(cards::note);
   }
@@ -400,6 +401,12 @@ final class PublishEditor implements Editor {
   private void writeVersion(final String typed) {
     final Optional<Path> root = root();
     if (root.isEmpty() || typed.strip().equals(versionOf(root.get()))) {
+      return;
+    }
+    if (!typed.isBlank() && !MapFolder.isWholeNumber(typed)) {
+      // told at once, as 0.020 or 1.5 is what map makers try first
+      version.setText(versionOf(root.get()));
+      Dialogs.toast(page, "! TripleA takes a whole number as the version: 1, then 2");
       return;
     }
     try {
@@ -514,14 +521,7 @@ final class PublishEditor implements Editor {
                   details.name().isEmpty() ? "The map has no name" : "The map's name is too long",
                   "The list of maps shows it; at most " + NAME_MAX_LENGTH + " characters.")
               : new Item(Id.NAME, Status.DONE, "Name: " + details.name(), ""));
-      items.add(
-          details.version().isEmpty()
-              ? new Item(
-                  Id.VERSION,
-                  Status.TODO,
-                  "No version yet",
-                  "TripleA's guide asks for a number that goes up with each update.")
-              : new Item(Id.VERSION, Status.DONE, "Version " + details.version(), ""));
+      items.add(versionItem(root, details.version()));
     } catch (final IOException e) {
       items.add(
           new Item(
@@ -585,6 +585,54 @@ final class PublishEditor implements Editor {
                 + MapFolder.DESCRIPTION_MAX_LENGTH
                 + ".")
         : new Item(Id.DESCRIPTION, Status.DONE, "Description (description.html)", "");
+  }
+
+  /**
+   * The version in map.yml: done for a whole number; to do without one, or with one that is no
+   * whole number, as TripleA's guide asks for 1, 2, 3; the game file's own version is named as
+   * not it, as map makers look for the version there.
+   */
+  static Item versionItem(final Path root, final String version) {
+    final String asked =
+        "TripleA's guide asks for a whole number in map.yml that goes up with each update: 1,"
+            + " then 2. Today's TripleA tells players of an update by the day of the upload.";
+    if (version.isEmpty()) {
+      final String inGameFile =
+          gameFileVersion(root)
+              .map(
+                  v ->
+                      " The version=\"" + SearchList.escape(v) + "\" in the game file is not it:"
+                          + " TripleA 2.6 and later read it no more.")
+              .orElse("");
+      return new Item(Id.VERSION, Status.TODO, "No version in map.yml yet", asked + inGameFile);
+    }
+    if (!MapFolder.isWholeNumber(version)) {
+      return new Item(
+          Id.VERSION,
+          Status.TODO,
+          "Version " + SearchList.escape(version) + " is no whole number",
+          asked + " Set version 1 writes 1; Raise then counts up.");
+    }
+    return new Item(Id.VERSION, Status.DONE, "Version " + version, "");
+  }
+
+  // the version="" of the map's first game file, which TripleA 2.6 and later read no more
+  private static Optional<String> gameFileVersion(final Path root) {
+    try {
+      return MapFolder.gamesOf(root).values().stream()
+          .findFirst()
+          .flatMap(
+              xml -> {
+                try {
+                  final Matcher found = INFO_VERSION.matcher(MapFolder.readText(xml));
+                  return found.find() ? Optional.of(found.group(1)) : Optional.empty();
+                } catch (final IOException | RuntimeException e) {
+                  return Optional.empty();
+                }
+              });
+    } catch (final IOException | RuntimeException e) {
+      return Optional.empty();
+    }
   }
 
   private static Item leftoversItem(final Path root) {
