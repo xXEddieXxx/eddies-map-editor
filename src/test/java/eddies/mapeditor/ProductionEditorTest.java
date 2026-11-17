@@ -73,6 +73,41 @@ final class ProductionEditorTest {
     return SwingUtilities.convertRectangle(part.getParent(), part.getBounds(), page);
   }
 
+  @DisplayName("Resources > At the start: each column as wide as its heading and its widest number,"
+      + " a number column at least five figures wide")
+  @Test
+  void startTableColumnsFitTheirContent(@TempDir final Path folder) {
+    final MapProject project = givenMinimap(folder);
+    project.edit(g -> ProductionXml.withResource(g, "Production Points Reserve"));
+    project.edit(
+        g ->
+            MapXml.withStartingResource(
+                g, MapXml.nations(g).getFirst(), "Production Points Reserve", 99999));
+    final JTabbedPane page = (JTabbedPane) new ProductionEditor(project).page();
+    page.setSelectedIndex(
+        IntStream.range(0, page.getTabCount())
+            .filter(i -> "Resources".equals(page.getTitleAt(i)))
+            .findFirst()
+            .orElseThrow());
+    givenLaidOut(page, 1200, 800);
+
+    final JTable start =
+        find(page, JTable.class, t -> "Nation".equals(t.getColumnName(0)));
+    final java.awt.FontMetrics header =
+        start.getFontMetrics(start.getTableHeader().getFont());
+    final java.awt.FontMetrics cells = start.getFontMetrics(start.getFont());
+
+    for (int i = 0; i < start.getColumnCount(); i++) {
+      final int width = start.getColumnModel().getColumn(i).getWidth();
+      assertThat(width)
+          .as("column %s wide enough for its heading", start.getColumnName(i))
+          .isGreaterThan(header.stringWidth(start.getColumnName(i)));
+      if (i > 0) {
+        assertThat(width).as("and for five figures").isGreaterThan(cells.stringWidth("99999"));
+      }
+    }
+  }
+
   @DisplayName("Buy: the rules table reaches down to Remove list, no empty room between")
   @Test
   void rulesTableFillsTheHeight(@TempDir final Path folder) {

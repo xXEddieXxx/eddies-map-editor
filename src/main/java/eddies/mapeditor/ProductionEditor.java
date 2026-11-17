@@ -502,15 +502,6 @@ final class ProductionEditor implements Editor {
       Details.comboColumn(table, 1, gives);
     }
 
-    /** The width of the table's columns at their least. */
-    private static int leastWidth(final JTable table) {
-      int width = 0;
-      for (int i = 0; i < table.getColumnCount(); i++) {
-        width += table.getColumnModel().getColumn(i).getMinWidth();
-      }
-      return width;
-    }
-
     /** "Remove rule" while a row is chosen; "Remove list" below it, apart. */
     private JComponent newRemoveRow(
         final String frontier, final RulesTable model, final JTable table) {
@@ -862,12 +853,22 @@ final class ProductionEditor implements Editor {
     }
   }
 
+  /** The width of a table's columns at their least. */
+  static int leastWidth(final JTable table) {
+    int width = 0;
+    for (int i = 0; i < table.getColumnCount(); i++) {
+      width += table.getColumnModel().getColumn(i).getMinWidth();
+    }
+    return width;
+  }
+
   /** The resources with their icons, and what each nation has of them at the start. */
   private static final class ResourcesPage {
     private static final int ICON_SIZE = 20;
     private static final int MAX_WIDTH = 760;
-    private static final int NATION_WIDTH = 160;
-    private static final int NUMBER_WIDTH = 120;
+    // the least a column takes: a nation's name, a number of five figures
+    private static final int NATION_WIDTH = 120;
+    private static final String WIDEST_NUMBER = "99999";
     private final MapProject project;
     private final Form form = new Form(420);
     private final JComponent page = SwingComponents.newJScrollPane(form);
@@ -879,13 +880,16 @@ final class ProductionEditor implements Editor {
           new ComponentAdapter() {
             @Override
             public void componentResized(final ComponentEvent e) {
-              // card, line and table one width, at most 760 px, at the left
+              // card and line at most 760 px, at the left; the table wider for many resources,
+              // so it takes
+              // the window's width before it scrolls
+              final int least = Math.max(MAX_WIDTH, startShown.map(t -> leastWidth(t) + 2).orElse(0));
               form.setBorder(
                   BorderFactory.createEmptyBorder(
                       Theme.GAP_XS,
                       Theme.GAP_L,
                       Theme.GAP_L,
-                      Math.max(Theme.GAP_L, form.getWidth() - Theme.GAP_L - MAX_WIDTH)));
+                      Math.max(Theme.GAP_L, form.getWidth() - Theme.GAP_L - least)));
             }
           });
       project.onChange(this::show);
@@ -915,11 +919,24 @@ final class ProductionEditor implements Editor {
       form.section("At the start");
       final JTable start = newStartTable();
       startShown = Optional.of(start);
-      final JScrollPane table = new JScrollPane(start);
-      final Dimension size = start.getPreferredSize();
-      table.setPreferredSize(
-          new Dimension(
-              size.width + 2, size.height + start.getTableHeader().getPreferredSize().height + 2));
+      final JScrollPane table =
+          new JScrollPane(start) {
+            @Serial private static final long serialVersionUID = 1L;
+
+            // as tall as the table; with the scroll bar's height once the columns no longer fit
+            @Override
+            public Dimension getPreferredSize() {
+              final Dimension size = start.getPreferredSize();
+              final int header = start.getTableHeader().getPreferredSize().height;
+              final boolean scrolls = getWidth() > 0 && getWidth() < leastWidth(start) + 2;
+              return new Dimension(
+                  size.width + 2,
+                  size.height
+                      + header
+                      + 2
+                      + (scrolls ? getHorizontalScrollBar().getPreferredSize().height : 0));
+            }
+          };
       form.row(table);
       form.end();
     }
@@ -961,13 +978,11 @@ final class ProductionEditor implements Editor {
           new JTable(model) {
             @Serial private static final long serialVersionUID = 1L;
 
-            // as wide as the card above while its columns fit; else they keep their width and
-            // the table scrolls
+            // as wide as the room while its columns fit; else they keep their width and the
+            // table scrolls
             @Override
             public boolean getScrollableTracksViewportWidth() {
-              return getParent() != null
-                  && getParent().getWidth()
-                      >= NATION_WIDTH + NUMBER_WIDTH * (getColumnCount() - 1);
+              return getParent() != null && getParent().getWidth() >= leastWidth(this);
             }
           };
       start.setTableHeader(
@@ -998,13 +1013,34 @@ final class ProductionEditor implements Editor {
             }
             return cell;
           };
+      sizeColumns(start, model);
       for (int i = 0; i < start.getColumnCount(); i++) {
-        final TableColumn column = start.getColumnModel().getColumn(i);
-        column.setPreferredWidth(i == 0 ? NATION_WIDTH : NUMBER_WIDTH);
-        column.setHeaderRenderer(aligned);
+        start.getColumnModel().getColumn(i).setHeaderRenderer(aligned);
       }
       start.setPreferredScrollableViewportSize(start.getPreferredSize());
       return start;
+    }
+
+    /**
+     * Each column as wide as its heading or its widest entry, a number column at least as wide
+     * as five figures: a resource's name and a nation's wealth show whole.
+     */
+    static void sizeColumns(final JTable start, final StartTable model) {
+      final FontMetrics header = start.getFontMetrics(start.getTableHeader().getFont());
+      final FontMetrics cells = start.getFontMetrics(start.getFont());
+      final int pad = 24;
+      for (int i = 0; i < start.getColumnCount(); i++) {
+        int width =
+            Math.max(
+                i == 0 ? NATION_WIDTH : cells.stringWidth(WIDEST_NUMBER) + pad,
+                header.stringWidth(start.getColumnName(i)) + pad);
+        for (int row = 0; row < model.getRowCount(); row++) {
+          width = Math.max(width, cells.stringWidth(String.valueOf(model.getValueAt(row, i))) + pad);
+        }
+        final TableColumn column = start.getColumnModel().getColumn(i);
+        column.setMinWidth(width);
+        column.setPreferredWidth(width);
+      }
     }
 
     /** The resource's icon in the map's folder at the size the game shows it, else its letter. */
