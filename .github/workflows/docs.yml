@@ -1,0 +1,49 @@
+name: Docs
+
+# Builds the user guide (docs/guide, mkdocs.yml) with MkDocs Material and publishes it to GitHub
+# Pages on each push to main that touches it. Pages must be set to "GitHub Actions" as its source
+# once, under Settings > Pages.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/guide/**"
+      - "mkdocs.yml"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: MkDocs Material
+        run: pip install mkdocs-material
+      - name: Build, refusing a broken link
+        run: mkdocs build --strict
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

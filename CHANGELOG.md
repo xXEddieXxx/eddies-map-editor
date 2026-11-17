@@ -65,7 +65,8 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 - A **user guide** in `docs/guide`: an overview with the window, keys and menus, a page per tool
   that describes every control, and a picture per page with numbered callouts. The pictures are
   made from the running editor (GuideScreenshots) in the dark theme; a test keeps every tool,
-  view and menu item named in the guide.
+  view and menu item named in the guide. The guide is published as a site at
+  https://xxeddiexxx.github.io/eddies-map-editor/ by MkDocs Material, built on each push.
 
 ### For developers
 

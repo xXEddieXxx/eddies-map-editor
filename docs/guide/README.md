@@ -1,7 +1,7 @@
 # Eddie's Map Editor: user guide
 
 How to make and change a TripleA map with the editor, tool by tool and control by control. For
-installing it see the [README](../../README.md). The pages use the editor's own words: a heading
+installing it see the [README on GitHub](https://github.com/xXEddieXxx/eddies-map-editor#get-started). The pages use the editor's own words: a heading
 is a tool or a control as you see it on screen, and the numbers in a picture are explained below
 it.
 

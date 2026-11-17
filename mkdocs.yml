@@ -1,0 +1,78 @@
+# The user guide as a site: docs/guide rendered by MkDocs with the Material theme, built and
+# published by .github/workflows/docs.yml on each push to main. The Markdown stays the source.
+site_name: Eddie's Map Editor
+site_description: User guide of Eddie's Map Editor, a map editor for TripleA
+site_url: https://xxeddiexxx.github.io/eddies-map-editor/
+repo_url: https://github.com/xXEddieXxx/eddies-map-editor
+repo_name: eddies-map-editor
+edit_uri: edit/main/docs/guide/
+docs_dir: docs/guide
+site_dir: build/site
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.action.edit
+    - toc.integrate
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue grey
+      accent: light blue
+      toggle:
+        icon: material/weather-sunny
+        name: Light
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue grey
+      accent: light blue
+      toggle:
+        icon: material/weather-night
+        name: Dark
+
+markdown_extensions:
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+nav:
+  - Guide: README.md
+  - Menus: menus.md
+  - New map: new-map.md
+  - Home: home.md
+  - Map:
+      - Territories: territories.md
+      - Connections: connections.md
+      - Canals: canals.md
+      - Terrain effects: terrain-effects.md
+      - Map look: map-look.md
+  - Players:
+      - Nations: nations.md
+      - Politics: politics.md
+      - Objectives: objectives.md
+      - Technology: technology.md
+  - Units & economy:
+      - Units: units.md
+      - Production: production.md
+  - Game flow:
+      - Turn order: turn-order.md
+      - Game options: game-options.md
+      - Actions: actions.md
+      - Triggers: triggers.md
+  - Texts & sound:
+      - Game notes: game-notes.md
+      - Texts: texts.md
+      - Sounds: sounds.md
+  - Share:
+      - Publish: publish.md
+  - Advanced:
+      - Attachments: attachments.md
+      - Files: files.md
