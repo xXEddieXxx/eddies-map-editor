@@ -99,4 +99,4 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 
 - The tests run against the installed TripleA. With TripleA 2026-09.16 one test fails,
   StackingLimitsTest.setsUnitLimits: that TripleA stores a unit's movementLimit as its
-  placementLimit, which TripleA has fixed since. TripleA 2026-11.16 or later passes it.
+  placementLimit, which TripleA has fixed since. With TripleA 2026-11.16 every test passes.
