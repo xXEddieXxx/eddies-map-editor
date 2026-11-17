@@ -90,6 +90,11 @@ What the game draws on every territory, shown to drag. A right click on a place 
   **Terrain effects**, **Victory cities**, **Blockades**, **Convoys**, **Kamikaze**: each ticks
   one kind of place on or off. The tool tip names the file it is kept in, for example
   place.txt for units and name_place.txt for names. "(none)" means the map has none of that kind.
+  A place shows what the game draws there: the name or PU value in the map's font, the PU
+  picture, the capital's large flag, the victory city marker, each with an outline and a dot on
+  the point the file keeps, which is the text's left end on its baseline or a picture's top left.
+  The Game view draws the same things where TripleA draws them, also for territories without a
+  place, as far as Map look's "On the map" boxes show them.
 - **Lay out unit places** arranges the unit places of every territory: how many at most per
   territory, and whether units beyond the places go on beside the last place.
 - **Create missing places** adds a place of a kind for every territory that lacks one, for

@@ -5,7 +5,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import games.strategy.triplea.attachments.TerritoryAttachment;
 import games.strategy.triplea.ui.mapdata.MapData;
 import java.awt.Point;
+import java.awt.Rectangle;
+import java.awt.image.BufferedImage;
 import java.nio.file.Files;
+import javax.imageio.ImageIO;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -287,7 +290,83 @@ final class MapPlacesTest {
     // then
     assertThat(value.x).as("the place is the text's left end").isGreaterThan(place.x);
     assertThat(value.y).as("and on its baseline").isLessThan(place.y);
-    assertThat(effect).as("a picture's mark stays on its place").isEqualTo(place);
+    assertThat(effect)
+        .as("a picture's mark is on the middle of the picture, drawn from its top left")
+        .isEqualTo(new Point(place.x + 16, place.y + 16));
+  }
+
+  @DisplayName("A capital's mark sits on the middle of its flag, a value's on its PU picture, a"
+      + " victory city's on its marker: what the game draws from the place's top left")
+  @Test
+  void marksOnWhatTheGameDraws() throws Exception {
+    // given: the map's own large flag of 100 px, a PU coin of 20 x 10 and a vc marker of 24 x 24
+    final MapProject project = givenSavedMapWithUnknownPlace();
+    final Path map = project.getFolder().orElseThrow();
+    final BufferedImage coin = new BufferedImage(20, 10, BufferedImage.TYPE_INT_ARGB);
+    Files.createDirectories(map.resolve("PUs"));
+    ImageIO.write(coin, "png", map.resolve("PUs").resolve("1.png").toFile());
+    final BufferedImage vc = new BufferedImage(24, 24, BufferedImage.TYPE_INT_ARGB);
+    Files.createDirectories(map.resolve("misc"));
+    ImageIO.write(vc, "png", map.resolve("misc").resolve("vc.png").toFile());
+    project.edit(game -> MapXml.withCapital(game, TERRITORY, "Red"));
+    project.edit(game -> MapXml.withProduction(game, TERRITORY, 1));
+    final MapFiles files = project.getFiles();
+    final Point place = new Point(40, 60);
+
+    // when
+    final Rectangle flag = files.markerDrawn(project.game(), Marker.CAPITAL, TERRITORY, place);
+    final Rectangle value = files.markerDrawn(project.game(), Marker.VALUE, TERRITORY, place);
+    final Rectangle marker = files.markerDrawn(project.game(), Marker.VICTORY_CITY, TERRITORY, place);
+    final Rectangle name = files.markerDrawn(project.game(), Marker.NAME, TERRITORY, place);
+
+    // then
+    assertThat(flag).as("the large flag the map has, 100 px, from the place").isEqualTo(new Rectangle(40, 60, 100, 100));
+    assertThat(files.markerMiddle(project.game(), Marker.CAPITAL, TERRITORY, place))
+        .as("the mark on the flag's middle")
+        .isEqualTo(new Point(90, 110));
+    assertThat(value).as("the PU coin from the place").isEqualTo(new Rectangle(40, 60, 20, 10));
+    assertThat(marker).as("the vc marker from the place").isEqualTo(new Rectangle(40, 60, 24, 24));
+    assertThat(name.x).as("a text from its left end").isEqualTo(40);
+    assertThat(name.y).as("above its baseline").isLessThan(60);
+    assertThat(name.y + name.height).as("to below it").isGreaterThan(60);
+  }
+
+  @DisplayName("Without a place the game centers a name in the territory and puts the flag's corner"
+      + " on the center: the editor draws them there")
+  @Test
+  void drawsWhereTheGameFallsBack() throws Exception {
+    // given: a map with no name place and no capital place for the territory
+    final MapProject project = givenSavedMapWithUnknownPlace();
+    project.edit(game -> MapXml.withCapital(game, TERRITORY, "Red"));
+    final MapFiles files = project.getFiles().withPlaces(project.getFiles().places().without(List.of(TERRITORY)));
+    final Rectangle bounds = files.polygons().get(TERRITORY).getFirst().getBounds();
+
+    // when
+    final Point name = files.gameMarkerPlace(project.game(), Marker.NAME, TERRITORY).orElseThrow();
+    final Point capital =
+        files.gameMarkerPlace(project.game(), Marker.CAPITAL, TERRITORY).orElseThrow();
+    final Rectangle nameDrawn = files.markerDrawn(project.game(), Marker.NAME, TERRITORY, name);
+
+    // then
+    assertThat(nameDrawn.getCenterX())
+        .as("the name's text centered on the territory's bounds")
+        .isCloseTo(bounds.getCenterX(), org.assertj.core.data.Offset.offset(2.0));
+    assertThat(capital).as("the flag's top left on the center").isEqualTo(files.centers().get(TERRITORY));
+    assertThat(files.gameMarkerPlace(project.game(), Marker.COMMENT, TERRITORY))
+        .as("no comment without a place")
+        .isEmpty();
+  }
+
+  @DisplayName("The count of a stack is drawn where the game draws it: a quarter in and the unit"
+      + " height down, or as units.counter.offset says")
+  @Test
+  void unitCounterOffset() throws Exception {
+    final MapProject project = givenSavedMapWithUnknownPlace();
+
+    assertThat(project.getFiles().unitCounterOffset()).as("the game's default for 48 px units").isEqualTo(new Point(12, 48));
+    project.setMapProperty("units.counter.offset.width", "30");
+    project.setMapProperty("units.counter.offset.height", "20");
+    assertThat(project.getFiles().unitCounterOffset()).isEqualTo(new Point(30, 20));
   }
 
   @DisplayName("Drawn from the top left, a name's mark is still on the middle of its text")

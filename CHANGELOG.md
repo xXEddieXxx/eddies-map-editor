@@ -9,6 +9,15 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 
 ### Fixed
 
+- **Names, PUs, capitals and unit counts drawn off from where TripleA draws them** (#16, part of
+  #17). The editor drew a letter badge or a star centered on a place, while the game draws a name
+  from the place's left end on its baseline and a flag or PU picture from the place's top left.
+  Now a place in the Places mode shows what the game draws there, the name in the map's font, the
+  PU picture, the large flag, the victory city marker, with an outline and a dot on the point the
+  file keeps. The Game view draws the same at the game's positions, also for territories without
+  a place, as far as Map look's "On the map" boxes show them. A stack's count sits where the game
+  puts it, a quarter in and a unit's height down, or as `units.counter.offset` says. Create
+  missing places centers the name's text and the map's own flag on the territory.
 - **Units drawn as name badges** (#2). Pictures a map keeps in its `units` folder itself, shared
   by every nation as 1941 Global Command Decision keeps its factories and bunkers, are found. The
   nation's own picture still wins. Not yet confirmed on that map by the map maker who reported it.

@@ -1,5 +1,6 @@
 package eddies.mapeditor;
 
+import games.strategy.triplea.ui.mapdata.MapData;
 import games.strategy.triplea.Constants;
 import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
@@ -32,6 +33,7 @@ import java.awt.geom.PathIterator;
 import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.net.URL;
 import java.io.Serial;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -952,6 +954,9 @@ final class MapCanvas extends JComponent {
                 (int) Math.ceil(visible.width / zoom),
                 (int) Math.ceil(visible.height / zoom)));
     shown.forEach(territory -> paintBadges(g, territory));
+    if (mode == MapMode.GAME) {
+      shown.forEach(territory -> paintGameMarkers(g, territory));
+    }
     if (showingEffects) {
       final Font letters = getFont().deriveFont(Font.BOLD, 11f);
       shown.forEach(territory -> paintEffects(g, territory, letters));
@@ -1248,6 +1253,113 @@ final class MapCanvas extends JComponent {
             misc -> decorationPictures.computeIfAbsent(misc.resolve(picture), MapCanvas::read));
   }
 
+  /**
+   * The territory's name, value, capital flag, victory city and comment as the game draws them,
+   * at their places or where the game falls back to without one ({@link
+   * MapFiles#gameMarkerPlace}); what Map look's "On the map" says the game shows.
+   */
+  private void paintGameMarkers(final Graphics2D g, final String territory) {
+    final MapFiles files = project.getFiles();
+    final Game game = project.game();
+    final Look look = look(territory);
+    final boolean names =
+        look.water()
+            ? files.shows(MapData.PROPERTY_MAP_SHOWSEAZONENAMES, false)
+            : files.shows(MapData.PROPERTY_MAP_SHOWTERRITORYNAMES, true);
+    if (names) {
+      files
+          .gameMarkerPlace(game, Marker.NAME, territory)
+          .ifPresent(at -> paintGameMarker(g, Marker.NAME, territory, at, 1f));
+    }
+    if (!look.water()
+        && MapXml.production(game, territory) > 0
+        && files.shows(MapData.PROPERTY_MAP_SHOWRESOURCES, true)) {
+      files
+          .gameMarkerPlace(game, Marker.VALUE, territory)
+          .ifPresent(at -> paintGameMarker(g, Marker.VALUE, territory, at, 1f));
+    }
+    if (MapXml.isCapital(game, territory)
+        && files.shows(MapData.PROPERTY_MAP_SHOWCAPITOLMARKERS, true)) {
+      files
+          .gameMarkerPlace(game, Marker.CAPITAL, territory)
+          .ifPresent(at -> paintGameMarker(g, Marker.CAPITAL, territory, at, 1f));
+    }
+    if (MapXml.isVictoryCity(game, territory)) {
+      files
+          .gameMarkerPlace(game, Marker.VICTORY_CITY, territory)
+          .ifPresent(at -> paintGameMarker(g, Marker.VICTORY_CITY, territory, at, 1f));
+    }
+    if (files.shows(MapData.PROPERTY_MAP_SHOWCOMMENTS, true)) {
+      files
+          .gameMarkerPlace(game, Marker.COMMENT, territory)
+          .ifPresent(at -> paintGameMarker(g, Marker.COMMENT, territory, at, 1f));
+    }
+  }
+
+  /**
+   * One marker as the game draws it at the place: its picture with its top left there, scaled
+   * with the map; a text in the map's name font from its left end on the baseline, in black as
+   * the game draws it, a value's picture where the map has one.
+   */
+  private void paintGameMarker(
+      final Graphics2D g, final Marker marker, final String territory, final Point at, final float alpha) {
+    final MapFiles files = project.getFiles();
+    final Game game = project.game();
+    final Rectangle drawn = files.markerDrawn(game, marker, territory, at);
+    final Rectangle on = scaled(drawn);
+    final Composite before = g.getComposite();
+    if (alpha < 1f) {
+      g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
+    }
+    final Optional<Image> picture =
+        files.markerPicture(game, marker, territory).flatMap(this::markerPicture);
+    if (picture.isPresent()) {
+      g.drawImage(picture.get(), on.x, on.y, on.width, on.height, null);
+    } else if (marker == Marker.NAME || marker == Marker.VALUE || marker == Marker.COMMENT) {
+      final String text =
+          marker == Marker.VALUE ? String.valueOf(MapXml.production(game, territory)) : territory;
+      g.setFont(MapFiles.NAME_FONT.deriveFont((float) (MapFiles.NAME_FONT.getSize2D() * zoom)));
+      g.setColor(Color.BLACK);
+      final int baseline = on.y + (int) Math.round(g.getFontMetrics().getAscent());
+      g.drawString(text, on.x, baseline);
+    } else {
+      // a marker the game has no picture for either: its letter in a badge of the game's size
+      g.setColor(BADGE);
+      g.fillOval(on.x, on.y, on.width, on.height);
+      g.setColor(BADGE_TEXT);
+      g.setFont(getFont().deriveFont(Font.BOLD, Math.max(9f, on.height * 0.5f)));
+      final FontMetrics metrics = g.getFontMetrics();
+      g.drawString(
+          marker.getLetter(),
+          on.x + (on.width - metrics.stringWidth(marker.getLetter())) / 2,
+          on.y + (on.height + metrics.getAscent() - metrics.getDescent()) / 2);
+    }
+    g.setComposite(before);
+  }
+
+  private Rectangle scaled(final Rectangle onMap) {
+    return new Rectangle(
+        (int) Math.round(onMap.x * zoom),
+        (int) Math.round(onMap.y * zoom),
+        (int) Math.max(1, Math.round(onMap.width * zoom)),
+        (int) Math.max(1, Math.round(onMap.height * zoom)));
+  }
+
+  // the markers' pictures by their file, read once: flags, PU coins, misc markers
+  private final transient Map<String, Optional<Image>> markerPictures = new HashMap<>();
+
+  private Optional<Image> markerPicture(final URL picture) {
+    return markerPictures.computeIfAbsent(
+        picture.toString(),
+        key -> {
+          try {
+            return Optional.ofNullable(ImageIO.read(picture));
+          } catch (final IOException e) {
+            return Optional.empty();
+          }
+        });
+  }
+
   /** How the marker or center is called, with its number for effects, and its territory. */
   private static String label(final Place place) {
     final String name =
@@ -1492,15 +1604,27 @@ final class MapCanvas extends JComponent {
       if (place.index() == unitPlacesOf(place.territory()).size() - 1) {
         paintOverflowArrow(g, shown, project.getFiles().overflowsToLeft(place.territory()));
       }
-    } else if (place.marker().equals(Optional.of(Marker.CAPITAL))
-        && !hovered.map(shown::contains).orElse(false)) {
-      // a star, as on maps; its name while the mouse is over it, as the other markers'
-      final Polygon star = star((int) shown.getCenterX(), (int) shown.getCenterY(), PLACE_DOT + 3);
-      g.setStroke(new BasicStroke(1));
-      g.setColor(CAPITAL_STAR);
-      g.fill(star);
-      g.setColor(CAPITAL_STAR_LINE);
-      g.draw(star);
+    } else if (place.marker().isPresent() && place.marker().get() != Marker.EFFECT) {
+      // what the game draws there, its outline, and the place itself as a dot: the map maker
+      // sees the name, the value or the flag where the game puts it
+      final Marker marker = place.marker().get();
+      final Point by = place.equals(dragged) ? draggedBy : new Point();
+      final Point at = new Point(place.at().x + (int) (by.x / zoom), place.at().y + (int) (by.y / zoom));
+      final Rectangle drawn =
+          project.getFiles().markerDrawn(project.game(), marker, place.territory(), at);
+      final Rectangle outline = scaled(drawn);
+      paintGameMarker(g, marker, place.territory(), at, 0.85f);
+      final boolean ofSelected = place.territory().equals(selected);
+      g.setColor(ofSelected ? SELECTED_PLACE : accent);
+      g.setStroke(new BasicStroke(1.5f));
+      g.drawRoundRect(outline.x - 2, outline.y - 2, outline.width + 4, outline.height + 4, 6, 6);
+      // the point the file keeps: the text's left end on its baseline, a picture's top left
+      final int px = (int) (at.x * zoom);
+      final int py = (int) (at.y * zoom);
+      g.fillOval(px - 3, py - 3, 6, 6);
+      if (hovered.map(shown::contains).orElse(false)) {
+        paintBadge(g, label(place), (int) shown.getCenterX(), shown.y - PLACE_DOT - 6);
+      }
     } else {
       // a letter on the point, the whole name while the mouse is over it
       final boolean hover = hovered.map(shown::contains).orElse(false);
@@ -2325,8 +2449,11 @@ final class MapCanvas extends JComponent {
       }
       if (stack.getQuantity() > 1) {
         final String count = String.valueOf(stack.getQuantity());
-        final int textX = x + size - metrics.stringWidth(count) / 2;
-        final int textY = y + size;
+        // as the game: units.counter.offset.width and height from the place, else a quarter of
+        // the unit width in and the unit height down
+        final Point offset = project.getFiles().unitCounterOffset();
+        final int textX = x + (int) Math.round(offset.x * zoom);
+        final int textY = y + (int) Math.round(offset.y * zoom);
         g.setColor(Color.BLACK);
         g.drawString(count, textX + 1, textY + 1);
         g.setColor(Color.WHITE);

@@ -1063,7 +1063,7 @@ class MapFolder {
   }
 
   /** A picture among the game's own assets, which the game takes when a map has none. */
-  private static Optional<URL> engineAsset(final String... path) {
+  static Optional<URL> engineAsset(final String... path) {
     return Optional.ofNullable(
         MapFolder.class.getClassLoader().getResource(ResourceLoader.getAssetsFileLocation(path)));
   }

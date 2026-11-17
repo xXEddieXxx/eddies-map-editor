@@ -24,6 +24,7 @@ import java.io.InputStream;
 import java.io.StringReader;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -47,6 +48,7 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiFunction;
 import java.util.function.IntConsumer;
 import java.util.function.Function;
@@ -167,7 +169,7 @@ record MapFiles(
   // the game's default map font and the sizes of its capital flags and victory city marker
   // shortcut: a map with another map font or other flag sizes gets its names and flags slightly
   // off center; read the font from map.properties and the flag size from its flags when that shows
-  private static final Font NAME_FONT = new Font(MapImage.FONT_FAMILY_DEFAULT, Font.BOLD, 12);
+  static final Font NAME_FONT = new Font(MapImage.FONT_FAMILY_DEFAULT, Font.BOLD, 12);
   private static final int CAPITAL_FLAG_SIZE = 100;
   private static final int VICTORY_CITY_SIZE = 36;
   private static final int MAX_PLACES = 30;
@@ -2784,7 +2786,7 @@ record MapFiles(
     return read.equals(places) ? this : withPlaces(read);
   }
 
-  private MapFiles withPlaces(final Places changed) {
+  MapFiles withPlaces(final Places changed) {
     return new MapFiles(
         folder,
         polygons,
@@ -2835,13 +2837,22 @@ record MapFiles(
   private Point foundMarker(final Game game, final Marker marker, final String territory) {
     final Point middle = middle(territory);
     return switch (marker) {
-      // the game draws the flag and the marker from their top left corner, else from the center
-      case CAPITAL -> new Point(middle.x - CAPITAL_FLAG_SIZE / 2, middle.y - CAPITAL_FLAG_SIZE / 2);
+      // the game draws the flag and the marker from their top left corner, else from the center:
+      // the place so that the map's own flag, or the game's, is centered there
+      case CAPITAL -> {
+        final Dimension flag =
+            markerPictureSize(game, marker, territory)
+                .orElse(new Dimension(CAPITAL_FLAG_SIZE, CAPITAL_FLAG_SIZE));
+        yield new Point(middle.x - flag.width / 2, middle.y - flag.height / 2);
+      }
       // right of the units around the center
-      case VICTORY_CITY ->
-          new Point(
-              middle.x + UnitImageFactory.DEFAULT_UNIT_ICON_SIZE / 2 + 2,
-              middle.y - VICTORY_CITY_SIZE / 2);
+      case VICTORY_CITY -> {
+        final Dimension vc =
+            markerPictureSize(game, marker, territory)
+                .orElse(new Dimension(VICTORY_CITY_SIZE, VICTORY_CITY_SIZE));
+        yield new Point(
+            middle.x + UnitImageFactory.DEFAULT_UNIT_ICON_SIZE / 2 + 2, middle.y - vc.height / 2);
+      }
       case BLOCKADE, CONVOY, KAMIKAZE, EFFECT -> middle;
       case NAME, VALUE, COMMENT -> {
         final FontMetrics font = fontMetrics();
@@ -2872,26 +2883,186 @@ record MapFiles(
   }
 
   /**
-   * The middle of what the game draws at the marker's place: for the territory's name and value
-   * the middle of the text, as the place is its left end on the baseline, or its top left with
-   * map.drawNamesFromTopLeft; for the other markers the place itself.
+   * The middle of what the game draws at the marker's place ({@link #markerDrawn}): the middle
+   * of the name's text, of the PU picture, of the capital's flag, so a mark on it is where the
+   * map maker sees the thing in the game.
    */
   Point markerMiddle(
       final Game game, final Marker marker, final String territory, final Point place) {
-    if (marker != Marker.NAME && marker != Marker.VALUE) {
-      return place;
+    final Rectangle drawn = markerDrawn(game, marker, territory, place);
+    return new Point(drawn.x + drawn.width / 2, drawn.y + drawn.height / 2);
+  }
+
+  /**
+   * What the game draws at the marker's place, as a rectangle on the map, as TripleA's drawables
+   * draw it: a name or comment from its left end on the baseline at the place, or a font's height
+   * lower with map.drawNamesFromTopLeft (TerritoryNameDrawable); a value as its PU picture with
+   * its top left at the place where the map has one in PUs/, else as text like the name; the
+   * capital's large flag, the victory city's, blockade's and kamikaze marker's picture and a
+   * convoy flag each with its top left at the place (IDrawable.drawImage); an effect's picture
+   * likewise. A picture the map lacks is as big as the game's own.
+   */
+  Rectangle markerDrawn(
+      final Game game, final Marker marker, final String territory, final Point place) {
+    final FontMetrics font = NameMetrics.FONT;
+    final boolean fromTopLeft =
+        Boolean.parseBoolean(properties.getProperty(MapData.PROPERTY_MAP_DRAWNAMESFROMTOPLEFT));
+    // a text's baseline: at the place, or a font's height below it from the top left
+    final int baseline = place.y + (fromTopLeft ? font.getHeight() : 0);
+    final Optional<Dimension> picture = markerPictureSize(game, marker, territory);
+    return switch (marker) {
+      case NAME, COMMENT -> textDrawn(territory, place.x, baseline, font);
+      case VALUE ->
+          picture
+              .map(size -> new Rectangle(place.x, baseline, size.width, size.height))
+              .orElseGet(
+                  () ->
+                      textDrawn(
+                          String.valueOf(MapXml.production(game, territory)),
+                          place.x,
+                          baseline,
+                          font));
+      case CAPITAL ->
+          new Rectangle(
+              place, picture.orElse(new Dimension(CAPITAL_FLAG_SIZE, CAPITAL_FLAG_SIZE)));
+      case VICTORY_CITY ->
+          new Rectangle(
+              place, picture.orElse(new Dimension(VICTORY_CITY_SIZE, VICTORY_CITY_SIZE)));
+      case BLOCKADE, CONVOY, KAMIKAZE, EFFECT ->
+          new Rectangle(place, picture.orElse(new Dimension(EFFECT_SPACING, EFFECT_SPACING)));
+    };
+  }
+
+  private static Rectangle textDrawn(
+      final String text, final int left, final int baseline, final FontMetrics font) {
+    return new Rectangle(
+        left, baseline - font.getAscent(), font.stringWidth(text), font.getAscent() + font.getDescent());
+  }
+
+  /**
+   * The picture the game draws for the marker, as the game finds it: the capital's owner's large
+   * flag, the PU picture of the territory's value (PUs/3.png), misc/vc.png, misc/blockade.png,
+   * misc/kamikaze.png, the owner's convoy flag; empty for a text or a picture the map lacks that
+   * the game has none of either.
+   */
+  Optional<URL> markerPicture(final Game game, final Marker marker, final String territory) {
+    return switch (marker) {
+      case CAPITAL ->
+          MapXml.capitalOf(game, territory)
+              .flatMap(nation -> folder.flatMap(f -> MapFolder.flag(f, nation, "_large")));
+      case CONVOY ->
+          MapXml.owner(game, territory)
+              .flatMap(nation -> folder.flatMap(f -> MapFolder.flag(f, nation, "_convoy")));
+      case VALUE ->
+          folder
+              .map(f -> f.resolve("PUs").resolve(MapXml.production(game, territory) + ".png"))
+              .filter(Files::isRegularFile)
+              .flatMap(MapFiles::urlOf);
+      case VICTORY_CITY -> miscPicture("vc.png");
+      case BLOCKADE -> miscPicture("blockade.png");
+      case KAMIKAZE -> miscPicture("kamikaze.png");
+      case NAME, COMMENT, EFFECT -> Optional.empty();
+    };
+  }
+
+  // the map's picture in misc/, else the game's own of that name
+  private Optional<URL> miscPicture(final String name) {
+    return miscFolder()
+        .map(misc -> misc.resolve(name))
+        .filter(Files::isRegularFile)
+        .flatMap(MapFiles::urlOf)
+        .or(() -> MapFolder.engineAsset("misc", name));
+  }
+
+  private static Optional<URL> urlOf(final Path file) {
+    try {
+      return Optional.of(file.toUri().toURL());
+    } catch (final java.net.MalformedURLException e) {
+      return Optional.empty();
+    }
+  }
+
+  private Optional<Dimension> markerPictureSize(
+      final Game game, final Marker marker, final String territory) {
+    return markerPicture(game, marker, territory).flatMap(MapFiles::pictureSize);
+  }
+
+  // the sizes of the pictures the game draws, each read once: every mark on the map asks
+  private static final Map<String, Optional<Dimension>> PICTURE_SIZES = new ConcurrentHashMap<>();
+
+  private static Optional<Dimension> pictureSize(final URL picture) {
+    return PICTURE_SIZES.computeIfAbsent(
+        picture.toString(),
+        key -> {
+          try {
+            final BufferedImage read = ImageIO.read(picture);
+            return Optional.ofNullable(read).map(i -> new Dimension(i.getWidth(), i.getHeight()));
+          } catch (final IOException e) {
+            return Optional.empty();
+          }
+        });
+  }
+
+  /**
+   * Where the game draws the marker for the territory: its place from the marker's file, else as
+   * TripleA falls back (MapData, TerritoryNameDrawable): a name centered in the territory's
+   * bounds, its value centered under the name, a capital, victory city, blockade, convoy or
+   * kamikaze marker with its top left at the center; a comment, nowhere.
+   */
+  Optional<Point> gameMarkerPlace(final Game game, final Marker marker, final String territory) {
+    final Optional<Point> own =
+        Optional.ofNullable(places.markers(marker).get(territory))
+            .filter(points -> !points.isEmpty())
+            .map(List::getFirst);
+    if (own.isPresent()) {
+      return own;
     }
     final FontMetrics font = NameMetrics.FONT;
-    final String text =
-        marker == Marker.VALUE ? String.valueOf(MapXml.production(game, territory)) : territory;
-    // from the top left the baseline is a font's height below the place (TerritoryNameDrawable)
-    final int down =
-        (font.getDescent() - font.getAscent()) / 2
-            + (Boolean.parseBoolean(
-                    properties.getProperty(MapData.PROPERTY_MAP_DRAWNAMESFROMTOPLEFT))
-                ? font.getHeight()
-                : 0);
-    return new Point(place.x + font.stringWidth(text) / 2, place.y + down);
+    final Rectangle bounds = boundsOf(polygons.getOrDefault(territory, List.of()));
+    final boolean fromTopLeft =
+        Boolean.parseBoolean(properties.getProperty(MapData.PROPERTY_MAP_DRAWNAMESFROMTOPLEFT));
+    return switch (marker) {
+      case NAME ->
+          Optional.of(
+              new Point(
+                  bounds.x + bounds.width / 2 - font.stringWidth(territory) / 2,
+                  bounds.y + bounds.height / 2 + font.getAscent() / 2
+                      - (fromTopLeft ? font.getHeight() : 0)));
+      case VALUE ->
+          gameMarkerPlace(game, Marker.NAME, territory)
+              .map(
+                  name ->
+                      new Point(
+                          name.x
+                              + (font.stringWidth(territory) >> 1)
+                              - (font.stringWidth(String.valueOf(MapXml.production(game, territory)))
+                                  >> 1),
+                          name.y + font.getLeading() + font.getAscent()));
+      case CAPITAL, VICTORY_CITY, BLOCKADE, CONVOY, KAMIKAZE, EFFECT ->
+          Optional.of(middle(territory));
+      case COMMENT -> Optional.empty();
+    };
+  }
+
+  /**
+   * Where the game draws the count of a stack of units, from the unit's place: map.properties
+   * units.counter.offset.width and height, else a quarter of the unit width in and the unit
+   * height down (MapData); the number's baseline starts there.
+   */
+  Point unitCounterOffset() {
+    final int width =
+        intProperty(MapData.PROPERTY_UNITS_WIDTH).orElse(UnitImageFactory.DEFAULT_UNIT_ICON_SIZE);
+    final int height =
+        intProperty(MapData.PROPERTY_UNITS_HEIGHT).orElse(UnitImageFactory.DEFAULT_UNIT_ICON_SIZE);
+    return new Point(
+        intProperty(MapData.PROPERTY_UNITS_COUNTER_OFFSET_WIDTH).orElse(width / 4),
+        intProperty(MapData.PROPERTY_UNITS_COUNTER_OFFSET_HEIGHT).orElse(height));
+  }
+
+  /** Whether the game shows the kind of marker, as map.properties says, eg map.showResources. */
+  boolean shows(final String property, final boolean fallback) {
+    return Boolean.parseBoolean(
+        properties.getProperty(property, String.valueOf(fallback)).strip());
   }
 
   // made once, as the map asks for every text marker it paints

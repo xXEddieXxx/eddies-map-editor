@@ -1224,12 +1224,12 @@ final class MapCanvasTest {
     assertThat(bound).as("no action of the map on Ctrl+O").containsExactly("null");
   }
 
-  @DisplayName("A capital's place shows as a yellow star; the overflow arrow follows the side")
+  @DisplayName("A capital's place shows the flag as the game draws it, from the place's top left;"
+      + " the overflow arrow follows the side")
   @Test
-  void capitalStarAndOverflowArrow() throws Exception {
+  void capitalFlagAndOverflowArrow() throws Exception {
     // given: a capital, its place and the unit places shown
     final MapProject project = MapProject.newEmpty();
-    final List<Long> stars = new ArrayList<>();
     final List<Integer> changed = new ArrayList<>();
 
     // when
@@ -1238,32 +1238,21 @@ final class MapCanvasTest {
           final MapCanvas canvas = givenCanvasShowingPlaces(project);
           project.edit(game -> MapXml.withNation(game, "Red"));
           project.edit(game -> MapXml.withCapital(game, EFFECT_LAND, "Red"));
-          stars.add(yellow(shown(canvas)));
+          final BufferedImage withoutCapitals = shown(canvas);
           canvas.showPlaces(
               MapCanvas.ShownPlaces.NONE
                   .with(MapCanvas.PlaceKind.UNITS)
                   .with(MapFiles.Marker.CAPITAL));
           final BufferedImage toRight = shown(canvas);
-          stars.add(yellow(toRight));
+          changed.add(changedPixels(withoutCapitals, toRight));
           project.flipOverflow(EFFECT_LAND);
           changed.add(changedPixels(toRight, shown(canvas)));
         });
 
     // then
-    assertThat(stars.get(0)).as("no star while capitals do not show").isZero();
-    assertThat(stars.get(1)).as("the star's yellow").isGreaterThan(20);
-    assertThat(changed).as("the arrow drawn on the other side").allMatch(pixels -> pixels > 10);
-  }
-
-  private static long yellow(final BufferedImage image) {
-    long count = 0;
-    for (int y = 0; y < image.getHeight(); y++) {
-      for (int x = 0; x < image.getWidth(); x++) {
-        if ((image.getRGB(x, y) & 0xFFFFFF) == 0xFFD400) {
-          count++;
-        }
-      }
-    }
-    return count;
+    assertThat(changed.get(0))
+        .as("the capital's marker, a flag's size, drawn once capitals show")
+        .isGreaterThan(400);
+    assertThat(changed.get(1)).as("the arrow drawn on the other side").isGreaterThan(10);
   }
 }
