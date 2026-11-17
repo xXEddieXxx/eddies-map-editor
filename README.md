@@ -48,6 +48,8 @@ It runs with your installed TripleA, and the maps it saves still load and play t
 
 Each release names the TripleA release it was tested with.
 
+The [user guide](docs/USER-GUIDE.md) walks through every tool, menu and key.
+
 ## What it does
 
 **Home** shows the next step to a playable map and opens the right tool for it. Every change can

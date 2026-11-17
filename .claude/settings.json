@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(cat); case \"$f\" in *mapeditor*Editor.java*|*MapMakerWindow.java*|*MapView.java*|*MapMode.java*) echo \"{\\\"systemMessage\\\":\\\"User guide: this file names tools, views or menu items. If one changed, update docs/USER-GUIDE.md; UserGuideTest fails on a missing name.\\\"}\";; esac",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
