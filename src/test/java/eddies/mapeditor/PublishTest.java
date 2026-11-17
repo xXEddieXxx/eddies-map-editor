@@ -103,7 +103,7 @@ final class PublishTest {
         .as("the new version before the games")
         .containsSubsequence("map_name", "version", "games");
     assertThat(MapFolder.gamesOf(givenRoot())).as("the game still listed").hasSize(1);
-    assertThat(yaml.resolveSibling("map.yml.bak")).as("the first version").hasContent(first);
+    assertThat(MapFolder.backupOf(yaml.resolveSibling("map.yml"))).as("the first version").hasContent(first);
   }
 
   @DisplayName("A version emptied leaves map.yml without one, not with an empty one")
@@ -155,7 +155,8 @@ final class PublishTest {
     givenSavedMap();
     MapFolder.setMapVersion(givenRoot(), "1");
     Files.writeString(givenRoot().resolve("description.html"), "<p>Two islands at war.</p>");
-    // setting the version left the first map.yml as .bak
+    // a .bak an older version of the editor left in the folder
+    Files.writeString(givenRoot().resolve("map.yml.bak"), "old");
     final List<Item> withBackup = PublishEditor.checklist(givenRoot(), Optional.of(0));
     Files.delete(givenRoot().resolve("map.yml.bak"));
 
@@ -214,6 +215,8 @@ final class PublishTest {
   void leftoversStayOutOfTheZip() throws Exception {
     givenSavedMap();
     MapFolder.setMapVersion(givenRoot(), "1");
+    // a .bak an older version of the editor left in the folder, and a failed save's file
+    Files.writeString(givenRoot().resolve("map.yml.bak"), "old");
     Files.writeString(givenRoot().resolve("games/island_wars.xml.saving"), "half");
     final long files;
     try (Stream<Path> walk = Files.walk(givenRoot())) {
@@ -264,15 +267,15 @@ final class PublishTest {
     assertThat(givenRoot().resolve("description.html"))
         .as("the description as typed last")
         .hasContent("<p>Two islands at war, again.</p>");
-    assertThat(givenRoot().resolve("description.html.bak"))
+    assertThat(MapFolder.backupOf(givenRoot().resolve("description.html")))
         .as("its first version")
         .hasContent("<p>Two islands at war.</p>");
     assertThat(setVersion.isVisible()).as("the version's line is done: no button").isFalse();
     assertThat(publish.items())
-        .as("Check, and the first map.yml the editor kept as .bak")
+        .as("Check alone: the first versions are in Backups, not in the folder")
         .filteredOn(i -> !i.done())
         .extracting(Item::id)
-        .containsExactly(Id.CHECK, Id.LEFTOVERS);
+        .containsExactly(Id.CHECK);
   }
 
   @DisplayName("Check's result shows in the Publish list until the map changes; a save keeps it")
@@ -350,7 +353,7 @@ final class PublishTest {
     assertThat(faded.getRGB(20, 16) >>> 24)
         .as("the faded flag of kamikaze zones lets the map through")
         .isBetween(90, 115);
-    assertThat(Files.size(flags.resolve("Red.png.bak")))
+    assertThat(Files.size(MapFolder.backupOf(flags.resolve("Red.png"))))
         .as("the plain flag the save made stays as .bak")
         .isEqualTo(plain);
     assertThat(new NationsEditor(project).flagIcon("Red"))
@@ -376,7 +379,7 @@ final class PublishTest {
         .as("the game now finds the imported flag")
         .endsWith("Red.png");
     assertThat(flags.resolve("Red_small.gif")).as("nor the small gif").doesNotExist();
-    assertThat(flags.resolve("Red.gif.bak")).as("the gif stays as .bak").exists();
+    assertThat(MapFolder.backupOf(flags.resolve("Red.gif"))).as("the gif stays as .bak").exists();
   }
 
   @DisplayName("A small flag picture is not blown up")
@@ -697,7 +700,7 @@ final class PublishTest {
     assertThat(ImageIO.read(smallMap.toFile()).getRGB(180, 160) & 0xFFFFFF)
         .as("the sea under the relief")
         .isEqualTo(Color.MAGENTA.getRGB() & 0xFFFFFF);
-    assertThat(smallMap.resolveSibling("smallMap.png.bak")).as("the small map before").exists();
+    assertThat(MapFolder.backupOf(smallMap.resolveSibling("smallMap.png"))).as("the small map before").exists();
   }
 
   @DisplayName("The small map is written into the file the game reads: a jpeg before a png")
@@ -715,7 +718,7 @@ final class PublishTest {
         .as("the jpeg the game takes first, 250 px wide")
         .isEqualTo(250);
     assertThat(folder.resolve("smallMap.png")).as("no second small map").doesNotExist();
-    assertThat(folder.resolve("smallMap.jpeg.bak")).as("the one before").exists();
+    assertThat(MapFolder.backupOf(folder.resolve("smallMap.jpeg"))).as("the one before").exists();
   }
 
   @DisplayName("Units looks for missing pictures only while it shows")

@@ -365,7 +365,7 @@ final class MapLookTest {
     assertThat(project.getFiles().showsRelief()).as("hidden when switched off").isFalse();
     assertThat(tiles.resolve("0_0.png")).as("the first tile written").exists();
     assertThat(tiles.resolve("9_9.png")).as("a tile beyond the relief removed").doesNotExist();
-    assertThat(tiles.resolve("9_9.png.bak")).as("its first version kept").hasContent("an old tile");
+    assertThat(MapFolder.backupOf(tiles.resolve("9_9.png"))).as("its first version kept").hasContent("an old tile");
   }
 
   @DisplayName("A new relief on a map told not to show one is shown, in the same step")

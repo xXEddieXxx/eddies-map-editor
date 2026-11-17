@@ -54,8 +54,11 @@ final class BigPictureTest {
   }
 
   private static List<String> backups(final MapProject project) throws Exception {
-    try (Stream<Path> tiles =
-        Files.list(project.getFolder().orElseThrow().resolve("baseTiles"))) {
+    final Path backups = MapFolder.backupFolderOf(project.getFolder().orElseThrow());
+    if (!Files.isDirectory(backups.resolve("baseTiles"))) {
+      return List.of();
+    }
+    try (Stream<Path> tiles = Files.list(backups.resolve("baseTiles"))) {
       return tiles
           .map(file -> file.getFileName().toString())
           .filter(name -> name.endsWith(".bak"))

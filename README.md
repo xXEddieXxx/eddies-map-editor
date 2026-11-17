@@ -54,7 +54,8 @@ and key, with a page and a picture per tool. It is built from [docs/guide](docs/
 ## What it does
 
 **Home** shows the next step to a playable map and opens the right tool for it. Every change can
-be undone, and a save writes only what changed, keeping the first version of each file as `.bak`.
+be undone, and a save writes only what changed, keeping the first version of each file in the
+editor's Backups folder.
 
 **Territories & map**
 - Find territories and sea zones in a picture; draw and erase borders, split and merge territories.
@@ -90,7 +91,7 @@ be undone, and a save writes only what changed, keeping the first version of eac
 **Share**
 - **Publish** sets the map's name, version, description and preview, lists what is still missing
   before an upload, and links TripleA's upload guide.
-- **Export** zips the map without the `.bak` files.
+- **Export** zips the map, without backups or half-written files.
 
 ## Support the project
 

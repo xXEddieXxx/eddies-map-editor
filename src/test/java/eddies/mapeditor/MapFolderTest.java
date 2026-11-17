@@ -88,7 +88,7 @@ games:
     assertThat(YamlReader.readMap(Files.readString(yml)))
         .as("an entry the editor does not know stays")
         .containsEntry("version", 3);
-    assertThat(yml.resolveSibling("map.yml.bak")).as("the first version kept").hasContent(before);
+    assertThat(MapFolder.backupOf(yml.resolveSibling("map.yml"))).as("the first version kept").hasContent(before);
   }
 
   @DisplayName("A copied sound ends in .mp3 in lower case, the only ending the game plays")
@@ -151,6 +151,38 @@ games:
     assertThat(MapFolder.gamesOf(root.resolve("loose")).keySet())
         .as("only the games folder's, by file name")
         .containsExactly("a.xml", "b.xml");
+  }
+
+  @DisplayName("A file's first version goes to the map's folder in Backups, under its path; a"
+      + " second map of the same name gets its own folder")
+  @Test
+  void backsUpOutOfTheMapFolder() throws IOException {
+    // a name no other test's map has: the Backups folder is shared by the tests of a run
+    final Path map = Files.createDirectories(root.resolve("backup_map"));
+    Files.createDirectories(map.resolve("games"));
+    Files.writeString(map.resolve("games/first.xml"), "<game/>");
+    final Path xml = map.resolve("games/first.xml");
+    final Path sameName = Files.createDirectories(root.resolve("elsewhere/backup_map"));
+    Files.createDirectories(sameName.resolve("games"));
+    Files.writeString(sameName.resolve("games/first.xml"), "<other/>");
+
+    MapFolder.replaceText(xml, "<game version='2'/>");
+    MapFolder.replaceText(xml, "<game version='3'/>");
+    MapFolder.replaceText(sameName.resolve("games/first.xml"), "<other version='2'/>");
+
+    final Path backup = MapFolder.backupOf(xml);
+    assertThat(backup)
+        .as("in Backups, in the map's folder, under the file's path")
+        .isEqualTo(MapFolder.backupsFolder().resolve("backup_map/games/first.xml.bak"))
+        .hasContent("<game/>");
+    assertThat(map.resolve("games/first.xml.bak")).as("nothing beside the file").doesNotExist();
+    assertThat(MapFolder.backupOf(sameName.resolve("games/first.xml")))
+        .as("the other map of that name has its own folder")
+        .isEqualTo(MapFolder.backupsFolder().resolve("backup_map-2/games/first.xml.bak"))
+        .hasContent("<other/>");
+    assertThat(MapFolder.backupFolderOf(map).resolve(".origin"))
+        .as("each folder names the map it belongs to")
+        .hasContent(map.toAbsolutePath().normalize().toString());
   }
 
   @DisplayName("The zip holds the map's folder without the map maker's backups or failed saves")
@@ -246,7 +278,7 @@ games:
     MapFolder.writeUnitPicture(map, "Red", "infantry", givenSquare(Color.BLUE));
     MapFolder.restoreUnitPicture(map, "Red", Color.RED, "infantry");
 
-    assertThat(map.resolve("units/Red/infantry.png.bak"))
+    assertThat(MapFolder.backupOf(map.resolve("units/Red/infantry.png")))
         .as("the map's first picture, not the one written over it")
         .hasBinaryContent(first);
   }
@@ -359,7 +391,7 @@ games:
         .containsEntry("map_name", "My Map")
         .containsEntry("version", 3);
     assertThat(Files.readString(yml)).as("an entry of a game stays").contains("note: keep me");
-    assertThat(yml.resolveSibling("map.yml.bak")).as("the first version kept").hasContent(before);
+    assertThat(MapFolder.backupOf(yml.resolveSibling("map.yml"))).as("the first version kept").hasContent(before);
   }
 
   @DisplayName("A renamed nation's flags of every variant move with it; another nation's whose name"
@@ -454,7 +486,7 @@ games:
 
     assertThat(ImageIO.read(coin.toFile())).as("written as a picture png reads").isNotNull();
     assertThat(Files.readAllBytes(coin)).as("as png").startsWith(0x89, 'P', 'N', 'G');
-    assertThat(coin.resolveSibling("3.png.bak")).as("the first version kept").hasContent("the old coin");
+    assertThat(MapFolder.backupOf(coin.resolveSibling("3.png"))).as("the first version kept").hasContent("the old coin");
   }
 
   @DisplayName("A picture folder wants a picture for each PU value, die side and effect of the game")
@@ -495,6 +527,6 @@ games:
     assertThat(List.of(small.getRGB(10, 10) >>> 24, small.getRGB(10, 2) >>> 24))
         .as("the wide picture in the middle, clear above it")
         .containsExactly(255, 0);
-    assertThat(map.resolve("resources/Oil.png.bak")).as("the first one kept").exists();
+    assertThat(MapFolder.backupOf(map.resolve("resources/Oil.png"))).as("the first one kept").exists();
   }
 }

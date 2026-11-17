@@ -71,7 +71,7 @@ final class MapProjectTest {
         .as("read as TripleA does: UTF-8, else ISO-8859-1")
         .isEqualTo("<p>Café de la Paix</p>");
     assertThat(notes).as("unchanged notes are not written again").hasBinaryContent(original);
-    assertThat(notes.resolveSibling(notes.getFileName() + ".bak"))
+    assertThat(MapFolder.backupOf(notes))
         .as("so there is no .bak")
         .doesNotExist();
 
@@ -83,7 +83,7 @@ final class MapProjectTest {
     assertThat(Files.readString(notes))
         .as("changed notes are saved as UTF-8")
         .isEqualTo("<p>Café Central</p>");
-    assertThat(notes.resolveSibling(notes.getFileName() + ".bak"))
+    assertThat(MapFolder.backupOf(notes))
         .as("the original stays as .bak, byte for byte")
         .hasBinaryContent(original);
   }
@@ -780,7 +780,7 @@ final class MapProjectTest {
 
     assertThat(project.hasUnsavedChanges()).as("all changes are saved").isFalse();
     assertThat(project.isChanged(NORTH)).as("the mark goes with the save").isFalse();
-    assertThat(Files.readString(folder.resolve("minimap.xml.bak")))
+    assertThat(Files.readString(MapFolder.backupOf(folder.resolve("minimap.xml"))))
         .as("the backup is the file before the first save")
         .isEqualTo(before);
     assertThat(MapXml.owner(MapProject.open(project.getXmlFile().orElseThrow()).game(), NORTH))

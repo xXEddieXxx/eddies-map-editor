@@ -1670,7 +1670,7 @@ public final class MapMakerWindow extends JFrame {
     editors.values().forEach(Editor::commit);
     // every map shown has its game file: opened from one, or made and saved by the wizard
     final Path xml = project.getXmlFile().orElseThrow();
-    final Path backup = xml.resolveSibling(xml.getFileName() + ".bak");
+    final Path backup = backupOf(xml);
     final boolean firstBackup = !Files.exists(backup);
     // a small map there, maybe made by hand, is not replaced by a save that writes a new relief
     final boolean smallMapStays =
@@ -1707,7 +1707,7 @@ public final class MapMakerWindow extends JFrame {
       } else if (openedFromFile && firstBackup && Files.exists(backup)) {
         Dialogs.toast(
             this,
-            saved + ". The old file stays as " + backup.getFileName(),
+            saved + ". The old file is kept in the editor's Backups folder",
             "Show",
             () -> {
               showFiles();
@@ -1735,6 +1735,15 @@ public final class MapMakerWindow extends JFrame {
   }
 
   /** eg ". The map is 4800 × 3000 pixels now", after the save of a resized map. */
+  // where the game file's first version goes; the file itself when Backups cannot be made
+  private static Path backupOf(final Path xml) {
+    try {
+      return MapFolder.backupOf(xml);
+    } catch (final IOException e) {
+      return xml;
+    }
+  }
+
   private static String sizeNews(final Dimension size) {
     return ". The map is " + size.width + " × " + size.height + " pixels now";
   }

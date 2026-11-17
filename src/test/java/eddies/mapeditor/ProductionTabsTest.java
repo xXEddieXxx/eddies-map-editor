@@ -183,7 +183,7 @@ final class ProductionTabsTest {
     assertThat(Files.readString(file, StandardCharsets.ISO_8859_1))
         .as("the one line changed, in the file TripleA reads")
         .isEqualTo(FILE.replace("tab_name.1=Land", "tab_name.1=Army"));
-    assertThat(Files.readString(folder.resolve(ProductionTabs.FILE + ".bak"), StandardCharsets.ISO_8859_1))
+    assertThat(Files.readString(MapFolder.backupOf(folder.resolve(ProductionTabs.FILE)), StandardCharsets.ISO_8859_1))
         .as("its first version stays")
         .isEqualTo(FILE);
     project.undo();

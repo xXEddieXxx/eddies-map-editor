@@ -152,7 +152,8 @@ while the map's picture is read from its tiles or a resize works.
 ### Saving and undo
 
 Every change is a step. Undo takes it back, also after a save. Save writes only what changed and
-keeps the first version of each file as `.bak`. The Save button's tool tip lists what the next
+keeps the first version of each file in the editor's Backups folder, `eddies-map-editor/Backups`
+in your home folder, a folder per map. The Save button's tool tip lists what the next
 save writes, for example "Saves 3 files: 300BC.xml, place.txt, map.properties". A save never
 writes a half file: it writes beside the file and moves it into place.
 

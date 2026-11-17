@@ -103,7 +103,7 @@ final class FilesEditorTest {
   @Test
   void revealedBackupShowsReadOnly() throws Exception {
     final FilesEditor files = givenFilesOfMinimap(new ArrayList<>(), () -> true, () -> {});
-    final Path backup = folder.resolve("minimap.xml.bak");
+    final Path backup = MapFolder.backupOf(folder.resolve("minimap.xml"));
     Files.writeString(backup, "<game/>");
 
     files.reveal(backup);
@@ -219,7 +219,7 @@ final class FilesEditorTest {
     assertThat(refused).as("the map may not be written: the file stays").isEqualTo("x");
     assertThat(reloadedRefused).as("nothing to read again").isFalse();
     assertThat(Files.readString(folder.resolve("notes.txt"))).as("written").isEqualTo("typed");
-    assertThat(folder.resolve("notes.txt.bak")).as("its first version kept").hasContent("x");
+    assertThat(MapFolder.backupOf(folder.resolve("notes.txt"))).as("its first version kept").hasContent("x");
     assertThat(reloaded.get()).as("the map is read again from its files").isTrue();
   }
 

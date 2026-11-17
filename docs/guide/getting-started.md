@@ -141,4 +141,4 @@ destroyer's cover and lands on the other island. The first simple version of you
   and the steps to upload it.
 
 Every change is a step: Undo (Ctrl+Z) takes it back, Save (Ctrl+S) writes it, and the first
-version of each file stays as `.bak` in the folder.
+version of each file is kept in the editor's Backups folder, out of the map's folder.

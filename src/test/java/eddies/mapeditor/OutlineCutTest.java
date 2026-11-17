@@ -221,10 +221,10 @@ final class OutlineCutTest {
     assertThat(unsaved).as("holding the picture is no change").isFalse();
     assertThat(drawn).as("drawn into the picture put together from its tiles").isTrue();
     assertThat(saved & 0xFFFFFF).as("the save wrote the line").isEqualTo(0xFF0000);
-    assertThat(Files.exists(tiles.resolve("1_0.png.bak")))
+    assertThat(Files.exists(MapFolder.backupOf(tiles.resolve("1_0.png"))))
         .as("the tile's first version kept")
         .isTrue();
-    assertThat(Files.exists(tiles.resolve("0_0.png.bak")))
+    assertThat(Files.exists(MapFolder.backupOf(tiles.resolve("0_0.png"))))
         .as("a tile without the line untouched")
         .isFalse();
     assertThat(ImageIO.read(tiles.resolve("0_0.png").toFile()).getRGB(100, 50))

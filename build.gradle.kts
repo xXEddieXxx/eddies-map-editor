@@ -45,6 +45,10 @@ tasks.test {
     systemProperty("guide.screenshots", System.getProperty("guide.screenshots") ?: "")
     systemProperty("guide.map", System.getProperty("guide.map") ?: "")
     systemProperty("guide.dark", System.getProperty("guide.dark") ?: "true")
+    // the editor's Backups folder for the tests, emptied first: the developer's own stays as it is
+    val testBackups = layout.buildDirectory.dir("test-backups").get().asFile
+    systemProperty("eddies.backups", testBackups.path)
+    doFirst { testBackups.deleteRecursively() }
 }
 
 tasks.named<JavaExec>("run") {

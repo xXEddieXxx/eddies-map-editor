@@ -85,4 +85,4 @@ Game view a hatched sea zone is one no unit may enter.
    line away where you drag.
 3. Choose Make territories. The territories enclosed by the new lines are found; the rest stay
    as they were. New territories are named by number; rename them in the list.
-4. Save. Only the tiles the lines touched are written, their first version kept as `.bak`.
+4. Save. Only the tiles the lines touched are written, their first version kept in Backups.

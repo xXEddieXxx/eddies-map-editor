@@ -179,7 +179,7 @@ final class ResizeMapTest {
 
     // then
     assertThat(map.resolve("baseTiles/3_2.png")).as("800x600 needs 4 by 3 tiles").exists();
-    assertThat(map.resolve("baseTiles/0_0.png.bak"))
+    assertThat(MapFolder.backupOf(map.resolve("baseTiles/0_0.png")))
         .as("the first tile as it was before the resize")
         .hasBinaryContent(firstTile);
     assertThat(map.resolve("smallMap.png"))
@@ -221,7 +221,7 @@ final class ResizeMapTest {
 
     // then
     assertThat(tiles.resolve("1_1.png")).as("no tile beyond 200x150").doesNotExist();
-    assertThat(tiles.resolve("1_1.png.bak")).as("its first version").exists();
+    assertThat(MapFolder.backupOf(tiles.resolve("1_1.png"))).as("its first version").exists();
 
     // when
     project.undo();
@@ -270,7 +270,7 @@ final class ResizeMapTest {
     // then
     assertThat(written).as("the save lists the tiles").contains(map.resolve("baseTiles/3_2.png"));
     assertThat(map.resolve("baseTiles/3_2.png")).exists();
-    assertThat(map.resolve("baseTiles/0_0.png.bak"))
+    assertThat(MapFolder.backupOf(map.resolve("baseTiles/0_0.png")))
         .as("the first tile as it was before the resize")
         .hasBinaryContent(firstTile);
     assertThat(staging.resolve("baseTiles")).as("the resize's folder is taken").doesNotExist();

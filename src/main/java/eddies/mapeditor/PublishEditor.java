@@ -600,8 +600,9 @@ final class PublishEditor implements Editor {
             Id.LEFTOVERS,
             Status.TODO,
             leftovers + (leftovers == 1 ? " backup file" : " backup files") + " in the folder",
-            "The editor keeps the first version of each file it changed as .bak. They are no part"
-                + " of the map: the zip leaves them out; with Git, do not add them.");
+            "Older versions of the editor kept the first version of each changed file as .bak in"
+                + " the folder; now they go to the editor's Backups folder. They are no part of"
+                + " the map: the zip leaves them out; with Git, do not add them.");
   }
 
   /** The folder name the upload guide asks for: lower case, underscores between the words. */

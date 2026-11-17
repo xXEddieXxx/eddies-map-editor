@@ -1135,10 +1135,81 @@ class MapFolder {
   }
 
   private static void backUp(final Path file) throws IOException {
-    final Path backup = file.resolveSibling(file.getFileName() + ".bak");
-    if (Files.exists(file) && !Files.exists(backup)) {
+    if (!Files.exists(file)) {
+      return;
+    }
+    final Path backup = backupOf(file);
+    if (!Files.exists(backup)) {
+      Files.createDirectories(backup.getParent());
       Files.copy(file, backup);
     }
+  }
+
+  // the Backups folder's property, for the tests: the developer's own backups stay untouched
+  static final String BACKUPS_PROPERTY = "eddies.backups";
+  // names the map a backup folder belongs to, as two maps may be called the same
+  private static final String ORIGIN = ".origin";
+
+  /**
+   * The editor's Backups folder, where the first version of each file a save changes is kept,
+   * out of the map's folder so that a copied or uploaded map holds the map alone: the user's
+   * eddies-map-editor/Backups, or what the property eddies.backups says.
+   */
+  static Path backupsFolder() {
+    return Optional.ofNullable(System.getProperty(BACKUPS_PROPERTY))
+        .filter(set -> !set.isBlank())
+        .map(Path::of)
+        .orElseGet(
+            () -> Path.of(System.getProperty("user.home"), "eddies-map-editor", "Backups"));
+  }
+
+  /**
+   * The map's own folder in Backups, named like the map's folder; a second map of that name gets
+   * "-2" and so on, as a .origin file in each names the map folder it belongs to.
+   */
+  static Path backupFolderOf(final Path mapFolder) throws IOException {
+    final Path root = mapFolder.toAbsolutePath().normalize();
+    final String base = Optional.ofNullable(root.getFileName()).map(Path::toString).orElse("map");
+    final Path backups = backupsFolder();
+    for (int n = 1; n < 1000; n++) {
+      final Path folder = backups.resolve(n == 1 ? base : base + "-" + n);
+      final Path origin = folder.resolve(ORIGIN);
+      if (!Files.exists(folder)) {
+        Files.createDirectories(folder);
+        Files.writeString(origin, root.toString());
+        return folder;
+      }
+      if (Files.isRegularFile(origin) && Files.readString(origin).strip().equals(root.toString())) {
+        return folder;
+      }
+    }
+    throw new IOException("No room for the backups of " + root + " in " + backups);
+  }
+
+  /**
+   * Where a file's first version is kept: in the map's folder in Backups, under the file's path
+   * in the map, named with ".bak"; eg Backups/my_map/games/my_map.xml.bak. The map's folder is the
+   * nearest above the file with a map.yml, map.properties, polygons.txt or games folder.
+   */
+  static Path backupOf(final Path file) throws IOException {
+    final Path absolute = file.toAbsolutePath().normalize();
+    final Path root = mapFolderOf(absolute);
+    return backupFolderOf(root)
+        .resolve(root.relativize(absolute).toString() + ".bak");
+  }
+
+  private static Path mapFolderOf(final Path file) {
+    final Path parent = Optional.ofNullable(file.getParent()).orElse(file);
+    Path candidate = parent;
+    for (int up = 0; candidate != null && up < 8; up++, candidate = candidate.getParent()) {
+      if (Files.isRegularFile(candidate.resolve(MapDescriptionYaml.MAP_YAML_FILE_NAME))
+          || Files.isRegularFile(candidate.resolve("map.properties"))
+          || Files.isRegularFile(candidate.resolve("polygons.txt"))
+          || Files.isDirectory(candidate.resolve("games"))) {
+        return candidate;
+      }
+    }
+    return parent;
   }
 
   /** Deletes a file as {@link #replace} replaces one: the first version stays as ".bak". */
@@ -1425,7 +1496,8 @@ class MapFolder {
 
   /**
    * The files in the map's folder that are no part of the map: the ".bak" of a file's first
-   * version and what a save that failed left; {@link #zip} leaves them out.
+   * version, as the editor kept it there before 0.1.92, and what a save that failed left; {@link
+   * #zip} leaves them out.
    */
   static List<Path> leftovers(final Path root) throws IOException {
     try (Stream<Path> walk = Files.walk(root)) {

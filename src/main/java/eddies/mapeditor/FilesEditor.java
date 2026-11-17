@@ -96,6 +96,7 @@ final class FilesEditor implements Editor {
   private static final int MAX_PROBLEM_ROWS = 6;
   private static final int INDENT = 16;
   private static final String OTHER_MAPS = "Other maps (read only)";
+  private static final String BACKUPS = "Backups (read only)";
   private static final String BACKUP = ".bak";
 
   private final Supplier<Optional<Path>> mapFolder;
@@ -108,7 +109,11 @@ final class FilesEditor implements Editor {
   private final Consumer<String> openTool;
   private final BiConsumer<String, String> openItem;
   private final List<Path> otherFolders = new ArrayList<>();
-  // backups are left out of the tree, but for those revealed, eg by the toast after a first save
+  // the map's folder in the editor's Backups, shown once a backup is revealed, eg by the toast
+  // after a first save
+  private Optional<Path> backups = Optional.empty();
+  // backups left in the map's folder by older versions are left out of the tree, but for those
+  // revealed
   private final Set<Path> revealedBackups = new HashSet<>();
   private final Folders folders = new Folders();
   // made once the map's folder is known, as the tree asks for the folders at once
@@ -283,7 +288,8 @@ final class FilesEditor implements Editor {
   @Override
   public String hint() {
     return "The map's files as on disk. Open one to change it; the game's files are checked as you"
-        + " type. Save file keeps the first version as .bak and reads the map again.";
+        + " type. Save file keeps the first version in the editor's Backups folder and reads"
+        + " the map again.";
   }
 
   @Override
@@ -334,6 +340,14 @@ final class FilesEditor implements Editor {
 
   /** Shows the file or folder in the tree, eg from the map's anatomy; a file opens beside it. */
   void reveal(final Path file) {
+    if (backups.isEmpty() && file.startsWith(MapFolder.backupsFolder())) {
+      // the map's folder in Backups: the one the file is in, below the Backups folder
+      final Path below = MapFolder.backupsFolder().relativize(file);
+      if (below.getNameCount() > 1) {
+        backups = Optional.of(MapFolder.backupsFolder().resolve(below.getName(0)));
+        folders.refresh();
+      }
+    }
     final Optional<Path> top = tops().stream().filter(file::startsWith).findFirst();
     if (top.isEmpty()) {
       return;
@@ -344,6 +358,8 @@ final class FilesEditor implements Editor {
     final List<Object> nodes = new ArrayList<>(List.of(folders.root));
     if (otherFolders.contains(top.get())) {
       nodes.add(OTHER_MAPS);
+    } else if (backups.filter(top.get()::equals).isPresent()) {
+      nodes.add(BACKUPS);
     }
     nodes.add(top.get());
     Path at = top.get();
@@ -407,6 +423,7 @@ final class FilesEditor implements Editor {
     final List<Path> tops = new ArrayList<>();
     mapFolder.get().ifPresent(tops::add);
     tops.addAll(otherFolders);
+    backups.ifPresent(tops::add);
     return tops;
   }
 
@@ -468,9 +485,9 @@ final class FilesEditor implements Editor {
 
   private void showText(final Path file) {
     try {
-      final boolean ofThisMap = mapFolder.get().filter(file::startsWith).isPresent();
-      final boolean small = Files.size(file) <= MAX_EDITED_SIZE;
       final boolean backup = isBackup(file);
+      final boolean ofThisMap = backup || mapFolder.get().filter(file::startsWith).isPresent();
+      final boolean small = Files.size(file) <= MAX_EDITED_SIZE;
       editable = ofThisMap && small && !backup;
       filling = true;
       final String name = typeName(file);
@@ -531,7 +548,8 @@ final class FilesEditor implements Editor {
   }
 
   private static boolean isBackup(final Path file) {
-    return file.getFileName().toString().endsWith(BACKUP);
+    return file.getFileName().toString().endsWith(BACKUP)
+        || file.startsWith(MapFolder.backupsFolder());
   }
 
   /** The file's name in lower case, of a backup without ".bak", which tells its type. */
@@ -1090,7 +1108,7 @@ final class FilesEditor implements Editor {
     }
   }
 
-  /** Writes the file, keeping its first version as .bak, and reloads the map from its files. */
+  /** Writes the file, keeping its first version in Backups, and reloads the map from its files. */
   private void saveFile() {
     final Path file = open;
     if (file == null || !editable || !mayWriteMapFile.getAsBoolean()) {
@@ -1181,10 +1199,14 @@ final class FilesEditor implements Editor {
         if (!otherFolders.isEmpty()) {
           tops.add(OTHER_MAPS);
         }
+        backups.ifPresent(b -> tops.add(BACKUPS));
         return tops;
       }
       if (parent == OTHER_MAPS) {
         return otherFolders;
+      }
+      if (parent == BACKUPS) {
+        return backups.map(List::of).orElse(List.of());
       }
       return listed.computeIfAbsent(
           (Path) parent,
@@ -1242,10 +1264,12 @@ final class FilesEditor implements Editor {
     return true;
   }
 
-  /** Hidden files are left out, and backups but for those revealed. */
+  /** Hidden files are left out, and old backups in the map's folder but for those revealed. */
   private boolean isShown(final Path file) {
     return !file.getFileName().toString().startsWith(".")
-        && (!isBackup(file) || revealedBackups.contains(file));
+        && (!file.getFileName().toString().endsWith(BACKUP)
+            || revealedBackups.contains(file)
+            || file.startsWith(MapFolder.backupsFolder()));
   }
 
   /** A folder's entries: folders first, then files, by name; hidden ones and backups left out. */

@@ -192,7 +192,7 @@ final class MapTextsTest {
     saved.load(new StringReader(Files.readString(file, StandardCharsets.ISO_8859_1)));
     assertThat(saved.getProperty("Welcome")).as("the save wrote the new text").isEqualTo("Hi");
     assertThat(saved.getProperty("Long")).as("and kept the others").isEqualTo("first second");
-    assertThat(Files.readString(folder.resolve("notifications.properties.bak")))
+    assertThat(Files.readString(MapFolder.backupOf(folder.resolve("notifications.properties"))))
         .as("the first version stays as .bak")
         .isEqualTo(MESSAGES);
   }
@@ -282,7 +282,7 @@ final class MapTextsTest {
     reopened.save();
 
     assertThat(file).as("the emptied file is gone").doesNotExist();
-    assertThat(Files.readString(folder.resolve("notifications.properties.bak")))
+    assertThat(Files.readString(MapFolder.backupOf(folder.resolve("notifications.properties"))))
         .as("its first version stays as .bak")
         .isEqualTo(original);
   }
@@ -327,7 +327,7 @@ final class MapTextsTest {
     assertThat(Files.readString(file, StandardCharsets.ISO_8859_1))
         .as("the lines before kept as they were, the new sound added")
         .isEqualTo(before + "battle_land_Russians=mine/battle.mp3\n");
-    assertThat(Files.readString(folder.resolve("sounds.properties.bak"), StandardCharsets.ISO_8859_1))
+    assertThat(Files.readString(MapFolder.backupOf(folder.resolve("sounds.properties")), StandardCharsets.ISO_8859_1))
         .as("the first version stays as .bak")
         .isEqualTo(before);
   }

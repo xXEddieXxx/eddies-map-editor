@@ -9,6 +9,11 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 
 ### Fixed
 
+- **Backup files in the map's folder** (#15). The first version of each file a save changes is no
+  longer kept as `.bak` beside it, but in the editor's own Backups folder, `eddies-map-editor/Backups`
+  in your home folder, a folder per map with the map's paths below it. A copied or uploaded map
+  folder holds the map alone. The toast after a first save shows the backup in Files, read only.
+  Old `.bak` files in a folder are still listed by Publish and left out of the zip.
 - **Names, PUs, capitals and unit counts drawn off from where TripleA draws them** (#16, part of
   #17). The editor drew a letter badge or a star centered on a place, while the game draws a name
   from the place's left end on its baseline and a flag or PU picture from the place's top left.

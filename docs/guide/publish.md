@@ -21,10 +21,10 @@ the description and picture the list of maps shows, and the steps to upload it.
 ![Publish, upload](img/publish-2.png)
 
 1. **Upload**: the steps to publish, each with a link. Sign up at GitHub, create a repository
-   named like the map's folder, install Git, upload the folder with Git GUI without the `.bak`
-   files as the guide shows, ask for the map to be added with a Map Registration issue, and
+   named like the map's folder, install Git, upload the folder with Git GUI as the guide shows,
+   ask for the map to be added with a Map Registration issue, and
    later updates go into the map's repository at triplea-maps, after which players are told
    their map is out of date.
 
-**Export as zip…** in the File menu packs the folder without the `.bak` files for an upload by
-hand.
+**Export as zip…** in the File menu packs the folder for an upload by hand, without the `.bak`
+files an older version of the editor left there.

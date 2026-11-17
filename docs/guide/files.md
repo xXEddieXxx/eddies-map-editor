@@ -3,7 +3,7 @@
 [← Guide](README.md)
 
 The map's files as on disk. Open one to change it; the game's files are checked as you type.
-Save file keeps the first version as `.bak` and reads the map again.
+Save file keeps the first version in the editor's Backups folder and reads the map again.
 
 ![Files](img/files.png)
 
@@ -19,5 +19,6 @@ Save file keeps the first version as `.bak` and reads the map again.
 The editor on the right is a text editor with colouring, line numbers, folding, find (Ctrl+F)
 and a size and theme that follow the editor. A game file or a place file is checked as you type:
 a line that TripleA would not read is marked and explained. **Save file** writes the file, keeps
-the first version as `.bak`, and reads the map again from its files, asking first when the map
-has unsaved changes. Pictures open in a viewer.
+the first version in the editor's Backups folder, and reads the map again from its files, asking
+first when the map has unsaved changes. Pictures open in a viewer. The toast after the first save
+of a file has **Show**, which lists the map's Backups folder in the tree, read only.

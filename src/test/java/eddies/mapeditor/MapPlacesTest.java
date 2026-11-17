@@ -70,7 +70,7 @@ final class MapPlacesTest {
     assertThat(PointFileReaderWriter.readOneToManyPlacements(placeTxt(project)))
         .as("the line of a territory the map does not have stays")
         .containsKey("Atlantis");
-    assertThat(placeTxt(project).resolveSibling("place.txt.bak"))
+    assertThat(MapFolder.backupOf(placeTxt(project).resolveSibling("place.txt")))
         .as("the file as it was before the save")
         .hasContent(before);
     assertThat(MapProject.open(project.getXmlFile().orElseThrow()).getFiles().unitPlaces(TERRITORY))
@@ -161,7 +161,7 @@ final class MapPlacesTest {
     assertThat(PointFileReaderWriter.readOneToOne(centers).get(TERRITORY))
         .as("the territory's center, moved")
         .isEqualTo(moved);
-    assertThat(centers.resolveSibling("centers.txt.bak"))
+    assertThat(MapFolder.backupOf(centers.resolveSibling("centers.txt")))
         .as("the file as it was before the save")
         .hasContent(before);
     project.undo();
@@ -178,7 +178,7 @@ final class MapPlacesTest {
 
     project.save();
 
-    assertThat(placeTxt(project).resolveSibling("place.txt.bak"))
+    assertThat(MapFolder.backupOf(placeTxt(project).resolveSibling("place.txt")))
         .as("place.txt was not written again")
         .doesNotExist();
   }
@@ -510,7 +510,7 @@ final class MapPlacesTest {
     assertThat(mapFolder.resolve("capitols.txt"))
         .as("the moved flag in its line, the line of Territory 2 as written by hand")
         .hasContent("Territory 1  (11,12) \nTerritory 2   (30,40)\n");
-    assertThat(mapFolder.resolve("capitols.txt.bak"))
+    assertThat(MapFolder.backupOf(mapFolder.resolve("capitols.txt")))
         .as("the file as it was before")
         .hasContent(CAPITALS_BY_HAND);
     final Map<String, List<Byte>> after = filesOf(project);
@@ -562,7 +562,7 @@ final class MapPlacesTest {
     assertThat(mapFolder.resolve("pu_place.txt"))
         .as("its value's line gone, the line of a territory the map does not have stays")
         .hasContent("Atlantis (3,4)");
-    assertThat(mapFolder.resolve("vc.txt.bak"))
+    assertThat(MapFolder.backupOf(mapFolder.resolve("vc.txt")))
         .as("vc.txt, without it, not written")
         .doesNotExist();
   }
@@ -707,7 +707,7 @@ final class MapPlacesTest {
         .as("the trees placed, the rocks as they were")
         .containsEntry("tree.png", List.of(new Point(5, 5), new Point(6, 6)))
         .containsEntry("rock.png", List.of(new Point(1, 1), new Point(2, 2)));
-    assertThat(decorations.resolveSibling("decorations.txt.bak"))
+    assertThat(MapFolder.backupOf(decorations.resolveSibling("decorations.txt")))
         .as("the first version kept")
         .hasContent("rock.png (1,1) (2,2)");
   }
