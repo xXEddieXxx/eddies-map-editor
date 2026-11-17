@@ -32,6 +32,7 @@ import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
 import lombok.experimental.UtilityClass;
+import lombok.extern.slf4j.Slf4j;
 import org.triplea.io.FileUtils;
 import org.triplea.map.data.elements.AttachmentList.Attachment;
 import org.triplea.map.data.elements.Game;
@@ -45,6 +46,7 @@ import eddies.mapeditor.MapFiles.NationUnit;
 
 /** The problems of a map, each with the territory to show for it if there is one. */
 @UtilityClass
+@Slf4j
 class MapChecks {
   private static final String NOT_STARTED = "The game does not start: ";
 
@@ -706,7 +708,8 @@ class MapChecks {
 
   private static Optional<String> findError(
       final Path xml, final Function<GameData, Optional<String>> whyNotPlayed) {
-    // TripleA's public parse only logs the reason; its parser itself throws it
+    // TripleA's public parse only logs the reason; its parser itself throws it. Its private parse
+    // takes the stream alone in older TripleAs, the path with it in the releases of 2026.
     final Object parser;
     final Method parse;
     try {
@@ -715,20 +718,31 @@ class MapChecks {
               Path.class, XmlGameElementMapper.class, boolean.class);
       constructor.setAccessible(true);
       parser = constructor.newInstance(xml, new XmlGameElementMapper(), false);
-      parse = GameParser.class.getDeclaredMethod("parse", InputStream.class);
+      parse = privateParse();
       parse.setAccessible(true);
     } catch (final ReflectiveOperationException e) {
       // a TripleA whose parser looks otherwise: whether it loads, without the reason
+      log.info("This TripleA's game parser is not the one Check knows", e);
       return GameParser.parse(xml, false).isPresent()
           ? Optional.empty()
           : Optional.of("TripleA cannot read it, its log says why");
     }
     try (InputStream in = Files.newInputStream(xml)) {
-      return whyNotStarted(parse.invoke(parser, in), whyNotPlayed);
+      final Object[] arguments =
+          parse.getParameterCount() == 1 ? new Object[] {in} : new Object[] {xml, in};
+      return whyNotStarted(parse.invoke(parser, arguments), whyNotPlayed);
     } catch (final InvocationTargetException e) {
       return Optional.of(message(e.getCause()));
     } catch (final IOException | IllegalAccessException e) {
       return Optional.of(message(e));
+    }
+  }
+
+  private static Method privateParse() throws NoSuchMethodException {
+    try {
+      return GameParser.class.getDeclaredMethod("parse", InputStream.class);
+    } catch (final NoSuchMethodException e) {
+      return GameParser.class.getDeclaredMethod("parse", Path.class, InputStream.class);
     }
   }
 

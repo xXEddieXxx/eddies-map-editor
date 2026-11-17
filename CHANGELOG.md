@@ -9,6 +9,11 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 
 ### Fixed
 
+- **Check and Play said nothing about a game that does not start, with today's TripleA.** The
+  start check reads the game with TripleA's own parser to get its reason; the TripleA releases of
+  2026 changed that parser's shape, so the check fell back to "loads or not" and never played the
+  first round. The reasons are back: a nation without a capital, a step without its nation, land
+  units at sea, a territory without its attachment, each named with the step TripleA stops at.
 - **Production > Resources cut off headings and values** (#23). The table of starting resources
   sizes each column to its heading and its widest number, at least five figures, takes the
   window's width when its columns need more than the cards above, and scrolls sideways only
@@ -92,5 +97,6 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 
 ### For developers
 
-- Nine tests fail on a machine where TripleA's start checks return nothing, or where the
-  downloaded maps hold a stray copy; they failed before these changes too.
+- The tests run against the installed TripleA. With TripleA 2026-09.16 one test fails,
+  StackingLimitsTest.setsUnitLimits: that TripleA stores a unit's movementLimit as its
+  placementLimit, which TripleA has fixed since. TripleA 2026-11.16 or later passes it.
