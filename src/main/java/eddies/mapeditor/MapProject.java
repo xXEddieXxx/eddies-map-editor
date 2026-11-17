@@ -2303,7 +2303,8 @@ final class MapProject {
     for (final Map.Entry<String, String> moved : movedNations.entrySet()) {
       if (!MapXml.nations(game).contains(moved.getKey())
           && !MapFolder.otherGameHasNation(mapFolder, xml, moved.getKey())) {
-        MapFolder.removeNationFiles(mapFolder, moved.getKey(), moved.getValue());
+        MapFolder.removeNationFiles(
+            mapFolder, moved.getKey(), moved.getValue(), MapXml.nations(game));
       }
     }
   }
@@ -2395,7 +2396,11 @@ final class MapProject {
     final Map<String, String> movedNations = new HashMap<>();
     for (final Map.Entry<String, String> renamed : files.renamedNations().entrySet()) {
       MapFolder.copyNationFiles(
-          mapFolder, renamed.getValue(), renamed.getKey(), MapXml.unitTypes(saving.game()));
+          mapFolder,
+          renamed.getValue(),
+          renamed.getKey(),
+          MapXml.unitTypes(saving.game()),
+          MapXml.nations(saving.game()));
       movedNations.put(renamed.getValue(), renamed.getKey());
     }
     writeNationPictures(saving.game(), files, before);

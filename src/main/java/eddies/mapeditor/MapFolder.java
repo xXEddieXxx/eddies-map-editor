@@ -614,10 +614,24 @@ class MapFolder {
   static void copyNationFiles(
       final Path folder, final String old, final String renamed, final Collection<String> units)
       throws IOException {
+    copyNationFiles(folder, old, renamed, units, List.of());
+  }
+
+  /**
+   * As {@link #copyNationFiles(Path, String, String, Collection)}; a flag of another of the
+   * nations whose name starts with the old name, eg Red_Army's for Red, is not the old nation's.
+   */
+  static void copyNationFiles(
+      final Path folder,
+      final String old,
+      final String renamed,
+      final Collection<String> units,
+      final Collection<String> nations)
+      throws IOException {
     final Path flags = folder.resolve("flags");
     for (final String name : names(flags)) {
       final Matcher matcher = flagOf(old).matcher(name);
-      if (matcher.matches()) {
+      if (matcher.matches() && !isAnotherNations(name, old, nations)) {
         copy(flags.resolve(name), flags.resolve(renamed + matcher.group(1)));
       }
     }
@@ -655,10 +669,27 @@ class MapFolder {
   }
 
   /** A nation's flags among the names in flags/, their ending as the group. */
+  /**
+   * The nation's files in the flags folder: its flag, and every variant named after it with an
+   * underscore, the game's (_small, _large, _fade, _convoy) and a map's own (eg _star_fill, _flag,
+   * _large_alt), which a decoration or a trigger may show; the rest of the name is the group.
+   */
   private static Pattern flagOf(final String nation) {
     return Pattern.compile(
-        Pattern.quote(nation) + "((?:_small|_large|_fade|_convoy)?\\.(?:png|gif))",
-        Pattern.CASE_INSENSITIVE);
+        Pattern.quote(nation) + "((?:_[^/\\\\]*)?\\.(?:png|gif))", Pattern.CASE_INSENSITIVE);
+  }
+
+  // eg "Red_Army.png" is Red_Army's, not Red's: another nation's name is a longer start of it
+  private static boolean isAnotherNations(
+      final String name, final String nation, final Collection<String> nations) {
+    final String lower = name.toLowerCase(Locale.ROOT);
+    return nations.stream()
+        .filter(other -> !other.equalsIgnoreCase(nation))
+        .filter(other -> other.length() > nation.length())
+        .anyMatch(
+            other ->
+                lower.startsWith(other.toLowerCase(Locale.ROOT) + ".")
+                    || lower.startsWith(other.toLowerCase(Locale.ROOT) + "_"));
   }
 
   /**
@@ -668,12 +699,21 @@ class MapFolder {
    */
   static void removeNationFiles(final Path folder, final String old, final String renamed)
       throws IOException {
+    removeNationFiles(folder, old, renamed, List.of());
+  }
+
+  /** As {@link #removeNationFiles(Path, String, String)}, another nation's flags left alone. */
+  static void removeNationFiles(
+      final Path folder, final String old, final String renamed, final Collection<String> nations)
+      throws IOException {
     if (old.equalsIgnoreCase(renamed)) {
       return;
     }
     final Path flags = folder.resolve("flags");
     for (final String name : names(flags)) {
-      if (flagOf(old).matcher(name).matches() && writes(flags.resolve(name))) {
+      if (flagOf(old).matcher(name).matches()
+          && !isAnotherNations(name, old, nations)
+          && writes(flags.resolve(name))) {
         Files.deleteIfExists(flags.resolve(name));
       }
     }

@@ -18,6 +18,12 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
   to Attachments, where the one written is changed. Units also lists the nations' limits that
   count the unit. Checked against 1941 Global Command Decision.
 
+- **A renamed nation keeps every flag** (#12). Flags with a suffix of the map's own, such as
+  `_star_fill`, `_large_alt`, `_medium`, `_fade2` or `_flag`, were left under the old name and
+  then deleted with it; only the game's four variants moved. Now every file in flags named after
+  the nation moves. Checked by renaming a nation in 201 downloaded maps: unit pictures always
+  moved, these flags were the only loss.
+
 ### Changed
 
 - **Value (tuv)** sits in the top row beside the cost, blank for "its cost" (#3).
@@ -53,7 +59,6 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 ### Known, not fixed
 
 - A unit's icon sometimes disappears (#11). No repro yet.
-- A renamed nation does not get its unit pictures copied under the new name (#12).
 
 ### For developers
 

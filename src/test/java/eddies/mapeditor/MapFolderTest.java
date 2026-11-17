@@ -362,6 +362,40 @@ games:
     assertThat(yml.resolveSibling("map.yml.bak")).as("the first version kept").hasContent(before);
   }
 
+  @DisplayName("A renamed nation's flags of every variant move with it; another nation's whose name"
+      + " starts the same stay")
+  @Test
+  void movesEveryFlagVariant(@TempDir final Path root) throws Exception {
+    final Path flags = Files.createDirectories(root.resolve("flags"));
+    for (final String name :
+        List.of(
+            "Red.png",
+            "Red_small.png",
+            "Red_star_fill.png",
+            "Red_fade2.gif",
+            "Red_Army.png",
+            "Red_Army_large.png",
+            "Redmond.png")) {
+      Files.writeString(flags.resolve(name), name);
+    }
+    final List<String> nations = List.of("Red", "Red_Army", "Redmond");
+
+    MapFolder.copyNationFiles(root, "Red", "Crimson", List.of(), nations);
+    MapFolder.removeNationFiles(root, "Red", "Crimson", nations);
+
+    assertThat(MapFolder.names(flags))
+        .as("Red's four flags under the new name, Red_Army's and Redmond's as they were")
+        .containsExactlyInAnyOrder(
+            "Crimson.png",
+            "Crimson_small.png",
+            "Crimson_star_fill.png",
+            "Crimson_fade2.gif",
+            "Red_Army.png",
+            "Red_Army_large.png",
+            "Redmond.png");
+    assertThat(flags.resolve("Crimson_star_fill.png")).hasContent("Red_star_fill.png");
+  }
+
   @DisplayName("Rename map renames the map in map.yml where the old name stands, and its game's entry")
   @Test
   void renameMapInYaml(@TempDir final Path root) throws Exception {

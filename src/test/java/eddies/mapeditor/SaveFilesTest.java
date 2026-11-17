@@ -59,6 +59,9 @@ final class SaveFilesTest {
         folder.resolve("polygons.txt"), "red north 1  <  (0,0) (10,0) (10,10) (0,10) >\n");
     Files.createDirectories(folder.resolve("flags"));
     Files.writeString(folder.resolve("flags").resolve("Russians.png"), "flag");
+    // a map's own variants, which the game does not know but a decoration or trigger may show
+    Files.writeString(folder.resolve("flags").resolve("Russians_star_fill.png"), "star");
+    Files.writeString(folder.resolve("flags").resolve("Russians_large_alt.png"), "alt");
     Files.createDirectories(folder.resolve("units").resolve("Russians"));
     Files.writeString(
         folder.resolve("units").resolve("Russians").resolve("infantry.png"), "infantry");
@@ -198,7 +201,10 @@ final class SaveFilesTest {
         .as("the new name's pictures and the old name's, which go")
         .contains(
             folder.resolve("flags").resolve("Soviets.png"),
+            folder.resolve("flags").resolve("Soviets_star_fill.png"),
+            folder.resolve("flags").resolve("Soviets_large_alt.png"),
             folder.resolve("flags").resolve("Russians.png"),
+            folder.resolve("flags").resolve("Russians_star_fill.png"),
             folder.resolve("units").resolve("Soviets").resolve("infantry.png"),
             folder.resolve("units").resolve("Russians").resolve("infantry.png"));
     assertThat(new HashSet<>(told))
