@@ -40,6 +40,11 @@ tasks.test {
     useJUnitPlatform()
     // Java preferences in memory: no test reads or writes what the developer chose here
     systemProperty("java.util.prefs.PreferencesFactory", "eddies.mapeditor.MemoryPreferencesFactory")
+    // the user guide's screenshots: -Dguide.screenshots=true runs GuideScreenshots, which writes
+    // docs/guide/img from the editor as it runs; a map's folder to show with -Dguide.map=<folder>
+    systemProperty("guide.screenshots", System.getProperty("guide.screenshots") ?: "")
+    systemProperty("guide.map", System.getProperty("guide.map") ?: "")
+    systemProperty("guide.dark", System.getProperty("guide.dark") ?: "true")
 }
 
 tasks.named<JavaExec>("run") {

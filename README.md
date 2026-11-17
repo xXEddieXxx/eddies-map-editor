@@ -48,7 +48,8 @@ It runs with your installed TripleA, and the maps it saves still load and play t
 
 Each release names the TripleA release it was tested with.
 
-The [user guide](docs/USER-GUIDE.md) walks through every tool, menu and key.
+The [user guide](docs/guide/README.md) walks through every tool, menu and key, with a page and a
+picture per tool.
 
 ## What it does
 

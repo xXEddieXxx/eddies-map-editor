@@ -60,6 +60,13 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 
 - A unit's icon sometimes disappears (#11). No repro yet.
 
+### Documentation
+
+- A **user guide** in `docs/guide`: an overview with the window, keys and menus, a page per tool
+  that describes every control, and a picture per page with numbered callouts. The pictures are
+  made from the running editor (GuideScreenshots) in the dark theme; a test keeps every tool,
+  view and menu item named in the guide.
+
 ### For developers
 
 - Nine tests fail on a machine where TripleA's start checks return nothing, or where the
