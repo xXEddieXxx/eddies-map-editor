@@ -9,8 +9,11 @@ the description and picture the list of maps shows, and the steps to upload it.
 
 1. **Map name**: the name in TripleA's list of maps to download (map.yml map_name), at most 70
    characters. The games in the map have names of their own; Rename map changes the game's.
-2. **Version**: a simple number, raised with each update you upload; **Raise** makes it one
-   higher. The line below says what the game file still carries, which TripleA no longer reads.
+2. **Version**: a whole number in map.yml, raised with each update you upload; **Raise** makes
+   it one higher. **Game version** below it is the game file's own (info version), free text as
+   0.021, which TripleA's upload guide recommends changing with the game notes though the game
+   does not read it; Raise raises its last number too. A line says when the game file names a
+   TripleA version it needs, which TripleA no longer reads.
 3. **Before you upload**: the checklist, "n of m are ready": checked since the last change, a
    name, a version, the description, the preview picture, the folder's name as the upload guide
    asks it, no backup files in the folder. Each ○ has a button that does it, for example **Set

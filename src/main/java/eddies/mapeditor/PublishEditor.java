@@ -67,8 +67,6 @@ final class PublishEditor implements Editor {
   private static final String GUIDE =
       "https://github.com/triplea-game/triplea/blob/main/docs/map-making/how-to/"
           + "uploading-a-map-to-triplea.md";
-  private static final Pattern INFO_VERSION =
-      Pattern.compile("<info\\b[^>]*\\bversion\\s*=\\s*\"([^\"]*)\"");
   private static final Pattern MINIMUM_VERSION =
       Pattern.compile("<triplea\\b[^>]*\\bminimumVersion\\s*=\\s*\"([^\"]*)\"");
 
@@ -106,6 +104,7 @@ final class PublishEditor implements Editor {
   private final Form cards = new Form(TEXT_WIDTH);
   private final JTextField name = new JTextField();
   private final JTextField version = new JTextField(6);
+  private final JTextField gameVersion = new JTextField(8);
   private final JLabel ready = Theme.newSecondaryLabel("");
   private final Map<Id, Row> rows = new EnumMap<>(Id.class);
   private final Map<Id, Item> items = new EnumMap<>(Id.class);
@@ -135,6 +134,8 @@ final class PublishEditor implements Editor {
     name.addActionListener(e -> writeName());
     onLeaving(version, () -> writeVersion(version.getText()));
     version.addActionListener(e -> writeVersion(version.getText()));
+    onLeaving(gameVersion, () -> writeGameVersion(gameVersion.getText()));
+    gameVersion.addActionListener(e -> writeGameVersion(gameVersion.getText()));
     description.setLineWrap(true);
     description.setWrapStyleWord(true);
     description.colorAsHtml();
@@ -291,6 +292,9 @@ final class PublishEditor implements Editor {
     } catch (final IOException e) {
       // the list says so
     }
+    if (!gameVersion.isFocusOwner()) {
+      gameVersion.setText(gameVersionOf().orElse(""));
+    }
     if (!description.isFocusOwner() && description.getText().equals(writtenDescription)) {
       // maybe changed outside meanwhile, eg in Files
       readDescription();
@@ -324,21 +328,26 @@ final class PublishEditor implements Editor {
         "The name in TripleA's list of maps to download (map.yml map_name). The games in the map"
             + " have names of their own, changed in Files.",
         name);
-    final JButton raise = button("Raise", () -> writeVersion(MapFolder.raised(version.getText())));
-    raise.setToolTipText("One higher, for an update you upload");
+    final JButton raise = button("Raise", this::raiseVersions);
+    raise.setToolTipText("Both one higher, for an update you upload: 2 and 0.021 after 1 and 0.020");
     cards.field(
         "Version",
         "A whole number, raised with each update you upload (map.yml version): 1, then 2."
             + " TripleA's guide asks for it; today's TripleA tells players that their map is out"
-            + " of date by the day of your last upload. The version in the game file is another"
-            + " thing, which TripleA 2.6 and later read no more.",
+            + " of date by the day of your last upload.",
         leftAligned(version, Box.createHorizontalStrut(Theme.GAP_S), raise));
+    cards.field(
+        "Game version",
+        "The game file's own version (info version), as you like it: 0.021, 1.5b. TripleA's"
+            + " upload guide recommends changing it with the game notes at each update; the game"
+            + " itself does not read it. Raise raises its last number with the version above.",
+        leftAligned(gameVersion));
     inGameFile().ifPresent(cards::note);
   }
 
   /**
-   * What the game file says of a version and of the TripleA it needs, which TripleA 2.6 and later
-   * read no more; a save keeps them as they are.
+   * What the game file says of the TripleA it needs, which TripleA 2.6 and later read no more; a
+   * save keeps it as it is.
    */
   private Optional<String> inGameFile() {
     try {
@@ -349,21 +358,13 @@ final class PublishEditor implements Editor {
   }
 
   static Optional<String> gameFileLine(final String xml) {
-    final List<String> parts = new ArrayList<>();
-    final Matcher infoVersion = INFO_VERSION.matcher(xml);
-    if (infoVersion.find()) {
-      parts.add("version " + SearchList.escape(infoVersion.group(1)));
-    }
     final Matcher minimum = MINIMUM_VERSION.matcher(xml);
-    if (minimum.find()) {
-      parts.add("for TripleA " + SearchList.escape(minimum.group(1)) + " or later");
-    }
-    return parts.isEmpty()
-        ? Optional.empty()
-        : Optional.of(
-            "The game file also says: "
-                + String.join(", ", parts)
-                + ". TripleA reads neither any more; a save keeps them as they are.");
+    return minimum.find()
+        ? Optional.of(
+            "The game file also says: for TripleA "
+                + SearchList.escape(minimum.group(1))
+                + " or later. TripleA reads it no more; a save keeps it as it is.")
+        : Optional.empty();
   }
 
   private void writeName() {
@@ -417,6 +418,38 @@ final class PublishEditor implements Editor {
       warn("Version", e);
     }
     refresh();
+  }
+
+  /** Raise: the map.yml number by one, the game file's last number with it. */
+  private void raiseVersions() {
+    writeVersion(MapFolder.raised(version.getText()));
+    gameVersionOf()
+        .filter(v -> !v.equals(MapFolder.raisedLast(v)))
+        .ifPresent(v -> writeGameVersion(MapFolder.raisedLast(v)));
+  }
+
+  private void writeGameVersion(final String typed) {
+    final Optional<Path> xml = project.getXmlFile();
+    if (xml.isEmpty() || typed.strip().equals(gameVersionOf().orElse(""))) {
+      return;
+    }
+    try {
+      MapFolder.setGameVersion(xml.get(), typed);
+      gameVersion.setText(typed.strip());
+    } catch (final IOException e) {
+      warn("Game version", e);
+    }
+    refresh();
+  }
+
+  private Optional<String> gameVersionOf() {
+    try {
+      return project.getXmlFile().isPresent()
+          ? MapFolder.gameVersion(project.getXmlFile().get())
+          : Optional.empty();
+    } catch (final IOException | RuntimeException e) {
+      return Optional.empty();
+    }
   }
 
   private static String versionOf(final Path root) {
@@ -589,22 +622,24 @@ final class PublishEditor implements Editor {
 
   /**
    * The version in map.yml: done for a whole number; to do without one, or with one that is no
-   * whole number, as TripleA's guide asks for 1, 2, 3; the game file's own version is named as
-   * not it, as map makers look for the version there.
+   * whole number, as TripleA's guide asks for 1, 2, 3. The game file's own version is named with
+   * it, as map makers keep theirs there: it is the one Raise raises along, not the one the list of
+   * maps goes by.
    */
   static Item versionItem(final Path root, final String version) {
     final String asked =
         "TripleA's guide asks for a whole number in map.yml that goes up with each update: 1,"
             + " then 2. Today's TripleA tells players of an update by the day of the upload.";
+    final Optional<String> inGameFile = gameFileVersion(root).map(SearchList::escape);
     if (version.isEmpty()) {
-      final String inGameFile =
-          gameFileVersion(root)
+      final String also =
+          inGameFile
               .map(
                   v ->
-                      " The version=\"" + SearchList.escape(v) + "\" in the game file is not it:"
-                          + " TripleA 2.6 and later read it no more.")
+                      " The game file's own version " + v + " is another thing, which the game"
+                          + " does not read; Raise raises both.")
               .orElse("");
-      return new Item(Id.VERSION, Status.TODO, "No version in map.yml yet", asked + inGameFile);
+      return new Item(Id.VERSION, Status.TODO, "No version in map.yml yet", asked + also);
     }
     if (!MapFolder.isWholeNumber(version)) {
       return new Item(
@@ -613,23 +648,18 @@ final class PublishEditor implements Editor {
           "Version " + SearchList.escape(version) + " is no whole number",
           asked + " Set version 1 writes 1; Raise then counts up.");
     }
-    return new Item(Id.VERSION, Status.DONE, "Version " + version, "");
+    return new Item(
+        Id.VERSION,
+        Status.DONE,
+        "Version " + version + inGameFile.map(v -> ", game file " + v).orElse(""),
+        "");
   }
 
-  // the version="" of the map's first game file, which TripleA 2.6 and later read no more
+  // the version="" of the map's first game file, which the game does not read
   private static Optional<String> gameFileVersion(final Path root) {
     try {
-      return MapFolder.gamesOf(root).values().stream()
-          .findFirst()
-          .flatMap(
-              xml -> {
-                try {
-                  final Matcher found = INFO_VERSION.matcher(MapFolder.readText(xml));
-                  return found.find() ? Optional.of(found.group(1)) : Optional.empty();
-                } catch (final IOException | RuntimeException e) {
-                  return Optional.empty();
-                }
-              });
+      final Optional<Path> xml = MapFolder.gamesOf(root).values().stream().findFirst();
+      return xml.isPresent() ? MapFolder.gameVersion(xml.get()) : Optional.empty();
     } catch (final IOException | RuntimeException e) {
       return Optional.empty();
     }

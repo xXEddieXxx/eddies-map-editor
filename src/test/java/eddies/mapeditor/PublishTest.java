@@ -121,7 +121,7 @@ final class PublishTest {
   }
 
   @DisplayName("The list says where the version lives and what it is: a whole number in map.yml,"
-      + " not the game file's version; one with a point is to do")
+      + " the game file's own beside it; one with a point is to do")
   @Test
   void versionItemTellsTheFormat() throws Exception {
     givenSavedMap();
@@ -135,14 +135,17 @@ final class PublishTest {
 
     assertThat(none.text()).isEqualTo("No version in map.yml yet");
     assertThat(none.hint())
-        .as("the whole number asked for, and the game file's version named as not it")
+        .as("the whole number asked for, and the game file's version named as another thing")
         .contains("whole number")
-        .contains("version=\"0.020\" in the game file is not it");
+        .contains("game file's own version 0.020 is another thing");
     assertThat(point)
         .as("a version with a point is to do, and told why")
         .returns(Status.TODO, Item::status)
         .returns("Version 0.020 is no whole number", Item::text);
-    assertThat(whole).returns(Status.DONE, Item::status).returns("Version 3", Item::text);
+    assertThat(whole)
+        .as("done, with the game file's version named")
+        .returns(Status.DONE, Item::status)
+        .returns("Version 3, game file 0.020", Item::text);
   }
 
   @DisplayName("Raise makes the version one higher, 1 for a map without one")
@@ -151,6 +154,37 @@ final class PublishTest {
     assertThat(List.of(MapFolder.raised(""), MapFolder.raised("7"), MapFolder.raised("1.5")))
         .as("none, a whole number, a number with a point")
         .containsExactly("1", "8", "2");
+  }
+
+  @DisplayName("The game file's own version is raised in its last number, keeping its figures")
+  @Test
+  void raisesGameVersion() {
+    assertThat(
+            Stream.of("0.020", "1.9", "1.5b", "2", "beta", "")
+                .map(MapFolder::raisedLast)
+                .toList())
+        .as("0.020 to 0.021, 1.9 to 1.10, a number not last stays, none stays")
+        .containsExactly("0.021", "1.10", "1.6b", "3", "beta", "");
+  }
+
+  @DisplayName("The game file's own version is read, set, added and taken out in the file's text")
+  @Test
+  void setsGameVersion() throws Exception {
+    givenSavedMap();
+    final Path xml = MapFolder.gamesOf(givenRoot()).values().iterator().next();
+    final String before = Files.readString(xml);
+
+    assertThat(MapFolder.gameVersion(xml)).as("a game of the editor's own has none").isEmpty();
+    MapFolder.setGameVersion(xml, "0.020");
+    assertThat(MapFolder.gameVersion(xml)).as("added to <info>").contains("0.020");
+    MapFolder.setGameVersion(xml, "0.021");
+    assertThat(MapFolder.gameVersion(xml)).as("changed").contains("0.021");
+    assertThat(Files.readString(xml))
+        .as("the rest of the file as it was")
+        .hasSize(before.length() + " version=\"0.021\"".length());
+    MapFolder.setGameVersion(xml, "");
+    assertThat(MapFolder.gameVersion(xml)).as("taken out").isEmpty();
+    assertThat(Files.readString(xml)).as("the file as before").isEqualTo(before);
   }
 
   // ---- the list
@@ -339,16 +373,15 @@ final class PublishTest {
         .endsWith("<p>Two islands.</p>");
   }
 
-  @DisplayName("What the game file says of version and TripleA version is told, not changed")
+  @DisplayName("What the game file says of the TripleA it needs is told, not changed")
   @Test
   void tellsGameFileVersions() {
     final String xml =
         "<game><info name=\"Old\" version=\"1.9\"/><triplea minimumVersion=\"1.8\"/></game>";
 
     assertThat(PublishEditor.gameFileLine(xml))
-        .as("both values")
-        .hasValueSatisfying(
-            line -> assertThat(line).contains("version 1.9", "for TripleA 1.8 or later"));
+        .as("the minimum version; the game's own has a field")
+        .hasValueSatisfying(line -> assertThat(line).contains("for TripleA 1.8 or later"));
     assertThat(PublishEditor.gameFileLine("<game><info name=\"New\"/></game>"))
         .as("a game file of today has neither")
         .isEmpty();

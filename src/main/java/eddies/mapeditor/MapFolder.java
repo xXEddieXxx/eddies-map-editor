@@ -83,6 +83,12 @@ class MapFolder {
   static final int MAP_NAME_MAX_LENGTH = 70;
   private static final String VERSION_KEY = "version";
   private static final Pattern WHOLE_NUMBER = Pattern.compile("\\d{1,9}");
+  private static final Pattern LAST_NUMBER = Pattern.compile("(\\d+)(?!.*\\d)");
+  // group 1 the attribute with the space before it, group 2 its value
+  private static final Pattern INFO_VERSION =
+      Pattern.compile("<info\\b[^>]*?(\\s+version\\s*=\\s*\"([^\"]*)\")");
+  // group 1 the tag up to its last attribute, before > or />
+  private static final Pattern INFO_TAG = Pattern.compile("(<info\\b[^>]*?)\\s*/?>");
   static final String PREVIEW_FILE = "preview.png";
   static final String DESCRIPTION_FILE = "description.html";
   // the map server shows no longer one: its database column (MapDescriptionReader)
@@ -1464,15 +1470,76 @@ class MapFolder {
         root, VERSION_KEY, WHOLE_NUMBER.matcher(typed).matches() ? Integer.valueOf(typed) : typed);
   }
 
-  /** The version after this one: its whole number raised by one, 1 for none. */
   /** Whether the version is what TripleA's guide asks for: a whole number, eg 1. */
   static boolean isWholeNumber(final String version) {
     return WHOLE_NUMBER.matcher(version.strip()).matches();
   }
 
+  /** The version after this one: its whole number raised by one, 1 for none. */
   static String raised(final String version) {
     final Matcher number = WHOLE_NUMBER.matcher(version.strip());
     return String.valueOf(number.lookingAt() ? Integer.parseInt(number.group()) + 1 : 1);
+  }
+
+  /**
+   * A free-form version with its last number raised by one, keeping its figures: 0.020 becomes
+   * 0.021, 1.9 becomes 1.10, 2b stays 2b as its number is not last; one without a number stays.
+   */
+  static String raisedLast(final String version) {
+    final Matcher last = LAST_NUMBER.matcher(version);
+    if (!last.find()) {
+      return version;
+    }
+    final String number = last.group(1);
+    final String raised = new java.math.BigInteger(number).add(java.math.BigInteger.ONE).toString();
+    final String padded = "0".repeat(Math.max(0, number.length() - raised.length())) + raised;
+    return version.substring(0, last.start(1)) + padded + version.substring(last.end(1));
+  }
+
+  /**
+   * The game file's own version, {@code <info version="…">}: TripleA's upload guide recommends
+   * raising it with each update, though the engine does not read it.
+   */
+  static Optional<String> gameVersion(final Path gameXml) throws IOException {
+    final Matcher found = INFO_VERSION.matcher(readText(gameXml));
+    return found.find() ? Optional.of(found.group(2)) : Optional.empty();
+  }
+
+  /**
+   * Sets the game file's own version in its text, so the rest of the file stays as it is; blank
+   * takes the attribute out. The model drops the attribute, so a save keeps what the file has.
+   */
+  static void setGameVersion(final Path gameXml, final String version) throws IOException {
+    final String xml = readText(gameXml);
+    final Matcher found = INFO_VERSION.matcher(xml);
+    final String value = version.strip();
+    final String changed;
+    if (found.find()) {
+      changed =
+          value.isEmpty()
+              ? xml.substring(0, found.start(1)) + xml.substring(found.end())
+              : xml.substring(0, found.start(2)) + escapeXml(value) + xml.substring(found.end(2));
+    } else if (value.isEmpty()) {
+      return;
+    } else {
+      final Matcher info = INFO_TAG.matcher(xml);
+      if (!info.find()) {
+        throw new IOException("The game file has no <info> element to hold the version.");
+      }
+      changed =
+          xml.substring(0, info.end(1))
+              + " version=\""
+              + escapeXml(value)
+              + "\""
+              + xml.substring(info.end(1));
+    }
+    if (!changed.equals(xml)) {
+      replaceText(gameXml, changed);
+    }
+  }
+
+  private static String escapeXml(final String text) {
+    return text.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;");
   }
 
   private static void setMapDetail(final Path root, final String key, final Object value)
