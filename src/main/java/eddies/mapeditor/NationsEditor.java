@@ -560,7 +560,7 @@ final class NationsEditor implements Editor {
   }
 
   /** Icons side by side, each centered on the tallest, eg a color and a flag. */
-  private record IconRow(Icon first, Icon second) implements Icon {
+  record IconRow(Icon first, Icon second) implements Icon {
     private static final int GAP = 6;
 
     @Override

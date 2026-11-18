@@ -238,10 +238,10 @@ final class NationsEditorTest {
         .orElseThrow();
   }
 
-  @DisplayName("The list shows each nation's color before its name")
+  @DisplayName("The list shows each nation's color before its name, the flag after the color")
   @Test
   void listShowsTheNationsColors() throws Exception {
-    // given
+    // given: a game in a folder, so the game's own flag of the Italians is found
     final MapProject project = givenMinimap();
     final NationsEditor editor = new NationsEditor(project);
     @SuppressWarnings("unchecked")
@@ -250,11 +250,16 @@ final class NationsEditorTest {
     // when
     final Component row =
         list.getCellRenderer().getListCellRendererComponent(list, "Italians", 1, false, false);
+    final List<Icon> icons =
+        find((Container) row, JLabel.class).map(JLabel::getIcon).filter(Objects::nonNull).toList();
 
     // then
-    assertThat(find((Container) row, JLabel.class).map(JLabel::getIcon).filter(Objects::nonNull))
-        .as("the Italians' color as a swatch")
-        .containsExactly(new MapLegend.Swatch(project.nationColor("Italians")));
+    assertThat(icons).as("one icon: the color, then the flag").hasSize(1);
+    assertThat(icons.get(0))
+        .as("the Italians' color as a swatch, first")
+        .isInstanceOf(NationsEditor.IconRow.class)
+        .extracting(icon -> ((NationsEditor.IconRow) icon).first())
+        .isEqualTo(new MapLegend.Swatch(project.nationColor("Italians")));
   }
 
   @DisplayName("With a folder the list shows the nation's flag beside its color, the row's height")
