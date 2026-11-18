@@ -20,9 +20,8 @@
       <Payload SourceFile="$(var.Ba)\EddiesSetup.dll" />
       <Payload SourceFile="$(var.Config)" Name="BootstrapperCore.config" />
     </BootstrapperApplicationRef>
-    <!-- for a Windows without the .NET Framework 4.8, older than Windows 10 of 2019: Burn fetches it -->
-    <WixVariable Id="WixMbaPrereqPackageId" Value="NetFx48Web" />
-    <WixVariable Id="WixMbaPrereqLicenseUrl" Value="https://go.microsoft.com/fwlink/?LinkId=2085155" />
+    <!-- for a Windows without the .NET Framework 4.8, older than Windows 10 of 2019, Burn fetches
+         it: NetFx48Web in the chain names itself as what the window needs -->
 
     <!-- what the window chose, set by SetupApp before the msi runs -->
     <Variable Name="InstallFolder" Type="string" Value="" />
