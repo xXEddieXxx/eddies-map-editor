@@ -92,6 +92,47 @@ final class MapMakerWindowTest {
             Primary.SAVE, Primary.CHECK, Primary.CHECK, Primary.CHECK, Primary.PLAY);
   }
 
+  @DisplayName("A newer version shows as a button at the top right, on the start page and in a"
+      + " map's header; none before one is known")
+  @Test
+  void newerVersionShowsAtTheTop() throws Exception {
+    assumeFalse(GraphicsEnvironment.isHeadless(), "the window needs a screen");
+    // given
+    final MapProject project = givenMinimapWithoutItalianLand();
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapMakerWindow window = new MapMakerWindow();
+          try {
+            seen.add(updateButtonShown(window));
+            window.showUpdate(new UpdateCheck.Release("0.2.4", "page"));
+            seen.add(updateButtonShown(window));
+            window.showProject(project);
+            seen.add(updateButtonShown(window));
+            seen.add(
+                buttons(window.getContentPane())
+                    .filter(b -> String.valueOf(b.getText()).contains("New version 0.2.4"))
+                    .noneMatch(Theme::isPrimary));
+          } finally {
+            window.dispose();
+          }
+        });
+
+    // then
+    assertThat(seen)
+        .as("hidden at first; on the start page; with a map; Check stays the one primary")
+        .containsExactly(false, true, true, true);
+  }
+
+  // whether the button of a newer version shows, it and what it is in
+  private static boolean updateButtonShown(final MapMakerWindow window) {
+    return buttons(window.getContentPane())
+        .filter(b -> String.valueOf(b.getText()).contains("New version 0.2.4"))
+        .anyMatch(b -> b.isVisible() && b.getParent().isVisible());
+  }
+
   @DisplayName("The header of an unchecked map: Check primary, Play a click away, no pill, no Save")
   @Test
   void headerOfAnUncheckedMap() throws Exception {

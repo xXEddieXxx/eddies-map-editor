@@ -25,12 +25,13 @@
 - **Close map (Ctrl+W)** goes back to the start page, asking about unsaved changes first.
 - **Show all options** opens every "▸ More … options" row in every tool, now and next time.
 - **Tell me of new versions**: once a day when the editor starts, it asks GitHub for the latest
-  release and shows a toast when there is a newer one, once per version, which stays until you
-  answer it or close it with ×. Nothing but that request leaves your computer; untick to stop
-  asking. An editor installed by its Windows installer
-  offers **Install**: it downloads the new installer, checks it against the release, asks, then
-  closes, lets Windows install the new version and starts again. An editor run from the zip, or
-  on another system, offers **Download**, which opens the release's page.
+  release. A newer one is offered once in the middle of the window, and stays as the button
+  **⬆ New version** at the top right, on the start page and beside a map's buttons, until you have
+  it; a click on the button offers it again. Nothing but that request leaves your computer; untick
+  to stop asking. An editor installed by its Windows installer offers **Install**: it downloads
+  the new installer, checks it against the release, asks, then closes, lets Windows install the
+  new version and starts again. An editor run from the zip, or on another system, offers **Open
+  the page**, the release's page with the downloads.
 - **Look for a new version** asks now, whatever was asked or told before, and offers the same.
 - **Version** is the editor's version. "dev" for a build from the sources.
 

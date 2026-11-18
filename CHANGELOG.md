@@ -15,12 +15,15 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
   place. Its pages carry the editor's icon and colors. It is not signed, so Windows warns at its first start: More info, Run anyway. The zip
   stays for those who want no installer.
 - **A new version installed from within the editor** (#28). An editor installed by the installer
-  offers **Install** in the toast on a new version: it downloads the release's installer, checks
+  offers **Install** on a new version: it downloads the release's installer, checks
   its size and SHA-256 against what GitHub tells of the release, asks, also about unsaved
   changes, then closes; Windows installs the new version showing only its progress, and the
-  editor starts again. An editor run from the zip keeps **Download**, the release's page.
-  **File > Look for a new version** asks at any time, also after the toast is gone. The toast
-  on a new version no longer goes after eight seconds: it stays until answered or closed.
+  editor starts again. An editor run from the zip is offered the release's page.
+  **File > Look for a new version** asks at any time.
+- **A new version shows where it is seen.** No longer a toast at the window's bottom for eight
+  seconds: the offer comes once in the middle of the window, and the button **⬆ New version**
+  stays at the top right, on the start page and beside a map's buttons, until you have the
+  version.
 
 ### Fixed
 

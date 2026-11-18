@@ -79,27 +79,6 @@ final class ToastTest {
     assertThat(Toast.shown(window.getLayeredPane())).as("the toast is gone").isEmpty();
   }
 
-  @DisplayName("An offer that wants an answer stays until its action or × is clicked")
-  @Test
-  void offerStaysUntilClosed() {
-    final JRootPane window = givenWindow();
-
-    Dialogs.toast(window, "✓ Saved", "Show", () -> {});
-    final boolean newsCloses = Toast.shown(window.getLayeredPane()).orElseThrow().closesByItself();
-    Dialogs.offer(window, "Eddie's Map Editor 0.2.4 is out; this is 0.2.3", "Install", () -> {});
-    final Toast offer = Toast.shown(window.getLayeredPane()).orElseThrow();
-
-    assertThat(newsCloses).as("news goes after its seconds").isTrue();
-    assertThat(offer.closesByItself()).as("an offer waits for its answer").isFalse();
-    List.of(offer.getComponents()).stream()
-        .filter(c -> c instanceof JButton button && "Close".equals(button.getToolTipText()))
-        .map(JButton.class::cast)
-        .findFirst()
-        .orElseThrow()
-        .doClick();
-    assertThat(Toast.shown(window.getLayeredPane())).as("× closes it").isEmpty();
-  }
-
   @DisplayName("A long text is cut in its middle, so its action and × stay beside it")
   @Test
   void longTextKeepsButtonsInSight() {

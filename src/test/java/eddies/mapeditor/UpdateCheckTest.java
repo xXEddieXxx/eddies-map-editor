@@ -100,4 +100,28 @@ final class UpdateCheckTest {
         .as("the next one is told")
         .isTrue();
   }
+
+  @DisplayName("A newer release is kept and known at the next start, with its installer, until"
+      + " this version is as new")
+  @Test
+  void keepsTheNewerRelease() {
+    final Preferences preferences = Preferences.userRoot().node("UpdateCheckTest/" + System.nanoTime());
+    final Updater.Installer installer =
+        new Updater.Installer(
+            Updater.RELEASES + "v0.2.4/" + Updater.MSI_NAME,
+            53125594,
+            java.util.Optional.of("ab".repeat(32)));
+    final UpdateCheck.Release release =
+        new UpdateCheck.Release("0.2.4", "page", java.util.Optional.of(installer));
+
+    assertThat(UpdateCheck.known("0.2.3", preferences)).as("nothing learnt yet").isEmpty();
+    UpdateCheck.keep(release, preferences);
+
+    assertThat(UpdateCheck.known("0.2.3", preferences)).contains(release);
+    assertThat(UpdateCheck.known("0.2.4", preferences)).as("installed since").isEmpty();
+    UpdateCheck.keep(new UpdateCheck.Release("0.2.5", "page"), preferences);
+    assertThat(UpdateCheck.known("0.2.3", preferences))
+        .as("a release without the installer")
+        .contains(new UpdateCheck.Release("0.2.5", "page"));
+  }
 }

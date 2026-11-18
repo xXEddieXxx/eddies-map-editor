@@ -151,6 +151,9 @@ public final class MapMakerWindow extends JFrame {
         }
       };
   private final JButton playButton = new JButton("Play", MakerIcon.small(Glyph.PLAYTEST));
+  // at the top right while a newer version is known; what a click on it offers
+  private final JButton updateButton = new JButton();
+  private Runnable onUpdate = () -> {};
   private final JButton checkButton = new JButton("Check", MakerIcon.small(Glyph.VALIDATE));
   private final JButton undoButton =
       Theme.newIconButton(Glyph.UNDO, "Undo (Ctrl+Z)", this::undo);
@@ -234,24 +237,70 @@ public final class MapMakerWindow extends JFrame {
     window.setLocationRelativeTo(null);
     window.setExtendedState(JFrame.MAXIMIZED_BOTH);
     window.setVisible(true);
-    UpdateCheck.whenDue(EddiesMapEditor.version(), window::tellOfNewVersion);
+    final String own = EddiesMapEditor.version();
+    // a newer version learnt of at an earlier start shows at once, without asking again
+    UpdateCheck.known(own).ifPresent(window::showUpdate);
+    UpdateCheck.whenDue(
+        own,
+        (release, first) -> {
+          window.showUpdate(release);
+          if (first) {
+            window.offerUpdate(release);
+          }
+        });
     window.offerTestInstall();
   }
 
   /**
-   * A toast on a newer release, once per version, that stays until it is answered or closed. An
-   * editor installed by its Windows installer
-   * offers Install, which downloads the release's installer and replaces this version; any other
-   * offers Download, which opens the release's page.
+   * A newer release shows as a button at the top right, on the start page and beside a map's
+   * buttons, for as long as this version is the older one; a click offers it.
    */
-  private void tellOfNewVersion(final UpdateCheck.Release release) {
-    final String news =
-        "Eddie's Map Editor " + release.version() + " is out; this is " + EddiesMapEditor.version();
+  void showUpdate(final UpdateCheck.Release release) {
+    showUpdate(
+        "⬆ New version " + release.version(),
+        "Eddie's Map Editor " + release.version() + " is out; this is " + EddiesMapEditor.version(),
+        () -> offerUpdate(release));
+  }
+
+  private void showUpdate(final String label, final String tip, final Runnable offer) {
+    updateButton.setText(label);
+    updateButton.setToolTipText(tip);
+    onUpdate = offer;
+    updateButton.setVisible(true);
+    Optional.ofNullable(updateButton.getParent())
+        .ifPresent(
+            around -> {
+              around.setVisible(true);
+              around.revalidate();
+            });
+  }
+
+  /**
+   * The offer in the middle of the window: an editor installed by its Windows installer offers to
+   * install the release, downloading its installer and replacing this version; any other offers
+   * the release's page. Later leaves the button at the top right.
+   */
+  private void offerUpdate(final UpdateCheck.Release release) {
+    final String title = "Eddie's Map Editor " + release.version() + " is out";
+    final String own = "This is version " + EddiesMapEditor.version() + ".";
     final Optional<Path> installed = release.installer().flatMap(installer -> Updater.installedAt());
     if (installed.isPresent()) {
-      Dialogs.offer(this, news, "Install", () -> downloadUpdate(release, installed.get()));
-    } else {
-      Dialogs.offer(this, news, "Download", () -> openPage(release));
+      if (Dialogs.confirm(
+          this,
+          "New version",
+          title + "\n" + own + " The editor downloads the new version, closes, lets Windows"
+              + " install it and starts again.",
+          "Later",
+          "Install")) {
+        downloadUpdate(release, installed.get());
+      }
+    } else if (Dialogs.confirm(
+        this,
+        "New version",
+        title + "\n" + own + " The release's page has the new version to download.",
+        "Later",
+        "Open the page")) {
+      openPage(release);
     }
   }
 
@@ -275,7 +324,8 @@ public final class MapMakerWindow extends JFrame {
                 "Look for a new version",
                 "GitHub gave no answer.\nTry again later, or look at " + RELEASES_PAGE + ".");
           } else if (UpdateCheck.isNewer(own, latest.get().version())) {
-            tellOfNewVersion(latest.get());
+            showUpdate(latest.get());
+            offerUpdate(latest.get());
           } else {
             Dialogs.toast(this, "✓ This is the newest version, " + own);
           }
@@ -391,29 +441,28 @@ public final class MapMakerWindow extends JFrame {
 
   /**
    * For trying the installation step without a release: with {@value Updater#TEST_MSI} naming an
-   * msi, eg one the Build workflow made, an installed editor offers to install that.
+   * msi, eg one the Build workflow made, an installed editor offers to install that, by the same
+   * button and the same steps as a release's.
    */
   private void offerTestInstall() {
-    Optional.ofNullable(System.getenv(Updater.TEST_MSI))
-        .map(Path::of)
-        .filter(Files::isRegularFile)
-        .ifPresent(
-            msi ->
-                Updater.installedAt()
-                    .ifPresent(
-                        folder ->
-                            Dialogs.offer(
-                                this,
-                                "Test: install " + msi,
-                                "Install",
-                                () -> {
-                                  try {
-                                    installUpdate(
-                                        "of " + msi.getFileName(), Updater.staged(msi), folder);
-                                  } catch (final IOException e) {
-                                    Dialogs.warn(this, "Test", String.valueOf(e.getMessage()));
-                                  }
-                                })));
+    final Optional<Path> msi =
+        Optional.ofNullable(System.getenv(Updater.TEST_MSI))
+            .map(Path::of)
+            .filter(Files::isRegularFile);
+    final Optional<Path> folder = msi.flatMap(file -> Updater.installedAt());
+    if (folder.isEmpty()) {
+      return;
+    }
+    final Runnable offer =
+        () -> {
+          try {
+            installUpdate("of " + msi.get().getFileName(), Updater.staged(msi.get()), folder.get());
+          } catch (final IOException e) {
+            Dialogs.warn(this, "Test", String.valueOf(e.getMessage()));
+          }
+        };
+    showUpdate("⬆ Test update", "Installs " + msi.get(), offer);
+    offer.run();
   }
 
   // ---- new, opening and leaving a map
@@ -423,7 +472,16 @@ public final class MapMakerWindow extends JFrame {
     mapShown = false;
     sidebar = null;
     setTitle("Eddie's Map Editor");
-    setContentPane(new StartPage(this::chooseAndOpen, this::createMap, this::openProject));
+    // above the page, at the top right: a newer version, where a map's header has it too
+    final JPanel top = new JPanel(new FlowLayout(FlowLayout.RIGHT, Theme.GAP_L, Theme.GAP_M));
+    top.add(updateButton);
+    top.setVisible(updateButton.isVisible());
+    final JPanel page = new JPanel(new BorderLayout());
+    page.add(top, BorderLayout.NORTH);
+    page.add(
+        new StartPage(this::chooseAndOpen, this::createMap, this::openProject),
+        BorderLayout.CENTER);
+    setContentPane(page);
     revalidate();
     repaint();
   }
@@ -1599,6 +1657,12 @@ public final class MapMakerWindow extends JFrame {
     saveButton.addActionListener(e -> save());
     playButton.setToolTipText("Saves and starts the game in a new TripleA window (F7)");
     playButton.addActionListener(e -> playtest());
+    // hidden until a newer version is known
+    // not primary, as Check is the header's one main action: outlined, its words in the accent
+    Theme.setSecondaryButtonStyle(updateButton);
+    updateButton.setForeground(Theme.getAccentTextColor());
+    updateButton.setVisible(false);
+    updateButton.addActionListener(e -> onUpdate.run());
   }
 
   /**
@@ -1624,6 +1688,8 @@ public final class MapMakerWindow extends JFrame {
     naming.add(Box.createHorizontalGlue());
     header.add(naming, BorderLayout.CENTER);
     final JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, Theme.GAP_S, 0));
+    // a newer version, while there is one
+    buttons.add(updateButton);
     buttons.add(pill);
     buttons.add(Box.createHorizontalStrut(Theme.GAP_S));
     buttons.add(undoButton);

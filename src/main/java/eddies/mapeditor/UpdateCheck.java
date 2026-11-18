@@ -7,6 +7,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Optional;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.prefs.Preferences;
 import java.util.regex.Matcher;
@@ -31,6 +32,8 @@ class UpdateCheck {
   private static final String TELL = "tellOfNewVersions";
   private static final String ASKED_AT = "newVersionAskedAt";
   private static final String TOLD = "newVersionTold";
+  // the newer release learnt of last: the start of its keys
+  private static final String KNOWN = "newVersion";
   private static final Pattern TAG = Pattern.compile("\"tag_name\"\\s*:\\s*\"v?([^\"]+)\"");
   private static final Pattern PAGE =
       Pattern.compile("\"html_url\"\\s*:\\s*\"(https://github\\.com/[^\"]*/releases/tag/[^\"]+)\"");
@@ -67,10 +70,11 @@ class UpdateCheck {
 
   /**
    * Asks for the latest release on a thread of its own when it is time, and gives a release newer
-   * than this version, not told of before, on the Swing thread. A failed request is logged alone;
-   * the next try is a day later.
+   * than this version on the Swing thread, with whether it is told for the first time. The
+   * release is kept for {@link #known}. A failed request is logged alone; the next try is a day
+   * later.
    */
-  static void whenDue(final String own, final Consumer<Release> found) {
+  static void whenDue(final String own, final BiConsumer<Release, Boolean> found) {
     final long now = System.currentTimeMillis();
     if (!tells() || own.equals("dev") || !isDue(now, PREFERENCES)) {
       return;
@@ -79,12 +83,53 @@ class UpdateCheck {
     inBackground(
         () ->
             latest(own)
-                .filter(release -> toTell(own, release, PREFERENCES))
+                .filter(release -> isNewer(own, release.version()))
                 .ifPresent(
                     release -> {
+                      final boolean first = toTell(own, release, PREFERENCES);
+                      keep(release, PREFERENCES);
                       PREFERENCES.put(TOLD, release.version());
-                      SwingUtilities.invokeLater(() -> found.accept(release));
+                      SwingUtilities.invokeLater(() -> found.accept(release, first));
                     }));
+  }
+
+  /**
+   * The newer release learnt of at an earlier start, while this version is still the older one:
+   * shown at once at every start, without asking GitHub again. None when telling is turned off.
+   */
+  static Optional<Release> known(final String own) {
+    return tells() && !own.equals("dev") ? known(own, PREFERENCES) : Optional.empty();
+  }
+
+  static Optional<Release> known(final String own, final Preferences preferences) {
+    final String version = preferences.get(KNOWN + "Version", "");
+    final String page = preferences.get(KNOWN + "Page", "");
+    if (version.isEmpty() || page.isEmpty() || !isNewer(own, version)) {
+      return Optional.empty();
+    }
+    final String msi = preferences.get(KNOWN + "Msi", "");
+    final String sha = preferences.get(KNOWN + "MsiSha", "");
+    return Optional.of(
+        new Release(
+            version,
+            page,
+            Optional.of(
+                    new Updater.Installer(
+                        msi,
+                        preferences.getLong(KNOWN + "MsiSize", 0),
+                        Optional.of(sha).filter(told -> !told.isEmpty())))
+                .filter(Updater.Installer::isOwn)));
+  }
+
+  /** Keeps the release for {@link #known}, in these preferences. */
+  static void keep(final Release release, final Preferences preferences) {
+    preferences.put(KNOWN + "Version", release.version());
+    preferences.put(KNOWN + "Page", release.page());
+    preferences.put(KNOWN + "Msi", release.installer().map(Updater.Installer::url).orElse(""));
+    preferences.putLong(
+        KNOWN + "MsiSize", release.installer().map(Updater.Installer::size).orElse(0L));
+    preferences.put(
+        KNOWN + "MsiSha", release.installer().flatMap(Updater.Installer::sha256).orElse(""));
   }
 
   /**
