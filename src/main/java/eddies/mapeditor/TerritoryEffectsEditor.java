@@ -652,7 +652,13 @@ final class TerritoryEffectsEditor implements Editor {
     choose.setToolTipText("Choose the unit types: " + title);
     choose.addActionListener(
         e ->
-            Dialogs.pickMany(page, title, MapXml.unitTypes(game), units, "Choose")
+            Dialogs.pickMany(
+                    page,
+                    title,
+                    MapXml.unitTypes(game),
+                    GameVariables.ofKind(game, GameVariables.Kind.UNITS),
+                    units,
+                    "Choose")
                 .ifPresent(
                     chosen ->
                         project.edit(

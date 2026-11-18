@@ -1047,6 +1047,7 @@ final class UnitsEditor implements Editor {
                   option.label(),
                   () -> UnitsXml.value(project.game(), unit, option),
                   choices(option.kind()),
+                  variables(option.kind()),
                   set),
               option.help()));
     }
@@ -1127,15 +1128,27 @@ final class UnitsEditor implements Editor {
     };
   }
 
+  /** The game's variables of the option's kind, which TripleA expands in a unit's option. */
+  private Map<String, List<String>> variables(final Kind kind) {
+    final Game game = project.game();
+    return switch (kind) {
+      case UNITS -> GameVariables.ofKind(game, GameVariables.Kind.UNITS);
+      case NATIONS -> GameVariables.ofKind(game, GameVariables.Kind.NATIONS);
+      case TERRITORIES -> GameVariables.ofKind(game, GameVariables.Kind.TERRITORIES);
+      default -> Map.of();
+    };
+  }
+
   /** A text field, or for a list of names a short summary and "Choose…". */
   private JComponent newListField(
       final String label,
       final Supplier<String> value,
       final List<String> choices,
+      final Map<String, List<String>> variables,
       final Consumer<String> onChange) {
     return choices.isEmpty()
         ? newTextField(value, onChange)
-        : newNames(label, value, choices, onChange);
+        : newNames(label, value, choices, variables, onChange);
   }
 
   /**
@@ -1172,13 +1185,14 @@ final class UnitsEditor implements Editor {
       final String label,
       final Supplier<String> value,
       final List<String> choices,
+      final Map<String, List<String>> variables,
       final Consumer<String> onChange) {
     final JLabel summary = new JLabel();
     showNames(summary, value.get());
     final JButton choose = new JButton("Choose…");
     choose.addActionListener(
         e ->
-            pick(label, value.get(), choices)
+            pick(label, value.get(), choices, variables)
                 .filter(picked -> !picked.equals(value.get().strip()))
                 .ifPresent(
                     picked -> {
@@ -1216,12 +1230,19 @@ final class UnitsEditor implements Editor {
    * Asks which of the names to tick, with those of the value ticked; the value's words that are
    * no name, eg "all", stay in front.
    */
-  private Optional<String> pick(final String title, final String value, final List<String> names) {
+  private Optional<String> pick(
+      final String title,
+      final String value,
+      final List<String> names,
+      final Map<String, List<String>> variables) {
     final List<String> words = words(value);
-    return Dialogs.pickMany(page, title, names, words, "Choose")
+    return Dialogs.pickMany(page, title, names, variables, words, "Choose")
         .map(
             picked ->
-                Stream.concat(words.stream().filter(w -> !names.contains(w)), picked.stream())
+                Stream.concat(
+                        words.stream()
+                            .filter(w -> !names.contains(w) && !variables.containsKey(w)),
+                        picked.stream())
                     .collect(Collectors.joining(":")));
   }
 
@@ -1363,6 +1384,7 @@ final class UnitsEditor implements Editor {
             "Supports",
             now.apply("unitType"),
             MapXml.unitTypes(game),
+            GameVariables.ofKind(game, GameVariables.Kind.UNITS),
             v -> set.accept("unitType", v)));
     grid.field("When", newChecks(value.apply("side"), SIDES, v -> set.accept("side", v)));
     grid.field(
@@ -1394,6 +1416,7 @@ final class UnitsEditor implements Editor {
                 "Kind of bonus",
                 now.apply("bonusType"),
                 List.of(),
+                Map.of(),
                 v -> set.accept("bonusType", v)),
             "Bonuses of one kind do not add up on a unit; 2:name lets two add up."));
     grid.field(
@@ -1402,6 +1425,7 @@ final class UnitsEditor implements Editor {
             "For nations",
             now.apply("players"),
             MapXml.nations(game),
+            GameVariables.ofKind(game, GameVariables.Kind.NATIONS),
             v -> set.accept("players", v)));
     final JCheckBox tech =
         new JCheckBox(

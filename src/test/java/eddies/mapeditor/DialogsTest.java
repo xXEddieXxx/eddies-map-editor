@@ -11,11 +11,13 @@ import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
@@ -231,6 +233,35 @@ final class DialogsTest {
     assertThat(textWidth).as("a text wraps at 560 px").isEqualTo(560);
     assertThat(formWidth).as("content is not cut").isEqualTo(900);
     assertThat(formOnSmallScreen).as("but stays on the screen").isEqualTo(800);
+  }
+
+  @DisplayName("Pick many lists the variables below the names, under Variables, each with its"
+      + " elements as the tool tip; the ticked come back by name")
+  @Test
+  void pickManyOffersVariablesBelowTheNames() {
+    final Dialogs.Ticks ticks =
+        Dialogs.newTicks(
+            List.of("infantry", "armour", "fighter"),
+            Map.of("$Land$", List.of("infantry", "armour")),
+            List.of("armour", "$Land$"));
+
+    final List<String> labels =
+        descendants(ticks.root())
+            .filter(c -> c instanceof JCheckBox || c instanceof JLabel)
+            .map(c -> c instanceof JCheckBox box ? box.getText() : ((JLabel) c).getText())
+            .toList();
+    assertThat(labels)
+        .as("the names, then the heading, then the variables")
+        .containsExactly("infantry", "armour", "fighter", "Variables", "$Land$");
+    assertThat(ticks.boxes().stream().filter(JCheckBox::isSelected).map(JCheckBox::getText))
+        .as("a variable the value holds is ticked")
+        .containsExactly("armour", "$Land$");
+    assertThat(ticks.boxes().getLast().getToolTipText())
+        .as("the elements in the tool tip")
+        .contains("infantry, armour");
+    assertThat(descendants(Dialogs.newTicks(List.of("infantry"), Map.of(), List.of()).root()))
+        .as("no heading without variables")
+        .noneMatch(c -> c instanceof JLabel label && "Variables".equals(label.getText()));
   }
 
   @DisplayName("Pick returns the item of the row chosen, also with repeated labels and a search")

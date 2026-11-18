@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -254,35 +255,84 @@ class Dialogs {
       final List<String> names,
       final Collection<String> ticked,
       final String verb) {
+    return pickMany(parent, title, names, Map.of(), ticked, verb);
+  }
+
+  /**
+   * Which of the names to tick, and below them, under "Variables", which of the game's variables,
+   * "$Name$" each with its elements in the tool tip; the ticked come back by name, a variable as
+   * "$Name$", as an attachment's option takes it.
+   */
+  static Optional<List<String>> pickMany(
+      final Component parent,
+      final String title,
+      final List<String> names,
+      final Map<String, List<String>> variables,
+      final Collection<String> ticked,
+      final String verb) {
+    final Ticks content = newTicks(names, variables, ticked);
+    return ask(parent, title, content.root(), verb)
+        ? Optional.of(
+            content.boxes().stream()
+                .filter(JCheckBox::isSelected)
+                .map(JCheckBox::getText)
+                .toList())
+        : Optional.empty();
+  }
+
+  /** The boxes of a pickMany, the names' then the variables', and the panel they are in. */
+  record Ticks(JComponent root, List<JCheckBox> boxes) {}
+
+  static Ticks newTicks(
+      final List<String> names,
+      final Map<String, List<String>> variables,
+      final Collection<String> ticked) {
     final JPanel ticks = new JPanel(new GridLayout(0, 1));
     final List<JCheckBox> boxes =
-        names.stream().map(name -> new JCheckBox(name, ticked.contains(name))).toList();
-    boxes.forEach(ticks::add);
+        new ArrayList<>(
+            names.stream().map(name -> new JCheckBox(name, ticked.contains(name))).toList());
+    final JLabel heading = Theme.newSecondaryLabel("Variables");
+    heading.setBorder(BorderFactory.createEmptyBorder(Theme.GAP_S, 0, 0, 0));
+    variables.forEach(
+        (name, elements) -> {
+          final JCheckBox box = new JCheckBox(name, ticked.contains(name));
+          box.setToolTipText(GameVariables.describe(elements));
+          boxes.add(box);
+        });
+    final Runnable show =
+        () -> {
+          ticks.removeAll();
+          boxes.stream().limit(names.size()).filter(Component::isVisible).forEach(ticks::add);
+          final List<JCheckBox> shownVariables =
+              boxes.stream().skip(names.size()).filter(Component::isVisible).toList();
+          if (!shownVariables.isEmpty()) {
+            ticks.add(heading);
+            shownVariables.forEach(ticks::add);
+          }
+          ticks.revalidate();
+          ticks.repaint();
+        };
+    show.run();
     final JScrollPane scroll = SwingComponents.newJScrollPane(ticks);
     scroll.setPreferredSize(
         new Dimension(320, Math.min(420, ticks.getPreferredSize().height + 8)));
     final JPanel content = new JPanel(new BorderLayout(0, 6));
     content.setOpaque(false);
     content.add(scroll, BorderLayout.CENTER);
-    if (names.size() >= SEARCH_FROM) {
+    if (boxes.size() >= SEARCH_FROM) {
       final JTextField search = newSearchField();
       // hidden boxes keep their tick
       OnTyping.attach(
           search,
           () -> {
             final String filter = search.getText().strip().toLowerCase(Locale.ROOT);
-            ticks.removeAll();
-            boxes.stream()
-                .filter(box -> box.getText().toLowerCase(Locale.ROOT).contains(filter))
-                .forEach(ticks::add);
-            ticks.revalidate();
-            ticks.repaint();
+            boxes.forEach(
+                box -> box.setVisible(box.getText().toLowerCase(Locale.ROOT).contains(filter)));
+            show.run();
           });
       content.add(search, BorderLayout.NORTH);
     }
-    return ask(parent, title, content, verb)
-        ? Optional.of(boxes.stream().filter(JCheckBox::isSelected).map(JCheckBox::getText).toList())
-        : Optional.empty();
+    return new Ticks(content, List.copyOf(boxes));
   }
 
   /** A problem the map maker must read before going on: one "Close" button. */

@@ -24,6 +24,8 @@ chosen.
    start from**, **+ Add anti-air kind…** for the anti-air that shoots at them.
 5. **Remove technology** takes it out of the game.
 
+A Choose list of unit types ends with the game's variables that hold unit types, `$Planes$` say.
+
 Above the bonuses the header says which nations research it and how many have it at the start.
 Each nation's research chart, the set of technologies it may get, is set per nation in the list
 of nations at the left; "Not researched" leaves a technology out of a nation's chart.

@@ -84,5 +84,7 @@ units" with the others.
 1. **Special**: Damage when captured, Captured by entering, Given with its territory to.
 2. **More options**: the options the sections do not show, as the game file has them, each with
    its name, a field and ×; a repeated or counted option is here too. **+ Add option…** adds any
-   option TripleA's unitAttachment takes, by its name, with a hint of its format.
+   option TripleA's unitAttachment takes, by its name, with a hint of its format. A Choose list
+   of unit types, nations or territories ends with the game's variables of that kind,
+   `$All-Fighters$` say; TripleA puts their elements in when it reads the file.
 3. **Remove unit** takes the unit type out of the game, its rules and starting units with it.

@@ -323,7 +323,13 @@ final class CanalsEditor implements Editor {
     choose.setToolTipText("Choose the unit types that pass freely");
     choose.addActionListener(
         e ->
-            Dialogs.pickMany(page, "Units that pass freely", MapXml.unitTypes(game), free, "Choose")
+            Dialogs.pickMany(
+                    page,
+                    "Units that pass freely",
+                    MapXml.unitTypes(game),
+                    GameVariables.ofKind(game, GameVariables.Kind.UNITS),
+                    free,
+                    "Choose")
                 .ifPresent(
                     units ->
                         change(

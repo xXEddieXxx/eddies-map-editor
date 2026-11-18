@@ -42,6 +42,41 @@ final class AttachmentsXmlTest {
     return Option.builder().name(name).value(value).build();
   }
 
+  @DisplayName("A variable is of the kind of its elements, resolved through the variables it names;"
+      + " a mixed one is of none, so no Choose list offers it")
+  @Test
+  void tellsAVariablesKind() throws Exception {
+    final Game game =
+        GameRulesXml.withVariable(
+            GameRulesXml.withVariable(
+                GameRulesXml.withVariable(
+                    GameRulesXml.withVariable(
+                        givenMinimap().game(), "Land", List.of("infantry", "armour")),
+                    "Planes",
+                    List.of("fighter", "$Land$")),
+                "Sides",
+                List.of("Russians", "Italians")),
+            "Mixed",
+            List.of("infantry", "Russians"));
+
+    assertThat(GameVariables.ofKind(game, GameVariables.Kind.UNITS))
+        .as("the unit variables, the nested one resolved, as $Name$")
+        .containsExactly(
+            Map.entry("$Land$", List.of("infantry", "armour")),
+            Map.entry("$Planes$", List.of("fighter", "infantry", "armour")));
+    assertThat(GameVariables.ofKind(game, GameVariables.Kind.NATIONS))
+        .as("the nation variables")
+        .containsOnlyKeys("$Sides$");
+    assertThat(GameVariables.ofKind(game, GameVariables.Kind.TERRITORIES))
+        .as("no variable holds territories")
+        .isEmpty();
+    assertThat(GameVariables.kindOf(game, List.of("infantry", "Russians")))
+        .as("a mixed variable is of no kind")
+        .isEmpty();
+    assertThat(GameVariables.kindOf(game, List.of("Russians")))
+        .contains(GameVariables.Kind.NATIONS);
+  }
+
   @DisplayName("An attachment written for each element of a variable reads as one per element")
   @Test
   void expandsForEach() throws Exception {

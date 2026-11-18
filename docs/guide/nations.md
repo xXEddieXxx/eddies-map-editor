@@ -55,5 +55,6 @@ save, the flags and unit pictures included.
 3. **Moving and attacking**: **Movement** how the nation's units move; **In round 1 its enemies
    defend at 1 at most**, a surprise attack; **Defends as usual against such an attack**.
 4. **Other rules**: **+ Add rule…** adds any rule of the game's playerAttachment the sections do
-   not show, by its name in the game's XML; each has a field and ×.
+   not show, by its name in the game's XML; each has a field and ×. A Choose list of nations,
+   territories or units ends with the game's variables of that kind, `$Allies$` say.
 5. **Remove nation** takes the nation out of the game. Its land becomes unowned, its units go.

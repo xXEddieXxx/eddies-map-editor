@@ -39,7 +39,9 @@ The assistant builds a trigger from an example and three questions.
    a nation holds territories, has units, the round number, a game option, and so on. **Another
    condition** adds one the map has already. **How many conditions must hold** for the trigger
    to fire, or the fewest. **Fire when the conditions are not met** turns the sense around.
-5. **For nations (optional)**: the nations the trigger belongs to.
+5. **For nations (optional)**: the nations the trigger belongs to. Here and in every list of
+   territories, nations or units, Choose ends with the game's variables of that kind, `$Axis$`
+   say, under Variables.
 6. **Check and save**: the assistant lists what is missing, for example "Condition c: Owns
    territories: Territories is missing.", or "No problems.", then **Add trigger** writes it.
    Options the assistant does not change stay as they are; Attachments shows them.

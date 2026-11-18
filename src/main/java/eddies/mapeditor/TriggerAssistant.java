@@ -273,7 +273,12 @@ final class TriggerAssistant {
     verb = new JButton(isNew() ? "Add trigger" : "Save trigger");
     nation = named(chooser(MapXml.nations(game), trigger.nation()), "Whose turn it fires in");
     nation.setEditable(false);
-    players = new ListField("Nations", Part.NATION.names(game), "");
+    players =
+        new ListField(
+            "Nations",
+            Part.NATION.names(game),
+            GameVariables.ofKind(game, GameVariables.Kind.NATIONS),
+            "");
     steps = isNew() ? List.of(Step.values())
         : List.of(Step.IF, Step.THEN, Step.WHEN, Step.REVIEW);
     if (!isNew()) {
@@ -1315,14 +1320,25 @@ final class TriggerAssistant {
     @Serial private static final long serialVersionUID = 1L;
     private final String what;
     private final List<String> names;
+    // the game's variables of the names' kind, which TripleA expands in a trigger's option
+    private final Map<String, List<String>> variables;
     private final JLabel shown = new JLabel();
     private String value;
 
     ListField(final String what, final List<String> names, final String value) {
+      this(what, names, Map.of(), value);
+    }
+
+    ListField(
+        final String what,
+        final List<String> names,
+        final Map<String, List<String>> variables,
+        final String value) {
       super(new BorderLayout(6, 0));
       setOpaque(false);
       this.what = what;
       this.names = names;
+      this.variables = variables;
       this.value = value;
       final JButton type = button("Type...", "Types the " + what.toLowerCase(Locale.ROOT)
           + ", eg -name to take one away", this::type);
@@ -1367,9 +1383,9 @@ final class TriggerAssistant {
      */
     private void choose() {
       final List<String> values = values();
-      Dialogs.pickMany(this, what, names, values, "Choose").ifPresent(ticked -> {
+      Dialogs.pickMany(this, what, names, variables, values, "Choose").ifPresent(ticked -> {
         final List<String> result = new ArrayList<>(values.stream()
-            .filter(v -> !names.contains(v) || ticked.contains(v))
+            .filter(v -> !names.contains(v) && !variables.containsKey(v) || ticked.contains(v))
             .distinct()
             .toList());
         ticked.stream().filter(v -> !result.contains(v)).forEach(result::add);
@@ -1481,7 +1497,8 @@ final class TriggerAssistant {
           values.add(() -> text(count));
           addRow(fields, piece.label(), count);
         } else if (piece.shape() == Shape.MANY) {
-          final ListField list = new ListField(piece.label(), names(piece), value);
+          final ListField list =
+              new ListField(piece.label(), names(piece), variables(piece), value);
           values.add(list::value);
           addRow(fields, label, list);
         } else if (piece.part() == Part.BOOL) {
@@ -1510,6 +1527,16 @@ final class TriggerAssistant {
         }
       }
       fields.revalidate();
+    }
+
+    /** The variables of the piece's kind: TripleA expands them in the trigger's option value. */
+    private Map<String, List<String>> variables(final Piece piece) {
+      return switch (piece.part()) {
+        case TERRITORY -> GameVariables.ofKind(game, GameVariables.Kind.TERRITORIES);
+        case NATION -> GameVariables.ofKind(game, GameVariables.Kind.NATIONS);
+        case UNIT -> GameVariables.ofKind(game, GameVariables.Kind.UNITS);
+        default -> Map.of();
+      };
     }
 
     private List<String> names(final Piece piece) {
@@ -1780,6 +1807,7 @@ final class TriggerAssistant {
       // a condition the map has stays where it is, so other triggers still find it
       owner.setEnabled(existing.isEmpty());
       forNations = new ListField("Nations", MapXml.nations(game),
+          GameVariables.ofKind(game, GameVariables.Kind.NATIONS),
           TriggerXml.value(shown, "players").orElse(""));
       inverted.setSelected(isTrue(shown, "invert"));
       inverted.addActionListener(e -> changed());

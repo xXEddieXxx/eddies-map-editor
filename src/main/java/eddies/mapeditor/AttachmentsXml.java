@@ -237,7 +237,7 @@ class AttachmentsXml {
   }
 
   /** Each variable's elements; an element naming another variable, "$Land$", is its elements. */
-  private static Map<String, List<String>> variables(final Game game) {
+  static Map<String, List<String>> variables(final Game game) {
     final Map<String, List<String>> resolved = new LinkedHashMap<>();
     for (final String name : GameRulesXml.variableNames(game)) {
       final List<String> elements = new ArrayList<>();

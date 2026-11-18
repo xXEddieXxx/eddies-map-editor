@@ -1218,6 +1218,7 @@ final class NationsEditor implements Editor {
                         MapXml.nations(project.game()).stream()
                             .filter(n -> !n.equals(nation))
                             .toList(),
+                        GameVariables.ofKind(project.game(), GameVariables.Kind.NATIONS),
                         chosen,
                         "Choose")
                     .ifPresent(
@@ -1390,18 +1391,25 @@ final class NationsEditor implements Editor {
     final JLabel names = new JLabel(shortList(listed));
     names.setToolTipText(listed.isEmpty() ? null : String.join(", ", listed));
     final List<String> territories = MapXml.territories(game);
+    final Map<String, List<String>> variables =
+        GameVariables.ofKind(game, GameVariables.Kind.TERRITORIES);
     final JButton choose =
         newLink(
             "Choose…",
             () ->
-                Dialogs.pickMany(page, MOVE_LABELS.get(shown), territories, listed, "Choose")
+                Dialogs.pickMany(
+                        page, MOVE_LABELS.get(shown), territories, variables, listed, "Choose")
                     .ifPresent(
                         ticked -> {
                           // words the game knows, eg "original", are no territories: they stay
                           final List<String> result =
                               new ArrayList<>(
                                   listed.stream()
-                                      .filter(t -> !territories.contains(t) || ticked.contains(t))
+                                      .filter(
+                                          t ->
+                                              !territories.contains(t)
+                                                      && !variables.containsKey(t)
+                                                  || ticked.contains(t))
                                       .distinct()
                                       .toList());
                           ticked.stream().filter(t -> !result.contains(t)).forEach(result::add);
@@ -1608,6 +1616,7 @@ final class NationsEditor implements Editor {
             "Units the limit counts together",
             Stream.concat(Stream.of(ALL_UNITS), MapXml.unitTypes(project.game()).stream())
                 .toList(),
+            GameVariables.ofKind(project.game(), GameVariables.Kind.UNITS),
             chosen,
             "Choose")
         .filter(picked -> !picked.isEmpty());
@@ -1814,13 +1823,20 @@ final class NationsEditor implements Editor {
     private void showParts() {
       parts.removeAll();
       switch (Objects.requireNonNull(form)) {
-        case UNITS -> parts.add(namesLine("Units", "Choose units…", MapXml.unitTypes(game)));
+        case UNITS ->
+            parts.add(
+                namesLine(
+                    "Units",
+                    "Choose units…",
+                    MapXml.unitTypes(game),
+                    GameVariables.ofKind(game, GameVariables.Kind.UNITS)));
         case NATIONS ->
             parts.add(
                 namesLine(
                     "Nations",
                     "Choose nations…",
-                    MapXml.nations(game).stream().filter(n -> !n.equals(nation)).toList()));
+                    MapXml.nations(game).stream().filter(n -> !n.equals(nation)).toList(),
+                    GameVariables.ofKind(game, GameVariables.Kind.NATIONS)));
         case NUMBER -> parts.add(line(count));
         case TEXT -> parts.add(line(text));
       }
@@ -1829,13 +1845,17 @@ final class NationsEditor implements Editor {
       fitWindow();
     }
 
-    private JComponent namesLine(final String label, final String verb, final List<String> all) {
+    private JComponent namesLine(
+        final String label,
+        final String verb,
+        final List<String> all,
+        final Map<String, List<String>> variables) {
       final JLabel shown = new JLabel("None");
       final JButton choose =
           newLink(
               verb,
               () ->
-                  Dialogs.pickMany(content, verb.replace("…", ""), all, names, "Choose")
+                  Dialogs.pickMany(content, verb.replace("…", ""), all, variables, names, "Choose")
                       .ifPresent(
                           picked -> {
                             names = picked;

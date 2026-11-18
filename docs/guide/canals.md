@@ -16,7 +16,7 @@ sea zones 81 and 98 across Egypt and Trans-Jordan.
 4. **At least one land**: the territories whose owners control the canal. Click land on the map
    to add it, × takes it out. Ships pass while their side holds all of them.
 5. **Units that pass freely**: unit types the canal never stops, air units by default. **Choose…**
-   ticks unit types.
+   ticks unit types, and the game's variables of unit types, `$Planes$` say, below them.
 6. **Remove canal** takes the canal out of the game.
 
 Without a map picture, as in the picture above, the right side still works; the map says "Load the

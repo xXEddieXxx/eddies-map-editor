@@ -626,8 +626,10 @@ final class TechnologyEditor implements Editor {
                     title,
                     // a unit type the game no longer has stays listed, to be unticked
                     Stream.concat(MapXml.unitTypes(project.game()).stream(), chosen.stream())
+                        .filter(name -> !name.startsWith("$"))
                         .distinct()
                         .toList(),
+                    GameVariables.ofKind(project.game(), GameVariables.Kind.UNITS),
                     chosen,
                     "Choose")
                 .ifPresent(onPick));
