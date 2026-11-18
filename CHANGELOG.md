@@ -80,6 +80,11 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
   orders the list A to Z, by cost or by kind as TripleA's buy tabs sort units, for one list or
   every list at once. Units: ▲ ▼ and ⇅ for the unit types, the order TripleA lists and draws
   them in. Game options: ▲ ▼ on every row, ⇅ sorts A to Z. Each is one step Undo takes back.
+- **Choose lists offer the game's $variables$** (#22) of their kind, nations, territories or unit
+  types, under a Variables heading below the names, wherever the chosen names go into an
+  attachment's option, which is where TripleA expands them: Units, Nations, Technology, Terrain
+  effects, Canals and the trigger assistant. A production rule or placement takes none, so none
+  is offered there.
 - **Value (tuv)** sits in the top row beside the cost, blank for "its cost" (#3).
 - **Resources it makes each turn** (`createsResourcesList`) is a field under Production and
   infrastructure: a count and a resource, a minus count for upkeep (#3). A unit with two such
