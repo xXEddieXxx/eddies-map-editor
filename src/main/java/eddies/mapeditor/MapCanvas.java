@@ -1197,7 +1197,7 @@ final class MapCanvas extends JComponent {
     for (final Marker marker : Marker.values()) {
       // a save keeps no other
       if (of.shows(marker)
-          && (marker.isOn(game, territory)
+          && (files.draws(game, marker, territory)
               || (marker.keepsUnused()
                   && files.places().markers(marker).containsKey(territory)))) {
         final List<Point> points = files.markerPlaces(game, marker, territory);
@@ -1254,25 +1254,34 @@ final class MapCanvas extends JComponent {
   }
 
   /**
-   * The territory's name, value, capital flag, victory city and comment as the game draws them,
-   * at their places or where the game falls back to without one ({@link
-   * MapFiles#gameMarkerPlace}); what Map look's "On the map" says the game shows.
+   * The territory's name, value, capital flag, victory city and comment, and a sea zone's
+   * kamikaze, blockade and convoy markers, as the game draws them, at their places or where the
+   * game falls back to without one ({@link MapFiles#gameMarkerPlace}); what Map look's "On the
+   * map" says the game shows.
    */
   private void paintGameMarkers(final Graphics2D g, final String territory) {
     final MapFiles files = project.getFiles();
     final Game game = project.game();
     final Look look = look(territory);
+    // under the names, as the game draws them (IDrawable.DrawLevel)
+    for (final Marker zone : List.of(Marker.KAMIKAZE, Marker.BLOCKADE, Marker.CONVOY)) {
+      if (zone.isOn(game, territory)) {
+        files
+            .gameMarkerPlace(game, zone, territory)
+            .ifPresent(at -> paintGameMarker(g, zone, territory, at, 1f));
+      }
+    }
+    // a sea zone's name needs both boxes, and no name shows that the map says not to draw
     final boolean names =
-        look.water()
-            ? files.shows(MapData.PROPERTY_MAP_SHOWSEAZONENAMES, false)
-            : files.shows(MapData.PROPERTY_MAP_SHOWTERRITORYNAMES, true);
+        files.shows(MapData.PROPERTY_MAP_SHOWTERRITORYNAMES, true)
+            && (!look.water() || files.shows(MapData.PROPERTY_MAP_SHOWSEAZONENAMES, false))
+            && !files.listed(MapFiles.HIDDEN_NAMES).contains(territory);
     if (names) {
       files
           .gameMarkerPlace(game, Marker.NAME, territory)
           .ifPresent(at -> paintGameMarker(g, Marker.NAME, territory, at, 1f));
     }
-    if (!look.water()
-        && MapXml.production(game, territory) > 0
+    if (files.draws(game, Marker.VALUE, territory)
         && files.shows(MapData.PROPERTY_MAP_SHOWRESOURCES, true)) {
       files
           .gameMarkerPlace(game, Marker.VALUE, territory)
@@ -1467,7 +1476,7 @@ final class MapCanvas extends JComponent {
     for (final Marker marker : Marker.IN_MENUS) {
       // a marker only kept from its file has no item: taken away, a save would write it a found
       // place
-      if (!shown.shows(marker) || !marker.isOn(game, territory)) {
+      if (!shown.shows(marker) || !project.getFiles().draws(game, marker, territory)) {
         continue;
       }
       final boolean set =

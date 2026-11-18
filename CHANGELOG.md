@@ -39,6 +39,15 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
   a place, as far as Map look's "On the map" boxes show them. A stack's count sits where the game
   puts it, a quarter in and a unit's height down, or as `units.counter.offset` says. Create
   missing places centers the name's text and the map's own flag on the territory.
+- **Flags on sea zones and their PU pictures missing in the Game view** (#27). Maps like 11
+  Rings of Power, 1888A and the Shoguns place each sea zone's flag by convoy.txt, to the pixel
+  over the map's picture. The Game view now draws a sea zone's convoy flag, blockade marker and
+  kamikaze flag at their places, as the game does. The flag is the one the game takes: the
+  nation's `_convoy` flag with Map look's "Each nation's own convoy flags", else its normal
+  flag, the faded flag on a kamikaze zone, the Neutral's for a zone nobody owns. A sea zone's
+  value shows as its PU picture where the game draws it, with sea zone names on or along with the
+  zone's comment, and Places offers its PUs place to drag. A sea zone's name shows only with
+  both name boxes ticked, and no name the map says not to draw.
 - **Units drawn as name badges** (#2). Pictures a map keeps in its `units` folder itself, shared
   by every nation as 1941 Global Command Decision keeps its factories and bunkers, are found. The
   nation's own picture still wins. Not yet confirmed on that map by the map maker who reported it.

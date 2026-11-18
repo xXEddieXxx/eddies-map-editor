@@ -1657,8 +1657,9 @@ record MapFiles(
           saved,
           t ->
               changed.contains(t)
-                  && marker.isOn(game, t)
-                  && !(savedNames.containsKey(t) && marker.isOn(savedGame, savedNames.get(t))),
+                  && draws(game, marker, t)
+                  && !(savedNames.containsKey(t)
+                      && saved.draws(savedGame, marker, savedNames.get(t))),
           t -> foundMarkers(game, marker, t),
           // the game reads one point but for the effects
           points -> pointsText(marker == Marker.EFFECT ? points : points.subList(0, 1)));
@@ -1905,7 +1906,10 @@ record MapFiles(
     static final List<Marker> IN_MENUS =
         List.of(CAPITAL, COMMENT, NAME, VALUE, EFFECT, VICTORY_CITY, BLOCKADE, CONVOY, KAMIKAZE);
 
-    /** Whether the game draws it for the territory, as TripleA's TileManager decides. */
+    /**
+     * Whether the game draws it for the territory, as TripleA's TileManager decides, by the game
+     * alone; a sea zone's value hangs on map.properties too, see {@link MapFiles#draws}.
+     */
     boolean isOn(final Game game, final String territory) {
       final boolean water = MapXml.isWater(game, territory);
       return switch (this) {
@@ -2661,8 +2665,23 @@ record MapFiles(
     }
     final Map<String, List<Point>> placed = places.markers(marker);
     return polygons.keySet().stream()
-        .filter(t -> placed.getOrDefault(t, List.of()).isEmpty() && marker.isOn(game, t))
+        .filter(t -> placed.getOrDefault(t, List.of()).isEmpty() && draws(game, marker, t))
         .toList();
+  }
+
+  /**
+   * Whether the game draws the marker for the territory: as {@link Marker#isOn} says, and a sea
+   * zone's value as well where the game draws it (TerritoryNameDrawable): with
+   * map.showSeaZoneNames, or along with the zone's comment, eg a convoy center's.
+   */
+  boolean draws(final Game game, final Marker marker, final String territory) {
+    if (marker == Marker.VALUE && MapXml.isWater(game, territory)) {
+      return MapXml.production(game, territory) > 0
+          && (shows(MapData.PROPERTY_MAP_SHOWSEAZONENAMES, false)
+              || (shows(MapData.PROPERTY_MAP_SHOWCOMMENTS, true)
+                  && Marker.COMMENT.isOn(game, territory)));
+    }
+    return marker.isOn(game, territory);
   }
 
   /** Whether the place file of this name is there but does not read, eg for a name twice. */
@@ -2941,9 +2960,11 @@ record MapFiles(
 
   /**
    * The picture the game draws for the marker, as the game finds it: the capital's owner's large
-   * flag, the PU picture of the territory's value (PUs/3.png), misc/vc.png, misc/blockade.png,
-   * misc/kamikaze.png, the owner's convoy flag; empty for a text or a picture the map lacks that
-   * the game has none of either.
+   * flag, the PU picture of the territory's value (PUs/3.png), misc/vc.png, misc/blockade.png, a
+   * convoy zone's owner's flag (ConvoyZoneDrawable: the "_convoy" one with
+   * map.useNation_convoyFlags, else the nation's own), a kamikaze zone's owner's faded flag
+   * (KamikazeZoneDrawable), for a zone nobody owns the flag of the game's Neutral; empty for a
+   * text or a picture the map lacks that the game has none of either.
    */
   Optional<URL> markerPicture(final Game game, final Marker marker, final String territory) {
     return switch (marker) {
@@ -2951,8 +2972,10 @@ record MapFiles(
           MapXml.capitalOf(game, territory)
               .flatMap(nation -> folder.flatMap(f -> MapFolder.flag(f, nation, "_large")));
       case CONVOY ->
-          MapXml.owner(game, territory)
-              .flatMap(nation -> folder.flatMap(f -> MapFolder.flag(f, nation, "_convoy")));
+          zoneFlag(
+              MapXml.owner(game, territory),
+              shows(MapData.PROPERTY_MAP_USENATION_CONVOYFLAGS, false) ? "_convoy" : "");
+      case KAMIKAZE -> zoneFlag(kamikazeOwner(game, territory), "_fade");
       case VALUE ->
           folder
               .map(f -> f.resolve("PUs").resolve(MapXml.production(game, territory) + ".png"))
@@ -2960,9 +2983,34 @@ record MapFiles(
               .flatMap(MapFiles::urlOf);
       case VICTORY_CITY -> miscPicture("vc.png");
       case BLOCKADE -> miscPicture("blockade.png");
-      case KAMIKAZE -> miscPicture("kamikaze.png");
       case NAME, COMMENT, EFFECT -> Optional.empty();
     };
+  }
+
+  // a sea zone's owner's flag of this ending; nobody's zone is the game's Neutral's
+  private Optional<URL> zoneFlag(final Optional<String> owner, final String ending) {
+    final String nation = owner.orElse(Constants.PLAYER_NAME_NEUTRAL);
+    return folder.flatMap(f -> MapFolder.flag(f, nation, ending));
+  }
+
+  /**
+   * Whose flag marks the kamikaze zone, as KamikazeZoneDrawable takes it: the owner's where the
+   * game option says the current owner makes the attacks, else the original owner's, at the
+   * start the owner unless the attachment names another.
+   */
+  private static Optional<String> kamikazeOwner(final Game game, final String territory) {
+    final Optional<String> owner = MapXml.owner(game, territory);
+    final boolean byCurrentOwner =
+        MapXml.properties(game).stream()
+            .filter(
+                p ->
+                    Constants.KAMIKAZE_SUICIDE_ATTACKS_DONE_BY_CURRENT_TERRITORY_OWNER.equals(
+                        p.getName()))
+            .anyMatch(p -> Boolean.parseBoolean(GameRulesXml.value(p).strip()));
+    return byCurrentOwner
+        ? owner
+        : MapXml.option(game, Constants.TERRITORY_ATTACHMENT_NAME, territory, "originalOwner")
+            .or(() -> owner);
   }
 
   // the map's picture in misc/, else the game's own of that name

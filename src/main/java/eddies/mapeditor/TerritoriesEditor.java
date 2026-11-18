@@ -902,7 +902,7 @@ final class TerritoriesEditor implements Editor {
             ? files.polygons().keySet().stream()
                 .noneMatch(
                     t ->
-                        marker.isOn(game, t)
+                        files.draws(game, marker, t)
                             || (marker.keepsUnused()
                                 && files.places().markers(marker).containsKey(t)))
             : files.polygons().isEmpty();

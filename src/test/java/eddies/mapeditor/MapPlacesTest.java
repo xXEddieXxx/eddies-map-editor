@@ -674,6 +674,82 @@ final class MapPlacesTest {
         .doesNotHaveDuplicates();
   }
 
+  @DisplayName("A sea zone shows its owner's flag as the game takes it: the convoy flag where the"
+      + " map asks for it, else the nation's own, faded on a kamikaze zone; nobody's zone the"
+      + " Neutral's")
+  @Test
+  void seaZoneFlagsAsTheGameTakesThem() throws Exception {
+    // given: a sea zone worth a PU that is a kamikaze zone, and the flags the game looks for
+    final MapProject project = givenSavedMapWithUnknownPlace();
+    final Path flags = Files.createDirectories(project.getFolder().orElseThrow().resolve("flags"));
+    for (final String flag : List.of("Red", "Red_convoy", "Red_fade", "Neutral_convoy")) {
+      Files.deleteIfExists(flags.resolve(flag + ".gif"));
+      ImageIO.write(
+          new BufferedImage(40, 30, BufferedImage.TYPE_INT_ARGB),
+          "png",
+          flags.resolve(flag + ".png").toFile());
+    }
+    project.edit(game -> MapXml.withProduction(game, SEA, 1));
+    project.edit(game -> MapXml.withOption(game, seaAttachment(), "kamikazeZone", "true"));
+    final Game nobodys = project.game();
+    final Game reds = MapXml.withOwner(nobodys, SEA, "Red");
+    final MapFiles ownFlags = project.getFiles();
+    final MapFiles convoyFlags =
+        ownFlags.withProperty(MapData.PROPERTY_MAP_USENATION_CONVOYFLAGS, "true");
+
+    // then
+    assertThat(Marker.CONVOY.isOn(reds, SEA)).as("the game draws a convoy center's flag").isTrue();
+    assertThat(pictureName(ownFlags, reds, Marker.CONVOY))
+        .as("the nation's own flag")
+        .isEqualTo("Red.png");
+    assertThat(pictureName(convoyFlags, reds, Marker.CONVOY))
+        .as("its convoy flag, as the map asks for")
+        .isEqualTo("Red_convoy.png");
+    assertThat(pictureName(convoyFlags, nobodys, Marker.CONVOY))
+        .as("nobody's zone: the Neutral's")
+        .isEqualTo("Neutral_convoy.png");
+    assertThat(pictureName(ownFlags, reds, Marker.KAMIKAZE))
+        .as("the faded flag on a kamikaze zone")
+        .isEqualTo("Red_fade.png");
+    assertThat(convoyFlags.markerDrawn(reds, Marker.CONVOY, SEA, new Point(7, 9)))
+        .as("the flag from the place's top left, at its own size")
+        .isEqualTo(new Rectangle(7, 9, 40, 30));
+  }
+
+  private static String pictureName(final MapFiles files, final Game game, final Marker marker) {
+    return files
+        .markerPicture(game, marker, SEA)
+        .map(picture -> picture.getPath().substring(picture.getPath().lastIndexOf('/') + 1))
+        .orElse("");
+  }
+
+  @DisplayName("A sea zone's value is drawn where the game draws it: with sea zone names shown, or"
+      + " along with the zone's comment")
+  @Test
+  void seaZoneValueWhereTheGameDrawsIt() throws Exception {
+    // given: a sea zone worth 2 PUs
+    final MapProject project = givenSavedMapWithUnknownPlace();
+    project.edit(game -> MapXml.withProduction(game, SEA, 2));
+    final Game nobodys = project.game();
+    final Game reds = MapXml.withOwner(nobodys, SEA, "Red");
+    final MapFiles plain = project.getFiles();
+    final MapFiles seaNames = plain.withProperty(MapData.PROPERTY_MAP_SHOWSEAZONENAMES, "true");
+    final MapFiles noComments = plain.withProperty(MapData.PROPERTY_MAP_SHOWCOMMENTS, "false");
+
+    // then
+    assertThat(plain.draws(nobodys, Marker.VALUE, SEA))
+        .as("no sea zone names, no comment: the game draws nothing")
+        .isFalse();
+    assertThat(seaNames.draws(nobodys, Marker.VALUE, SEA)).as("with sea zone names").isTrue();
+    assertThat(plain.draws(reds, Marker.VALUE, SEA))
+        .as("with the convoy center's comment")
+        .isTrue();
+    assertThat(noComments.draws(reds, Marker.VALUE, SEA)).as("comments off").isFalse();
+    assertThat(seaNames.withoutMarkerPlace(nobodys, Marker.VALUE))
+        .as("so its place counts among those a map may lack")
+        .contains(SEA);
+  }
+
   /** The sea zone as a kamikaze zone with two territory effects. */
   private static Game givenKamikazeZoneWithEffects(final Game game) {
     final MapXml.AttachmentKey sea = seaAttachment();
