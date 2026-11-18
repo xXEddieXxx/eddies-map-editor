@@ -108,8 +108,12 @@ val appImage = tasks.register<Exec>("appImage") {
     inputs.property("appVersion", appVersion)
     outputs.dir(appImageDir)
     val outputFolder = appImageDir.get().asFile
-    // jpackage refuses to write over an earlier image
-    doFirst { outputFolder.deleteRecursively() }
+    // jpackage refuses to write over an earlier image; its exe is read-only, which on Windows
+    // keeps it from being deleted
+    doFirst {
+        outputFolder.walkBottomUp().forEach { it.setWritable(true) }
+        outputFolder.deleteRecursively()
+    }
     executable(jpackage.get())
     args(
         "--type", "app-image",
@@ -125,6 +129,48 @@ val appImage = tasks.register<Exec>("appImage") {
     )
     if (isWindows) {
         args("--icon", file("packaging/icon.ico").absolutePath)
+    }
+}
+
+// The Windows installer of that program (#28): an msi for the current user, so it asks for no
+// administrator and a later update needs none either, with a Start menu entry and an uninstaller.
+// jpackage needs the WiX toolset for it (candle and light on the PATH, or installed where WiX
+// installs itself). The upgrade code never changes: by it a newer installer replaces the
+// installed version in place.
+val installerDir = layout.buildDirectory.dir("installer")
+val installerName = "eddies-map-editor-windows.msi"
+tasks.register<Exec>("appInstaller") {
+    group = "distribution"
+    description = "Builds the Windows installer, build/installer/$installerName; needs WiX"
+    dependsOn(appImage)
+    // locals, as the configuration cache keeps no reference to the script
+    val onWindows = isWindows
+    val msiName = installerName
+    onlyIf("an msi is made on Windows only") { onWindows }
+    inputs.dir(appImageDir)
+    inputs.property("appVersion", appVersion)
+    outputs.dir(installerDir)
+    val outputFolder = installerDir.get().asFile
+    doFirst { outputFolder.deleteRecursively() }
+    executable(jpackage.get())
+    args(
+        "--type", "msi",
+        "--app-image", appImageDir.get().dir(appName).asFile.absolutePath,
+        "--name", appName,
+        "--app-version", appVersion,
+        "--vendor", "Eddie",
+        "--description", "Map editor for TripleA",
+        "--about-url", "https://github.com/xXEddieXxx/eddies-map-editor",
+        "--win-per-user-install",
+        "--win-menu",
+        "--win-shortcut-prompt",
+        "--win-upgrade-uuid", "6f0c9d0e-3b7a-4f58-9c1e-5a2d8e4b7c31",
+        "--dest", outputFolder.absolutePath,
+    )
+    // jpackage names it by name and version; the release links to one name
+    doLast {
+        outputFolder.listFiles { f -> f.extension == "msi" }!!.single()
+            .renameTo(outputFolder.resolve(msiName))
     }
 }
 

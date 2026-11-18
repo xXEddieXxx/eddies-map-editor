@@ -122,6 +122,7 @@ Bug reports, ideas and feedback are just as welcome in the
 ./gradlew run       # start the editor
 ./gradlew test      # the tests
 ./gradlew appZip    # the program with its own Java, for this system, in build/distributions
+./gradlew appInstaller  # Windows: its installer, build/installer; needs the WiX toolset 3
 ./gradlew distZip   # the zip for every system, needs Java 25
 ```
 
@@ -134,7 +135,8 @@ commit` skips it once.
 
 The **Release** workflow builds releases: *Actions → Release → Run workflow*, enter the version
 (eg `1.2.0`) and, if needed, the TripleA release to build with (default: the newest). It runs the
-tests, builds the Windows program, the Mac program (Apple silicon, not signed) and the zip for
+tests, builds the Windows program and its installer (not signed), the Mac program (Apple
+silicon, not signed) and the zip for
 every system, and publishes them as release `v<version>`. The *Download* links above always point
 to the newest one.
 

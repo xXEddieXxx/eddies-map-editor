@@ -5,6 +5,9 @@ name: Release
 #  - refuses a version that already has a tag,
 #  - builds against a TripleA release (the newest, or the tag given) and runs the tests,
 #  - publishes the release "v<version>" with
+#      eddies-map-editor-windows.msi           the Windows installer, for the README's
+#                                              .../releases/latest/download/... link; not signed
+#      eddies-map-editor-<version>-windows.msi the same, named by version
 #      eddies-map-editor-windows.zip           the program with its own Java, for the README's
 #                                              .../releases/latest/download/... link
 #      eddies-map-editor-<version>-windows.zip the same, named by version
@@ -111,8 +114,15 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      # jpackage makes the msi with the WiX toolset 3; the runner brings it, else it is installed
+      - name: WiX
+        run: |
+          if ! ls "/c/Program Files (x86)"/WiX\ Toolset\ v3*/bin/candle.exe >/dev/null 2>&1; then
+            choco install wixtoolset --version=3.14.1 -y --no-progress
+          fi
+
       - name: Test and package
-        run: ./gradlew test appZip distZip -PtripleaHome=triplea -PappVersion=${{ steps.version.outputs.version }}
+        run: ./gradlew test appZip appInstaller distZip -PtripleaHome=triplea -PappVersion=${{ steps.version.outputs.version }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -123,6 +133,8 @@ jobs:
         run: |
           V=${{ steps.version.outputs.version }}
           cd build/distributions
+          cp ../installer/eddies-map-editor-windows.msi .
+          cp eddies-map-editor-windows.msi "eddies-map-editor-$V-windows.msi"
           cp eddies-map-editor-macos.zip "eddies-map-editor-$V-macos.zip"
           cp eddies-map-editor-windows.zip "eddies-map-editor-$V-windows.zip"
           mv eddies-map-editor.zip "eddies-map-editor-$V.zip"
@@ -138,12 +150,14 @@ jobs:
           generate_release_notes: true
           make_latest: true
           body: |
-            **Windows:** download `eddies-map-editor-windows.zip`, unzip it and start `Eddies Map Editor.exe`. It brings its own Java.
+            **Windows:** download `eddies-map-editor-windows.msi` and open it: it installs the editor for you alone, without administrator rights, with a Start menu entry, and replaces an older installed version. It is not signed: on Windows' warning choose More info › Run anyway. Without installing: download `eddies-map-editor-windows.zip`, unzip it and start `Eddies Map Editor.exe`. Both bring their own Java.
             **macOS (Apple silicon):** download `eddies-map-editor-macos.zip`, unzip it and open `Eddies Map Editor.app`. It brings its own Java. It is not signed: the first time, right-click it and choose Open, or allow it under System Settings › Privacy & Security.
             **Other systems:** `eddies-map-editor-${{ steps.version.outputs.version }}.zip` needs Java 25; start `bin/eddies-map-editor`.
 
             **Needs TripleA installed** (triplea-game.org): the editor runs with it and finds it by itself, or asks where it is. Built and tested with TripleA ${{ steps.triplea.outputs.release }}.
           files: |
+            build/distributions/eddies-map-editor-windows.msi
+            build/distributions/eddies-map-editor-${{ steps.version.outputs.version }}-windows.msi
             build/distributions/eddies-map-editor-windows.zip
             build/distributions/eddies-map-editor-${{ steps.version.outputs.version }}-windows.zip
             build/distributions/eddies-map-editor-macos.zip

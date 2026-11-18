@@ -44,6 +44,44 @@ jobs:
           name: eddies-map-editor
           path: build/distributions/*.zip
 
+  # the Windows installer packages too, so the Release workflow does not find out first
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: TripleA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download -R triplea-game/triplea -p game-headed.zip
+          unzip -q game-headed.zip -d triplea
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # jpackage makes the msi with the WiX toolset 3; the runner brings it, else it is installed
+      - name: WiX
+        run: |
+          if ! ls "/c/Program Files (x86)"/WiX\ Toolset\ v3*/bin/candle.exe >/dev/null 2>&1; then
+            choco install wixtoolset --version=3.14.1 -y --no-progress
+          fi
+
+      - name: Package
+        run: ./gradlew appInstaller -PtripleaHome=triplea
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eddies-map-editor-windows-installer
+          path: build/installer/eddies-map-editor-windows.msi
+
   # the Mac program packages too, so the Release workflow does not find out first
   mac:
     runs-on: macos-latest
