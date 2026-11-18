@@ -213,18 +213,29 @@ final class ActionsEditor implements Editor {
         .toList();
   }
 
-  private static String key(final Action action) {
+  /** The action's row in the list, eg "Axis_To_War (Germans)": what a link to it names. */
+  static String key(final Action action) {
     return shortName(action) + " (" + action.nation() + ")";
   }
 
   private static String shortName(final Action action) {
-    final String name = action.name();
-    final String prefix =
-        action.isPolitical()
-            ? Constants.POLITICALACTION_ATTACHMENT_PREFIX
-            : Constants.USERACTION_ATTACHMENT_PREFIX;
-    final String rest = name.substring(prefix.length()).replaceFirst("^_", "");
-    return rest.isEmpty() ? name : rest;
+    return action.shortName();
+  }
+
+  /** Shows the action of this key, eg from Politics; the list filtered by its nation if need be. */
+  @Override
+  public void show(final String key) {
+    ActionsXml.actions(project.game()).stream()
+        .filter(a -> key(a).equals(key))
+        .findFirst()
+        .ifPresent(
+            action -> {
+              if (!listed.containsKey(key) || !nation().isEmpty()) {
+                nationFilter.setSelectedItem(action.nation());
+              }
+              list.choose(key);
+              choose(key);
+            });
   }
 
   private String rowTitle(final String key) {
@@ -665,7 +676,7 @@ final class ActionsEditor implements Editor {
           rest.remove(i);
           project.edit(g -> ActionsXml.withValues(g, action, ActionsXml.COST_RESOURCES, rest));
         });
-    ActionsXml.value(game, action, "costPU")
+    ActionsXml.value(game, action, ActionsXml.COST_PU)
         .ifPresent(pus -> form.note("Also costs " + pus + " PUs (costPU)."));
     final List<String> resources =
         Optional.ofNullable(game.getResourceList())

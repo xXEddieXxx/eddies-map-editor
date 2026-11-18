@@ -44,6 +44,7 @@ import javax.swing.UIManager;
 import org.triplea.map.data.elements.AttachmentList.Attachment.Option;
 import org.triplea.map.data.elements.Game;
 import org.triplea.swing.SwingComponents;
+import eddies.mapeditor.ActionsXml.Action;
 import eddies.mapeditor.MakerIcon.Glyph;
 
 /**
@@ -53,6 +54,7 @@ import eddies.mapeditor.MakerIcon.Glyph;
 final class PoliticsEditor implements Editor {
   private static final String BY_ALLIANCE = "By alliance";
   private static final String ARCHETYPE = "archeType";
+  private static final String UPKEEP_COST = "upkeepCost";
   private static final List<String> ARCHETYPES =
       List.of(
           Constants.RELATIONSHIP_ARCHETYPE_WAR,
@@ -540,6 +542,7 @@ final class PoliticsEditor implements Editor {
               default -> "used by " + pairs + " pairs at the start";
             });
     typeForm.row(heartRow(game, type));
+    showChanges(game, type);
     typeForm.section("What nations in it may do in each other's land");
     TYPE_RULES.forEach(rule -> typeForm.row(ruleRow(type, rule.getKey(), rule.getValue())));
     final List<Option> others = otherOptions(game, type);
@@ -549,6 +552,80 @@ final class PoliticsEditor implements Editor {
     }
     typeForm.remove("Remove type", () -> removeType(type));
     typeForm.end();
+  }
+
+  /**
+   * The political actions that set a pair to the type, what each costs and asks, and what holding
+   * the type costs each turn, read here and changed in Actions. As TripleA has it: a change holds
+   * until an action or a trigger changes the pair again; a relationshipChange has no length of its
+   * own, a fourth part makes the game refuse to load; a condition can ask how many rounds a pair
+   * has held its type (RulesAttachment relationship); upkeepCost is paid each turn by a nation
+   * for every pair it holds in the type, flat or as a share of its income.
+   */
+  private void showChanges(final Game game, final String type) {
+    typeForm.section("Changing to it in the game");
+    final List<Action> actions = ActionsXml.changingTo(game, type);
+    if (actions.isEmpty()) {
+      typeForm.note(
+          "No political action sets a pair to it yet; a trigger may. A pair keeps its type until an"
+              + " action or trigger changes it again.");
+    }
+    for (final Action action : actions) {
+      final JLabel sentence =
+          new JLabel(
+              "<html><div style='width:380px'>"
+                  + SearchList.escape(changeSentence(game, action, type))
+                  + "</div></html>");
+      sentence.setToolTipText(action.name());
+      typeForm.row(sentence);
+      typeForm.row(Help.link("Cost, chance and acceptance in", "Actions", ActionsEditor.key(action)));
+    }
+    upkeepText(RulesXml.relationshipOption(game, type, UPKEEP_COST)).ifPresent(typeForm::note);
+  }
+
+  /**
+   * "Axis to war (Germans): Germans and Russians, for 5 PUs, 1 chance in 3, twice a turn, Russians
+   * must accept." A free action without chance or acceptance ends after its pairs.
+   */
+  static String changeSentence(final Game game, final Action action, final String type) {
+    final List<String> parts = new ArrayList<>();
+    parts.add(String.join(", ", ActionsXml.pairsChangedTo(game, action, type)));
+    final List<String> costs = ActionsXml.costs(game, action);
+    if (!costs.isEmpty()) {
+      parts.add("for " + String.join(" and ", costs));
+    }
+    ActionsXml.value(game, action, ActionsXml.CHANCE)
+        .map(c -> c.split(":"))
+        .filter(odds -> odds.length == 2 && !odds[1].strip().equals(odds[0].strip()))
+        .ifPresent(odds -> parts.add(odds[0].strip() + " chance in " + odds[1].strip()));
+    ActionsXml.value(game, action, ActionsXml.ATTEMPTS_PER_TURN)
+        .map(String::strip)
+        .filter(n -> !n.equals("1") && !n.isEmpty())
+        .ifPresent(n -> parts.add(("2".equals(n) ? "twice" : n + " times") + " a turn"));
+    final List<String> accept = ActionsXml.names(game, action, ActionsXml.ACTION_ACCEPT);
+    if (!accept.isEmpty()) {
+      parts.add(String.join(" and ", accept) + " must accept");
+    }
+    return action.shortName().replace('_', ' ')
+        + " ("
+        + action.nation()
+        + "): "
+        + String.join(", ", parts)
+        + ".";
+  }
+
+  /** "Holding it costs 5 PUs each turn, per pair." for 5 or 5:flat; a share for 10:percentage. */
+  static Optional<String> upkeepText(final String upkeepCost) {
+    if (upkeepCost.isBlank() || Constants.RELATIONSHIP_PROPERTY_DEFAULT.equals(upkeepCost)) {
+      return Optional.empty();
+    }
+    final String[] parts = upkeepCost.split(":");
+    final String count = parts[0].strip();
+    final boolean share = parts.length > 1 && "percentage".equals(parts[1].strip());
+    return Optional.of(
+        "Holding it costs a nation "
+            + (share ? count + "% of its income" : count + " PUs")
+            + " each turn for every pair it has in it (upkeepCost).");
   }
 
   /** "At heart ( ) War ( ) Allied ( ) Neutral". */

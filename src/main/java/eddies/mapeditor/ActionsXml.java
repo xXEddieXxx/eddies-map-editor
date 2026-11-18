@@ -32,6 +32,8 @@ class ActionsXml {
   static final String RELATIONSHIP_CHANGE = "relationshipChange";
   static final String ACTIVATE_TRIGGER = "activateTrigger";
   static final String COST_RESOURCES = "costResources";
+  // the older cost, PUs alone
+  static final String COST_PU = "costPU";
   static final String CHANCE = "chance";
   static final String ATTEMPTS_PER_TURN = "attemptsPerTurn";
   static final String ACTION_ACCEPT = "actionAccept";
@@ -69,6 +71,17 @@ class ActionsXml {
 
     boolean matches(final Attachment attachment) {
       return name.equals(attachment.getName()) && nation.equals(attachment.getAttachTo());
+    }
+
+    /** The name without the prefix TripleA finds it by, eg "Axis_To_War". */
+    String shortName() {
+      final String prefix =
+          isPolitical()
+              ? Constants.POLITICALACTION_ATTACHMENT_PREFIX
+              : Constants.USERACTION_ATTACHMENT_PREFIX;
+      final String rest = name.substring(Math.min(name.length(), prefix.length()))
+          .replaceFirst("^_", "");
+      return rest.isEmpty() ? name : rest;
     }
 
     /** The parts of its texts, eg "BUTTON". */
@@ -126,6 +139,44 @@ class ActionsXml {
 
   static Optional<String> value(final Game game, final Action action, final String option) {
     return values(game, action, option).stream().findFirst();
+  }
+
+  /**
+   * The political actions that set a pair to the relationship type, in the game's order. TripleA
+   * reads a relationshipChange as exactly "nation:nation:type"; a fourth part, eg a number of
+   * turns, makes the game refuse to load, so none is read here either.
+   */
+  static List<Action> changingTo(final Game game, final String type) {
+    return actions(game).stream()
+        .filter(Action::isPolitical)
+        .filter(a -> !pairsChangedTo(game, a, type).isEmpty())
+        .toList();
+  }
+
+  /** The pairs the action sets to the type, each as "Germans and Russians". */
+  static List<String> pairsChangedTo(final Game game, final Action action, final String type) {
+    return values(game, action, RELATIONSHIP_CHANGE).stream()
+        .map(change -> change.split(":"))
+        .filter(parts -> parts.length >= 3 && parts[2].strip().equals(type))
+        .map(parts -> parts[0].strip() + " and " + parts[1].strip())
+        .toList();
+  }
+
+  /**
+   * What an attempt costs, each as "5 PUs": the costResources, "count:resource" each, and the older
+   * costPU, which TripleA takes on top of them; empty for a free action.
+   */
+  static List<String> costs(final Game game, final Action action) {
+    final List<String> costs = new ArrayList<>();
+    values(game, action, COST_RESOURCES).stream()
+        .map(c -> c.split(":", 2))
+        .filter(parts -> parts.length == 2)
+        .forEach(parts -> costs.add(parts[0].strip() + " " + parts[1].strip()));
+    value(game, action, COST_PU)
+        .map(String::strip)
+        .filter(pus -> !pus.isEmpty() && !"0".equals(pus))
+        .ifPresent(pus -> costs.add(pus + " " + MapXml.PUS));
+    return costs;
   }
 
   /** The text key of the action, eg "Axis_To_War"; its texts are "Axis_To_War.BUTTON" and so on. */

@@ -7,6 +7,9 @@ import games.strategy.triplea.Constants;
 import java.awt.Component;
 import java.awt.Container;
 import java.nio.file.Path;
+import eddies.mapeditor.ActionsXml.Action;
+import org.triplea.map.data.elements.Game;
+import java.util.Objects;
 import javax.swing.SwingConstants;
 import java.nio.file.Files;
 import java.io.InputStream;
@@ -95,6 +98,41 @@ final class PoliticsEditorTest {
                 Stream.concat(
                     type.isInstance(c) ? Stream.of(type.cast(c)) : Stream.empty(),
                     c instanceof Container inner ? find(inner, type) : Stream.empty()));
+  }
+
+  @DisplayName("A type's page says which actions set a pair to it, what one costs, and the upkeep")
+  @Test
+  void typeTellsChangesAndCosts(@TempDir final Path folder) {
+    final MapProject project = givenG40(folder);
+    final String name = "politicalActionAttachment_Ally";
+    final Action action = new Action(name, "Germans");
+    project.edit(
+        g -> {
+          Game changed =
+              ActionsXml.withAction(
+                  g, ActionsXml.POLITICAL, name, "Germans", "Ally", List.of("Germans:Russians:Allied"));
+          changed = ActionsXml.withValues(changed, action, ActionsXml.COST_RESOURCES, List.of("5:PUs"));
+          changed = ActionsXml.withValues(changed, action, ActionsXml.CHANCE, List.of("1:3"));
+          changed = ActionsXml.withValues(changed, action, ActionsXml.ACTION_ACCEPT, List.of("Russians"));
+          return RulesXml.withRelationshipOption(changed, "Allied", "upkeepCost", "10:percentage");
+        });
+
+    // the first type, Allied, shows
+    final PoliticsEditor editor = new PoliticsEditor(project);
+    final List<String> texts =
+        find(editor.page(), JLabel.class).map(JLabel::getText).filter(Objects::nonNull).toList();
+
+    assertThat(PoliticsEditor.changeSentence(project.game(), action, "Allied"))
+        .isEqualTo("Ally (Germans): Germans and Russians, for 5 PUs, 1 chance in 3, Russians must accept.");
+    assertThat(texts)
+        .as("the sentence, as html, and the upkeep")
+        .anySatisfy(t -> assertThat(t).contains("Ally (Germans): Germans and Russians, for 5 PUs"))
+        .anySatisfy(t -> assertThat(t).contains("10% of its income each turn"));
+    assertThat(PoliticsEditor.upkeepText("5")).contains("Holding it costs a nation 5 PUs each turn for every pair it has in it (upkeepCost).");
+    assertThat(PoliticsEditor.upkeepText("default")).isEmpty();
+    assertThat(find(editor.page(), JButton.class).map(JButton::getText))
+        .as("a link to Actions")
+        .contains("Actions ›");
   }
 
   @DisplayName("Under the tabs the types list keeps room above its count line")

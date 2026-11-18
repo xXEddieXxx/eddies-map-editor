@@ -58,6 +58,28 @@ final class ActionsXmlTest {
     return project;
   }
 
+  @DisplayName("The actions that set a pair to a type are found, with what an attempt costs")
+  @Test
+  void findsActionsChangingToAType() {
+    final Game game = givenPoliticalAction(givenMinimapWithTruce(), "politicalActionAttachment_T");
+    final Action action = ActionsXml.actions(game).getFirst();
+    final Game priced =
+        ActionsXml.withValues(
+            ActionsXml.withValues(
+                game, action, ActionsXml.COST_RESOURCES, List.of("5:PUs", "2:Politics")),
+            action,
+            ActionsXml.COST_PU,
+            List.of("3"));
+
+    assertThat(ActionsXml.changingTo(game, TRUCE)).as("the one action to the truce").containsExactly(action);
+    assertThat(ActionsXml.changingTo(game, "War")).as("none to war").isEmpty();
+    assertThat(ActionsXml.pairsChangedTo(game, action, TRUCE)).containsExactly("Russians and Italians");
+    assertThat(ActionsXml.costs(game, action)).as("free").isEmpty();
+    assertThat(ActionsXml.costs(priced, action))
+        .as("each resource, the older costPU on top")
+        .containsExactly("5 PUs", "2 Politics", "3 PUs");
+  }
+
   @DisplayName("A new political action with cost, chance and acceptance loads on the minimap")
   @Test
   void newPoliticalActionLoads() {
