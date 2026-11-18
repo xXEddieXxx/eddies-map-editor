@@ -11,6 +11,7 @@ import java.awt.Component;
 import java.awt.Desktop;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.Rectangle;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
 import java.awt.image.BufferedImage;
@@ -40,6 +41,8 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextField;
 import javax.swing.SwingWorker;
+import javax.swing.Timer;
+import javax.swing.border.Border;
 import lombok.extern.slf4j.Slf4j;
 import org.triplea.awt.OpenFileUtility;
 import org.triplea.map.data.elements.Game;
@@ -61,6 +64,8 @@ final class PublishEditor implements Editor {
   private static final int TEXT_WIDTH = 640;
   private static final int HINT_WIDTH = 400;
   private static final int DESCRIPTION_HEIGHT = 260;
+  // how long Write it marks the Description box
+  private static final int MARK_MILLIS = 1500;
   private static final int PREVIEW_WIDTH = 240;
   // MapDescriptionYaml.MAX_MAP_NAME_LENGTH
   private static final int NAME_MAX_LENGTH = MapFolder.MAP_NAME_MAX_LENGTH;
@@ -603,20 +608,21 @@ final class PublishEditor implements Editor {
       return new Item(
           Id.DESCRIPTION,
           Status.TODO,
-          "No description yet",
+          "No description yet (description.html)",
           "Players read it in the list of maps before they download: the setting, the time, what"
-              + " is special. Without one the list says that none is available.");
+              + " is special. Without one the list says that none is available. Write it goes to"
+              + " the Description box below.");
     }
     return text.length() > MapFolder.DESCRIPTION_MAX_LENGTH
         ? new Item(
             Id.DESCRIPTION,
             Status.PROBLEM,
-            "The description is too long",
+            "The description is too long (description.html)",
             "It has "
                 + text.length()
                 + " characters; the map server shows none longer than "
                 + MapFolder.DESCRIPTION_MAX_LENGTH
-                + ".")
+                + ". Shorten it in the Description box below.")
         : new Item(Id.DESCRIPTION, Status.DONE, "Description (description.html)", "");
   }
 
@@ -697,7 +703,8 @@ final class PublishEditor implements Editor {
       case MAP_YML -> Optional.of("Create or open map.yml");
       case NAME -> Optional.empty();
       case VERSION -> Optional.of("Set version 1");
-      case DESCRIPTION -> Optional.of("Write it");
+      case DESCRIPTION ->
+          Optional.of(item.status() == Status.PROBLEM ? "Shorten it" : "Write it");
       case PREVIEW -> Optional.of("Make it from the map");
       case FOLDER -> Optional.of("Show folder");
       case LEFTOVERS -> Optional.of("Export as zip without them…");
@@ -723,11 +730,27 @@ final class PublishEditor implements Editor {
       }
       case NAME -> name.requestFocusInWindow();
       case VERSION -> writeVersion("1");
-      case DESCRIPTION -> description.requestFocusInWindow();
+      case DESCRIPTION -> showDescriptionBox();
       case PREVIEW -> makePreview(root);
       case FOLDER -> showFolder(root);
       case LEFTOVERS -> export.run();
     }
+  }
+
+  /**
+   * Brings the Description box into view with the cursor in it and marks it for a moment, as the
+   * list is at the top and the box further down: the map maker sees where Write it went.
+   */
+  private void showDescriptionBox() {
+    descriptionPanes.scrollRectToVisible(
+        new Rectangle(0, 0, descriptionPanes.getWidth(), descriptionPanes.getHeight()));
+    description.requestFocusInWindow();
+    final Border before = descriptionPanes.getBorder();
+    descriptionPanes.setBorder(
+        BorderFactory.createLineBorder(Theme.getAccentColor(), UIScale.scale(2)));
+    final Timer back = new Timer(MARK_MILLIS, e -> descriptionPanes.setBorder(before));
+    back.setRepeats(false);
+    back.start();
   }
 
   /** The map as players see it, shrunk, as its preview.png; in the background as it may be big. */

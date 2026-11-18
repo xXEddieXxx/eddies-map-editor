@@ -17,7 +17,9 @@ the description and picture the list of maps shows, and the steps to upload it.
 3. **Before you upload**: the checklist, "n of m are ready": checked since the last change, a
    name, a version, the description, the preview picture, the folder's name as the upload guide
    asks it, no backup files in the folder. Each ○ has a button that does it, for example **Set
-   version 1** or **Check**.
+   version 1** or **Check**. **Write it** on the description line goes to the Description box
+   below, which it marks for a moment with the cursor in it; **Shorten it** when the file is too
+   long.
 4. **Description**: what the list of maps shows about the map (description.html), with a preview
    as TripleA shows it and the count of characters, 3000 at most.
 

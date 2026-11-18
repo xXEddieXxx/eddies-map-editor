@@ -201,6 +201,12 @@ final class PublishTest {
         .filteredOn(i -> !i.done())
         .extracting(Item::id)
         .containsExactly(Id.CHECK, Id.VERSION, Id.DESCRIPTION);
+    assertThat(item(items, Id.DESCRIPTION))
+        .as("the line names the file and says where Write it goes")
+        .returns("No description yet (description.html)", Item::text)
+        .extracting(Item::hint)
+        .asString()
+        .contains("Description box below");
     assertThat(item(items, Id.NAME).text())
         .as("the name map.yml has")
         .isEqualTo("Name: Island Wars");
@@ -241,9 +247,10 @@ final class PublishTest {
         .as("Check's problems")
         .returns(Status.PROBLEM, Item::status)
         .returns("Check found 2 problems", Item::text);
-    assertThat(item(items, Id.DESCRIPTION).status())
-        .as("over the map server's 3000 characters")
-        .isEqualTo(Status.PROBLEM);
+    assertThat(item(items, Id.DESCRIPTION))
+        .as("over the map server's 3000 characters; the line names the file")
+        .returns(Status.PROBLEM, Item::status)
+        .returns("The description is too long (description.html)", Item::text);
     assertThat(item(items, Id.PREVIEW).status()).as("no preview.png").isEqualTo(Status.TODO);
     assertThat(item(items, Id.FOLDER))
         .as("the folder is not renamed, the name to give it is said")
