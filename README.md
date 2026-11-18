@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/xXEddieXxx/eddies-map-editor/releases/latest/download/eddies-map-editor-windows.zip"><b>⬇️ Download for Windows</b></a>
+  <a href="https://github.com/xXEddieXxx/eddies-map-editor/releases/latest/download/eddies-map-editor-windows.msi"><b>⬇️ Download for Windows</b></a>
   &nbsp;·&nbsp;
   <a href="https://github.com/xXEddieXxx/eddies-map-editor/releases/latest/download/eddies-map-editor-macos.zip"><b>⬇️ Download for macOS</b></a>
   &nbsp;·&nbsp;
@@ -29,10 +29,15 @@ It runs with your installed TripleA, and the maps it saves still load and play t
 ## Get started
 
 1. **Windows:** download
-   [`eddies-map-editor-windows.zip`](https://github.com/xXEddieXxx/eddies-map-editor/releases/latest/download/eddies-map-editor-windows.zip),
-   unzip it anywhere and start `Eddies Map Editor.exe`. It brings its own Java and runs with your
+   [`eddies-map-editor-windows.msi`](https://github.com/xXEddieXxx/eddies-map-editor/releases/latest/download/eddies-map-editor-windows.msi)
+   and open it. It installs the editor for you alone, without administrator rights, with a Start
+   menu entry, and later versions install from within the editor. It is not signed: on Windows'
+   warning choose *More info › Run anyway*. The editor brings its own Java and runs with your
    installed [TripleA](https://triplea-game.org/download/), which it finds or asks for. It needs a
-   TripleA from June 2026 or newer and says so at its start when yours is older.
+   TripleA from June 2026 or newer and says so at its start when yours is older. Without
+   installing: download
+   [`eddies-map-editor-windows.zip`](https://github.com/xXEddieXxx/eddies-map-editor/releases/latest/download/eddies-map-editor-windows.zip),
+   unzip it anywhere and start `Eddies Map Editor.exe`.
 2. **macOS (Apple silicon):** download
    [`eddies-map-editor-macos.zip`](https://github.com/xXEddieXxx/eddies-map-editor/releases/latest/download/eddies-map-editor-macos.zip),
    unzip it and open `Eddies Map Editor.app`. It brings its own Java and needs TripleA installed.
