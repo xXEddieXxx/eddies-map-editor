@@ -74,6 +74,10 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
   orders the list A to Z, by cost or by kind as TripleA's buy tabs sort units, for one list or
   every list at once. Units: ▲ ▼ and ⇅ for the unit types, the order TripleA lists and draws
   them in. Game options: ▲ ▼ on every row, ⇅ sorts A to Z. Each is one step Undo takes back.
+- **A word when a new version is out.** Once a day when the editor starts, it asks GitHub for
+  the latest release and shows a toast with Download when there is a newer one, once per version.
+  Nothing but that request leaves the computer; **Tell me of new versions** in the File menu
+  turns it off.
 - **Choose lists offer the game's $variables$** (#22) of their kind, nations, territories or unit
   types, under a Variables heading below the names, wherever the chosen names go into an
   attachment's option, which is where TripleA expands them: Units, Nations, Technology, Terrain

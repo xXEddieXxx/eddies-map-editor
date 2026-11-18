@@ -129,7 +129,7 @@ final class MapMakerWindowTest {
   }
 
   @DisplayName(
-      "The File menu: open, new, recent, new game, rename, export, publish, folder, close, version")
+      "The File menu: open, new, recent, new game, rename, export, publish, folder, close, new versions, version")
   @Test
   void fileMenuHoldsTheMapsActions() throws Exception {
     assumeFalse(GraphicsEnvironment.isHeadless(), "the window needs a screen");
@@ -189,6 +189,7 @@ final class MapMakerWindowTest {
                 : "Show in Explorer",
             "Close map " + KeyEvent.VK_W,
             "Show all options",
+            "Tell me of new versions",
             "Version dev");
     assertThat(seen).as("Publish… opens the Publish tool").containsExactly(true);
   }

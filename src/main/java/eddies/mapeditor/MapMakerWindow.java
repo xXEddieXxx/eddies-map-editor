@@ -26,6 +26,7 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.net.URI;
 import java.io.Serial;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -227,6 +228,22 @@ public final class MapMakerWindow extends JFrame {
     window.setLocationRelativeTo(null);
     window.setExtendedState(JFrame.MAXIMIZED_BOTH);
     window.setVisible(true);
+    UpdateCheck.whenDue(EddiesMapEditor.version(), window::tellOfNewVersion);
+  }
+
+  /** A toast on a newer release, once per version: Download opens the release's page. */
+  private void tellOfNewVersion(final UpdateCheck.Release release) {
+    Dialogs.toast(
+        this,
+        "Eddie's Map Editor " + release.version() + " is out; this is " + EddiesMapEditor.version(),
+        "Download",
+        () -> {
+          try {
+            Desktop.getDesktop().browse(URI.create(release.page()));
+          } catch (final IOException | RuntimeException e) {
+            Dialogs.warn(this, "Download", "Could not open the browser. The page: " + release.page());
+          }
+        });
   }
 
   // ---- new, opening and leaving a map
@@ -1521,6 +1538,13 @@ public final class MapMakerWindow extends JFrame {
           project.showAgain();
         });
     menu.add(all);
+    final JCheckBoxMenuItem tell =
+        new JCheckBoxMenuItem("Tell me of new versions", UpdateCheck.tells());
+    tell.setToolTipText(
+        "Once a day when the editor starts, ask GitHub for the latest release and say when there"
+            + " is a newer one");
+    tell.addActionListener(e -> UpdateCheck.setTells(tell.isSelected()));
+    menu.add(tell);
     menu.add("Version " + EddiesMapEditor.version()).setEnabled(false);
     return menu;
   }
