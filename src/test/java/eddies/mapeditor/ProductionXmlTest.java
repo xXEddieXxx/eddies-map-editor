@@ -39,6 +39,42 @@ final class ProductionXmlTest {
         "buyBomber");
   }
 
+  @DisplayName("A rule moves in its list, a list takes an order, every list at once; the same"
+      + " order is no change")
+  @Test
+  void movesAndOrdersRules() {
+    final Game navy = givenNavy();
+    final List<String> was = ProductionXml.rulesIn(navy, "production");
+
+    final Game moved = ProductionXml.withRuleMovedIn(navy, "production", 0, 2);
+    final Game byName = ProductionXml.withRulesOrderedIn(navy, "production", ProductionXml.rulesByName(navy));
+    final Game byCost = ProductionXml.withRulesOrderedIn(navy, "production", ProductionXml.rulesByCost(navy));
+    final Game byKind = ProductionXml.withRulesOrdered(navy, ProductionXml.rulesByKind(navy));
+
+    assertThat(ProductionXml.rulesIn(moved, "production"))
+        .as("infantry two down")
+        .containsExactly("buyArtillery", "buyArmour", "buyInfantry", "buyFighter", "buyAAGun");
+    assertThat(ProductionXml.rulesIn(byName, "production"))
+        .as("A to Z by what is sold: aaGun, armour, artillery, fighter, infantry")
+        .containsExactly("buyAAGun", "buyArmour", "buyArtillery", "buyFighter", "buyInfantry");
+    assertThat(ProductionXml.rulesIn(byCost, "production"))
+        .as("the cheapest first: infantry 3, artillery 4, armour and aaGun 5, fighter 10")
+        .containsExactly("buyInfantry", "buyArtillery", "buyAAGun", "buyArmour", "buyFighter");
+    assertThat(ProductionXml.rulesIn(byKind, "production"))
+        .as("land A to Z, then air")
+        .containsExactly("buyAAGun", "buyArmour", "buyArtillery", "buyInfantry", "buyFighter");
+    assertThat(ProductionXml.rulesIn(byKind, NAVY))
+        .as("every list: the navy's infantry before its carrier")
+        .containsExactly("buyInfantry", ProductionXml.rulesIn(navy, NAVY).get(0));
+    assertThat(ProductionXml.withRuleMovedIn(navy, "production", 0, 0))
+        .as("no move is no change")
+        .isSameAs(navy);
+    assertThat(ProductionXml.withRulesOrderedIn(byName, "production", ProductionXml.rulesByName(byName)))
+        .as("the order it has is no change")
+        .isSameAs(byName);
+    assertThat(was).as("the game before stays").isEqualTo(ProductionXml.rulesIn(navy, "production"));
+  }
+
   @DisplayName("Frontiers, rules and what a nation buys from change, each a new game")
   @Test
   void changesProduction() {

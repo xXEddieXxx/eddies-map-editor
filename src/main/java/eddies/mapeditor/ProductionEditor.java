@@ -22,10 +22,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.text.ParseException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
 import java.util.function.IntConsumer;
 import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
@@ -43,6 +45,7 @@ import javax.swing.JComponent;
 import javax.swing.JFileChooser;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JRadioButton;
 import javax.swing.JScrollPane;
 import javax.swing.JSpinner;
@@ -418,12 +421,85 @@ final class ProductionEditor implements Editor {
       toggle.add(new JLabel("Show"));
       toggle.add(here);
       toggle.add(all);
+      final JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, Theme.GAP_XS, 0));
+      tools.setOpaque(false);
+      tools.add(
+          Theme.newIconButton(
+              "▲", "Move the rule up, as the buy window orders them", () -> move(frontier, -1)));
+      tools.add(
+          Theme.newIconButton(
+              "▼", "Move the rule down, as the buy window orders them", () -> move(frontier, 1)));
+      tools.add(newOrderButton(frontier));
+      tools.add(addRule);
       final JPanel showRow = new JPanel(new BorderLayout());
       showRow.add(toggle, BorderLayout.WEST);
-      showRow.add(addRule, BorderLayout.EAST);
+      showRow.add(tools, BorderLayout.EAST);
       head.row(showRow);
       head.revalidate();
       head.repaint();
+    }
+
+    /**
+     * The chosen rule one up or down in the list, which is the buy window's order; among the rules
+     * sold here only, as the other view shows every rule of the game.
+     */
+    private void move(final String frontier, final int by) {
+      commit();
+      final Optional<String> rule =
+          rulesShown
+              .filter(t -> t.getSelectedRow() >= 0)
+              .map(t -> ((RulesTable) t.getModel()).ruleName(t.getSelectedRow()));
+      final List<String> sold = ProductionXml.rulesIn(view(), frontier);
+      final int from = rule.map(sold::indexOf).orElse(-1);
+      if (allRules) {
+        Dialogs.toast(page, "Show Sold here to move the rules: All rules is the game's order");
+        return;
+      }
+      if (from >= 0 && from + by >= 0 && from + by < sold.size()) {
+        edit(g -> ProductionXml.withRuleMovedIn(g, frontier, from, from + by));
+      }
+    }
+
+    /** Order: this list's rules A to Z, by cost or by kind; with several lists, all of them. */
+    private JButton newOrderButton(final String frontier) {
+      final JPopupMenu orders = new JPopupMenu();
+      final boolean several = ProductionXml.frontiers(view()).size() > 1;
+      addOrders(orders, several ? "This list A to Z" : "A to Z", order -> order, frontier);
+      if (several) {
+        orders.addSeparator();
+        addOrders(orders, "Every list A to Z", order -> order, null);
+      }
+      final JButton button = Theme.newIconButton("⇅", "Order the rules", () -> {});
+      button.addActionListener(e -> orders.show(button, 0, button.getHeight()));
+      return button;
+    }
+
+    // three entries: A to Z, by cost, by kind; for one frontier, or every one for null
+    private void addOrders(
+        final JPopupMenu orders,
+        final String firstLabel,
+        final UnaryOperator<String> label,
+        @Nullable final String frontier) {
+      final String scope = firstLabel.replace("A to Z", "").strip();
+      orders.add(firstLabel).addActionListener(e -> order(frontier, ProductionXml::rulesByName));
+      orders
+          .add((scope.isEmpty() ? "By" : scope + " by") + " cost, the cheapest first")
+          .addActionListener(e -> order(frontier, ProductionXml::rulesByCost));
+      orders
+          .add(
+              (scope.isEmpty() ? "By" : scope + " by")
+                  + " kind, as TripleA's buy tabs: land, air, sea, construction")
+          .addActionListener(e -> order(frontier, ProductionXml::rulesByKind));
+    }
+
+    private void order(
+        @Nullable final String frontier, final Function<Game, Comparator<String>> order) {
+      commit();
+      edit(
+          g ->
+              frontier == null
+                  ? ProductionXml.withRulesOrdered(g, order.apply(g))
+                  : ProductionXml.withRulesOrderedIn(g, frontier, order.apply(g)));
     }
 
     private void chooseNations(final String frontier) {

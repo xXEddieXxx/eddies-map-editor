@@ -46,6 +46,34 @@ final class MapXmlTest {
     }
   }
 
+  @DisplayName("A unit type moves in the game's list, the list takes an order: A to Z, by cost, by kind")
+  @Test
+  void movesAndOrdersUnitTypes() {
+    final Game minimap = givenMinimap();
+
+    final Game moved = MapXml.withUnitTypeMoved(minimap, 11, 0);
+    final Game byName = MapXml.withUnitTypesOrdered(minimap, MapXml.unitTypesOrdered().apply(minimap));
+    final Game byCost = MapXml.withUnitTypesOrdered(minimap, MapXml.unitTypesByCost(minimap));
+    final Game byKind = MapXml.withUnitTypesOrdered(minimap, MapXml.unitTypesByKind(minimap));
+
+    assertThat(MapXml.unitTypes(moved)).as("the destroyer first").startsWith("destroyer", "infantry");
+    assertThat(MapXml.unitTypes(byName))
+        .startsWith("aaGun", "armour", "artillery", "battleship", "bomber", "carrier");
+    assertThat(MapXml.unitTypes(byCost))
+        .as("the cheapest first, by every rule of the game: infantry 3, artillery 4, then the 5s A to Z")
+        .startsWith("infantry", "artillery", "aaGun", "armour")
+        .endsWith("carrier", "battleship");
+    assertThat(MapXml.unitTypes(byKind))
+        .as("land, air, sea, construction")
+        .containsExactly(
+            "aaGun", "armour", "artillery", "infantry",
+            "bomber", "fighter",
+            "battleship", "carrier", "destroyer", "submarine", "transport",
+            "factory");
+    assertThat(MapXml.withUnitTypeMoved(minimap, 0, 0)).as("no move is no change").isSameAs(minimap);
+    assertThat(MapXml.unitTypes(minimap)).as("the game before stays").startsWith("infantry", "armour");
+  }
+
   @DisplayName("The territories are read with their owner, value, capital and victory city")
   @Test
   void readsTerritories() {

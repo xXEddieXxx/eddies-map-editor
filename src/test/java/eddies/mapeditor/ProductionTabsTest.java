@@ -66,6 +66,22 @@ final class ProductionTabsTest {
     return MapProject.open(xml);
   }
 
+  @DisplayName("A unit's tab among TripleA's own: upgrades first, then construction, sea, air, land")
+  @Test
+  void tellsTheStandardKind() {
+    final Game minimap = MapXmlTest.givenMinimap();
+    final Game consuming =
+        MapXml.withUnitOption(minimap, "fighter", "consumesUnits", "1:infantry");
+
+    assertThat(
+            java.util.stream.Stream.of("infantry", "fighter", "carrier", "factory", "PUs")
+                .map(unit -> ProductionTabs.standardKindOf(minimap, unit)))
+        .containsExactly("Land", "Air", "Sea", "Construction", "Resources");
+    assertThat(ProductionTabs.standardKindOf(consuming, "fighter"))
+        .as("consuming units wins over flying")
+        .isEqualTo("Upgrades/Consumes");
+  }
+
   @DisplayName("A production_tabs file reads as tabs with names and what they sell, rows and columns")
   @Test
   void readsTheFile() {

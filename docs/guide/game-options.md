@@ -11,7 +11,8 @@ Victory, Bids, Luck, and More options for the rest.
 1. **Search options** finds an option by its name.
 2. **Only what players may change** hides the fixed ones.
 3. **+ Add option…** adds an option TripleA knows, for example Low Luck, or one the map's
-   triggers read.
+   triggers read. **⇅** before it orders the options A to Z in the game file, which is the order
+   of TripleA's setup screen; **▲ ▼** on a row move one option, shown within its group here.
 4. A number option, here **Dice sides**, has a field.
 5. A yes/no option, here **8 Capital Victory**, has a box.
 6. **The lock** beside each option: open, players may change it before a game; closed, fixed by

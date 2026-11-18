@@ -51,6 +51,35 @@ final class GameRulesXmlTest {
         .orElseThrow();
   }
 
+  @DisplayName("An option moves among the options, the options sort A to Z; the notes keep their place")
+  @Test
+  void movesAndSortsOptions() {
+    final Game minimap = MapXmlTest.givenMinimap();
+    final List<String> was = GameRulesXml.options(minimap).stream().map(Property::getName).toList();
+    final int notesAt =
+        MapXml.properties(minimap).stream().map(Property::getName).toList().indexOf("notes");
+
+    final Game moved = GameRulesXml.withOptionMoved(minimap, "Low Luck", -1);
+    final Game sorted = GameRulesXml.withOptionsSorted(minimap);
+    final List<String> sortedNames =
+        GameRulesXml.options(sorted).stream().map(Property::getName).toList();
+
+    assertThat(GameRulesXml.options(moved).stream().map(Property::getName))
+        .as("Low Luck one up")
+        .containsExactly(ListOrder.moved(was, was.indexOf("Low Luck"), was.indexOf("Low Luck") - 1).toArray(String[]::new));
+    assertThat(sortedNames)
+        .as("A to Z, case not counting")
+        .isSortedAccordingTo(String.CASE_INSENSITIVE_ORDER)
+        .containsExactlyInAnyOrderElementsOf(was);
+    assertThat(MapXml.properties(sorted).stream().map(Property::getName).toList().indexOf("notes"))
+        .as("the notes, no option, stay where they were")
+        .isEqualTo(notesAt);
+    assertThat(GameRulesXml.withOptionMoved(minimap, was.getFirst(), -1))
+        .as("the first cannot go up: no change")
+        .isSameAs(minimap);
+    assertThat(GameRulesXml.withOptionsSorted(sorted)).as("sorted again is no change").isSameAs(sorted);
+  }
+
   @DisplayName("Options are added of a kind, changed, made fixed and removed, and still load")
   @Test
   void changesTypedOptions(@TempDir final Path folder) {

@@ -38,6 +38,36 @@ record ProductionTabs(boolean standard, int rows, int columns, List<Tab> tabs) {
   static final String STANDARD_TABS =
       "All, Land, Air, Sea, Construction, Upgrades/Consumes, Resources";
 
+  /** TripleA's own tabs after All, in the order the buy window shows them. */
+  static final List<String> STANDARD_KINDS =
+      List.of("Land", "Air", "Sea", "Construction", "Upgrades/Consumes", "Resources");
+
+  /**
+   * The tab TripleA's own tabs put what a rule sells in, as TabbedProductionPanel sorts: a resource
+   * under Resources; a unit that consumes units under Upgrades/Consumes, else a construction (also
+   * the old isFactory) under Construction, else a sea unit, an air unit, the rest under Land.
+   */
+  static String standardKindOf(final Game game, final String resourceOrUnit) {
+    if (!MapXml.unitTypes(game).contains(resourceOrUnit)) {
+      return "Resources";
+    }
+    if (MapXml.option(game, UNIT, resourceOrUnit, "consumesUnits")
+        .filter(v -> !v.isBlank())
+        .isPresent()) {
+      return "Upgrades/Consumes";
+    }
+    if (MapXml.unitFlag(game, resourceOrUnit, "isConstruction")
+        || MapXml.unitFlag(game, resourceOrUnit, "isFactory")) {
+      return "Construction";
+    }
+    if (MapXml.unitFlag(game, resourceOrUnit, "isSea")) {
+      return "Sea";
+    }
+    return MapXml.unitFlag(game, resourceOrUnit, "isAir") ? "Air" : "Land";
+  }
+
+  private static final String UNIT = games.strategy.triplea.Constants.UNIT_ATTACHMENT_NAME;
+
   private static final String PREFIX = "production_tabs.";
   private static final String STANDARD = PREFIX + "use_default_tabs";
   private static final String COUNT = PREFIX + "number_of_tabs";

@@ -133,8 +133,13 @@ final class RulesEditorsTest {
         .isTrue();
     assertThat(
             givenAll(givenRow(editor, "Heavy Bomber Dice Rolls"), JButton.class)
-                .anyMatch(b -> b.isVisible() && !b.getText().isEmpty() && !isHelp(b)))
-        .as("a fixed number has none in TripleA")
+                .anyMatch(
+                    b ->
+                        b.isVisible()
+                            && !b.getText().isEmpty()
+                            && !isHelp(b)
+                            && !List.of("▲", "▼").contains(b.getText())))
+        .as("a fixed number has none in TripleA; the move buttons are no range")
         .isFalse();
   }
 

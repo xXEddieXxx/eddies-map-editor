@@ -2,9 +2,11 @@ package eddies.mapeditor;
 
 import games.strategy.triplea.Constants;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Predicate;
@@ -205,6 +207,83 @@ class ProductionXml {
                 : Stream.concat(
                         rules.stream(), Stream.of(FrontierRules.builder().name(rule).build()))
                     .toList());
+  }
+
+  /** The game with the frontier's rule at from moved to to, as in the buy window's order. */
+  static Game withRuleMovedIn(final Game game, final String frontier, final int from, final int to) {
+    final List<String> was = rulesIn(game, frontier);
+    final List<String> now = ListOrder.moved(was, from, to);
+    return now.equals(was) ? game : withRulesIn(game, frontier, now);
+  }
+
+  /** The game with the frontier's rules in the order; the same game when they are already. */
+  static Game withRulesOrderedIn(
+      final Game game, final String frontier, final Comparator<String> order) {
+    final List<String> was = rulesIn(game, frontier);
+    final List<String> now = ListOrder.ordered(was, order);
+    return now.equals(was) ? game : withRulesIn(game, frontier, now);
+  }
+
+  /** The game with every frontier's rules in the order, as one change. */
+  static Game withRulesOrdered(final Game game, final Comparator<String> order) {
+    Game ordered = game;
+    for (final String frontier : frontiers(game)) {
+      ordered = withRulesOrderedIn(ordered, frontier, order);
+    }
+    return ordered;
+  }
+
+  private static Game withRulesIn(final Game game, final String frontier, final List<String> rules) {
+    return withFrontierRules(
+        game,
+        frontier,
+        was ->
+            rules.stream()
+                .map(
+                    name ->
+                        was.stream()
+                            .filter(r -> name.equals(r.getName()))
+                            .findFirst()
+                            .orElseGet(() -> FrontierRules.builder().name(name).build()))
+                .toList());
+  }
+
+  /** A to Z by what the rule sells, a rule that sells nothing by its name. */
+  static Comparator<String> rulesByName(final Game game) {
+    return ListOrder.byName(rule -> sold(game, rule));
+  }
+
+  /** The cheapest first, in PUs or the game's first resource, the same cost A to Z. */
+  static Comparator<String> rulesByCost(final Game game) {
+    final String resource = costResource(game).orElse(MapXml.PUS);
+    return Comparator.<String>comparingInt(
+            rule -> ruleNamed(game, rule).map(r -> cost(r, resource)).orElse(0))
+        .thenComparing(rulesByName(game));
+  }
+
+  /**
+   * As TripleA's own buy tabs group them, Land, Air, Sea, Construction, Upgrades/Consumes,
+   * Resources, each group A to Z.
+   */
+  static Comparator<String> rulesByKind(final Game game) {
+    return Comparator.<String>comparingInt(
+            rule ->
+                ProductionTabs.STANDARD_KINDS.indexOf(
+                    ProductionTabs.standardKindOf(game, sold(game, rule))))
+        .thenComparing(rulesByName(game));
+  }
+
+  /** What the rule sells, its name when its result is unreadable. */
+  private static String sold(final Game game, final String rule) {
+    return ruleNamed(game, rule)
+        .flatMap(ProductionXml::result)
+        .map(Result::getResourceOrUnit)
+        .filter(Objects::nonNull)
+        .orElse(rule);
+  }
+
+  private static Optional<ProductionRule> ruleNamed(final Game game, final String rule) {
+    return rules(game).stream().filter(r -> rule.equals(r.getName())).findFirst();
   }
 
   static Game withoutRuleIn(final Game game, final String frontier, final String rule) {

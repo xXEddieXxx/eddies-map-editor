@@ -19,6 +19,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -51,6 +52,7 @@ import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
+import javax.swing.JPopupMenu;
 import javax.swing.SwingConstants;
 import javax.swing.JList;
 import javax.swing.JPanel;
@@ -139,6 +141,12 @@ final class UnitsEditor implements Editor {
                 this::detail,
                 this::choose)
             .withIcons(this::listIcon, LIST_PICTURE_SIZE)
+            .withTools(
+                Theme.newIconButton(
+                    "▲", "Move the unit up, where TripleA lists the units", () -> move(-1)),
+                Theme.newIconButton(
+                    "▼", "Move the unit down, where TripleA lists the units", () -> move(1)),
+                newOrderButton())
             .withAdd("Add unit…", "Add a unit", this::addUnit)
             .withEmpty(
                 Panels.empty(
@@ -291,6 +299,36 @@ final class UnitsEditor implements Editor {
     selected = unit;
     openSupport = null;
     showInspector();
+  }
+
+  /** The chosen unit one up or down in the game's list, which is TripleA's order of the units. */
+  private void move(final int by) {
+    final List<String> units = MapXml.unitTypes(project.game());
+    final int from = selected == null ? -1 : units.indexOf(selected);
+    if (from >= 0 && from + by >= 0 && from + by < units.size()) {
+      commit();
+      project.edit(g -> MapXml.withUnitTypeMoved(g, from, from + by));
+    }
+  }
+
+  /** Order: the whole list A to Z, by cost or by kind, each one step to undo. */
+  private JButton newOrderButton() {
+    final JPopupMenu orders = new JPopupMenu();
+    orders.add("A to Z").addActionListener(e -> order(MapXml.unitTypesOrdered()));
+    orders
+        .add("By cost, the cheapest first")
+        .addActionListener(e -> order(MapXml::unitTypesByCost));
+    orders
+        .add("By kind, as TripleA's buy tabs: land, air, sea, construction")
+        .addActionListener(e -> order(MapXml::unitTypesByKind));
+    final JButton button = Theme.newIconButton("⇅", "Order the units", () -> {});
+    button.addActionListener(e -> orders.show(button, 0, button.getHeight()));
+    return button;
+  }
+
+  private void order(final Function<Game, Comparator<String>> order) {
+    commit();
+    project.edit(g -> MapXml.withUnitTypesOrdered(g, order.apply(g)));
   }
 
   /**

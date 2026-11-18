@@ -6,6 +6,7 @@ import games.strategy.triplea.attachments.UnitAttachment;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -13,6 +14,7 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
@@ -1671,6 +1673,42 @@ class MapXml {
         .stream()
         .map(Unit::getName)
         .toList();
+  }
+
+  /** The game with the unit type at from moved to to in its list, where TripleA lists them. */
+  static Game withUnitTypeMoved(final Game game, final int from, final int to) {
+    final List<Unit> was = unitElements(game);
+    final List<Unit> now = ListOrder.moved(was, from, to);
+    return now.equals(was) ? game : withUnitElements(game, now);
+  }
+
+  /** The game with its unit types in the order; the same game when they are already. */
+  static Game withUnitTypesOrdered(final Game game, final Comparator<String> order) {
+    final List<Unit> was = unitElements(game);
+    final List<Unit> now = ListOrder.ordered(was, Comparator.comparing(Unit::getName, order));
+    return now.equals(was) ? game : withUnitElements(game, now);
+  }
+
+  /** A to Z, for {@link #withUnitTypesOrdered}; a function of the game like the other orders. */
+  static Function<Game, Comparator<String>> unitTypesOrdered() {
+    return game -> ListOrder.byName(unit -> unit);
+  }
+
+  /** The unit types that cost least first, by the rule that sells one; without a rule last. */
+  static Comparator<String> unitTypesByCost(final Game game) {
+    return Comparator.<String>comparingInt(unit -> unitCost(game, unit).orElse(Integer.MAX_VALUE))
+        .thenComparing(ListOrder.byName(unit -> unit));
+  }
+
+  /** The unit types as TripleA's own buy tabs group them, each group A to Z. */
+  static Comparator<String> unitTypesByKind(final Game game) {
+    return Comparator.<String>comparingInt(
+            unit -> ProductionTabs.STANDARD_KINDS.indexOf(ProductionTabs.standardKindOf(game, unit)))
+        .thenComparing(ListOrder.byName(unit -> unit));
+  }
+
+  private static Game withUnitElements(final Game game, final List<Unit> units) {
+    return game.toBuilder().unitList(UnitList.builder().units(units).build()).build();
   }
 
   /**

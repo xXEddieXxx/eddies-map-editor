@@ -163,12 +163,19 @@ class RulesEditors {
       filters.add(onlyChangeable);
       final JPanel top = new JPanel(new BorderLayout(Theme.GAP_S, 0));
       top.add(filters, BorderLayout.CENTER);
-      top.add(
+      final JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, Theme.GAP_XS, 0));
+      tools.setOpaque(false);
+      tools.add(
+          Theme.newIconButton(
+              "⇅",
+              "Order the options A to Z in the game file, which is the setup screen's order",
+              () -> project.edit(GameRulesXml::withOptionsSorted)));
+      tools.add(
           Theme.newAddButton(
               "Add option…",
               "An option TripleA knows, eg Low Luck, or one the map's triggers read",
-              this::addOption),
-          BorderLayout.EAST);
+              this::addOption));
+      top.add(tools, BorderLayout.EAST);
       page.add(top, BorderLayout.NORTH);
       page.add(SwingComponents.newJScrollPane(form), BorderLayout.CENTER);
       page.add(newVariablesBar(), BorderLayout.SOUTH);
@@ -345,13 +352,24 @@ class RulesEditors {
               "×",
               "Remove option from the game",
               () -> project.edit(g -> GameRulesXml.withoutOption(g, name)));
+      // the file's order is the setup screen's; here it shows within the option's group
+      final JButton up =
+          Theme.newIconButton(
+              "▲",
+              "Move the option up in the game file, the setup screen's order",
+              () -> project.edit(g -> GameRulesXml.withOptionMoved(g, name, -1)));
+      final JButton down =
+          Theme.newIconButton(
+              "▼",
+              "Move the option down in the game file, the setup screen's order",
+              () -> project.edit(g -> GameRulesXml.withOptionMoved(g, name, 1)));
       // a "?" for what TripleA's own options do; the others keep its place, so the "×" line up
       final JComponent help =
           GameRulesXml.optionHelp(name)
               .<JComponent>map(text -> Help.button(name, text))
               .orElseGet(() -> (JComponent) Box.createRigidArea(
                           new Dimension(UIScale.scale(HELP_WIDTH), UIScale.scale(HELP_WIDTH))));
-      final JPanel row = newLine(control, lock, help, remove);
+      final JPanel row = newLine(control, lock, help, up, down, remove);
       row.setName(name);
       showNear(row, remove);
       return row;

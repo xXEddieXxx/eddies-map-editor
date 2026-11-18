@@ -10,7 +10,9 @@ for an option is in the tool tip of its label.
 ![Units, the top of a unit](img/units.png)
 
 1. **+ Add unit…** makes a unit type: a name, the unit to start from as a copy, and maybe a
-   picture.
+   picture. **▲ ▼** before it move the chosen unit in the game's list, which is the order TripleA
+   lists and draws the units in; **⇅** orders the whole list in one step: A to Z, by cost or by
+   kind as TripleA's own buy tabs group units. Undo takes an order back.
 2. **Upload picture…** gives the unit its own picture, for every nation or tinted per nation;
    **Use the game's picture** takes it back. The list shows each unit's picture as the first
    nation shows it.

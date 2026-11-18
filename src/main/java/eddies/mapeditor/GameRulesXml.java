@@ -1,5 +1,6 @@
 package eddies.mapeditor;
 
+import java.util.Iterator;
 import static java.util.Map.entry;
 
 import games.strategy.triplea.Constants;
@@ -83,6 +84,39 @@ class GameRulesXml {
         .filter(p -> !NOTES.equalsIgnoreCase(p.getName()))
         .filter(p -> !Constants.MAP_NAME.equals(p.getName()))
         .toList();
+  }
+
+  /**
+   * The game with the option one up (-1) or down (1) among the options, which is the order of
+   * TripleA's setup screen; the game's hidden properties, eg notes, keep their places.
+   */
+  static Game withOptionMoved(final Game game, final String name, final int by) {
+    final List<String> was = options(game).stream().map(Property::getName).toList();
+    final int from = was.indexOf(name);
+    final List<String> now = ListOrder.moved(was, from, from + by);
+    return now.equals(was) ? game : withOptionsIn(game, now);
+  }
+
+  /** The game with the options A to Z; the same game when they are already. */
+  static Game withOptionsSorted(final Game game) {
+    final List<String> was = options(game).stream().map(Property::getName).toList();
+    final List<String> now = ListOrder.ordered(was, ListOrder.byName(option -> option));
+    return now.equals(was) ? game : withOptionsIn(game, now);
+  }
+
+  // the options in the order given, each at the place of an option; the other properties stay
+  private static Game withOptionsIn(final Game game, final List<String> order) {
+    final List<Property> options = options(game);
+    final Iterator<String> next = order.iterator();
+    return withProperties(
+        game,
+        MapXml.properties(game).stream()
+            .map(
+                p ->
+                    options.contains(p)
+                        ? option(game, next.next()).orElse(p)
+                        : p)
+            .toList());
   }
 
   private static Optional<Property> option(final Game game, final String name) {

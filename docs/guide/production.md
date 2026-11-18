@@ -17,7 +17,11 @@ window tabs**.
    tick it to sell it here.
 5. **+ Add rule…** makes a rule: the unit or resource, how many, and what it costs in each
    resource. A rule with a count sells several at once, for example 2 infantry for 7 PUs. Each
-   rule row has **Rename**, **Remove rule** and, in the row, the price fields.
+   rule row has **Rename**, **Remove rule** and, in the row, the price fields. **▲ ▼** move the
+   chosen rule, which is the order of the game's buy window, with Sold here shown; **⇅** orders
+   the whole list in one step: A to Z, by cost or by kind as TripleA's own buy tabs group units
+   (land, air, sea, construction, upgrades, resources), and with several lists, every list at
+   once. Undo takes an order back.
 6. **Remove list** takes the list away; its nations then have none.
 
 ## Repair

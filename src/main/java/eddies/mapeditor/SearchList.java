@@ -6,6 +6,7 @@ import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Component;
 import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.GridBagLayout;
@@ -86,6 +87,8 @@ final class SearchList extends JPanel {
   private final Optional<String> nounPlural;
   private final JLabel count = Theme.newSecondaryLabel("");
   private final JPanel header = new JPanel(new BorderLayout(Theme.GAP_S, 0));
+  // the add button and the tools before it, at the header's right
+  private final JPanel east = new JPanel(new FlowLayout(FlowLayout.RIGHT, Theme.GAP_XS, 0));
   private final JLabel prefixLine = Theme.newSecondaryLabel("");
   private final JPanel middle = new JPanel(new CardLayout());
   private final JLabel noMatch = new JLabel();
@@ -202,6 +205,8 @@ final class SearchList extends JPanel {
     list.addMouseMotionListener(hover);
 
     header.add(count, BorderLayout.WEST);
+    east.setOpaque(false);
+    header.add(east, BorderLayout.EAST);
     header.setVisible(noun.isPresent());
     final JPanel top = new JPanel();
     top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
@@ -295,7 +300,16 @@ final class SearchList extends JPanel {
 
   /** "+ label" at the right of the count. */
   SearchList withAdd(final String label, final String toolTip, final Runnable add) {
-    header.add(Theme.newAddButton(label, toolTip, add), BorderLayout.EAST);
+    east.add(Theme.newAddButton(label, toolTip, add));
+    header.setVisible(true);
+    return this;
+  }
+
+  /** Small buttons before the add button, eg ▲ ▼ to move the chosen name in the game's order. */
+  SearchList withTools(final JComponent... tools) {
+    for (int i = 0; i < tools.length; i++) {
+      east.add(tools[i], i);
+    }
     header.setVisible(true);
     return this;
   }
