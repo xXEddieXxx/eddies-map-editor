@@ -66,6 +66,7 @@ import javax.swing.JPopupMenu;
 import javax.swing.JRadioButtonMenuItem;
 import javax.swing.JSplitPane;
 import javax.swing.KeyStroke;
+import javax.swing.MenuSelectionManager;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 import javax.swing.WindowConstants;
@@ -154,6 +155,8 @@ public final class MapMakerWindow extends JFrame {
   // at the top right while a newer version is known; what a click on it offers
   private final JButton updateButton = new JButton();
   private Runnable onUpdate = () -> {};
+  // what File > Look for a new version found last, shown beside it; "" before it was asked
+  private String lookAnswer = "";
   private final JButton checkButton = new JButton("Check", MakerIcon.small(Glyph.VALIDATE));
   private final JButton undoButton =
       Theme.newIconButton(Glyph.UNDO, "Undo (Ctrl+Z)", this::undo);
@@ -312,24 +315,46 @@ public final class MapMakerWindow extends JFrame {
     }
   }
 
-  /** File > Look for a new version: asks GitHub now and says what it found. */
-  private void lookForNewVersion() {
+  /**
+   * File > Look for a new version: asks GitHub now. The answer shows beside the item's words, in
+   * the menu still open and the next time it opens: that this is the newest, or that GitHub gave
+   * none. A newer version closes the menu and is offered.
+   */
+  private void lookForNewVersion(final JMenuItem item) {
     final String own = EddiesMapEditor.version();
+    item.setText(lookText("looking…"));
     UpdateCheck.now(
         own,
         latest -> {
-          if (latest.isEmpty()) {
-            Dialogs.warn(
-                this,
-                "Look for a new version",
-                "GitHub gave no answer.\nTry again later, or look at " + RELEASES_PAGE + ".");
-          } else if (UpdateCheck.isNewer(own, latest.get().version())) {
+          if (latest.isPresent() && UpdateCheck.isNewer(own, latest.get().version())) {
+            lookAnswer = "";
+            MenuSelectionManager.defaultManager().clearSelectedPath();
             showUpdate(latest.get());
             offerUpdate(latest.get());
-          } else {
-            Dialogs.toast(this, "✓ This is the newest version, " + own);
+            return;
           }
+          lookAnswer = latest.isPresent() ? "✓ this is the newest" : "no answer from GitHub";
+          item.setText(lookText(lookAnswer));
+          // the item is as wide as its words: the menu follows
+          Optional.ofNullable(SwingUtilities.getAncestorOfClass(JPopupMenu.class, item))
+              .map(JPopupMenu.class::cast)
+              .filter(JPopupMenu::isVisible)
+              .ifPresent(JPopupMenu::pack);
         });
+  }
+
+  /** The item's words, and beside them in the secondary color what looking found, if anything. */
+  static String lookText(final String answer) {
+    final String words = "Look for a new version";
+    return answer.isEmpty()
+        ? words
+        : "<html>"
+            + words
+            + " <span style='color:"
+            + Theme.convertColorToHex(Theme.getSecondaryTextColor())
+            + "'>· "
+            + answer
+            + "</span></html>";
   }
 
   /**
@@ -1781,11 +1806,26 @@ public final class MapMakerWindow extends JFrame {
             + " is a newer one");
     tell.addActionListener(e -> UpdateCheck.setTells(tell.isSelected()));
     menu.add(tell);
-    final JMenuItem look = menu.add("Look for a new version");
+    // a click leaves the menu open, so the answer shows beside the item's words
+    final JMenuItem look =
+        new JMenuItem(lookText(lookAnswer)) {
+          @Override
+          protected void processMouseEvent(final MouseEvent e) {
+            if (e.getID() == MouseEvent.MOUSE_RELEASED && contains(e.getPoint())) {
+              // not the menu's own handling, which closes it
+              fireActionPerformed(
+                  new ActionEvent(this, ActionEvent.ACTION_PERFORMED, getActionCommand()));
+              e.consume();
+            } else {
+              super.processMouseEvent(e);
+            }
+          }
+        };
+    menu.add(look);
     look.setToolTipText(
         "Asks GitHub for the latest release now; an editor installed by its installer can"
             + " install it from here");
-    look.addActionListener(e -> lookForNewVersion());
+    look.addActionListener(e -> lookForNewVersion(look));
     menu.add("Version " + EddiesMapEditor.version()).setEnabled(false);
     return menu;
   }

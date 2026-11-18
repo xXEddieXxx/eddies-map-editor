@@ -19,7 +19,8 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
   its size and SHA-256 against what GitHub tells of the release, asks, also about unsaved
   changes, then closes; Windows installs the new version showing only its progress, and the
   editor starts again. An editor run from the zip is offered the release's page.
-  **File > Look for a new version** asks at any time.
+  **File > Look for a new version** asks at any time; the menu stays open and says beside the
+  words when this is the newest.
 - **A new version shows where it is seen.** No longer a toast at the window's bottom for eight
   seconds: the offer comes once in the middle of the window, and the button **⬆ New version**
   stays at the top right, on the start page and beside a map's buttons, until you have the

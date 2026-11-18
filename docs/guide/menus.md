@@ -32,7 +32,9 @@
   the new installer, checks it against the release, asks, then closes, lets Windows install the
   new version and starts again. An editor run from the zip, or on another system, offers **Open
   the page**, the release's page with the downloads.
-- **Look for a new version** asks now, whatever was asked or told before, and offers the same.
+- **Look for a new version** asks now, whatever was asked or told before. The menu stays open
+  and the answer shows beside the words: that this is the newest, or that GitHub gave none. A
+  newer version is offered as above.
 - **Version** is the editor's version. "dev" for a build from the sources.
 
 ## The map picture menu

@@ -126,6 +126,15 @@ final class MapMakerWindowTest {
         .containsExactly(false, true, true, true);
   }
 
+  @DisplayName("What looking for a new version found shows beside the item's words; nothing before")
+  @Test
+  void lookAnswerBesideTheWords() {
+    assertThat(MapMakerWindow.lookText("")).isEqualTo("Look for a new version");
+    assertThat(MapMakerWindow.lookText("✓ this is the newest"))
+        .startsWith("<html>Look for a new version ")
+        .contains("· ✓ this is the newest");
+  }
+
   // whether the button of a newer version shows, it and what it is in
   private static boolean updateButtonShown(final MapMakerWindow window) {
     return buttons(window.getContentPane())
