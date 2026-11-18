@@ -51,6 +51,24 @@ tasks.test {
     doFirst { testBackups.deleteRecursively() }
 }
 
+// the repo's git hooks: pre-commit runs UserGuideTest when the sources or the guide change, so the
+// user guide moves with the editor; set once per clone, on the first build
+val hasGitAndHooks = file(".git").exists() && file(".githooks").isDirectory
+val installGitHooks by tasks.registering {
+    description = "Points git at .githooks, whose pre-commit checks the user guide"
+    val root = projectDir
+    val wanted = hasGitAndHooks
+    onlyIf { wanted }
+    doLast {
+        try {
+            ProcessBuilder("git", "config", "core.hooksPath", ".githooks").directory(root).start().waitFor()
+        } catch (e: java.io.IOException) {
+            // no git on the PATH: the hooks are for those who commit
+        }
+    }
+}
+tasks.named("compileJava") { dependsOn(installGitHooks) }
+
 tasks.named<JavaExec>("run") {
     classpath += triplea
 }

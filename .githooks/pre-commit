@@ -1,0 +1,38 @@
+#!/bin/sh
+# The user guide moves with the editor: a commit that touches the editor's sources or the guide
+# runs UserGuideTest first, which fails on a tool, view or menu item the guide does not name, a
+# tool without its page or picture, or a page without its way back. Installed by the build
+# (git config core.hooksPath .githooks). SKIP_GUIDE_CHECK=1 git commit ... skips it once.
+
+if [ -n "$SKIP_GUIDE_CHECK" ]; then
+  exit 0
+fi
+
+if ! git diff --cached --name-only --diff-filter=ACMRD | grep -q -E '^(src/main/java/.*\.java|docs/guide/.*|README\.md|mkdocs\.yml)$'; then
+  exit 0
+fi
+
+# the JDK: JAVA_HOME as set, else the newest under ~/.jdks, else what java on the PATH is
+if [ -z "$JAVA_HOME" ]; then
+  for jdk in "$HOME"/.jdks/*; do
+    [ -x "$jdk/bin/java" ] || [ -x "$jdk/bin/java.exe" ] && JAVA_HOME="$jdk"
+  done
+  [ -n "$JAVA_HOME" ] && export JAVA_HOME
+fi
+
+echo "pre-commit: checking the user guide against the editor (UserGuideTest)..."
+root=$(git rev-parse --show-toplevel)
+if ! (cd "$root" && ./gradlew -q test --tests eddies.mapeditor.UserGuideTest --rerun --offline >/tmp/guide-check.log 2>&1); then
+  echo "pre-commit: the user guide does not match the editor. UserGuideTest says:"
+  result="$root/build/test-results/test/TEST-eddies.mapeditor.UserGuideTest.xml"
+  if [ -f "$result" ] && grep -q "<failure" "$result"; then
+    # each failing test's name and message, as the XML result has them
+    grep -o -E '<testcase name="[^"]*"|<failure message="[^"]*"' "$result"       | sed -e 's/<testcase name="/  /' -e 's/<failure message="/      /' -e 's/"$//'             -e 's/&quot;/"/g' -e 's/&#1[03];/ /g' -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g'       | awk '/^  [^ ]/{name=$0; next} /^      /{print name; print; name=""}' | head -40
+  else
+    # the build itself failed: what gradle says
+    grep -E "went wrong|^> |error:|^- " /tmp/guide-check.log | head -20
+  fi
+  echo "Full output: /tmp/guide-check.log. Fix docs/guide, or SKIP_GUIDE_CHECK=1 to commit anyway."
+  exit 1
+fi
+echo "pre-commit: the user guide is current."

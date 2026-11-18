@@ -125,6 +125,11 @@ Bug reports, ideas and feedback are just as welcome in the
 ./gradlew distZip   # the zip for every system, needs Java 25
 ```
 
+The first build points git at `.githooks`: before a commit that touches the sources or the guide,
+`pre-commit` runs UserGuideTest, which fails on a tool, view or menu item the user guide does not
+name, a tool without its page or picture, or a page without its way back. `SKIP_GUIDE_CHECK=1 git
+commit` skips it once.
+
 ### Release
 
 The **Release** workflow builds releases: *Actions → Release → Run workflow*, enter the version
