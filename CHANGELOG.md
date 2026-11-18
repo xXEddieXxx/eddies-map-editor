@@ -56,6 +56,12 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 
 ### Changed
 
+- **Grid of territories** (#14), in the map picture menu: squares, squares with diagonals,
+  hexagons in straight rows or columns, offset squares in straight rows or columns, laid over a
+  picture without territories. Sized by the cell's width or by the number of columns; the dialog
+  tells rows, columns and count as you type. One step gives outlines, centers, connections and the
+  names A1, B1, …, and draws the borders into the picture; Undo takes picture and territories back
+  together. Paint the owners and the sea after.
 - **Flags in Nations and Politics** (#19). The Nations list shows each nation's colour and flag side
   by side; the Politics matrix shows the flag before each row and above each column.
 - **Politics says what a change costs and how it holds** (#20). A relationship type's page lists the
