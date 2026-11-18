@@ -12,7 +12,7 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 - **A Windows installer** (#28). Each release brings `eddies-map-editor-windows.msi` beside the
   zip. It installs the editor for you alone, so it asks for no administrator rights, adds a
   Start menu entry and an uninstaller, and a newer installer replaces the installed version in
-  place. It is not signed, so Windows warns at its first start: More info, Run anyway. The zip
+  place. Its pages carry the editor's icon and colors. It is not signed, so Windows warns at its first start: More info, Run anyway. The zip
   stays for those who want no installer. Updating from within the editor builds on it and
   follows.
 

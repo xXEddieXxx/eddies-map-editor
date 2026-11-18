@@ -1,3 +1,7 @@
+import java.net.URI
+import java.nio.file.FileSystems
+import java.nio.file.Files
+
 plugins {
     application
 }
@@ -137,6 +141,8 @@ val appImage = tasks.register<Exec>("appImage") {
 // jpackage needs the WiX toolset for it (candle and light on the PATH, or installed where WiX
 // installs itself). The upgrade code never changes: by it a newer installer replaces the
 // installed version in place.
+// Its pages carry the editor's own pictures, packaging/installer (drawn by make-bitmaps.py): for
+// them jpackage's main.wxs, read from the JDK that packages, gets two lines naming the pictures.
 val installerDir = layout.buildDirectory.dir("installer")
 val installerName = "eddies-map-editor-windows.msi"
 tasks.register<Exec>("appInstaller") {
@@ -148,14 +154,41 @@ tasks.register<Exec>("appInstaller") {
     val msiName = installerName
     onlyIf("an msi is made on Windows only") { onWindows }
     inputs.dir(appImageDir)
+    inputs.dir("packaging/installer")
     inputs.property("appVersion", appVersion)
     outputs.dir(installerDir)
     val outputFolder = installerDir.get().asFile
-    doFirst { outputFolder.deleteRecursively() }
+    val pictures = file("packaging/installer")
+    val resources = layout.buildDirectory.dir("installer-resources").get().asFile
+    val jdkHome = jpackage.map { File(it).parentFile.parentFile.absolutePath }
+    doFirst {
+        outputFolder.deleteRecursively()
+        resources.deleteRecursively()
+        resources.mkdirs()
+        val wxs = FileSystems
+            .newFileSystem(URI.create("jrt:/"), mapOf("java.home" to jdkHome.get()))
+            .use { jdk ->
+                Files.readString(
+                    jdk.getPath("/modules/jdk.jpackage/jdk/jpackage/internal/resources/main.wxs")
+                )
+            }
+        val ui = "<UIRef Id=\"JpUI\"/>"
+        check(wxs.contains(ui)) { "jpackage's main.wxs has no $ui to put the pictures before" }
+        resources.resolve("main.wxs").writeText(
+            wxs.replace(
+                ui,
+                listOf("WixUIBannerBmp" to "banner.bmp", "WixUIDialogBmp" to "dialog.bmp")
+                    .joinToString("\n    ", postfix = "\n    $ui") { (id, picture) ->
+                        "<WixVariable Id=\"$id\" Value=\"${pictures.resolve(picture).absolutePath}\"/>"
+                    },
+            )
+        )
+    }
     executable(jpackage.get())
     args(
         "--type", "msi",
         "--app-image", appImageDir.get().dir(appName).asFile.absolutePath,
+        "--resource-dir", resources.absolutePath,
         "--name", appName,
         "--app-version", appVersion,
         "--vendor", "Eddie",
