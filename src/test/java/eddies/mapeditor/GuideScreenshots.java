@@ -696,7 +696,10 @@ final class GuideScreenshots {
     holder.dispose();
   }
 
-  /** The WW2 Global 1940 game of the tests, in a folder of its own: no picture, every rule. */
+  /**
+   * The WW2 Global 1940 game of the tests, in a folder of its own: no picture, every rule; with
+   * the flags of the downloaded map when it is there, so Nations and Politics show them.
+   */
   private static Path givenWw2Xml() throws IOException {
     final Path folder = Files.createTempDirectory("eddies-guide-ww2");
     final Path games = Files.createDirectories(folder.resolve("games"));
@@ -704,6 +707,18 @@ final class GuideScreenshots {
     try (java.io.InputStream original =
         GuideScreenshots.class.getClassLoader().getResourceAsStream("ww2global40.xml")) {
       Files.copy(original, xml);
+    }
+    final Path flags =
+        Path.of(
+            System.getProperty("user.home"),
+            "triplea/downloadedMaps/world_war_ii_global/map/flags");
+    if (Files.isDirectory(flags)) {
+      final Path copied = Files.createDirectories(folder.resolve("flags"));
+      try (Stream<Path> files = Files.list(flags)) {
+        for (final Path flag : files.toList()) {
+          Files.copy(flag, copied.resolve(flag.getFileName().toString()));
+        }
+      }
     }
     return xml;
   }
