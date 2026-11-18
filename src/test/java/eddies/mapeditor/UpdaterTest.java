@@ -75,12 +75,46 @@ final class UpdaterTest {
     assertThat(Updater.isListed("Suchvorgang abgeschlossen: 0")).as("not installed").isFalse();
   }
 
+  @DisplayName("The folder Windows' list of programs names is this one, whatever code page reg"
+      + " writes its letters in")
+  @Test
+  void tellsItsFolderAmongThePrograms() {
+    final String found =
+        """
+
+        HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{97D9}
+            DisplayName    REG_SZ    Eddies Map Editor
+
+        """;
+    final String entry =
+        """
+
+        HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{97D9}
+            InstallLocation    REG_SZ    D:\\Spiele\\J\u0094rg\\Map Editor\\
+
+        """;
+
+    assertThat(Updater.keys(found))
+        .containsExactly(
+            "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{97D9}");
+    assertThat(Updater.installLocation(entry)).contains("D:\\Spiele\\J\u0094rg\\Map Editor\\");
+    assertThat(Updater.installLocation(found)).as("an entry without it").isEmpty();
+    assertThat(Updater.isSamePlace("D:\\Spiele\\J\u0094rg\\Map Editor\\", "d:\\Spiele\\J\u00f6rg\\Map Editor"))
+        .as("the same folder, its \u00f6 in the console's code page, with a last backslash")
+        .isTrue();
+    assertThat(Updater.isSamePlace("D:\\Spiele\\Map Editor\\", "C:\\Downloads\\Map Editor"))
+        .as("an unzipped copy elsewhere")
+        .isFalse();
+  }
+
   @DisplayName("The script that installs holds no path: they reach it as variables, whatever"
       + " letters and spaces a user's folder has")
   @Test
   void scriptTakesPathsAsVariables() {
     assertThat(Updater.SCRIPT)
         .contains("%SYS%msiexec.exe /i \"%UPDATE_MSI%\" /passive /norestart")
+        .as("into the folder the editor is in, also one the map maker chose")
+        .contains("INSTALLDIR=\"%EDITOR_DIR%\"")
         .contains("start \"\" \"%EDITOR_EXE%\"")
         .as("it waits for the editor and for the program that started it")
         .contains("%EDITOR_PID%", "%STARTER_PID%")

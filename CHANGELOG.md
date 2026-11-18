@@ -28,6 +28,12 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 
 ### Fixed
 
+- **The installer did not say where it installs, and its Start menu entry was hard to find**
+  (#28). The entry sat in a Start menu folder called "Unknown". It is now under **Eddies Map
+  Editor**, and the installer offers a desktop shortcut as well. A new page shows the folder the
+  editor is installed into, `C:\Users\<you>\AppData\Local\Eddies Map Editor`, and lets you choose
+  another; an update from within the editor keeps the folder chosen.
+
 - **Check and Play said nothing about a game that does not start, with today's TripleA.** The
   start check reads the game with TripleA's own parser to get its reason; the TripleA releases of
   2026 changed that parser's shape, so the check fell back to "loads or not" and never played the

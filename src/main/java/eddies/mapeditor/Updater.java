@@ -15,10 +15,14 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.function.BooleanSupplier;
 import java.util.function.IntConsumer;
+import java.util.stream.Stream;
 import lombok.experimental.UtilityClass;
 import lombok.extern.slf4j.Slf4j;
 
@@ -45,6 +49,9 @@ class Updater {
   static final String TEST_MSI = "EDDIES_MAP_EDITOR_UPDATE_MSI";
 
   private static final String LINE_END = "\r\n";
+  private static final String PRODUCTS = "HKCU\\Software\\Microsoft\\Installer\\Products";
+  private static final String UNINSTALL =
+      "\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall";
   // the name the temporary folder of a download starts with
   private static final String STAGE = "eddies-map-editor-update";
   private static final Duration CONNECT = Duration.ofSeconds(15);
@@ -64,22 +71,19 @@ class Updater {
 
   /**
    * The folder this editor is installed in, when it is the copy Windows Installer put there: the
-   * program's folder under the user's local application data, with the program in Windows' list of
-   * the user's installed products. Empty on other systems, for the zip and for the sources.
+   * program is among the user's installed products, and Windows' list of programs names this
+   * folder as where it was installed, wherever the map maker chose that to be. Empty on other
+   * systems, for the zip and for the sources.
    */
   static Optional<Path> installedAt() {
     if (!System.getProperty("os.name", "").startsWith("Windows")) {
       return Optional.empty();
     }
     return programFolder()
+        .filter(folder -> isListed(reg(PRODUCTS, "/s", "/f", PROGRAM, "/d", "/e")))
         .filter(
             folder ->
-                Optional.ofNullable(System.getenv("LOCALAPPDATA"))
-                    .map(local -> Path.of(local, PROGRAM))
-                    .filter(Files::isDirectory)
-                    .map(installed -> isSame(installed, folder))
-                    .orElse(false))
-        .filter(folder -> isListed(installedProducts()));
+                installLocations().stream().anyMatch(told -> isSamePlace(told, folder.toString())));
   }
 
   // the folder with the exe: the jar is in its app folder
@@ -95,14 +99,6 @@ class Updater {
     }
   }
 
-  private static boolean isSame(final Path one, final Path other) {
-    try {
-      return Files.isSameFile(one, other);
-    } catch (final IOException e) {
-      return false;
-    }
-  }
-
   /** Whether reg's answer lists the program among the installed products, by its exact name. */
   static boolean isListed(final String products) {
     return products
@@ -111,21 +107,53 @@ class Updater {
         .anyMatch(line -> line.matches("ProductName\\s+REG_SZ\\s+" + PROGRAM));
   }
 
-  // the user's products as Windows Installer keeps them; the name is plain ASCII in any code page
-  private static String installedProducts() {
+  // where Windows' list of programs says the program is installed: for the user or for all
+  private static List<String> installLocations() {
+    return Stream.of("HKCU", "HKLM")
+        .map(hive -> reg(hive + UNINSTALL, "/s", "/f", PROGRAM, "/d", "/e"))
+        .flatMap(found -> keys(found).stream())
+        .map(key -> reg(key, "/v", "InstallLocation"))
+        .flatMap(entry -> installLocation(entry).stream())
+        .toList();
+  }
+
+  /** The registry keys reg's answer names, each on a line of its own. */
+  static List<String> keys(final String answer) {
+    return answer.lines().map(String::strip).filter(line -> line.startsWith("HKEY_")).toList();
+  }
+
+  /** The folder reg's answer gives as InstallLocation, if it has one. */
+  static Optional<String> installLocation(final String answer) {
+    return answer
+        .lines()
+        .map(String::strip)
+        .filter(line -> line.matches("InstallLocation\\s+REG_SZ\\s+.+"))
+        .map(line -> line.replaceFirst("InstallLocation\\s+REG_SZ\\s+", ""))
+        .findFirst();
+  }
+
+  /**
+   * Whether the folder reg told of is this folder. reg writes letters beyond ASCII in the
+   * console's code page, which Java cannot ask for: they are left out of both, as are a last
+   * backslash and the difference of capitals.
+   */
+  static boolean isSamePlace(final String told, final String folder) {
+    return plain(told).equals(plain(folder));
+  }
+
+  private static String plain(final String path) {
+    return path.strip()
+        .replaceAll("[^\\x20-\\x7E]", "")
+        .replaceAll("\\\\+$", "")
+        .toLowerCase(Locale.ROOT);
+  }
+
+  // reg query's answer; "" when it cannot be asked. Names and keys are plain ASCII in any code page
+  private static String reg(final String key, final String... options) {
     try {
-      final Process reg =
-          new ProcessBuilder(
-                  "reg",
-                  "query",
-                  "HKCU\\Software\\Microsoft\\Installer\\Products",
-                  "/s",
-                  "/f",
-                  PROGRAM,
-                  "/d",
-                  "/e")
-              .redirectErrorStream(true)
-              .start();
+      final List<String> command = new ArrayList<>(List.of("reg", "query", key));
+      command.addAll(List.of(options));
+      final Process reg = new ProcessBuilder(command).redirectErrorStream(true).start();
       reg.getOutputStream().close();
       final String answer =
           new String(reg.getInputStream().readAllBytes(), StandardCharsets.ISO_8859_1);
@@ -259,6 +287,8 @@ class Updater {
         .put("STARTER_PID", String.valueOf(editor.parent().orElse(editor).pid()));
     installing.environment().put("UPDATE_MSI", msi.toString());
     installing.environment().put("EDITOR_EXE", folder.resolve(PROGRAM + ".exe").toString());
+    // into the folder it is in: Windows Installer does not remember one the map maker chose
+    installing.environment().put("EDITOR_DIR", folder.toString());
     installing.start();
   }
 
@@ -284,7 +314,8 @@ class Updater {
           "%SYS%ping.exe -n 2 127.0.0.1 >nul",
           "goto wait",
           ":install",
-          "start \"\" /wait %SYS%msiexec.exe /i \"%UPDATE_MSI%\" /passive /norestart",
+          "start \"\" /wait %SYS%msiexec.exe /i \"%UPDATE_MSI%\" /passive /norestart"
+              + " INSTALLDIR=\"%EDITOR_DIR%\"",
           "start \"\" \"%EDITOR_EXE%\"",
           ":end",
           "cd /d \"%TEMP%\"",

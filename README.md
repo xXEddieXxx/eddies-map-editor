@@ -30,9 +30,12 @@ It runs with your installed TripleA, and the maps it saves still load and play t
 
 1. **Windows:** download
    [`eddies-map-editor-windows.msi`](https://github.com/xXEddieXxx/eddies-map-editor/releases/latest/download/eddies-map-editor-windows.msi)
-   and open it. It installs the editor for you alone, without administrator rights, with a Start
-   menu entry, and later versions install from within the editor. It is not signed: on Windows'
-   warning choose *More info › Run anyway*. The editor brings its own Java and runs with your
+   and open it. It installs the editor for you alone, without administrator rights, and later
+   versions install from within the editor. The installer shows the folder it installs into,
+   `%LOCALAPPDATA%\Eddies Map Editor` (that is `C:\Users\<you>\AppData\Local\Eddies Map Editor`)
+   unless you choose another, and offers a Start menu entry and a desktop shortcut: start the
+   editor from **Eddies Map Editor** in the Start menu or on the desktop. It is not signed: on
+   Windows' warning choose *More info › Run anyway*. The editor brings its own Java and runs with your
    installed [TripleA](https://triplea-game.org/download/), which it finds or asks for. It needs a
    TripleA from June 2026 or newer and says so at its start when yours is older. Without
    installing: download

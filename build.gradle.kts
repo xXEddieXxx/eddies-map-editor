@@ -137,7 +137,9 @@ val appImage = tasks.register<Exec>("appImage") {
 }
 
 // The Windows installer of that program (#28): an msi for the current user, so it asks for no
-// administrator and a later update needs none either, with a Start menu entry and an uninstaller.
+// administrator and a later update needs none either. It shows the folder it installs into, the
+// program's name under the user's local application data unless another is chosen, and offers a
+// Start menu entry and a desktop shortcut; Windows' list of programs has its uninstaller.
 // jpackage needs the WiX toolset for it (candle and light on the PATH, or installed where WiX
 // installs itself). The upgrade code never changes: by it a newer installer replaces the
 // installed version in place.
@@ -195,7 +197,13 @@ tasks.register<Exec>("appInstaller") {
         "--description", "Map editor for TripleA",
         "--about-url", "https://github.com/xXEddieXxx/eddies-map-editor",
         "--win-per-user-install",
+        // a page that shows the folder and lets it be changed: where the files go
+        "--win-dir-chooser",
+        // in the Start menu under the editor's own name, not jpackage's "Unknown", and on the
+        // desktop; the installer asks for each
         "--win-menu",
+        "--win-menu-group", appName,
+        "--win-shortcut",
         "--win-shortcut-prompt",
         "--win-upgrade-uuid", "6f0c9d0e-3b7a-4f58-9c1e-5a2d8e4b7c31",
         "--dest", outputFolder.absolutePath,
