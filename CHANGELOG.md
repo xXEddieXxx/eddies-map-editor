@@ -19,7 +19,8 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
   its size and SHA-256 against what GitHub tells of the release, asks, also about unsaved
   changes, then closes; Windows installs the new version showing only its progress, and the
   editor starts again. An editor run from the zip keeps **Download**, the release's page.
-  **File > Look for a new version** asks at any time, also after the toast is gone.
+  **File > Look for a new version** asks at any time, also after the toast is gone. The toast
+  on a new version no longer goes after eight seconds: it stays until answered or closed.
 
 ### Fixed
 

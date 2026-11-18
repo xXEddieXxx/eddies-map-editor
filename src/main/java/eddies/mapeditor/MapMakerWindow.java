@@ -239,7 +239,8 @@ public final class MapMakerWindow extends JFrame {
   }
 
   /**
-   * A toast on a newer release, once per version. An editor installed by its Windows installer
+   * A toast on a newer release, once per version, that stays until it is answered or closed. An
+   * editor installed by its Windows installer
    * offers Install, which downloads the release's installer and replaces this version; any other
    * offers Download, which opens the release's page.
    */
@@ -248,9 +249,9 @@ public final class MapMakerWindow extends JFrame {
         "Eddie's Map Editor " + release.version() + " is out; this is " + EddiesMapEditor.version();
     final Optional<Path> installed = release.installer().flatMap(installer -> Updater.installedAt());
     if (installed.isPresent()) {
-      Dialogs.toast(this, news, "Install", () -> downloadUpdate(release, installed.get()));
+      Dialogs.offer(this, news, "Install", () -> downloadUpdate(release, installed.get()));
     } else {
-      Dialogs.toast(this, news, "Download", () -> openPage(release));
+      Dialogs.offer(this, news, "Download", () -> openPage(release));
     }
   }
 
@@ -401,7 +402,7 @@ public final class MapMakerWindow extends JFrame {
                 Updater.installedAt()
                     .ifPresent(
                         folder ->
-                            Dialogs.toast(
+                            Dialogs.offer(
                                 this,
                                 "Test: install " + msi,
                                 "Install",

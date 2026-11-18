@@ -19,11 +19,14 @@ import javax.swing.Timer;
 
 /**
  * News that needs no answer, eg "Saved", at the bottom of the window above everything for a few
- * seconds; one at a time, a new one replaces the old. It never takes the focus.
+ * seconds; one at a time, a new one replaces the old. It never takes the focus. An offer that
+ * wants an answer, eg a new version to install, stays until its action or its × is clicked.
  */
 final class Toast extends JPanel {
   private static final int SHORT_MILLIS = 4000;
   private static final int LONG_MILLIS = 8000;
+  // no time: it stays until it is closed
+  private static final int STAYS = 0;
   private static final int MAX_WIDTH = 480;
   // on the layered pane: the toast it shows
   private static final String SHOWN = "Toast.shown";
@@ -65,7 +68,7 @@ final class Toast extends JPanel {
           @Override
           public void mouseExited(final MouseEvent e) {
             // entering one of its buttons leaves the panel too
-            if (!contains(e.getPoint())) {
+            if (!contains(e.getPoint()) && millis != STAYS) {
               timer.restart();
             }
           }
@@ -84,6 +87,22 @@ final class Toast extends JPanel {
     final JButton button = newButton(action, onAction);
     button.putClientProperty(FlatClientProperties.STYLE_CLASS, "semibold");
     show(anyInWindow, text, List.of(button), LONG_MILLIS);
+  }
+
+  /** As show with an action, but it stays until the action or × is clicked. */
+  static void showUntilClosed(
+      final Component anyInWindow,
+      final String text,
+      final String action,
+      final Runnable onAction) {
+    final JButton button = newButton(action, onAction);
+    button.putClientProperty(FlatClientProperties.STYLE_CLASS, "semibold");
+    show(anyInWindow, text, List.of(button), STAYS);
+  }
+
+  /** Whether it closes after its time; an offer shown until closed does not. */
+  boolean closesByItself() {
+    return timer.isRunning();
   }
 
   private static void show(
@@ -112,7 +131,9 @@ final class Toast extends JPanel {
           // screen readers read the news without the focus moving
           rootPane.getAccessibleContext().setAccessibleDescription(text);
           layers.repaint(toast.getBounds());
-          toast.timer.start();
+          if (millis != STAYS) {
+            toast.timer.start();
+          }
         });
   }
 

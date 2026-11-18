@@ -404,6 +404,15 @@ class Dialogs {
     Toast.show(anyInWindow, text, action, onAction);
   }
 
+  /** An offer that wants an answer, eg a new version: it stays until its action or × is clicked. */
+  static void offer(
+      final Component anyInWindow,
+      final String text,
+      final String action,
+      final Runnable onAction) {
+    Toast.showUntilClosed(anyInWindow, text, action, onAction);
+  }
+
   /**
    * The text (its first line in semibold, the rest below it), at most 6 details, the content, and
    * [Cancel] [verb]; the verb enabled while valid says so, checked again by recheck.
