@@ -18,7 +18,8 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * A newer release of the editor on GitHub: asked for once a day when the editor starts, told once
  * per version. Nothing but the request for the latest release leaves the computer; "Tell me of new
- * versions" in the File menu turns it off. A build from the sources ("dev") never asks.
+ * versions" in the File menu turns it off. A build from the sources ("dev") never asks. "Look
+ * for a new version" there asks at once. What is done with a newer release is {@link Updater}'s.
  */
 @UtilityClass
 @Slf4j
@@ -33,10 +34,27 @@ class UpdateCheck {
   private static final Pattern TAG = Pattern.compile("\"tag_name\"\\s*:\\s*\"v?([^\"]+)\"");
   private static final Pattern PAGE =
       Pattern.compile("\"html_url\"\\s*:\\s*\"(https://github\\.com/[^\"]*/releases/tag/[^\"]+)\"");
+  // the installer among the release's files: from its name to its link, with its size and digest
+  private static final Pattern MSI =
+      Pattern.compile(
+          "\"name\"\\s*:\\s*\""
+              + Pattern.quote(Updater.MSI_NAME)
+              + "\"(.*?)\"browser_download_url\"\\s*:\\s*\"([^\"]+)\"",
+          Pattern.DOTALL);
+  private static final Pattern SIZE = Pattern.compile("\"size\"\\s*:\\s*(\\d+)");
+  private static final Pattern DIGEST =
+      Pattern.compile("\"digest\"\\s*:\\s*\"sha256:([0-9a-fA-F]{64})\"");
   private static final Preferences PREFERENCES = Preferences.userNodeForPackage(UpdateCheck.class);
 
-  /** A release: its version without the v, and its page with the downloads. */
-  record Release(String version, String page) {}
+  /**
+   * A release: its version without the v, its page with the downloads, and its Windows installer
+   * where it has one.
+   */
+  record Release(String version, String page, Optional<Updater.Installer> installer) {
+    Release(final String version, final String page) {
+      this(version, page, Optional.empty());
+    }
+  }
 
   /** Whether the editor asks GitHub for new versions; on unless turned off in the File menu. */
   static boolean tells() {
@@ -58,43 +76,64 @@ class UpdateCheck {
       return;
     }
     PREFERENCES.putLong(ASKED_AT, now);
-    final Thread asking =
-        new Thread(
-            () -> {
-              try {
-                final HttpResponse<String> response =
-                    HttpClient.newBuilder()
-                        .connectTimeout(TIMEOUT)
-                        .followRedirects(HttpClient.Redirect.NORMAL)
-                        .build()
-                        .send(
-                            HttpRequest.newBuilder(URI.create(LATEST))
-                                .timeout(TIMEOUT)
-                                .header("Accept", "application/vnd.github+json")
-                                .header("User-Agent", "eddies-map-editor/" + own)
-                                .GET()
-                                .build(),
-                            HttpResponse.BodyHandlers.ofString());
-                if (response.statusCode() != 200) {
-                  log.info("No word of the latest release: HTTP {}", response.statusCode());
-                  return;
-                }
-                parse(response.body())
-                    .filter(release -> toTell(own, release, PREFERENCES))
-                    .ifPresent(
-                        release -> {
-                          PREFERENCES.put(TOLD, release.version());
-                          SwingUtilities.invokeLater(() -> found.accept(release));
-                        });
-              } catch (final IOException | RuntimeException e) {
-                log.info("No word of the latest release", e);
-              } catch (final InterruptedException e) {
-                Thread.currentThread().interrupt();
-              }
-            },
-            "update check");
-    asking.setDaemon(true);
-    asking.start();
+    inBackground(
+        () ->
+            latest(own)
+                .filter(release -> toTell(own, release, PREFERENCES))
+                .ifPresent(
+                    release -> {
+                      PREFERENCES.put(TOLD, release.version());
+                      SwingUtilities.invokeLater(() -> found.accept(release));
+                    }));
+  }
+
+  /**
+   * Asks for the latest release now, whatever was asked or told before, as "Look for a new
+   * version" does, and gives it on the Swing thread: the release, also when it is this version or
+   * older, or nothing when GitHub gave no answer.
+   */
+  static void now(final String own, final Consumer<Optional<Release>> answered) {
+    inBackground(
+        () -> {
+          final Optional<Release> latest = latest(own);
+          SwingUtilities.invokeLater(() -> answered.accept(latest));
+        });
+  }
+
+  private static void inBackground(final Runnable asking) {
+    final Thread thread = new Thread(asking, "update check");
+    thread.setDaemon(true);
+    thread.start();
+  }
+
+  // the latest release as GitHub tells it now; a failed request is logged and gives none
+  private static Optional<Release> latest(final String own) {
+    try {
+      final HttpResponse<String> response =
+          HttpClient.newBuilder()
+              .connectTimeout(TIMEOUT)
+              .followRedirects(HttpClient.Redirect.NORMAL)
+              .build()
+              .send(
+                  HttpRequest.newBuilder(URI.create(LATEST))
+                      .timeout(TIMEOUT)
+                      .header("Accept", "application/vnd.github+json")
+                      .header("User-Agent", "eddies-map-editor/" + own)
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString());
+      if (response.statusCode() != 200) {
+        log.info("No word of the latest release: HTTP {}", response.statusCode());
+        return Optional.empty();
+      }
+      return parse(response.body());
+    } catch (final IOException | RuntimeException e) {
+      log.info("No word of the latest release", e);
+      return Optional.empty();
+    } catch (final InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return Optional.empty();
+    }
   }
 
   /** Whether a day has passed since the last time asked, by these preferences. */
@@ -115,7 +154,26 @@ class UpdateCheck {
     if (!tag.find() || !page.find()) {
       return Optional.empty();
     }
-    return Optional.of(new Release(tag.group(1), page.group(1)));
+    return Optional.of(new Release(tag.group(1), page.group(1), installer(json)));
+  }
+
+  // the release's Windows installer, when it has one that is a file of the editor's releases
+  private static Optional<Updater.Installer> installer(final String json) {
+    final Matcher msi = MSI.matcher(json);
+    if (!msi.find()) {
+      return Optional.empty();
+    }
+    final Matcher size = SIZE.matcher(msi.group(1));
+    final Matcher digest = DIGEST.matcher(msi.group(1));
+    if (!size.find()) {
+      return Optional.empty();
+    }
+    return Optional.of(
+            new Updater.Installer(
+                msi.group(2),
+                Long.parseLong(size.group(1)),
+                digest.find() ? Optional.of(digest.group(1)) : Optional.empty()))
+        .filter(Updater.Installer::isOwn);
   }
 
   /**

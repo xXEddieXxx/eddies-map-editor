@@ -13,8 +13,13 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
   zip. It installs the editor for you alone, so it asks for no administrator rights, adds a
   Start menu entry and an uninstaller, and a newer installer replaces the installed version in
   place. Its pages carry the editor's icon and colors. It is not signed, so Windows warns at its first start: More info, Run anyway. The zip
-  stays for those who want no installer. Updating from within the editor builds on it and
-  follows.
+  stays for those who want no installer.
+- **A new version installed from within the editor** (#28). An editor installed by the installer
+  offers **Install** in the toast on a new version: it downloads the release's installer, checks
+  its size and SHA-256 against what GitHub tells of the release, asks, also about unsaved
+  changes, then closes; Windows installs the new version showing only its progress, and the
+  editor starts again. An editor run from the zip keeps **Download**, the release's page.
+  **File > Look for a new version** asks at any time, also after the toast is gone.
 
 ### Fixed
 

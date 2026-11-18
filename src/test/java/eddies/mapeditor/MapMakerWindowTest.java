@@ -190,6 +190,7 @@ final class MapMakerWindowTest {
             "Close map " + KeyEvent.VK_W,
             "Show all options",
             "Tell me of new versions",
+            "Look for a new version",
             "Version dev");
     assertThat(seen).as("Publish… opens the Publish tool").containsExactly(true);
   }

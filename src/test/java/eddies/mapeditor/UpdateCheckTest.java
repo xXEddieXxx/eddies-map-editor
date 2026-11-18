@@ -29,6 +29,42 @@ final class UpdateCheckTest {
     assertThat(UpdateCheck.parse("{\"message\": \"Not Found\"}")).as("no release").isEmpty();
   }
 
+  @DisplayName("A release with the Windows installer gives its link, size and SHA-256; one of"
+      + " another repository's file gives none")
+  @Test
+  void parsesTheInstaller() {
+    final String link =
+        "https://github.com/xXEddieXxx/eddies-map-editor/releases/download/v0.2.4/"
+            + "eddies-map-editor-windows.msi";
+    final String answer =
+        """
+        {
+          "html_url": "https://github.com/xXEddieXxx/eddies-map-editor/releases/tag/v0.2.4",
+          "tag_name": "v0.2.4",
+          "assets": [
+            {"name": "eddies-map-editor-windows.zip", "size": 5, "digest": "sha256:%s",
+             "browser_download_url": "https://github.com/x/y/releases/download/v0.2.4/a.zip"},
+            {"name": "eddies-map-editor-windows.msi", "uploader": {"login": "bot"},
+             "size": 53125594, "digest": "sha256:%s", "download_count": 3,
+             "browser_download_url": "%s"}
+          ]
+        }
+        """
+            .formatted("11".repeat(32), "ab".repeat(32), link);
+
+    assertThat(UpdateCheck.parse(answer).orElseThrow().installer())
+        .contains(new Updater.Installer(link, 53125594, java.util.Optional.of("ab".repeat(32))));
+    assertThat(
+            UpdateCheck.parse(answer.replace("xXEddieXxx/eddies-map-editor/releases/download", "x/y"))
+                .orElseThrow()
+                .installer())
+        .as("a link that is not to the editor's releases")
+        .isEmpty();
+    assertThat(UpdateCheck.parse(ANSWER).orElseThrow().installer())
+        .as("a release without the installer")
+        .isEmpty();
+  }
+
   @DisplayName("Newer is told number by number: 0.2.10 after 0.2.9, 0.3 after 0.2.9, never itself")
   @Test
   void comparesVersions() {

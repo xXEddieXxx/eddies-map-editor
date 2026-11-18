@@ -42,6 +42,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -52,6 +53,7 @@ import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.ButtonGroup;
 import javax.swing.JButton;
+import javax.swing.JDialog;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComponent;
 import javax.swing.JFrame;
@@ -59,6 +61,7 @@ import javax.swing.JLabel;
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
+import javax.swing.JProgressBar;
 import javax.swing.JPopupMenu;
 import javax.swing.JRadioButtonMenuItem;
 import javax.swing.JSplitPane;
@@ -88,6 +91,9 @@ import eddies.mapeditor.Theme.Status;
  */
 @Slf4j
 public final class MapMakerWindow extends JFrame {
+  private static final String RELEASES_PAGE =
+      "github.com/xXEddieXxx/eddies-map-editor/releases";
+
   @Serial private static final long serialVersionUID = 1L;
 
   private static final int INSPECTOR_WIDTH = 340;
@@ -229,21 +235,184 @@ public final class MapMakerWindow extends JFrame {
     window.setExtendedState(JFrame.MAXIMIZED_BOTH);
     window.setVisible(true);
     UpdateCheck.whenDue(EddiesMapEditor.version(), window::tellOfNewVersion);
+    window.offerTestInstall();
   }
 
-  /** A toast on a newer release, once per version: Download opens the release's page. */
+  /**
+   * A toast on a newer release, once per version. An editor installed by its Windows installer
+   * offers Install, which downloads the release's installer and replaces this version; any other
+   * offers Download, which opens the release's page.
+   */
   private void tellOfNewVersion(final UpdateCheck.Release release) {
-    Dialogs.toast(
-        this,
-        "Eddie's Map Editor " + release.version() + " is out; this is " + EddiesMapEditor.version(),
-        "Download",
-        () -> {
-          try {
-            Desktop.getDesktop().browse(URI.create(release.page()));
-          } catch (final IOException | RuntimeException e) {
-            Dialogs.warn(this, "Download", "Could not open the browser. The page: " + release.page());
+    final String news =
+        "Eddie's Map Editor " + release.version() + " is out; this is " + EddiesMapEditor.version();
+    final Optional<Path> installed = release.installer().flatMap(installer -> Updater.installedAt());
+    if (installed.isPresent()) {
+      Dialogs.toast(this, news, "Install", () -> downloadUpdate(release, installed.get()));
+    } else {
+      Dialogs.toast(this, news, "Download", () -> openPage(release));
+    }
+  }
+
+  private void openPage(final UpdateCheck.Release release) {
+    try {
+      Desktop.getDesktop().browse(URI.create(release.page()));
+    } catch (final IOException | RuntimeException e) {
+      Dialogs.warn(this, "Download", "Could not open the browser. The page: " + release.page());
+    }
+  }
+
+  /** File > Look for a new version: asks GitHub now and says what it found. */
+  private void lookForNewVersion() {
+    final String own = EddiesMapEditor.version();
+    UpdateCheck.now(
+        own,
+        latest -> {
+          if (latest.isEmpty()) {
+            Dialogs.warn(
+                this,
+                "Look for a new version",
+                "GitHub gave no answer.\nTry again later, or look at " + RELEASES_PAGE + ".");
+          } else if (UpdateCheck.isNewer(own, latest.get().version())) {
+            tellOfNewVersion(latest.get());
+          } else {
+            Dialogs.toast(this, "✓ This is the newest version, " + own);
           }
         });
+  }
+
+  /**
+   * Downloads the release's installer, showing how far it is, with Cancel; then offers to install
+   * it. A download that fails or is not the release's file offers the release's page instead.
+   */
+  private void downloadUpdate(final UpdateCheck.Release release, final Path folder) {
+    final JDialog dialog = new JDialog(this, "Eddie's Map Editor " + release.version(), true);
+    final JProgressBar progress = new JProgressBar(0, 100);
+    final AtomicBoolean cancelled = new AtomicBoolean();
+    final SwingWorker<Optional<Path>, Integer> download =
+        new SwingWorker<>() {
+          @Override
+          protected Optional<Path> doInBackground() throws Exception {
+            return Updater.download(
+                release.installer().orElseThrow(), this::publish, cancelled::get);
+          }
+
+          @Override
+          protected void process(final List<Integer> percents) {
+            progress.setValue(percents.getLast());
+          }
+
+          @Override
+          protected void done() {
+            dialog.dispose();
+          }
+        };
+    final JButton cancel = new JButton("Cancel");
+    cancel.addActionListener(
+        e -> {
+          cancelled.set(true);
+          dialog.dispose();
+        });
+    dialog.addWindowListener(
+        new WindowAdapter() {
+          @Override
+          public void windowClosing(final WindowEvent e) {
+            cancelled.set(true);
+          }
+        });
+    dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+    final JPanel content = new JPanel(new BorderLayout(0, Theme.GAP_M));
+    content.setBorder(
+        BorderFactory.createEmptyBorder(Theme.GAP_L, Theme.GAP_L, Theme.GAP_L, Theme.GAP_L));
+    content.add(new JLabel("Downloading version " + release.version() + "…"), BorderLayout.NORTH);
+    progress.setPreferredSize(new Dimension(360, progress.getPreferredSize().height));
+    content.add(progress, BorderLayout.CENTER);
+    final JPanel buttons = new JPanel(new FlowLayout(FlowLayout.TRAILING, 0, 0));
+    buttons.add(cancel);
+    content.add(buttons, BorderLayout.SOUTH);
+    dialog.setContentPane(content);
+    dialog.pack();
+    dialog.setResizable(false);
+    dialog.setLocationRelativeTo(this);
+    download.execute();
+    // until the download is done or cancelled
+    dialog.setVisible(true);
+    if (cancelled.get()) {
+      return;
+    }
+    try {
+      download.get().ifPresent(msi -> installUpdate(release.version(), msi, folder));
+    } catch (final ExecutionException e) {
+      log.info("The new version did not download", e.getCause());
+      if (Dialogs.confirm(
+          this,
+          "Install version " + release.version(),
+          "The new version could not be downloaded.\n"
+              + Optional.ofNullable(e.getCause()).map(Throwable::getMessage).orElse("")
+              + "\nThe release's page has it to download and install by hand.",
+          "Close",
+          "Open the page")) {
+        openPage(release);
+      }
+    } catch (final InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
+  }
+
+  /**
+   * Asks, and about unsaved changes too; then the installer is started and the editor closes, as
+   * Windows cannot replace a running program. Not now deletes the download.
+   */
+  private void installUpdate(final String version, final Path msi, final Path folder) {
+    if (!Dialogs.confirm(
+            this,
+            "Install version " + version,
+            "Version " + version + " is ready to install.\nThe editor closes, Windows installs the"
+                + " new version and the editor starts again. That takes about a minute.",
+            "Not now",
+            "Install and restart")
+        || !mayLeaveProject()) {
+      Updater.delete(msi);
+      return;
+    }
+    try {
+      Updater.install(msi, folder);
+      dispose();
+    } catch (final IOException e) {
+      log.info("The installer did not start", e);
+      Updater.delete(msi);
+      Dialogs.warn(
+          this,
+          "Install version " + version,
+          "The installer did not start.\nThe new version is at " + RELEASES_PAGE + ".");
+    }
+  }
+
+  /**
+   * For trying the installation step without a release: with {@value Updater#TEST_MSI} naming an
+   * msi, eg one the Build workflow made, an installed editor offers to install that.
+   */
+  private void offerTestInstall() {
+    Optional.ofNullable(System.getenv(Updater.TEST_MSI))
+        .map(Path::of)
+        .filter(Files::isRegularFile)
+        .ifPresent(
+            msi ->
+                Updater.installedAt()
+                    .ifPresent(
+                        folder ->
+                            Dialogs.toast(
+                                this,
+                                "Test: install " + msi,
+                                "Install",
+                                () -> {
+                                  try {
+                                    installUpdate(
+                                        "of " + msi.getFileName(), Updater.staged(msi), folder);
+                                  } catch (final IOException e) {
+                                    Dialogs.warn(this, "Test", String.valueOf(e.getMessage()));
+                                  }
+                                })));
   }
 
   // ---- new, opening and leaving a map
@@ -1545,6 +1714,11 @@ public final class MapMakerWindow extends JFrame {
             + " is a newer one");
     tell.addActionListener(e -> UpdateCheck.setTells(tell.isSelected()));
     menu.add(tell);
+    final JMenuItem look = menu.add("Look for a new version");
+    look.setToolTipText(
+        "Asks GitHub for the latest release now; an editor installed by its installer can"
+            + " install it from here");
+    look.addActionListener(e -> lookForNewVersion());
     menu.add("Version " + EddiesMapEditor.version()).setEnabled(false);
     return menu;
   }
