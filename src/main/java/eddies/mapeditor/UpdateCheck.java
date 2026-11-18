@@ -37,13 +37,6 @@ class UpdateCheck {
   private static final Pattern TAG = Pattern.compile("\"tag_name\"\\s*:\\s*\"v?([^\"]+)\"");
   private static final Pattern PAGE =
       Pattern.compile("\"html_url\"\\s*:\\s*\"(https://github\\.com/[^\"]*/releases/tag/[^\"]+)\"");
-  // the installer among the release's files: from its name to its link, with its size and digest
-  private static final Pattern MSI =
-      Pattern.compile(
-          "\"name\"\\s*:\\s*\""
-              + Pattern.quote(Updater.MSI_NAME)
-              + "\"(.*?)\"browser_download_url\"\\s*:\\s*\"([^\"]+)\"",
-          Pattern.DOTALL);
   private static final Pattern SIZE = Pattern.compile("\"size\"\\s*:\\s*(\\d+)");
   private static final Pattern DIGEST =
       Pattern.compile("\"digest\"\\s*:\\s*\"sha256:([0-9a-fA-F]{64})\"");
@@ -202,9 +195,21 @@ class UpdateCheck {
     return Optional.of(new Release(tag.group(1), page.group(1), installer(json)));
   }
 
-  // the release's Windows installer, when it has one that is a file of the editor's releases
+  // the release's Windows installer, when it has one that is a file of the editor's releases: the
+  // setup, else for a release before there was one the msi
   private static Optional<Updater.Installer> installer(final String json) {
-    final Matcher msi = MSI.matcher(json);
+    return installer(json, Updater.SETUP_NAME).or(() -> installer(json, Updater.MSI_NAME));
+  }
+
+  // the file of this name among the release's: from its name to its link, with its size and digest
+  private static Optional<Updater.Installer> installer(final String json, final String name) {
+    final Matcher msi =
+        Pattern.compile(
+                "\"name\"\\s*:\\s*\""
+                    + Pattern.quote(name)
+                    + "\"(.*?)\"browser_download_url\"\\s*:\\s*\"([^\"]+)\"",
+                Pattern.DOTALL)
+            .matcher(json);
     if (!msi.find()) {
       return Optional.empty();
     }

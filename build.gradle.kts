@@ -215,6 +215,67 @@ tasks.register<Exec>("appInstaller") {
     }
 }
 
+// The setup (#28): eddies-map-editor-setup.exe, WiX's Burn around the msi with a window of its
+// own, packaging/setup, for an interface in place of Windows Installer's pages. Three steps: the
+// window is compiled with dotnet (the .NET SDK; it runs on the .NET Framework 4.8 of Windows 10
+// and 11), then WiX's candle and light make the exe. WiX is found by its WIX variable, which its
+// installer sets, else on the PATH.
+val setupDir = layout.buildDirectory.dir("setup")
+val setupName = "eddies-map-editor-setup.exe"
+val wixHome = providers.environmentVariable("WIX").orNull
+fun wixTool(name: String) = wixHome?.let { File(it, "bin/$name.exe").absolutePath } ?: name
+
+val setupInterface = tasks.register<Exec>("setupInterface") {
+    group = "distribution"
+    description = "Compiles the setup's window, build/setup/ba/EddiesSetup.dll; needs the .NET SDK"
+    val onWindows = isWindows
+    onlyIf("the setup is made on Windows only") { onWindows }
+    inputs.dir("packaging/setup")
+    outputs.dir(setupDir.map { it.dir("ba") })
+    executable("dotnet")
+    args("build", file("packaging/setup/Setup.csproj").absolutePath, "-c", "Release", "-nologo", "-v", "q")
+}
+
+val setupObject = tasks.register<Exec>("setupObject") {
+    group = "distribution"
+    description = "Compiles the setup's bundle with WiX's candle"
+    dependsOn("appInstaller", setupInterface)
+    val onWindows = isWindows
+    onlyIf("the setup is made on Windows only") { onWindows }
+    inputs.file("packaging/setup/Bundle.wxs")
+    inputs.property("appVersion", appVersion)
+    outputs.file(setupDir.map { it.file("Bundle.wixobj") })
+    executable(wixTool("candle"))
+    args(
+        "-nologo", "-arch", "x64",
+        "-ext", "WixBalExtension", "-ext", "WixNetFxExtension",
+        "-dVersion=$appVersion",
+        "-dMsi=" + installerDir.get().file(installerName).asFile.absolutePath,
+        "-dBa=" + setupDir.get().dir("ba").asFile.absolutePath,
+        "-dConfig=" + file("packaging/setup/BootstrapperCore.config").absolutePath,
+        "-dIcon=" + file("packaging/icon.ico").absolutePath,
+        "-out", setupDir.get().file("Bundle.wixobj").asFile.absolutePath,
+        file("packaging/setup/Bundle.wxs").absolutePath,
+    )
+}
+
+tasks.register<Exec>("appSetup") {
+    group = "distribution"
+    description = "Builds the Windows setup, build/setup/$setupName; needs WiX and the .NET SDK"
+    dependsOn(setupObject)
+    val onWindows = isWindows
+    onlyIf("the setup is made on Windows only") { onWindows }
+    inputs.file(setupDir.map { it.file("Bundle.wixobj") })
+    outputs.file(setupDir.map { it.file(setupName) })
+    executable(wixTool("light"))
+    args(
+        "-nologo",
+        "-ext", "WixBalExtension", "-ext", "WixNetFxExtension",
+        "-out", setupDir.get().file(setupName).asFile.absolutePath,
+        setupDir.get().file("Bundle.wixobj").asFile.absolutePath,
+    )
+}
+
 tasks.register<Zip>("appZip") {
     group = "distribution"
     description = "Zips the program of appImage, eg build/distributions/eddies-map-editor-windows.zip"

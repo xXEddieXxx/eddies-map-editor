@@ -44,7 +44,7 @@ jobs:
           name: eddies-map-editor
           path: build/distributions/*.zip
 
-  # the Windows installer packages too, so the Release workflow does not find out first
+  # the Windows setup and its msi package too, so the Release workflow does not find out first
   windows:
     runs-on: windows-latest
     defaults:
@@ -67,20 +67,25 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      # jpackage makes the msi with the WiX toolset 3; the runner brings it, else it is installed
+      # jpackage makes the msi with the WiX toolset 3, and the setup is made with it; the runner
+      # brings it, else it is installed. WIX names its folder for the build, as WiX's installer
+      # does for a new shell.
       - name: WiX
         run: |
           if ! ls "/c/Program Files (x86)"/WiX\ Toolset\ v3*/bin/candle.exe >/dev/null 2>&1; then
             choco install wixtoolset --version=3.14.1 -y --no-progress
           fi
+          echo "WIX=$(cygpath -w "$(ls -d "/c/Program Files (x86)"/WiX\ Toolset\ v3*/ | tail -1)")" >> "$GITHUB_ENV"
 
       - name: Package
-        run: ./gradlew appInstaller -PtripleaHome=triplea
+        run: ./gradlew appSetup -PtripleaHome=triplea
 
       - uses: actions/upload-artifact@v4
         with:
           name: eddies-map-editor-windows-installer
-          path: build/installer/eddies-map-editor-windows.msi
+          path: |
+            build/setup/eddies-map-editor-setup.exe
+            build/installer/eddies-map-editor-windows.msi
 
   # the Mac program packages too, so the Release workflow does not find out first
   mac:

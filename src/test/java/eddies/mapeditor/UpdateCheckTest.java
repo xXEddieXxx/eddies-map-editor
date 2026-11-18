@@ -63,6 +63,15 @@ final class UpdateCheckTest {
     assertThat(UpdateCheck.parse(ANSWER).orElseThrow().installer())
         .as("a release without the installer")
         .isEmpty();
+    final String setup = link.replace("eddies-map-editor-windows.msi", "eddies-map-editor-setup.exe");
+    final String withSetup =
+        answer.replace(
+            "\"assets\": [",
+            "\"assets\": [{\"name\": \"eddies-map-editor-setup.exe\", \"size\": 7,"
+                + " \"browser_download_url\": \"" + setup + "\"},");
+    assertThat(UpdateCheck.parse(withSetup).orElseThrow().installer())
+        .as("a release with the setup: that, not the msi beside it")
+        .contains(new Updater.Installer(setup, 7, java.util.Optional.empty()));
   }
 
   @DisplayName("Newer is told number by number: 0.2.10 after 0.2.9, 0.3 after 0.2.9, never itself")

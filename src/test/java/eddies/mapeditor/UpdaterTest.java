@@ -26,6 +26,14 @@ final class UpdaterTest {
     assertThat(new Updater.Installer(URL, 10, Optional.empty()).isOwn()).isTrue();
     assertThat(
             new Updater.Installer(
+                    URL.replace("eddies-map-editor-windows.msi", "eddies-map-editor-setup.exe"),
+                    10,
+                    Optional.empty())
+                .isOwn())
+        .as("the setup")
+        .isTrue();
+    assertThat(
+            new Updater.Installer(
                     "https://github.com/someone/else/releases/download/v9/"
                         + "eddies-map-editor-windows.msi",
                     10,
@@ -112,7 +120,9 @@ final class UpdaterTest {
   @Test
   void scriptTakesPathsAsVariables() {
     assertThat(Updater.SCRIPT)
-        .contains("%SYS%msiexec.exe /i \"%UPDATE_MSI%\" /passive /norestart")
+        .contains("%SYS%msiexec.exe /i \"%UPDATE_FILE%\" /passive /norestart")
+        .as("the setup with its own progress, told the folder")
+        .contains("\"%UPDATE_FILE%\" -passive \"InstallFolder=%EDITOR_DIR%\"")
         .as("into the folder the editor is in, also one the map maker chose")
         .contains("INSTALLDIR=\"%EDITOR_DIR%\"")
         .contains("start \"\" \"%EDITOR_EXE%\"")

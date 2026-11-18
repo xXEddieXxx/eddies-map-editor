@@ -38,6 +38,13 @@ class Updater {
   /** The installer's name in every release, as the Release workflow publishes it. */
   static final String MSI_NAME = "eddies-map-editor-windows.msi";
 
+  /**
+   * The setup with its own window around that msi, in every release since there is one. An update
+   * takes it where a release has it: it keeps the setup's entry among Windows' programs right,
+   * which the msi alone would leave at the old version.
+   */
+  static final String SETUP_NAME = "eddies-map-editor-setup.exe";
+
   /** The program's name: its folder, its exe, its entry in Windows' list of programs. */
   static final String PROGRAM = "Eddies Map Editor";
 
@@ -65,7 +72,8 @@ class Updater {
   record Installer(String url, long size, Optional<String> sha256) {
     /** Whether it is a file of the editor's own releases. */
     boolean isOwn() {
-      return url.startsWith(RELEASES) && url.endsWith("/" + MSI_NAME);
+      return url.startsWith(RELEASES)
+          && (url.endsWith("/" + SETUP_NAME) || url.endsWith("/" + MSI_NAME));
     }
   }
 
@@ -180,7 +188,9 @@ class Updater {
     if (!installer.isOwn()) {
       throw new IOException("Not a file of the editor's releases: " + installer.url());
     }
-    final Path msi = Files.createTempDirectory(STAGE).resolve(MSI_NAME);
+    final Path msi =
+        Files.createTempDirectory(STAGE)
+            .resolve(installer.url().substring(installer.url().lastIndexOf('/') + 1));
     final HttpResponse<InputStream> response =
         HttpClient.newBuilder()
             .connectTimeout(CONNECT)
@@ -227,7 +237,7 @@ class Updater {
 
   /** A copy of the msi in a folder made for an update, as a download is, for {@link #TEST_MSI}. */
   static Path staged(final Path msi) throws IOException {
-    return Files.copy(msi, Files.createTempDirectory(STAGE).resolve(MSI_NAME));
+    return Files.copy(msi, Files.createTempDirectory(STAGE).resolve(msi.getFileName()));
   }
 
   /** What is wrong with a downloaded file of this size and SHA-256, if anything. */
@@ -285,7 +295,7 @@ class Updater {
     installing
         .environment()
         .put("STARTER_PID", String.valueOf(editor.parent().orElse(editor).pid()));
-    installing.environment().put("UPDATE_MSI", msi.toString());
+    installing.environment().put("UPDATE_FILE", msi.toString());
     installing.environment().put("EDITOR_EXE", folder.resolve(PROGRAM + ".exe").toString());
     // into the folder it is in: Windows Installer does not remember one the map maker chose
     installing.environment().put("EDITOR_DIR", folder.toString());
@@ -314,8 +324,14 @@ class Updater {
           "%SYS%ping.exe -n 2 127.0.0.1 >nul",
           "goto wait",
           ":install",
-          "start \"\" /wait %SYS%msiexec.exe /i \"%UPDATE_MSI%\" /passive /norestart"
+          // the setup shows its own progress and is told the folder; the msi alone Windows'
+          "if /i \"%UPDATE_FILE:~-4%\"==\".exe\" goto setup",
+          "start \"\" /wait %SYS%msiexec.exe /i \"%UPDATE_FILE%\" /passive /norestart"
               + " INSTALLDIR=\"%EDITOR_DIR%\"",
+          "goto installed",
+          ":setup",
+          "start \"\" /wait \"%UPDATE_FILE%\" -passive \"InstallFolder=%EDITOR_DIR%\"",
+          ":installed",
           "start \"\" \"%EDITOR_EXE%\"",
           ":end",
           "cd /d \"%TEMP%\"",

@@ -5,7 +5,12 @@ name: Release
 #  - refuses a version that already has a tag,
 #  - builds against a TripleA release (the newest, or the tag given) and runs the tests,
 #  - publishes the release "v<version>" with
-#      eddies-map-editor-windows.msi           the Windows installer, for the README's
+#      eddies-map-editor-setup.exe             the Windows setup, a window of its own around the
+#                                              msi, for the README's .../releases/latest/download/...
+#                                              link; not signed
+#      eddies-map-editor-<version>-setup.exe   the same, named by version
+#      eddies-map-editor-windows.msi           the msi alone, which the editors of 0.2.3 and 0.2.4
+#                                              update with, for the README's
 #                                              .../releases/latest/download/... link; not signed
 #      eddies-map-editor-<version>-windows.msi the same, named by version
 #      eddies-map-editor-windows.zip           the program with its own Java, for the README's
@@ -114,15 +119,18 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      # jpackage makes the msi with the WiX toolset 3; the runner brings it, else it is installed
+      # jpackage makes the msi with the WiX toolset 3, and the setup is made with it; the runner
+      # brings it, else it is installed. WIX names its folder for the build, as WiX's installer
+      # does for a new shell.
       - name: WiX
         run: |
           if ! ls "/c/Program Files (x86)"/WiX\ Toolset\ v3*/bin/candle.exe >/dev/null 2>&1; then
             choco install wixtoolset --version=3.14.1 -y --no-progress
           fi
+          echo "WIX=$(cygpath -w "$(ls -d "/c/Program Files (x86)"/WiX\ Toolset\ v3*/ | tail -1)")" >> "$GITHUB_ENV"
 
       - name: Test and package
-        run: ./gradlew test appZip appInstaller distZip -PtripleaHome=triplea -PappVersion=${{ steps.version.outputs.version }}
+        run: ./gradlew test appZip appSetup distZip -PtripleaHome=triplea -PappVersion=${{ steps.version.outputs.version }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -133,6 +141,8 @@ jobs:
         run: |
           V=${{ steps.version.outputs.version }}
           cd build/distributions
+          cp ../setup/eddies-map-editor-setup.exe .
+          cp eddies-map-editor-setup.exe "eddies-map-editor-$V-setup.exe"
           cp ../installer/eddies-map-editor-windows.msi .
           cp eddies-map-editor-windows.msi "eddies-map-editor-$V-windows.msi"
           cp eddies-map-editor-macos.zip "eddies-map-editor-$V-macos.zip"
@@ -156,6 +166,8 @@ jobs:
 
             **Needs TripleA installed** (triplea-game.org): the editor runs with it and finds it by itself, or asks where it is. Built and tested with TripleA ${{ steps.triplea.outputs.release }}.
           files: |
+            build/distributions/eddies-map-editor-setup.exe
+            build/distributions/eddies-map-editor-${{ steps.version.outputs.version }}-setup.exe
             build/distributions/eddies-map-editor-windows.msi
             build/distributions/eddies-map-editor-${{ steps.version.outputs.version }}-windows.msi
             build/distributions/eddies-map-editor-windows.zip

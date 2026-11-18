@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Pictures of the setup window's pages, dark and light, without Burn or an installation: for
+    looking at a change of the window.
+      dotnet run -c Release (in packaging/setup/preview), with the folder for the pictures as
+      its one argument
+  -->
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>SetupPreview</AssemblyName>
+    <RootNamespace>EddiesSetup</RootNamespace>
+    <LangVersion>7.3</LangVersion>
+    <Nullable>disable</Nullable>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>..\..\..\build\setup\preview\</OutputPath>
+    <EnableDefaultPageItems>false</EnableDefaultPageItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\SetupModel.cs" Link="SetupModel.cs" />
+    <Compile Include="..\FolderPicker.cs" Link="FolderPicker.cs" />
+    <Compile Include="..\SetupWindow.xaml.cs" Link="SetupWindow.xaml.cs" />
+    <Page Include="..\SetupWindow.xaml" Link="SetupWindow.xaml" />
+    <Resource Include="..\icon.png" Link="icon.png" />
+  </ItemGroup>
+</Project>

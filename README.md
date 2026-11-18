@@ -130,7 +130,8 @@ Bug reports, ideas and feedback are just as welcome in the
 ./gradlew run       # start the editor
 ./gradlew test      # the tests
 ./gradlew appZip    # the program with its own Java, for this system, in build/distributions
-./gradlew appInstaller  # Windows: its installer, build/installer; needs the WiX toolset 3
+./gradlew appSetup  # Windows: its setup, build/setup, and the msi in it, build/installer;
+                    # needs the WiX toolset 3 and the .NET SDK
 ./gradlew distZip   # the zip for every system, needs Java 25
 ```
 
@@ -139,16 +140,22 @@ The first build points git at `.githooks`: before a commit that touches the sour
 name, a tool without its page or picture, or a page without its way back. `SKIP_GUIDE_CHECK=1 git
 commit` skips it once.
 
-To try the update from within the editor without a release: install an msi, set the environment
-variable `EDDIES_MAP_EDITOR_UPDATE_MSI` to the path of an msi (eg the Build workflow's) and start
-the installed editor. It offers to install that file, by the same steps as a release's.
+The setup's window is in `packaging/setup`, C# for the .NET Framework 4.8 that Windows brings.
+To look at a change of it without installing anything: `dotnet run -c Release` in
+`packaging/setup/preview`, with a folder as its argument, writes a picture of every page, dark
+and light.
+
+To try the update from within the editor without a release: install the editor, set the
+environment variable `EDDIES_MAP_EDITOR_UPDATE_MSI` to the path of a setup exe or an msi (eg the
+Build workflow's) and start the installed editor. It offers to install that file, by the same
+steps as a release's.
 
 ### Release
 
 The **Release** workflow builds releases: *Actions → Release → Run workflow*, enter the version
 (eg `1.2.0`) and, if needed, the TripleA release to build with (default: the newest). It runs the
-tests, builds the Windows program and its installer (not signed), the Mac program (Apple
-silicon, not signed) and the zip for
+tests, builds the Windows program, its setup and the msi in it (not signed), the Mac program
+(Apple silicon, not signed) and the zip for
 every system, and publishes them as release `v<version>`. The *Download* links above always point
 to the newest one.
 

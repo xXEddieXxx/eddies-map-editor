@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The window of eddies-map-editor-setup.exe: the interface WiX's Burn shows while it installs the
+    editor's msi. A library for the .NET Framework 4.8 that Windows 10 and 11 bring, loaded by
+    Burn's managed host. Built by Gradle's appSetup: dotnet build -c Release.
+    BootstrapperCore.dll comes with the WiX toolset 3: from its SDK folder, or -p:WixSdk=<folder>.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>Library</OutputType>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>EddiesSetup</AssemblyName>
+    <RootNamespace>EddiesSetup</RootNamespace>
+    <LangVersion>7.3</LangVersion>
+    <Nullable>disable</Nullable>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>..\..\build\setup\ba\</OutputPath>
+    <WixSdk Condition="'$(WixSdk)' == ''">$(WIX)SDK</WixSdk>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="BootstrapperCore">
+      <HintPath>$(WixSdk)\BootstrapperCore.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Resource Include="icon.png" />
+    <Compile Remove="preview\**" />
+    <Page Remove="preview\**" />
+  </ItemGroup>
+</Project>

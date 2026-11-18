@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  eddies-map-editor-setup.exe: WiX's Burn around the editor's msi, with the setup's own window
+  (EddiesSetup.dll) for an interface in place of Windows Installer's pages. Built by Gradle's
+  appSetup with candle and light, which give Version, Msi, Ba (the folder of EddiesSetup.dll),
+  Config and Icon.
+
+  The upgrade code never changes: by it a newer setup replaces an installed one. Burn lists the
+  setup among Windows' programs, where Uninstall starts it again; the msi itself is not listed.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Bundle Name="Eddies Map Editor"
+          Version="$(var.Version)"
+          Manufacturer="Eddie"
+          UpgradeCode="3c1f6a52-8d0b-4e7a-b2c9-7f4e1a9d5b60"
+          IconSourceFile="$(var.Icon)"
+          AboutUrl="https://github.com/xXEddieXxx/eddies-map-editor"
+          DisableModify="yes">
+    <BootstrapperApplicationRef Id="ManagedBootstrapperApplicationHost">
+      <Payload SourceFile="$(var.Ba)\EddiesSetup.dll" />
+      <Payload SourceFile="$(var.Config)" Name="BootstrapperCore.config" />
+    </BootstrapperApplicationRef>
+    <!-- for a Windows without the .NET Framework 4.8, older than Windows 10 of 2019: Burn fetches it -->
+    <WixVariable Id="WixMbaPrereqPackageId" Value="NetFx48Web" />
+    <WixVariable Id="WixMbaPrereqLicenseUrl" Value="https://go.microsoft.com/fwlink/?LinkId=2085155" />
+
+    <!-- what the window chose, set by SetupApp before the msi runs -->
+    <Variable Name="InstallFolder" Type="string" Value="" />
+    <Variable Name="StartMenuShortcut" Type="string" Value="1" />
+    <Variable Name="DesktopShortcut" Type="string" Value="1" />
+
+    <Chain>
+      <PackageGroupRef Id="NetFx48Web" />
+      <MsiPackage Id="Editor" SourceFile="$(var.Msi)" Compressed="yes" DisplayInternalUI="no" Vital="yes">
+        <MsiProperty Name="INSTALLDIR" Value="[InstallFolder]" />
+        <MsiProperty Name="JP_INSTALL_STARTMENU_SHORTCUT" Value="[StartMenuShortcut]" />
+        <MsiProperty Name="JP_INSTALL_DESKTOP_SHORTCUT" Value="[DesktopShortcut]" />
+      </MsiPackage>
+    </Chain>
+  </Bundle>
+</Wix>

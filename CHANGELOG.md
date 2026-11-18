@@ -9,6 +9,15 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 
 ### Added
 
+- **A setup with a window of its own** (#28). The Windows download is now
+  `eddies-map-editor-setup.exe`: one window in the editor's colors, dark or light as Windows is
+  set, in place of Windows Installer's pages. It shows the folder it installs into, with
+  **Change…**, two boxes for the Start menu entry and the desktop shortcut, and **Install**;
+  then the progress, and at the end where to start the editor and where its files are, with
+  **Start the editor**. Run again, or from Windows' list of programs, it offers to remove the
+  editor. Inside it is the same msi as before, which still comes with each release. An update
+  from within the editor takes the setup and shows its progress.
+
 - **A Windows installer** (#28). Each release brings `eddies-map-editor-windows.msi` beside the
   zip. It installs the editor for you alone, so it asks for no administrator rights, adds a
   Start menu entry and an uninstaller, and a newer installer replaces the installed version in

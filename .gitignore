@@ -1,5 +1,8 @@
 .gradle/
 build/
+# what dotnet leaves beside the setup's sources
+packaging/setup/**/obj/
+packaging/setup/**/bin/
 out/
 .idea/
 *.iml
