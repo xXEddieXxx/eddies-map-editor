@@ -24,6 +24,8 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.awt.Point;
+import games.strategy.triplea.ui.mapdata.MapData;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -278,7 +280,20 @@ final class TerritoryEffectsEditor implements Editor {
           showOnMap.accept(effect);
         });
     usedRow.add(show);
-    for (final JComponent part : List.of(title, usedRow)) {
+    // how the player sees the effect, by the picture and the map's files as they are now
+    final MapFiles files = project.getFiles();
+    final Map<String, List<Point>> placed = files.places().markers(MapFiles.Marker.EFFECT);
+    final JLabel inGame =
+        Theme.newSecondaryLabel(
+            "<html><div style='width:" + SHOWN_WIDTH + "px'>"
+                + SearchList.escape(
+                    shownInGame(
+                        effect,
+                        pictureFile(effect).flatMap(TerritoryEffectsEditor::readPicture).isPresent(),
+                        files.shows(MapData.PROPERTY_MAP_USETERRITORYEFFECTMARKERS, false),
+                        used.stream().anyMatch(t -> !placed.getOrDefault(t, List.of()).isEmpty())))
+                + "</div></html>");
+    for (final JComponent part : List.of(title, usedRow, inGame)) {
       part.setAlignmentX(JComponent.LEFT_ALIGNMENT);
       left.add(part);
     }
@@ -286,6 +301,43 @@ final class TerritoryEffectsEditor implements Editor {
     header.add(left, BorderLayout.CENTER);
     header.add(pictureColumn(effect), BorderLayout.EAST);
     return header;
+  }
+
+  /**
+   * How TripleA shows the effect to the player, which of its three ways this map uses. On the
+   * status bar: with a picture territoryEffects/name.png a small icon before the territory's name,
+   * the effect's name as its tool tip (BottomBar); without one the name in brackets after the
+   * territory's name. On the map: the picture, name_large.png before name.png, at the places
+   * territory_effects.txt gives the territory, only with map.useTerritoryEffectMarkers=true in
+   * map.properties (TerritoryEffectDrawable). The game writes no values of an effect anywhere; a
+   * picture that carries text is how a map shows them.
+   */
+  static String shownInGame(
+      final String effect, final boolean picture, final boolean markersOn, final boolean placed) {
+    if (!picture) {
+      return "In the game: its name in brackets after the territory's name on the status bar, eg"
+          + " \"Karelia ("
+          + effect
+          + ")\"; its rules are what the game notes say. With a picture territoryEffects/"
+          + effect
+          + ".png the status bar shows a small icon instead, the name as its tool tip, and the map"
+          + " can show it too.";
+    }
+    final String bar =
+        "In the game: this picture on the status bar before the territory's name, the name as"
+            + " its tool tip.";
+    if (markersOn && placed) {
+      return bar
+          + " On the map too, at the places territory_effects.txt gives each territory ("
+          + effect
+          + "_large.png if there is one). Text in the picture is all the player reads of its"
+          + " values; the game shows none itself.";
+    }
+    return bar
+        + " On the map too, once territory_effects.txt places it (Places › Terrain effects) and"
+        + " map.properties says map.useTerritoryEffectMarkers=true; now "
+        + (markersOn ? "the places are missing" : "that property is off")
+        + ". The rules are what the game notes say.";
   }
 
   /** "Used by 7 territories: Karelia, Belarus, Bryansk, …". */
@@ -299,6 +351,9 @@ final class TerritoryEffectsEditor implements Editor {
         + String.join(", ", territories.subList(0, Math.min(NAMES_SHOWN, territories.size())))
         + (territories.size() > NAMES_SHOWN ? ", …" : "");
   }
+
+  // the explanation's width: the header's left side beside the picture column
+  private static final int SHOWN_WIDTH = 480;
 
   private JPanel pictureColumn(final String effect) {
     final Optional<Path> file = pictureFile(effect);

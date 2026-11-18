@@ -173,6 +173,37 @@ final class TerritoryEffectsEditorTest {
         .isEqualTo("Used by 4 territories: a, b, c, …");
   }
 
+  @DisplayName("The header says how the game shows the effect: name on the status bar without a"
+      + " picture, icon with one, on the map only with places and the property")
+  @Test
+  void saysHowTheGameShowsIt() throws Exception {
+    final MapProject project = givenForest();
+    final List<String> seen = new ArrayList<>();
+
+    SwingUtilities.invokeAndWait(
+        () -> seen.addAll(labels(new TerritoryEffectsEditor(project))));
+
+    assertThat(seen)
+        .as("the minimap has no picture of the forest")
+        .anySatisfy(
+            t ->
+                assertThat(t)
+                    .contains("In the game: its name in brackets")
+                    .contains("\"Karelia (forest)\"")
+                    .contains("territoryEffects/forest.png"));
+    assertThat(TerritoryEffectsEditor.shownInGame("forest", true, false, false))
+        .as("a picture, not yet on the map: what is missing")
+        .contains("this picture on the status bar")
+        .contains("that property is off");
+    assertThat(TerritoryEffectsEditor.shownInGame("forest", true, true, false))
+        .contains("the places are missing");
+    assertThat(TerritoryEffectsEditor.shownInGame("forest", true, true, true))
+        .as("on the map too")
+        .contains("On the map too, at the places")
+        .contains("forest_large.png")
+        .contains("the game shows none itself");
+  }
+
   @DisplayName("An effect no territory has yet still offers Show on map, to paint it there")
   @Test
   void showOnMapWithoutTerritories() throws Exception {
