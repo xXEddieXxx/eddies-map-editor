@@ -57,6 +57,14 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
   a place, as far as Map look's "On the map" boxes show them. A stack's count sits where the game
   puts it, a quarter in and a unit's height down, or as `units.counter.offset` says. Create
   missing places centers the name's text and the map's own flag on the territory.
+- **Units drawn bigger than in the game, PU pictures a line too low** (#27). The editor fitted
+  every unit's picture into a square of the map's unit width, so the small flags that 1888A, the
+  Shoguns and 11 Rings of Power place to the pixel on their name plates, 20 x 28 px, came out as
+  blocks of 72 x 72, and a picture of 72 x 54 was stretched. A unit is now drawn at its
+  picture's own size by `units.scale`, from its place's top left, as TripleA draws it. A PU
+  picture sat a line of text below its place with names drawn from the top left, and its own
+  height too low without: now its top left is at the place, or its bottom left. Both compared
+  with TripleA's own drawing of the same territories.
 - **Flags on sea zones and their PU pictures missing in the Game view** (#27). Maps like 11
   Rings of Power, 1888A and the Shoguns place each sea zone's flag by convoy.txt, to the pixel
   over the map's picture. The Game view now draws a sea zone's convoy flag, blockade marker and

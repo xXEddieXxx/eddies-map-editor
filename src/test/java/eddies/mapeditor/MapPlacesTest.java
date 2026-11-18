@@ -324,7 +324,15 @@ final class MapPlacesTest {
     assertThat(files.markerMiddle(project.game(), Marker.CAPITAL, TERRITORY, place))
         .as("the mark on the flag's middle")
         .isEqualTo(new Point(90, 110));
-    assertThat(value).as("the PU coin from the place").isEqualTo(new Rectangle(40, 60, 20, 10));
+    assertThat(value)
+        .as("the PU coin with its bottom left at the place, where a text's baseline would be")
+        .isEqualTo(new Rectangle(40, 50, 20, 10));
+    assertThat(
+            files
+                .withProperty(MapData.PROPERTY_MAP_DRAWNAMESFROMTOPLEFT, "true")
+                .markerDrawn(project.game(), Marker.VALUE, TERRITORY, place))
+        .as("drawn from the top left, its top left there, not a line lower as a text is")
+        .isEqualTo(new Rectangle(40, 60, 20, 10));
     assertThat(marker).as("the vc marker from the place").isEqualTo(new Rectangle(40, 60, 24, 24));
     assertThat(name.x).as("a text from its left end").isEqualTo(40);
     assertThat(name.y).as("above its baseline").isLessThan(60);

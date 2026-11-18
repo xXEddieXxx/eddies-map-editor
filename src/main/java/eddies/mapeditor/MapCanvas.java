@@ -181,6 +181,8 @@ final class MapCanvas extends JComponent {
   private MapMode mode = MapMode.GAME;
   // the size of a unit on the map, as the files have it
   private Dimension unitSize = new Dimension();
+  // how much bigger or smaller than its picture the game draws a unit, units.scale
+  private double unitScale = 1;
   private double zoom = 0.5;
   private boolean showPicture = true;
   private @Nullable String selected;
@@ -1775,6 +1777,7 @@ final class MapCanvas extends JComponent {
       filled.clear();
       unitPlaces.clear();
       unitSize = filesSeen.unitSize();
+      unitScale = filesSeen.unitScale();
       unitPictures.clear();
       // a relief loaded, saved or undone: the tiles on disk may be new
       if (!filesSeen.relief().equals(reliefSeen)) {
@@ -2446,15 +2449,27 @@ final class MapCanvas extends JComponent {
       final Point place = places.get(Math.min(i, places.size() - 1));
       final int x = (int) (place.x * zoom) + Math.max(0, i - places.size() + 1) * beyond;
       final int y = (int) (place.y * zoom);
-      unitPicture(stack.getOwner(), stack.getUnitType())
-          .ifPresentOrElse(
-              picture -> g.drawImage(picture, x, y, size, size, null),
-              () -> paintBadge(g, stack.getUnitType(), x + size / 2, y + size / 2));
+      final Optional<Image> picture = unitPicture(stack.getOwner(), stack.getUnitType());
+      // as the game (UnitImageFactory): the picture from the place's top left at its own size by
+      // units.scale, not fitted to units.width and height, which only lay the places out; so a
+      // small picture, eg a flag of 20 x 28 on a name plate, stays small
+      final Dimension drawn =
+          picture
+              .map(
+                  p ->
+                      new Dimension(
+                          (int) Math.round(p.getWidth(null) * unitScale * zoom),
+                          (int) Math.round(p.getHeight(null) * unitScale * zoom)))
+              .filter(d -> d.width > 0 && d.height > 0)
+              .orElse(new Dimension(size, size));
+      picture.ifPresentOrElse(
+          p -> g.drawImage(p, x, y, drawn.width, drawn.height, null),
+          () -> paintBadge(g, stack.getUnitType(), x + size / 2, y + size / 2));
       if (highlighted) {
         // an orange shade over the selected territory's units, like its places,
         // so it shows which units belong to it
         g.setColor(withAlpha(SELECTED_PLACE, 0x60));
-        g.fillRect(x, y, size, size);
+        g.fillRect(x, y, drawn.width, drawn.height);
       }
       if (stack.getQuantity() > 1) {
         final String count = String.valueOf(stack.getQuantity());

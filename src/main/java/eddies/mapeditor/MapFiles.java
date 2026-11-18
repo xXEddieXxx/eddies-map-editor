@@ -2931,9 +2931,17 @@ record MapFiles(
     final Optional<Dimension> picture = markerPictureSize(game, marker, territory);
     return switch (marker) {
       case NAME, COMMENT -> textDrawn(territory, place.x, baseline, font);
+      // a picture is not drawn like a text (TerritoryNameDrawable.draw): from the top left its top
+      // left is at the place, else its bottom left, where a text's baseline would be
       case VALUE ->
           picture
-              .map(size -> new Rectangle(place.x, baseline, size.width, size.height))
+              .map(
+                  size ->
+                      new Rectangle(
+                          place.x,
+                          fromTopLeft ? place.y : place.y - size.height,
+                          size.width,
+                          size.height))
               .orElseGet(
                   () ->
                       textDrawn(

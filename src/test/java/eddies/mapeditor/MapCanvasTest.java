@@ -210,6 +210,43 @@ final class MapCanvasTest {
     assertThat(MapCanvas.isNumbered(fit)).as("numbers would run together at fit").isFalse();
   }
 
+  @DisplayName("A unit's picture is drawn at its own size, as the game draws it, not fitted to the"
+      + " map's unit size: a flag of 20 x 28 stays that small")
+  @Test
+  void unitPictureAtItsOwnSize() throws Exception {
+    // given: a saved map whose infantry of Red is a magenta picture of 20 x 28, one in a territory
+    final MapProject made =
+        MapProject.newMap("Island Wars", MapPictureTest.givenPicture(), List.of("Red"), maps)
+            .project();
+    final Path units =
+        Files.createDirectories(made.getFolder().orElseThrow().resolve("units").resolve("Red"));
+    final BufferedImage flag = new BufferedImage(20, 28, BufferedImage.TYPE_INT_ARGB);
+    final Graphics2D paint = flag.createGraphics();
+    paint.setColor(Color.MAGENTA);
+    paint.fillRect(0, 0, 20, 28);
+    paint.dispose();
+    javax.imageio.ImageIO.write(flag, "png", units.resolve("infantry.png").toFile());
+    final MapProject project = MapProject.open(made.getXmlFile().orElseThrow());
+    project.edit(game -> MapXml.withUnits(game, EFFECT_LAND, "Red", "infantry", 1));
+    final List<Integer> magenta = new ArrayList<>();
+
+    // when: the Game view at 100 %
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapCanvas canvas = new MapCanvas(project);
+          canvas.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 12));
+          canvas.zoomBy(2.0);
+          canvas.setSize(400, 300);
+          canvas.setMode(MapMode.GAME);
+          magenta.add(magentaPixels(shown(canvas)));
+        });
+
+    // then
+    assertThat(magenta)
+        .as("20 x 28 pixels of it, not the 48 x 48 of the map's unit size")
+        .containsExactly(20 * 28);
+  }
+
   @DisplayName("Faintly marked territories, eg the other canals, show in the mark's color")
   @Test
   void faintMarksShow() throws Exception {
