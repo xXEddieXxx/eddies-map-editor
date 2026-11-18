@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/xXEddieXxx/eddies-map-editor/releases/latest/download/eddies-map-editor-windows.msi"><b>⬇️ Download for Windows</b></a>
+  <a href="https://github.com/xXEddieXxx/eddies-map-editor/releases/latest/download/eddies-map-editor-setup.exe"><b>⬇️ Download for Windows</b></a>
   &nbsp;·&nbsp;
   <a href="https://github.com/xXEddieXxx/eddies-map-editor/releases/latest/download/eddies-map-editor-macos.zip"><b>⬇️ Download for macOS</b></a>
   &nbsp;·&nbsp;
@@ -29,9 +29,9 @@ It runs with your installed TripleA, and the maps it saves still load and play t
 ## Get started
 
 1. **Windows:** download
-   [`eddies-map-editor-windows.msi`](https://github.com/xXEddieXxx/eddies-map-editor/releases/latest/download/eddies-map-editor-windows.msi)
+   [`eddies-map-editor-setup.exe`](https://github.com/xXEddieXxx/eddies-map-editor/releases/latest/download/eddies-map-editor-setup.exe)
    and open it. It installs the editor for you alone, without administrator rights, and later
-   versions install from within the editor. The installer shows the folder it installs into,
+   versions install from within the editor. Its window shows the folder it installs into,
    `%LOCALAPPDATA%\Eddies Map Editor` (that is `C:\Users\<you>\AppData\Local\Eddies Map Editor`)
    unless you choose another, and offers a Start menu entry and a desktop shortcut: start the
    editor from **Eddies Map Editor** in the Start menu or on the desktop. It is not signed: on
