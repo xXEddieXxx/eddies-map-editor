@@ -114,6 +114,7 @@ final class MapView extends JPanel {
   private static final String PROGRESS_CARD = "progress";
   private transient Consumer<MapGuide.Step.Id> followStep = step -> {};
   private final JMenuItem findAgain = new JMenuItem("Make territories again…");
+  private final JMenuItem grid = new JMenuItem("Grid of territories…");
   // what the middle shows: "" the map, PICTURE_ONLY, else the number of territories without map;
   // built anew only when it changes
   private Optional<String> shownState = Optional.empty();
@@ -421,6 +422,12 @@ final class MapView extends JPanel {
     redraw.addActionListener(e -> redrawBorders.run());
     findAgain.addActionListener(e -> findTerritories.run());
     pictureMenu.add(findAgain);
+    grid.setToolTipText(
+        "Lays squares, hexagons or offset squares over the picture as territories named by row"
+            + " and column, with their centers and connections, and draws the borders into the"
+            + " picture: for a map without territories yet");
+    grid.addActionListener(e -> MapMakerWindow.gridTerritories(this));
+    pictureMenu.add(grid);
     final JMenuItem resize = pictureMenu.add("Resize map…");
     resize.setToolTipText(
         "Makes the whole map bigger or smaller: picture, borders and places. Units keep their"
@@ -585,6 +592,8 @@ final class MapView extends JPanel {
         picture.isPresent()
             ? null
             : "Only a picture loaded here can be searched. An opened map has tiles instead.");
+    // the grid is drawn into the picture, so it needs one held too
+    grid.setEnabled(picture.isPresent());
     final String state;
     if (project.getFiles().hasOutlines()) {
       state = "";

@@ -772,6 +772,71 @@ public final class MapMakerWindow extends JFrame {
   }
 
   /**
+   * Grid of territories, from the window the component is in, ie the picture menu; outside the
+   * editor's window nothing happens.
+   */
+  static void gridTerritories(final Component inWindow) {
+    if (SwingUtilities.getWindowAncestor(inWindow) instanceof MapMakerWindow window) {
+      window.gridTerritories();
+    }
+  }
+
+  /**
+   * Asks which grid, then lays it over the picture as the map's territories, as one step: the
+   * cells with their outlines, centers and connections replace the territories there are, and the
+   * borders are drawn into the picture.
+   */
+  private void gridTerritories() {
+    final MapProject gridding = project;
+    final Optional<BufferedImage> picture = gridding.getFiles().picture();
+    if (picture.isEmpty()) {
+      Dialogs.toast(this, "! Only a picture loaded here can take a grid. An opened map has tiles.");
+      return;
+    }
+    if (gridding.getFiles().hasOutlines()
+        && !Dialogs.confirm(
+            this,
+            "Grid of territories",
+            "Replace the territories with a grid?\nThe grid's cells replace the territories and"
+                + " connections the map has now, with their owners and units. Undo takes it back.",
+            "Replace")) {
+      return;
+    }
+    final Dimension size = new Dimension(picture.get().getWidth(), picture.get().getHeight());
+    final Optional<GridDialog.Request> request = GridDialog.ask(this, size);
+    if (request.isEmpty()) {
+      return;
+    }
+    final int edits = gridding.pictureEdits();
+    inBackground(
+        "Could not make the grid",
+        () -> TerritoryGrid.grid(size, request.get().pattern(), request.get().cellWidth()),
+        grid -> {
+          if (gridding != project
+              || !gridding.getFiles().picture().equals(picture)
+              || gridding.pictureEdits() != edits) {
+            Dialogs.warn(
+                this,
+                "Grid of territories",
+                "The map changed while the grid was made, so it stays as it is.\nChoose Grid of"
+                    + " territories again.");
+            return;
+          }
+          gridding.loadPicture(TerritoryGrid.withBorders(picture.get(), grid), grid);
+          Dialogs.toast(
+              this,
+              "A grid of "
+                  + grid.territories().size()
+                  + " territories, "
+                  + TerritoryGrid.rows(size, request.get().pattern(), request.get().cellWidth())
+                  + " rows × "
+                  + TerritoryGrid.columns(size, request.get().pattern(), request.get().cellWidth())
+                  + " columns. Undo takes it back.");
+          check(problems -> {});
+        });
+  }
+
+  /**
    * Resize map, from the window the component is in, eg from Map look or the picture menu; outside
    * the editor's window nothing happens.
    */

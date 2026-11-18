@@ -41,6 +41,14 @@ The button at the right end of the map's toolbar.
   areas become territories, merged ones are joined.
 - **Make territories again…** looks for territories in the whole picture again. Only a picture
   loaded here can be searched; a map opened from its folder has tiles instead.
+- **Grid of territories…** lays a grid over a picture that has no territories yet: squares,
+  squares with diagonal connections, hexagons in straight rows or columns, or offset squares like
+  bricks in straight rows or columns. Cells are sized by their width or by how many columns go
+  across; the dialog counts the territories that gives. Every cell becomes a land territory named
+  by row and column, A1, A2, B1, with its center and its connections, 4, 8 or 6 neighbours by the
+  pattern, and the borders are drawn into the picture as black lines, so the saved tiles show
+  them. Cells at the picture's edge are cut to it. Paint owners and sea zones after; Undo takes
+  the whole grid back. With territories there already, it asks before it replaces them.
 - **Resize map…** is described under [Map look](map-look.md#resize-map).
 - **Save the map's picture as a file…** writes the whole picture, without the relief, as one
   PNG, put together from the tiles. For a paint program; then Load another picture or Redraw

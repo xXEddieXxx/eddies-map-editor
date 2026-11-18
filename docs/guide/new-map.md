@@ -26,6 +26,10 @@ three steps and saves it in TripleA's maps folder, where TripleA finds it.
   picture's borders are not closed or not dark enough: fix the picture and choose it again.
 - A map without a picture is possible too: skip this step and draw the borders later with Draw
   borders in Territories.
+- A picture without borders, for example a plain relief, can take a **grid** instead: after the
+  wizard, choose Grid of territories… in the [map picture menu](menus.md#the-map-picture-menu).
+  Squares, hexagons or offset squares become the territories, named A1, A2, B1, with their
+  connections.
 
 ## 3 Nations
 
