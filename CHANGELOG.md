@@ -56,6 +56,30 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 
 ### Changed
 
+- **Grid of territories** (#14), in the map picture menu: squares, squares with diagonals,
+  hexagons in straight rows or columns, offset squares in straight rows or columns, laid over a
+  picture without territories. Sized by the cell's width or by the number of columns; the dialog
+  tells rows, columns and count as you type. One step gives outlines, centers, connections and the
+  names A1, B1, …, and draws the borders into the picture; Undo takes picture and territories back
+  together. Paint the owners and the sea after.
+- **Flags in Nations and Politics** (#19). The Nations list shows each nation's colour and flag side
+  by side; the Politics matrix shows the flag before each row and above each column.
+- **Politics says what a change costs and how it holds** (#20). A relationship type's page lists the
+  political actions that set a pair to it, each with its pairs, cost, chance and who must accept,
+  with a link to Actions, and a note on the type's upkeep. TripleA knows no length of a change: a
+  `relationshipChange` with a fourth part such as `:3` is refused when the game loads; a pair keeps
+  its type until an action or trigger changes it, `upkeepCost` is paid each turn.
+- **Terrain effects say how the game shows an effect** (#21): its name in brackets on the status
+  bar, a picture there with `territoryEffects/<name>.png`, or on the map too at the places in
+  territory_effects.txt with `map.useTerritoryEffectMarkers`. The line says which this map does
+  and what the next way needs. The game draws no effect values; "picture with text" is text in the
+  picture.
+- **Publish > Write it** names description.html and goes to the Description box, which is marked
+  for a moment so the cursor is found; **Shorten it** when the text is too long (#24).
+- **Move and order the entries of a list** (#26). Production > Buy: ▲ ▼ move the chosen rule, ⇅
+  orders the list A to Z, by cost or by kind as TripleA's buy tabs sort units, for one list or
+  every list at once. Units: ▲ ▼ and ⇅ for the unit types, the order TripleA lists and draws
+  them in. Game options: ▲ ▼ on every row, ⇅ sorts A to Z. Each is one step Undo takes back.
 - **Value (tuv)** sits in the top row beside the cost, blank for "its cost" (#3).
 - **Resources it makes each turn** (`createsResourcesList`) is a field under Production and
   infrastructure: a count and a resource, a minus count for upkeep (#3). A unit with two such
@@ -99,6 +123,10 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
   https://xxeddiexxx.github.io/eddies-map-editor/ by MkDocs Material, built on each push.
 
 ### For developers
+
+- A **pre-commit hook** (`.githooks`, installed by the first build) runs UserGuideTest before a
+  commit that touches the sources or the guide, so a tool, view or menu item the user guide does
+  not name cannot be committed. `SKIP_GUIDE_CHECK=1` skips it once.
 
 - The tests run against the installed TripleA. With TripleA 2026-09.16 one test fails,
   StackingLimitsTest.setsUnitLimits: that TripleA stores a unit's movementLimit as its
