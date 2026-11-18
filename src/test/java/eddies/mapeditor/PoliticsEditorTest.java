@@ -7,6 +7,9 @@ import games.strategy.triplea.Constants;
 import java.awt.Component;
 import java.awt.Container;
 import java.nio.file.Path;
+import javax.swing.SwingConstants;
+import java.nio.file.Files;
+import java.io.InputStream;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -55,6 +58,43 @@ final class PoliticsEditorTest {
         .as("one undo brings them back")
         .contains("Neutrality");
     assertThat(project.canUndo()).as("it was one step").isFalse();
+  }
+
+  @DisplayName("The matrix shows each nation's flag before its row's name and above its column's")
+  @Test
+  void matrixShowsFlags(@TempDir final Path folder) throws Exception {
+    // given: a map folder, so the flags are found, the game's own for G40's nations
+    Files.writeString(folder.resolve("polygons.txt"), "");
+    final Path xml = folder.resolve("ww2global40.xml");
+    try (InputStream original =
+        PoliticsEditorTest.class.getClassLoader().getResourceAsStream("ww2global40.xml")) {
+      Files.copy(original, xml);
+    }
+    final PoliticsEditor editor = new PoliticsEditor(MapProject.open(xml));
+    // the matrix is made when the tool shows
+    editor.showing();
+
+    final List<JButton> rows =
+        find(editor.page(), JButton.class).filter(b -> "Germans".equals(b.getText())).toList();
+    final List<JLabel> columns =
+        find(editor.page(), JLabel.class)
+            .filter(l -> l.getIcon() != null && "Germans".equals(l.getText()))
+            .toList();
+
+    assertThat(rows).as("the row's name has the flag").hasSize(1);
+    assertThat(rows.getFirst().getIcon()).isNotNull();
+    assertThat(rows.getFirst().getIcon().getIconHeight()).isLessThanOrEqualTo(20);
+    assertThat(columns).as("the column's name has it above the text").hasSize(1);
+    assertThat(columns.getFirst().getVerticalTextPosition()).isEqualTo(SwingConstants.BOTTOM);
+  }
+
+  private static <T> Stream<T> find(final Container in, final Class<T> type) {
+    return Stream.of(in.getComponents())
+        .flatMap(
+            c ->
+                Stream.concat(
+                    type.isInstance(c) ? Stream.of(type.cast(c)) : Stream.empty(),
+                    c instanceof Container inner ? find(inner, type) : Stream.empty()));
   }
 
   @DisplayName("Under the tabs the types list keeps room above its count line")

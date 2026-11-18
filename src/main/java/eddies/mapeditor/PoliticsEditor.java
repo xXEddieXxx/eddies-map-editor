@@ -26,6 +26,7 @@ import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.ButtonGroup;
+import javax.swing.Icon;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
@@ -87,6 +88,8 @@ final class PoliticsEditor implements Editor {
   private static final double BY_KIND = 0.15;
   // a name longer than this goes on two lines in the matrix
   private static final int SHORT_NAME = 10;
+  // a nation's flag before its name in the matrix, at most this high
+  private static final int FLAG_HEIGHT = 20;
 
   private final MapProject project;
   private final Consumer<String> openTool;
@@ -253,9 +256,17 @@ final class PoliticsEditor implements Editor {
         cells.add(cell(game, nation, other, alliances));
       }
     }
+    // each flag read once for its row and its column
+    final Map<String, Optional<Icon>> flags = new HashMap<>();
+    all.forEach(
+        n ->
+            flags.put(
+                n,
+                project.flagPicture(n).map(f -> NationsEditor.flagIcon(f, FLAG_HEIGHT))));
     final List<JLabel> columnNames =
-        all.stream().map(n -> new JLabel(twoLines(n), SwingConstants.CENTER)).toList();
-    final List<JButton> rowNames = all.stream().map(n -> rowName(game, n)).toList();
+        all.stream().map(n -> columnName(n, flags.get(n))).toList();
+    final List<JButton> rowNames =
+        all.stream().map(n -> rowName(game, n, flags.get(n))).toList();
     // one size for every cell and column name, so the headers line up with the cells
     final Dimension size = new Dimension(0, 0);
     for (final JComponent part : concat(cells, columnNames)) {
@@ -298,9 +309,22 @@ final class PoliticsEditor implements Editor {
     return top;
   }
 
-  /** The row's nation: it offers to set all its pairs back to By alliance. */
-  private JButton rowName(final Game game, final String nation) {
+  /** The column's nation, its flag above the name so the columns stay narrow. */
+  private static JLabel columnName(final String nation, final Optional<Icon> flag) {
+    final JLabel name = new JLabel(twoLines(nation), SwingConstants.CENTER);
+    flag.ifPresent(
+        icon -> {
+          name.setIcon(icon);
+          name.setHorizontalTextPosition(SwingConstants.CENTER);
+          name.setVerticalTextPosition(SwingConstants.BOTTOM);
+        });
+    return name;
+  }
+
+  /** The row's nation with its flag: it offers to set all its pairs back to By alliance. */
+  private JButton rowName(final Game game, final String nation, final Optional<Icon> flag) {
     final JButton name = new JButton(plain(nation));
+    flag.ifPresent(name::setIcon);
     name.setHorizontalAlignment(SwingConstants.LEFT);
     name.putClientProperty(
         FlatClientProperties.BUTTON_TYPE, FlatClientProperties.BUTTON_TYPE_BORDERLESS);

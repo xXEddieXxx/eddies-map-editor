@@ -3,6 +3,8 @@ package eddies.mapeditor;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.awt.Component;
+import java.awt.Color;
+import javax.swing.Icon;
 import java.awt.Container;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
@@ -253,6 +255,35 @@ final class NationsEditorTest {
     assertThat(find((Container) row, JLabel.class).map(JLabel::getIcon).filter(Objects::nonNull))
         .as("the Italians' color as a swatch")
         .containsExactly(new MapLegend.Swatch(project.nationColor("Italians")));
+  }
+
+  @DisplayName("With a folder the list shows the nation's flag beside its color, the row's height")
+  @Test
+  void listShowsTheFlags() throws Exception {
+    // given: a map folder, so the flags are found, the game's own for the minimap's nations
+    Files.writeString(folder.resolve("polygons.txt"), "");
+    final MapProject project = givenMinimap();
+    final NationsEditor editor = new NationsEditor(project);
+    @SuppressWarnings("unchecked")
+    final JList<String> list = find(editor.page(), JList.class).findFirst().orElseThrow();
+
+    // when
+    final Component row =
+        list.getCellRenderer().getListCellRendererComponent(list, "Italians", 1, false, false);
+    final Icon icon =
+        find((Container) row, JLabel.class)
+            .map(JLabel::getIcon)
+            .filter(Objects::nonNull)
+            .findFirst()
+            .orElseThrow();
+
+    // then
+    assertThat(project.flagPicture("Italians")).as("the game's flag of the Italians").isPresent();
+    assertThat(icon)
+        .as("color and flag in one icon, no higher than the row's two lines")
+        .isNotInstanceOf(MapLegend.Swatch.class)
+        .returns(true, i -> i.getIconHeight() <= 24 && i.getIconHeight() >= 12)
+        .returns(true, i -> i.getIconWidth() > new MapLegend.Swatch(Color.RED).getIconWidth());
   }
 
   @DisplayName("More options always shows, with how many options it holds and how many are set;"

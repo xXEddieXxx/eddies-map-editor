@@ -10,6 +10,9 @@ import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.GridLayout;
 import java.awt.Image;
+import com.formdev.flatlaf.util.UIScale;
+import java.util.HashMap;
+import java.awt.Graphics;
 import java.awt.Window;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
@@ -155,6 +158,8 @@ final class NationsEditor implements Editor {
   private final MapView map;
   private final JPanel page = new JPanel(new CardLayout());
   private final SearchList list;
+  // the list's icons, made once per nation until the game changes
+  private final Map<String, Icon> listIcons = new HashMap<>();
   private final Form inspector = new Form(280);
   // the first two sections, side by side when wide enough
   private final Form start = new Form(280);
@@ -168,6 +173,9 @@ final class NationsEditor implements Editor {
     this(project, new MapView(project, () -> {}, () -> {}, () -> {}));
   }
 
+  // the flag in the list, at most this high: a 32 px flag shrunk to the two lines of its row
+  private static final int LIST_FLAG_HEIGHT = 24;
+
   NationsEditor(final MapProject project, final MapView map) {
     this.project = project;
     this.map = map;
@@ -179,7 +187,7 @@ final class NationsEditor implements Editor {
                 nation -> nation,
                 nation -> allianceLine(project.game(), nation),
                 this::choose)
-            .withIcons(nation -> new MapLegend.Swatch(project.nationColor(nation)))
+            .withIcons(this::listIcon, LIST_FLAG_HEIGHT)
             .withAdd("Add nation…", "Add a nation", this::addNation)
             .withEmpty(
                 Panels.empty(
@@ -197,6 +205,8 @@ final class NationsEditor implements Editor {
     page.add(newNationCard(), NATION);
     project.onChange(
         () -> {
+          // a color changed, a flag imported, a map saved into its folder
+          listIcons.clear();
           list.refresh();
           if (!editingHere) {
             showInspector();
@@ -519,22 +529,57 @@ final class NationsEditor implements Editor {
 
   /** The nation's flag as the game finds it, the map's or the game's own; empty without one. */
   Optional<Icon> flagIcon(final String nation) {
-    return project
-        .getFiles()
-        .folder()
-        // a nation renamed since the last save has its flags under the name it was saved with
-        .flatMap(
-            folder -> MapFolder.flag(folder, project.getFiles().nationFilesName(nation), ""))
-        // read anew each time, as an import replaces the file under the same name
-        .flatMap(
-            url -> {
-              try {
-                return Optional.ofNullable(ImageIO.read(url));
-              } catch (final IOException e) {
-                return Optional.empty();
-              }
-            })
-        .map(NationsEditor::icon);
+    return project.flagPicture(nation).map(NationsEditor::icon);
+  }
+
+  /** The list's icon: the nation's color, and its flag at the row's height when it has one. */
+  private Icon listIcon(final String nation) {
+    return listIcons.computeIfAbsent(
+        nation,
+        n -> {
+          final Icon swatch = new MapLegend.Swatch(project.nationColor(n));
+          return project
+              .flagPicture(n)
+              .<Icon>map(flag -> new IconRow(swatch, flagIcon(flag, LIST_FLAG_HEIGHT)))
+              .orElse(swatch);
+        });
+  }
+
+  /** The flag fitted to the height, keeping its shape; a smaller one stays as it is. */
+  static Icon flagIcon(final Image flag, final int height) {
+    final int width = flag.getWidth(null);
+    final int own = flag.getHeight(null);
+    final double scale = Math.min(1, UIScale.scale(height) / (double) Math.max(1, own));
+    return new ImageIcon(
+        scale == 1
+            ? flag
+            : flag.getScaledInstance(
+                Math.max(1, (int) Math.round(width * scale)),
+                Math.max(1, (int) Math.round(own * scale)),
+                Image.SCALE_SMOOTH));
+  }
+
+  /** Icons side by side, each centered on the tallest, eg a color and a flag. */
+  private record IconRow(Icon first, Icon second) implements Icon {
+    private static final int GAP = 6;
+
+    @Override
+    public void paintIcon(final Component c, final Graphics g, final int x, final int y) {
+      final int height = getIconHeight();
+      first.paintIcon(c, g, x, y + (height - first.getIconHeight()) / 2);
+      second.paintIcon(
+          c, g, x + first.getIconWidth() + GAP, y + (height - second.getIconHeight()) / 2);
+    }
+
+    @Override
+    public int getIconWidth() {
+      return first.getIconWidth() + GAP + second.getIconWidth();
+    }
+
+    @Override
+    public int getIconHeight() {
+      return Math.max(first.getIconHeight(), second.getIconHeight());
+    }
   }
 
   /**

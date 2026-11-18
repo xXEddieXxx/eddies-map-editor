@@ -3,8 +3,8 @@
 [← Guide](README.md)
 
 Give each nation an alliance and its starting PUs. Who owns which land is set in Territories. The
-map shows the Owners view; the list on the right names the nations, each with its colour; a click
-chooses one.
+map shows the Owners view; the list on the right names the nations, each with its colour and, once
+the map has a folder, its flag; a click chooses one.
 
 ![Nations, the top of a nation](img/nations.png)
 

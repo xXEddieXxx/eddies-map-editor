@@ -2023,6 +2023,25 @@ final class MapProject {
   }
 
   /**
+   * The nation's flag as the game shows it, the map's own or the game's; empty without one or
+   * before the map has a folder. Read anew each time, as an import replaces the file.
+   */
+  Optional<BufferedImage> flagPicture(final String nation) {
+    return getFiles()
+        .folder()
+        // a nation renamed since the last save has its flags under the name it was saved with
+        .flatMap(folder -> MapFolder.flag(folder, getFiles().nationFilesName(nation), ""))
+        .flatMap(
+            url -> {
+              try {
+                return Optional.ofNullable(ImageIO.read(url));
+              } catch (final IOException e) {
+                return Optional.empty();
+              }
+            });
+  }
+
+  /**
    * The unit's picture as the first nation with one of the map's shows it, else as the first nation
    * shows it; before there are nations, an uploaded one as it is or the game's of the Germans.
    */
