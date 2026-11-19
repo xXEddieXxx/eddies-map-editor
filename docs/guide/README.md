@@ -7,7 +7,7 @@ and rules, and play the map in TripleA, without writing XML by hand. This site i
 guide: a page for every tool, with pictures.
 
 [Download the editor](https://github.com/xXEddieXxx/eddies-map-editor/releases/latest){ .md-button .md-button--primary }
-[Make your first map](getting-started.md){ .md-button }
+[Make your first map](getting-started.md){ .md-button .md-button--primary }
 
 </div>
 
