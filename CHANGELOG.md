@@ -135,6 +135,12 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 
 ### Changed
 
+- **The map's views are one button** (#38). **View: Game ▾** above the map, in every tool and at
+  every window width, in place of a row of buttons that became this one only when short of room.
+  Its menu has four views: Game, Owners, Political and Values. The Units view is gone, as Game
+  shows the units (zoomed far out, where Units showed a count per territory, zoom in to see
+  them); the neighbours' lines belong to Connections, which shows them always and has
+  no view button.
 - **Production reads easier** (#37). In Buy and Repair each unit's row shows the unit's picture,
   as the nation that buys from the list shows it, and the numbers stand in the middle of their columns. In Resources › At the start each
   resource has its icon above its name, the numbers are centered, and the number columns stay as

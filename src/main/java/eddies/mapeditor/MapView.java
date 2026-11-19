@@ -92,8 +92,6 @@ final class MapView extends JPanel {
   private final MapCanvas canvas;
 
   private final MapViewsBar views;
-  // the territory the tool chose, shown again when the map maker leaves Neighbours
-  private @Nullable String chosen;
   private final MapLegend legend;
   private final JPanel top = new JPanel(new BorderLayout());
   private final JPanel editorTools = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
@@ -169,7 +167,7 @@ final class MapView extends JPanel {
                 fitOnce();
               }
             });
-    views = new MapViewsBar(MapMode.GAME, this::viewChosen);
+    views = new MapViewsBar(MapMode.GAME, this::showMode);
     legend = new MapLegend(project);
     goal = new GoalStrip(project);
     final JButton zoomShown = new JButton();
@@ -240,24 +238,16 @@ final class MapView extends JPanel {
 
   /**
    * The toolbar's layout: the views, a line, the editor's tools, the map's tools at the right, all
-   * in one row as long as it fits; shorter of room first the views as one button with a menu, so
-   * the editor's tools keep their names, then those named tools as their glyphs ({@link
-   * Theme#setNamedMapToolStyle}). If even that does not fit, it wraps: the editor's tools, then
-   * the map's, on lines of their own, so nothing is cut or lies over another.
+   * in one row as long as it fits; short of room the editor's named tools show as their glyphs
+   * ({@link Theme#setNamedMapToolStyle}). If even that does not fit, it wraps: the editor's tools,
+   * then the map's, on lines of their own, so nothing is cut or lies over another. A tool whose
+   * view is its own, Connections, has no views: the row then starts with its tools.
    */
   private final class ToolbarLayout implements LayoutManager {
-    private static final List<Stage> STAGES =
-        List.of(
-            new Stage(MapViewsBar.Shape.TOGGLES, true),
-            new Stage(MapViewsBar.Shape.DROPDOWN, true),
-            new Stage(MapViewsBar.Shape.DROPDOWN, false));
-
     private final JPanel row;
     private final JComponent mapTools;
     // the lines laid out last, for the row's height
     private int lines = 1;
-
-    private record Stage(MapViewsBar.Shape views, boolean toolNames) {}
 
     ToolbarLayout(final JPanel row, final JComponent mapTools) {
       this.row = row;
@@ -275,7 +265,7 @@ final class MapView extends JPanel {
       final Insets insets = parent.getInsets();
       final int height = UIScale.scale(Theme.MAP_TOOL) * lines + Theme.GAP_XS * (lines - 1);
       return new Dimension(
-          insets.left + insets.right + width(STAGES.getFirst()),
+          insets.left + insets.right + width(true),
           insets.top + insets.bottom + height);
     }
 
@@ -288,15 +278,13 @@ final class MapView extends JPanel {
     public void layoutContainer(final Container parent) {
       final Insets insets = parent.getInsets();
       final int room = parent.getWidth() - insets.left - insets.right;
-      final Stage stage =
-          STAGES.stream().filter(s -> width(s) <= room).findFirst().orElse(STAGES.getLast());
-      views.show(stage.views());
-      named(editorTools).forEach(tool -> showTool(tool, stage.toolNames()));
+      final boolean toolNames = width(true) <= room;
+      named(editorTools).forEach(tool -> showTool(tool, toolNames));
       final int lineHeight = UIScale.scale(Theme.MAP_TOOL);
       final int right = parent.getWidth() - insets.right;
       int y = insets.top;
       int laidLines = 1;
-      int x = place(views, insets.left, y);
+      int x = views.isVisible() ? place(views, insets.left, y) : insets.left;
       if (editorTools.isVisible()) {
         final boolean sameLine = x + editorToolsWidth() <= right;
         if (beforeEditorTools.isVisible() != sameLine) {
@@ -340,13 +328,16 @@ final class MapView extends JPanel {
           + editorTools.getPreferredSize().width;
     }
 
-    /** The width of all in one line at this stage, measured without changing anything. */
-    private int width(final Stage stage) {
-      int width = views.width(stage.views()) + Theme.GAP_S + mapTools.getPreferredSize().width;
+    /** The width of all in one line, the tools by name or glyph, measured without a change. */
+    private int width(final boolean toolNames) {
+      int width =
+          (views.isVisible() ? views.getPreferredSize().width : 0)
+              + Theme.GAP_S
+              + mapTools.getPreferredSize().width;
       if (editorTools.isVisible()) {
         width += editorToolsWidth();
         for (final AbstractButton tool : named(editorTools).toList()) {
-          width += toolWidth(tool, stage.toolNames()) - tool.getPreferredSize().width;
+          width += toolWidth(tool, toolNames) - tool.getPreferredSize().width;
         }
       }
       return width;
@@ -557,15 +548,6 @@ final class MapView extends JPanel {
     bannerCards.show(bannerOrProgress, banner.isVisible() ? BANNER_CARD : PROGRESS_CARD);
   }
 
-  /**
-   * The view the map maker chose; Neighbours starts with no territory chosen, so it shows all
-   * connections until a click chooses one; another view shows the tool's choice again.
-   */
-  private void viewChosen(final MapMode mode) {
-    showMode(mode);
-    canvas.setSelected(mode == MapMode.CONNECTIONS ? null : chosen);
-  }
-
   /** The map and its legend in this view. */
   private void showMode(final MapMode mode) {
     canvas.setMode(mode);
@@ -708,7 +690,11 @@ final class MapView extends JPanel {
 
   /** Takes the map for an editor: its mode, its tools above the map, what a click does. */
   void useFor(final MapMode mapMode, final JComponent tools, final Consumer<String> onClick) {
-    views.showChosen(mapMode);
+    // a view that is the tool's own, Connections' lines, always shows: nothing to choose
+    views.setVisible(MapMode.CHOICES.contains(mapMode));
+    if (views.isVisible()) {
+      views.showChosen(mapMode);
+    }
     showMode(mapMode);
     editorTools.removeAll();
     tools.setOpaque(false);
@@ -1019,7 +1005,6 @@ final class MapView extends JPanel {
   }
 
   void select(@Nullable final String territory) {
-    chosen = territory;
     canvas.setSelected(territory);
   }
 

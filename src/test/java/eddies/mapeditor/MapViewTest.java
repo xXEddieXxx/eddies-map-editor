@@ -28,7 +28,6 @@ import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JSeparator;
-import javax.swing.JToggleButton;
 import javax.swing.KeyStroke;
 import javax.swing.LookAndFeel;
 import javax.swing.SwingUtilities;
@@ -240,7 +239,7 @@ final class MapViewTest {
     assertThat(help).as("explanations live in tool tips and the banner").containsExactly(false);
   }
 
-  @DisplayName("The views start the toolbar above the map, before the tool's own; not in the legend")
+  @DisplayName("The views are one button at the toolbar's start, with room too; not in the legend")
   @Test
   void viewsStartTheToolbar() throws Exception {
     // given
@@ -259,18 +258,8 @@ final class MapViewTest {
 
     // then
     assertThat(toolbar)
-        .as("left to right: the views by name, then the tool's own, then the map's")
-        .startsWith(
-            "Game",
-            "Owners",
-            "Political",
-            "Values",
-            "Units",
-            "Connections",
-            "Select",
-            "Paint ▾",
-            "Places ▾",
-            "Draw borders");
+        .as("left to right: the views' one button, then the tool's own, then the map's")
+        .startsWith("View: Game ▾", "Select", "Paint ▾", "Places ▾", "Draw borders");
     assertThat(inLegend).as("the legend has only keys").containsExactly(false);
   }
 
@@ -280,7 +269,7 @@ final class MapViewTest {
     // given
     final List<Icon> icons = new ArrayList<>();
 
-    // when: with room, where each view has its icon, and short of it, where the tools have theirs
+    // when: with room, and short of it, where the tools show only their glyphs
     SwingUtilities.invokeAndWait(
         () ->
             inEditorsTheme(
@@ -293,11 +282,11 @@ final class MapViewTest {
                   }
                 }));
 
-    // then: the Game view's die is on the dropdown too, so each glyph counts once
+    // then: each glyph counts once
     final List<Icon> glyphs = icons.stream().distinct().toList();
     assertThat(glyphs)
-        .as("the views, Select, the brush, the pin, the pencil, Fit and the picture")
-        .hasSize(MapMode.values().length + 6);
+        .as("the Game view, Select, the brush, the pin, the pencil, Fit and the picture")
+        .hasSize(7);
     assertThat(glyphs.stream().map(MapViewTest::painted))
         .as("and no two are drawn alike, eg the Game view is not the picture")
         .doesNotHaveDuplicates();
@@ -351,7 +340,7 @@ final class MapViewTest {
     return SwingUtilities.convertPoint(canvas.getParent().getParent(), 0, 0, map).y;
   }
 
-  @DisplayName("Short of room the views are one dropdown, the tools keep their names, none is cut")
+  @DisplayName("At 1280 px the tools keep their names beside the views' button, none is cut")
   @Test
   void narrowToolbarCutsNothing() throws Exception {
     // given
@@ -409,7 +398,7 @@ final class MapViewTest {
         System.getProperty("os.name").startsWith("Windows"),
         "the width is the one of Windows' fonts");
     assertThat(toolbar)
-        .as("the views' dropdown, then glyphs only, Paint and Places with their arrows")
+        .as("the views' button, then glyphs only, Paint and Places with their arrows")
         .startsWith("View: Game ▾", "", "▾", "▾", "");
     assertThat(select)
         .as("Select as its glyph, named in its tool tip")
@@ -446,9 +435,36 @@ final class MapViewTest {
     assertThat(rowHeight.getFirst()).as("more than one line").isGreaterThan(48);
   }
 
-  @DisplayName("The Connections view starts with no territory chosen; another view shows it again")
+  @DisplayName("While Connections has the map there is no view button; another tool has it again")
   @Test
-  void neighboursViewStartsUnchosen() throws Exception {
+  void connectionsHasNoViewButton() throws Exception {
+    // given
+    final List<List<String>> views = new ArrayList<>();
+    final List<Boolean> fits = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenMap();
+          map.setSize(1400, 600);
+          for (final MapMode mode : List.of(MapMode.CONNECTIONS, MapMode.OWNERS)) {
+            map.useFor(mode, new JPanel(), territory -> {});
+            layOut(map);
+            views.add(toolbarTexts(map).stream().filter(text -> text.startsWith("View")).toList());
+            fits.add(cutNothing(map));
+          }
+        });
+
+    // then
+    assertThat(views)
+        .as("none while the tool's lines always show, then the next tool's view to choose from")
+        .containsExactly(List.of(), List.of("View: Owners ▾"));
+    assertThat(fits).as("the map's tools whole both times").containsExactly(true, true);
+  }
+
+  @DisplayName("A view chosen from the menu keeps the territory the tool chose")
+  @Test
+  void chosenViewKeepsTheTerritory() throws Exception {
     // given
     final List<Optional<String>> selected = new ArrayList<>();
 
@@ -458,17 +474,22 @@ final class MapViewTest {
           final MapView map = givenMap();
           map.useFor(MapMode.GAME, new JPanel(), territory -> {});
           map.select("Territory 1");
-          toolbarButton(map, MapMode.CONNECTIONS + ": " + MapMode.CONNECTIONS.getDescription())
-              .doClick();
-          selected.add(find(map, MapCanvas.class).getSelected());
-          toolbarButton(map, MapMode.GAME + ": " + MapMode.GAME.getDescription()).doClick();
+          chooseView(map, MapMode.VALUES);
           selected.add(find(map, MapCanvas.class).getSelected());
         });
 
     // then
-    assertThat(selected)
-        .as("none in Connections, the tool's again in Game")
-        .containsExactly(Optional.empty(), Optional.of("Territory 1"));
+    assertThat(selected).as("still the tool's").containsExactly(Optional.of("Territory 1"));
+  }
+
+  /** Chooses the view in the menu of the views' button. */
+  private static void chooseView(final MapView map, final MapMode mode) {
+    final JMenuItem item =
+        (JMenuItem)
+            find(map, MapViewsBar.class)
+                .viewsMenu()
+                .getComponent(MapMode.CHOICES.indexOf(mode));
+    item.doClick();
   }
 
   @DisplayName("A tool without controls of its own leaves no line and no room in the toolbar")
@@ -481,7 +502,7 @@ final class MapViewTest {
     SwingUtilities.invokeAndWait(
         () -> {
           final MapView map = givenMap();
-          map.useFor(MapMode.CONNECTIONS, new JPanel(), territory -> {});
+          map.useFor(MapMode.GAME, new JPanel(), territory -> {});
           map.setSize(1400, 600);
           layOut(map);
           final Container row = find(map, MapViewsBar.class).getParent();
@@ -617,15 +638,7 @@ final class MapViewTest {
     SwingUtilities.invokeAndWait(
         () -> {
           final MapView map = givenMap();
-          all(map)
-              .flatMap(
-                  c ->
-                      c instanceof JToggleButton t && "Values".equals(t.getText())
-                          ? Stream.of(t)
-                          : Stream.empty())
-              .findFirst()
-              .orElseThrow()
-              .doClick();
+          chooseView(map, MapMode.VALUES);
           shown.add(titles(map).stream().anyMatch(text -> text.startsWith("Badge: PUs")));
         });
 

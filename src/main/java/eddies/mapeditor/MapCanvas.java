@@ -110,7 +110,8 @@ final class MapCanvas extends JComponent {
   // at this zoom or less a smaller copy of the picture shows: the screen holds more tiles than kept
   private static final double OVERVIEW_ZOOM = 0.6;
   private static final int OVERVIEW_WIDTH = 4096;
-  // unit pictures smaller than this, in pixels, show as a count instead
+  // unit pictures smaller than this, in pixels, are not drawn: zoomed out that far, units show
+  // only after zooming in
   private static final int MIN_UNIT_SIZE = 14;
   // squares of the screen drawn once, 1 MB each at 100 %, 4 MB at 200 %: enough for a big screen
   private static final int LAYER_SIZE = 512;
@@ -2111,7 +2112,7 @@ final class MapCanvas extends JComponent {
             .map(n -> allianceColors.getOrDefault(n, NEUTRAL))
             .orElse(NEUTRAL);
       }
-      case VALUES, UNITS, CONNECTIONS -> blend(owner, NEUTRAL);
+      case VALUES, CONNECTIONS -> blend(owner, NEUTRAL);
     };
   }
 
@@ -2270,9 +2271,8 @@ final class MapCanvas extends JComponent {
   }
 
   /**
-   * The territory's value in a badge, or its units: their pictures where the game draws them, or in
-   * the Units view when they would be too small to see, how many in a badge. A dot marks a change
-   * not saved yet.
+   * The territory's value in a badge, or its units: their pictures where the game draws them,
+   * unless they would be too small to see. A dot marks a change not saved yet.
    */
   private void paintBadges(final Graphics2D g, final String territory) {
     final Look look = look(territory);
@@ -2280,21 +2280,10 @@ final class MapCanvas extends JComponent {
     final int y = (int) (look.center().y * zoom);
     // the map's unit size, as its place.txt is laid out for units of that size
     final int size = (int) Math.round(unitSize.width * zoom);
-    final boolean showsUnits = mode == MapMode.GAME || mode == MapMode.UNITS;
-    if (showsUnits && size >= MIN_UNIT_SIZE) {
+    if (mode == MapMode.GAME && size >= MIN_UNIT_SIZE) {
       paintUnits(g, territory, look.units(), size);
-    } else {
-      final String text =
-          switch (mode) {
-            case VALUES -> look.values();
-            case UNITS ->
-                Optional.of(look.units().stream().mapToInt(UnitPlacement::getQuantity).sum())
-                    .filter(count -> count > 0)
-                    .map(count -> count + " units")
-                    .orElse("");
-            case GAME, OWNERS, POLITICAL, CONNECTIONS -> "";
-          };
-      paintBadge(g, text, x, y);
+    } else if (mode == MapMode.VALUES) {
+      paintBadge(g, look.values(), x, y);
     }
     if (look.changed()) {
       g.setColor(Theme.getAccentColor());

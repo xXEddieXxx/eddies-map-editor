@@ -141,7 +141,6 @@ final class MapLegend extends JPanel {
         keys.add(chip(MapCanvas.SEA, "Sea zone"));
       }
       case VALUES -> keys.add(note("Badge: PUs per turn · ★ capital · VC victory city"));
-      case UNITS -> keys.add(note("Units where the game draws them"));
       case CONNECTIONS ->
           keys.add(note("Line = neighbours. The chosen territory's lines are red."));
       default -> throw new IllegalStateException("Unknown view: " + mode);

@@ -10,7 +10,7 @@ chosen territory in place of the list.
 
 ![Territories with a territory chosen](img/territories.png)
 
-1. **View** switches the colouring: Game, Owners, Political, Values, Units, Connections. See
+1. **View** switches the colouring: Game, Owners, Political, Values. See
    [View](menus.md#view).
 2. **Select** is the usual mode: a click on the map chooses the territory.
 3. **Paint** opens the brush menu: owner, capital, PUs, units, passable, terrain effects,

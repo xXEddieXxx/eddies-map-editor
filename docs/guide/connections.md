@@ -7,8 +7,8 @@ connection is an island.
 
 ![Connections](img/connections.png)
 
-1. **View: Connections** is chosen for you: every connection is a line between the middles of two
-   territories. The chosen territory's lines are red.
+1. The map always shows the connections here, so it has no view button: every connection is a
+   line between the middles of two territories. The chosen territory's lines are red.
 2. **Find neighbours again…** compares the connections with the territories' outlines: which
    touch without a connection, and which connections join territories that do not touch. The
    result lists both under **Problems** and **Worth a look**, each with **Show**, and offers to

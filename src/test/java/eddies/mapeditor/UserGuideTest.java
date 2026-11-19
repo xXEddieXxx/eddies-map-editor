@@ -117,7 +117,7 @@ final class UserGuideTest {
     pictureMenu.addAll(found(view, "pictureMenu\\.add\\(\"([^\"]+)\"\\)"));
     pictureMenu.addAll(found(view, "new JMenuItem\\(\"([^\"]+)\"\\)"));
     pictureMenu.addAll(found(view, "new JCheckBoxMenuItem\\(\"([^\"]+)\""));
-    final List<String> views = found(source("MapMode.java"), "\\(\\s*\"([A-Z][a-z]+)\",");
+    final List<String> views = MapMode.CHOICES.stream().map(MapMode::toString).toList();
     // the system's folder name differs per system: the guide names both
     final List<String> fileMenuNamed =
         fileMenu.stream().filter(item -> !item.startsWith("Play with")).toList();
@@ -128,7 +128,7 @@ final class UserGuideTest {
     assertThat(missing(guide, pictureMenu))
         .as("map picture menu items the guide does not name")
         .isEmpty();
-    assertThat(views).as("the views, read from MapMode").hasSize(6);
+    assertThat(views).as("the views to choose from, read from MapMode").hasSize(4);
     assertThat(missing(guide, views)).as("views the guide does not name").isEmpty();
     assertThat(guide)
         .as("Play with, and the folder on both systems")

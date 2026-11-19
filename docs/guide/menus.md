@@ -62,15 +62,17 @@ The button at the right end of the map's toolbar.
 
 ![View menu](img/menu-view.png)
 
-The same map in six colourings. The legend below the map explains the one shown.
+One button above the map, **View: Game ▾**: the same map in four colourings. The legend below
+the map explains the one shown.
 
 - **Game** as it plays: the picture, the owners' colours and the units.
 - **Owners** each territory in its owner's colour.
 - **Political** each territory in its owner's alliance colour.
 - **Values** each territory's PUs per turn, capital and victory city, at its center. Where the
   game draws the number is set in Territories' Places › PUs.
-- **Units** the units each territory starts with.
-- **Connections** which territories are neighbours, as the Connections tool shows them.
+
+The Connections tool has no view button: there the map always shows which territories are
+neighbours, as lines.
 
 ## Paint
 
