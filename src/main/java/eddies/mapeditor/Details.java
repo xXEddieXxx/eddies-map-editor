@@ -5,9 +5,11 @@ import java.awt.Component;
 import java.awt.FlowLayout;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Function;
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
 import javax.swing.DefaultCellEditor;
+import javax.swing.Icon;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
@@ -52,19 +54,30 @@ class Details {
    * cell's right shows that it does.
    */
   static void comboColumn(final JTable table, final int column, final JComboBox<String> choices) {
+    comboColumn(table, column, choices, value -> Optional.empty());
+  }
+
+  /** As comboColumn, each row with the icon of its value before it, eg a unit's picture. */
+  static void comboColumn(
+      final JTable table,
+      final int column,
+      final JComboBox<String> choices,
+      final Function<String, Optional<Icon>> icons) {
     final DefaultCellEditor editor = new DefaultCellEditor(choices);
     editor.setClickCountToStart(1);
     final TableColumn tableColumn = table.getColumnModel().getColumn(column);
     tableColumn.setCellEditor(editor);
-    tableColumn.setCellRenderer(new ComboCell());
+    tableColumn.setCellRenderer(new ComboCell(icons));
   }
 
   /** The value as text, with the default renderer's colors, and the arrow beside it. */
   private static final class ComboCell extends DefaultTableCellRenderer {
     private final JLabel arrow = new JLabel("▾");
     private final JPanel cell = new JPanel(new BorderLayout());
+    private final transient Function<String, Optional<Icon>> icons;
 
-    ComboCell() {
+    ComboCell(final Function<String, Optional<Icon>> icons) {
+      this.icons = icons;
       arrow.setForeground(Theme.getSecondaryTextColor());
       arrow.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, Theme.GAP_XS));
       cell.add(this, BorderLayout.CENTER);
@@ -80,6 +93,7 @@ class Details {
         final int row,
         final int column) {
       super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+      setIcon(icons.apply(String.valueOf(value)).orElse(null));
       cell.setBackground(getBackground());
       cell.setToolTipText(getToolTipText());
       return cell;

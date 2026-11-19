@@ -130,6 +130,10 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 
 ### Changed
 
+- **Production reads easier** (#37). In Buy and Repair each unit's row shows the unit's picture,
+  as the nation that buys from the list shows it, and the numbers stand in the middle of their columns. In Resources › At the start each
+  resource has its icon above its name, the numbers are centered, and the number columns stay as
+  narrow as they need: room to spare goes to the nations' names.
 - **Units' sections in a new order** (#36): what a unit does in a battle first (Combat, Gives
   support, Air and anti-air, Bombing, Sea), then how it moves (Movement, Transport and carrier),
   then the rest (Miscellaneous, Production and infrastructure, Special). Bombing shows for air

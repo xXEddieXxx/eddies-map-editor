@@ -680,7 +680,7 @@ final class UnitsEditor implements Editor {
   }
 
   /** The picture at most so many px wide and high, never blown up, so a small one stays sharp. */
-  private static ImageIcon scaledIcon(final Image image, final int most) {
+  static ImageIcon scaledIcon(final Image image, final int most) {
     final int width = image.getWidth(null);
     final int height = image.getHeight(null);
     final double scale = Math.min(1, (double) most / Math.max(1, Math.max(width, height)));

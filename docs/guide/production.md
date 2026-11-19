@@ -14,7 +14,8 @@ window tabs**.
 3. **Copy from…** takes the rules of another list in place of this one's.
 4. **Show**: **Sold here (n)** lists the rules this list sells; **All rules (n)** every rule of
    the game, with a tick for each that this list sells. A rule is a unit or resource for a price;
-   tick it to sell it here.
+   tick it to sell it here. A unit's row shows its picture, as the nation that buys from the list
+   shows it.
 5. **+ Add rule…** makes a rule: the unit or resource, how many, and what it costs in each
    resource. A rule with a count sells several at once, for example 2 infantry for 7 PUs. Each
    rule row has **Rename**, **Remove rule** and, in the row, the price fields. **▲ ▼** move the
@@ -32,7 +33,8 @@ of repair costs. **Choose nations…** says who uses the list.
 ## Resources
 
 The game's resources, PUs first; **Add resource…** adds another, for example Ore, with its icon
-(**Change icon…**) and what each nation has of it **At the start**. Territories give resources per
+(**Change icon…**) and what each nation has of it **At the start**, a column per resource under
+its icon. Territories give resources per
 turn in Territories → More options, units in Units → Production and infrastructure.
 
 ## Buy window tabs

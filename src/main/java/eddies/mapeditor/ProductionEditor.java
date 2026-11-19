@@ -9,6 +9,7 @@ import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.Graphics2D;
+import java.awt.Image;
 import java.awt.RenderingHints;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
@@ -23,6 +24,7 @@ import java.nio.file.Path;
 import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -38,6 +40,7 @@ import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.ButtonGroup;
 import javax.swing.DefaultCellEditor;
+import javax.swing.Icon;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
@@ -57,6 +60,7 @@ import javax.swing.ListSelectionModel;
 import javax.swing.SwingConstants;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.table.AbstractTableModel;
+import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.JTableHeader;
 import javax.swing.table.TableCellRenderer;
 import javax.swing.table.TableColumn;
@@ -72,6 +76,9 @@ import eddies.mapeditor.ProductionTabs.Tab;
  * the rules with what they give and cost.
  */
 final class ProductionEditor implements Editor {
+  // a unit's picture in a row of a rules table, which is 8 px higher than its text
+  private static final int UNIT_ICON_SIZE = 22;
+
   private final JTabbedPane page = new JTabbedPane();
   private final FrontiersPage buy;
   private final FrontiersPage repair;
@@ -176,6 +183,8 @@ final class ProductionEditor implements Editor {
     private @Nullable Game titledIn;
     private Map<String, String> titles = Map.of();
     private Optional<JTable> rulesShown = Optional.empty();
+    // the units' pictures for the rows, made anew after every change: a picture, a nation's color
+    private final Map<String, Icon> unitIcons = new HashMap<>();
 
     FrontiersPage(final MapProject project, final Trade trade) {
       this.project = project;
@@ -195,6 +204,7 @@ final class ProductionEditor implements Editor {
       page.add(Panels.sideBySide(list, details), BorderLayout.CENTER);
       project.onChange(
           () -> {
+            unitIcons.clear();
             list.refresh();
             if (selected != null && ProductionXml.frontiers(view()).contains(selected)) {
               update();
@@ -244,7 +254,16 @@ final class ProductionEditor implements Editor {
               : users.size() == 1 ? "" : " · " + nationsText(users));
     }
 
+    private Optional<Image> unitPicture(final String unit) {
+      return Optional.ofNullable(selected)
+          .flatMap(frontier -> users(view(), frontier).stream().findFirst())
+          .flatMap(nation -> project.unitPicture(nation, project.nationColor(nation), unit))
+          .or(() -> project.unitPicture(unit));
+    }
+
     private void choose(final String frontier) {
+      // another list's nation may show the units in its own pictures
+      unitIcons.clear();
       selected = frontier;
       showDetails();
     }
@@ -548,6 +567,7 @@ final class ProductionEditor implements Editor {
             }
           });
       table.setRowHeight(table.getRowHeight() + 8);
+      table.setDefaultRenderer(Integer.class, newCenteredNumbers());
       table.setAutoResizeMode(JTable.AUTO_RESIZE_SUBSEQUENT_COLUMNS);
       table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
       table.putClientProperty("terminateEditOnFocusLost", true);
@@ -575,7 +595,39 @@ final class ProductionEditor implements Editor {
       }
       final JComboBox<String> gives = new JComboBox<>();
       things(view()).forEach(gives::addItem);
-      Details.comboColumn(table, 1, gives);
+      Details.comboColumn(table, 1, gives, this::unitIcon);
+    }
+
+    /**
+     * The unit's picture for its row, as the first nation that buys from the chosen list shows
+     * it (a nation's own picture of the unit, its color), else as the first nation with one
+     * does; in the middle of a square all rows have, so the names stay in line; the square alone
+     * for a resource or a unit without a picture.
+     */
+    private Optional<Icon> unitIcon(final String thing) {
+      return Optional.of(
+          unitIcons.computeIfAbsent(
+              thing,
+              t -> {
+                final BufferedImage square =
+                    new BufferedImage(
+                        UNIT_ICON_SIZE, UNIT_ICON_SIZE, BufferedImage.TYPE_INT_ARGB);
+                Optional.of(t)
+                    .filter(MapXml.unitTypes(project.game())::contains)
+                    .flatMap(this::unitPicture)
+                    .map(image -> UnitsEditor.scaledIcon(image, UNIT_ICON_SIZE))
+                    .ifPresent(
+                        icon -> {
+                          final Graphics2D g = square.createGraphics();
+                          icon.paintIcon(
+                              null,
+                              g,
+                              (UNIT_ICON_SIZE - icon.getIconWidth()) / 2,
+                              (UNIT_ICON_SIZE - icon.getIconHeight()) / 2);
+                          g.dispose();
+                        });
+                return new ImageIcon(square);
+              }));
     }
 
     /** "Remove rule" while a row is chosen; "Remove list" below it, apart. */
@@ -929,6 +981,13 @@ final class ProductionEditor implements Editor {
     }
   }
 
+  /** Numbers in the middle of their column, under a heading in the middle. */
+  private static DefaultTableCellRenderer newCenteredNumbers() {
+    final DefaultTableCellRenderer centered = new DefaultTableCellRenderer();
+    centered.setHorizontalAlignment(SwingConstants.CENTER);
+    return centered;
+  }
+
   /** The width of a table's columns at their least. */
   static int leastWidth(final JTable table) {
     int width = 0;
@@ -1076,7 +1135,13 @@ final class ProductionEditor implements Editor {
       start.setRowHeight(start.getRowHeight() + 8);
       start.putClientProperty("terminateEditOnFocusLost", true);
       ((DefaultCellEditor) start.getDefaultEditor(Integer.class)).setClickCountToStart(1);
-      // numbers right-aligned under right-aligned headers
+      start.setDefaultRenderer(Integer.class, newCenteredNumbers());
+      // each resource's icon above its name, in the middle like the numbers below; made once, as
+      // a heading is asked for at every paint and layout
+      final Map<String, Icon> icons = new HashMap<>();
+      for (int i = 1; i < start.getColumnCount(); i++) {
+        icons.put(start.getColumnName(i), icon(start.getColumnName(i)));
+      }
       final TableCellRenderer header = start.getTableHeader().getDefaultRenderer();
       final TableCellRenderer aligned =
           (table, value, isSelected, hasFocus, row, column) -> {
@@ -1085,7 +1150,10 @@ final class ProductionEditor implements Editor {
                     table, value, isSelected, hasFocus, row, column);
             if (cell instanceof JLabel label) {
               label.setHorizontalAlignment(
-                  column == 0 ? SwingConstants.LEADING : SwingConstants.RIGHT);
+                  column == 0 ? SwingConstants.LEADING : SwingConstants.CENTER);
+              label.setIcon(icons.get(String.valueOf(value)));
+              label.setHorizontalTextPosition(SwingConstants.CENTER);
+              label.setVerticalTextPosition(SwingConstants.BOTTOM);
             }
             return cell;
           };
@@ -1116,6 +1184,10 @@ final class ProductionEditor implements Editor {
         final TableColumn column = start.getColumnModel().getColumn(i);
         column.setMinWidth(width);
         column.setPreferredWidth(width);
+        if (i > 0) {
+          // room to spare goes to the nations' names, the numbers stay together
+          column.setMaxWidth(width);
+        }
       }
     }
 
