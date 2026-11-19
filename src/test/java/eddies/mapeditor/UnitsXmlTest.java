@@ -285,4 +285,126 @@ final class UnitsXmlTest {
         .as("hints only for options the sections do not show")
         .doesNotContainAnyElementsOf(UnitOptions.NAMES);
   }
+
+  @DisplayName("A unit type whose attachment is written for each element of a variable reads it")
+  @Test
+  void readsOptionsWrittenForEach() throws Exception {
+    // given
+    final Game g40 = givenGame("ww2global40.xml").game();
+
+    // when
+    final Game game = givenWalkersLoop(g40);
+
+    // then
+    assertThat(UnitsXml.value(game, "artillery", givenOption("attack")))
+        .as("the attack the loop gives it, not its default 0")
+        .isEqualTo("4");
+    assertThat(MapXml.unitStat(game, "infantry", "hitPoints", 1))
+        .as("the list's line reads the same")
+        .isEqualTo(2);
+    assertThat(UnitsXml.options(game, "infantry"))
+        .as("the loop's attachment replaces the one written before it, as in TripleA")
+        .extracting(Option::getName)
+        .containsExactly("attack", "hitPoints");
+    assertThat(UnitsXml.loop(game, "infantry"))
+        .as("changed at the loop as written")
+        .map(loop -> loop.getAttachTo())
+        .contains("@Walkers@");
+    assertThat(UnitsXml.loop(game, "fighter")).as("one of its own").isEmpty();
+  }
+
+  @DisplayName("A change for one unit type of a loop is not taken: it would replace the loop's")
+  @Test
+  void loopMadeUnitIsNotChangedAlone() throws Exception {
+    // given
+    final Game game = givenWalkersLoop(givenGame("ww2global40.xml").game());
+
+    // when
+    final Game changed =
+        UnitsXml.withNewOption(
+            UnitsXml.withoutOptionAt(
+                UnitsXml.withValue(game, "infantry", givenOption("attack"), "9"),
+                "infantry",
+                "hitPoints",
+                0),
+            "infantry",
+            Option.builder().name("isAir").value("true").build());
+
+    // then
+    assertThat(changed).as("the game as it was").isSameAs(game);
+  }
+
+  /** G40 with a unitAttachment written for each of infantry and artillery, after their own. */
+  static Game givenWalkersLoop(final Game g40) {
+    return givenLoop(
+        GameRulesXml.withVariable(g40, "Walkers", List.of("infantry", "artillery")),
+        "$Walkers$",
+        "@Walkers@",
+        "4");
+  }
+
+  private static Game givenLoop(
+      final Game game, final String foreach, final String attachTo, final String attack) {
+    final Game added =
+        AttachmentsXml.withNewAttachment(game, "UnitAttachment", "unitAttachment", attachTo);
+    final int last = AttachmentsXml.attachments(added).size() - 1;
+    return AttachmentsXml.withAttachment(
+        added,
+        last,
+        Builders.toBuilder(AttachmentsXml.attachments(added).get(last))
+            .foreach(foreach)
+            .options(
+                List.of(
+                    Option.builder().name("attack").value(attack).build(),
+                    Option.builder().name("hitPoints").value("2").build()))
+            .build());
+  }
+
+  @DisplayName("An attachment written for the unit type after the loop counts, not the loop's")
+  @Test
+  void ownAttachmentAfterTheLoopCounts() throws Exception {
+    // given
+    final Game loop = givenWalkersLoop(givenGame("ww2global40.xml").game());
+    final Game own =
+        AttachmentsXml.withNewAttachment(loop, "UnitAttachment", "unitAttachment", "infantry");
+    final int last = AttachmentsXml.attachments(own).size() - 1;
+
+    // when
+    final Game game =
+        AttachmentsXml.withAttachment(
+            own,
+            last,
+            Builders.toBuilder(AttachmentsXml.attachments(own).get(last))
+                .options(List.of(Option.builder().name("attack").value("1").build()))
+                .build());
+
+    // then
+    assertThat(UnitsXml.value(game, "infantry", givenOption("attack")))
+        .as("the own one, written last, counts")
+        .isEqualTo("1");
+    assertThat(UnitsXml.loop(game, "infantry")).as("its own, changed here").isEmpty();
+  }
+
+  @DisplayName("Two variables side by side in a loop go element by element: $A$:$B$")
+  @Test
+  void readsVariablesSideBySide() throws Exception {
+    // given: each walker with the attack of the same place in another variable
+    final Game variables =
+        GameRulesXml.withVariable(
+            GameRulesXml.withVariable(
+                givenGame("ww2global40.xml").game(), "Walkers", List.of("infantry", "artillery")),
+            "Attacks",
+            List.of("5", "6"));
+
+    // when
+    final Game game = givenLoop(variables, "$Walkers$:$Attacks$", "@Walkers@", "@Attacks@");
+
+    // then
+    assertThat(
+            List.of(
+                UnitsXml.value(game, "infantry", givenOption("attack")),
+                UnitsXml.value(game, "artillery", givenOption("attack"))))
+        .as("one attachment per place, not per pair")
+        .containsExactly("5", "6");
+  }
 }

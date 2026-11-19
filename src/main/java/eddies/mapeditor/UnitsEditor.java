@@ -3,6 +3,7 @@ package eddies.mapeditor;
 import com.formdev.flatlaf.FlatClientProperties;
 import java.awt.BorderLayout;
 import java.awt.Component;
+import java.awt.Container;
 import java.awt.Dimension;
 import java.awt.Color;
 import java.awt.FlowLayout;
@@ -40,6 +41,7 @@ import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
 import javax.imageio.ImageIO;
+import javax.swing.AbstractButton;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
@@ -61,6 +63,7 @@ import javax.swing.JSpinner;
 import javax.swing.JTextField;
 import javax.swing.ListSelectionModel;
 import javax.swing.SwingUtilities;
+import javax.swing.text.JTextComponent;
 import org.triplea.map.data.elements.AttachmentList.Attachment.Option;
 import org.triplea.map.data.elements.Game;
 import org.triplea.swing.SwingComponents;
@@ -74,6 +77,11 @@ import eddies.mapeditor.UnitOptions.UnitKind;
 /** The unit types: what they cost and how they fight and move. */
 final class UnitsEditor implements Editor {
   private static final String SUPPORT = "Gives support";
+  private static final String LOCKED =
+      "Can't be changed here: the game file writes it once for several unit types (foreach)."
+          + " Change it in Attachments.";
+  // marks a part that lock leaves as it is
+  private static final String OWN = "UnitsEditor.own";
   // the rows of Stacking limits, as RulesXml.STACKING_LIMITS and STACKING_COUNTS
   private static final List<String> STACKING_LABELS =
       List.of("When placing", "When moving in", "When attacking");
@@ -457,6 +465,17 @@ final class UnitsEditor implements Editor {
     }
     final String unit = selected;
     showHeader(game, unit);
+    UnitsXml.loop(game, unit)
+        .ifPresent(
+            loop ->
+                inspector.row(
+                    Help.link(
+                        "The grey options can't be changed here: the game file writes them once"
+                            + " for each element of "
+                            + loop.getForeach()
+                            + ". Change them in",
+                        "Attachments",
+                        loop.getName() + " of " + loop.getAttachTo())));
     inspector.row(leftAligned(optionSearch));
     inspector.row(grid);
     inspector.row(below);
@@ -470,8 +489,68 @@ final class UnitsEditor implements Editor {
     grid.clear();
     below.clear();
     showSections(game, unit);
+    if (UnitsXml.loop(game, unit).isPresent()) {
+      lock(grid);
+      lock(below);
+    }
     inspector.revalidate();
     inspector.repaint();
+  }
+
+  /**
+   * Shown but not changed: every field and button in it off, for a unit whose options are written
+   * for each element of a variable. Labels, fold rows, "?" and links to other tools stay, to read
+   * everything, and what is marked {@link #OWN}.
+   */
+  private static void lock(final Component part) {
+    if (part instanceof JLabel
+        || (part instanceof JComponent marked && marked.getClientProperty(OWN) != null)
+        || (part instanceof JButton button
+            && Optional.ofNullable(button.getText())
+                .filter(
+                    text ->
+                        text.startsWith("▸")
+                            || text.startsWith("▾")
+                            || text.equals("?")
+                            || text.endsWith("›"))
+                .isPresent())) {
+      return;
+    }
+    sayLocked(part);
+    if (part instanceof JLabel) {
+      return;
+    }
+    final boolean field =
+        part instanceof AbstractButton
+            || part instanceof JSpinner
+            || part instanceof JComboBox
+            || part instanceof JTextComponent;
+    if (!field && part instanceof Container container) {
+      for (final Component child : container.getComponents()) {
+        lock(child);
+      }
+      return;
+    }
+    part.setEnabled(false);
+  }
+
+  // why it is off, wherever the mouse is: on the field, its parts, its label or the space between,
+  // as the line above the options may be scrolled away
+  private static void sayLocked(final Component part) {
+    if (part instanceof JComponent told) {
+      final String tip = told.getToolTipText();
+      if (tip == null || tip.startsWith("<html")) {
+        told.setToolTipText(LOCKED);
+      } else if (!tip.startsWith(LOCKED)) {
+        told.setToolTipText(LOCKED + " " + tip);
+      }
+    }
+    // a field's own parts, eg a number's text and arrows
+    if (!(part instanceof JPanel) && part instanceof Container container) {
+      for (final Component child : container.getComponents()) {
+        sayLocked(child);
+      }
+    }
   }
 
   // ---- the top: picture, name, kind and the numbers of the list's line
@@ -668,6 +747,10 @@ final class UnitsEditor implements Editor {
     }
     UnitOptions.ESSENTIALS.forEach(
         name -> fields.add(newEssential(game, unit, UnitOptions.named(name))));
+    if (UnitsXml.loop(game, unit).isPresent()) {
+      // not the cost, which a production rule gives
+      fields.stream().skip(1).forEach(UnitsEditor::lock);
+    }
     final List<String> labels =
         List.of("Cost", "Value", "Attack", "Defense", "Movement", "Hit points");
     for (int i = 0; i < labels.size(); i++) {
@@ -738,6 +821,9 @@ final class UnitsEditor implements Editor {
     cells.setOpaque(false);
     cells.add(new JLabel("Kind"));
     cells.add(leftAligned(parts.toArray(JComponent[]::new)));
+    if (UnitsXml.loop(game, unit).isPresent()) {
+      lock(cells);
+    }
     return cells;
   }
 
@@ -853,6 +939,8 @@ final class UnitsEditor implements Editor {
       return 0;
     }
     grid.section(SUPPORT);
+    // the supports are attachments of their own, changed here also for a unit a loop makes
+    grid.section().putClientProperty(OWN, true);
     showSupports(game, unit);
     return 1;
   }

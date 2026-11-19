@@ -175,28 +175,58 @@ class AttachmentsXml {
     final Map<String, List<String>> variables = variables(game);
     final List<Attachment> all = new ArrayList<>();
     for (final Attachment attachment : attachments(game)) {
-      if (!isForEach(attachment)) {
+      if (isForEach(attachment)) {
+        all.addAll(madeBy(attachment, variables));
+      } else {
         all.add(attachment);
-        continue;
-      }
-      List<Map<String, String>> each = List.of(Map.of());
-      for (final String part : attachment.getForeach().split("\\^")) {
-        final String variable = part.strip().replaceAll("^\\$|\\$$", "");
-        final List<Map<String, String>> more = new ArrayList<>();
-        for (final Map<String, String> sofar : each) {
-          for (final String element : variables.getOrDefault(variable, List.of())) {
-            final Map<String, String> with = new LinkedHashMap<>(sofar);
-            with.put(variable, element);
-            more.add(with);
-          }
-        }
-        each = more;
-      }
-      for (final Map<String, String> elements : each) {
-        all.add(made(attachment, elements, variables));
       }
     }
     return all;
+  }
+
+  /**
+   * The attachments the one written for each element makes, with the game's {@link #variables}:
+   * "$A$^$B$" one per pair, "$A$:$B$" the two side by side, element by element. None for a loop
+   * TripleA refuses: a variable the game does not have, or two side by side of unlike length.
+   */
+  static List<Attachment> madeBy(
+      final Attachment loop, final Map<String, List<String>> variables) {
+    List<Map<String, String>> each = List.of(Map.of());
+    for (final String part : loop.getForeach().split("\\^")) {
+      final List<Map<String, String>> rounds = sideBySide(part, variables);
+      final List<Map<String, String>> more = new ArrayList<>();
+      for (final Map<String, String> sofar : each) {
+        for (final Map<String, String> round : rounds) {
+          final Map<String, String> with = new LinkedHashMap<>(sofar);
+          with.putAll(round);
+          more.add(with);
+        }
+      }
+      each = more;
+    }
+    return each.stream().map(elements -> made(loop, elements, variables)).toList();
+  }
+
+  // "$A$:$B$": a round per index, each variable's element of that index
+  private static List<Map<String, String>> sideBySide(
+      final String part, final Map<String, List<String>> variables) {
+    final List<String> names =
+        Stream.of(part.split(":"))
+            .map(name -> name.strip().replaceAll("^\\$|\\$$", ""))
+            .toList();
+    final int length = variables.getOrDefault(names.getFirst(), List.of()).size();
+    if (names.stream().anyMatch(name -> variables.getOrDefault(name, List.of()).size() != length)) {
+      return List.of();
+    }
+    final List<Map<String, String>> rounds = new ArrayList<>();
+    for (int i = 0; i < length; i++) {
+      final Map<String, String> round = new LinkedHashMap<>();
+      for (final String name : names) {
+        round.put(name, variables.get(name).get(i));
+      }
+      rounds.add(round);
+    }
+    return rounds;
   }
 
   // the attachment for these elements of its variables, as GameParser replaces them
@@ -206,6 +236,10 @@ class AttachmentsXml {
       final Map<String, List<String>> variables) {
     final UnaryOperator<String> each =
         text -> {
+          // most texts name no variable, and a big map's loops make 50,000 attachments
+          if (text.indexOf('@') < 0) {
+            return text;
+          }
           String made = text;
           for (final Map.Entry<String, String> element : elements.entrySet()) {
             made = made.replace("@" + element.getKey() + "@", element.getValue());
@@ -215,6 +249,9 @@ class AttachmentsXml {
     final UnaryOperator<String> all =
         text -> {
           String made = each.apply(text);
+          if (made.indexOf('$') < 0) {
+            return made;
+          }
           for (final Map.Entry<String, List<String>> variable : variables.entrySet()) {
             made = made.replace("$" + variable.getKey() + "$", String.join(":", variable.getValue()));
           }

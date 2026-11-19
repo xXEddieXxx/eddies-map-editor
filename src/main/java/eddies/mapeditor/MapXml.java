@@ -1716,12 +1716,12 @@ class MapXml {
    */
   static int unitStat(
       final Game game, final String unitType, final String stat, final int defaultValue) {
-    return option(game, UNIT, unitType, stat).flatMap(MapXml::parseInt).orElse(defaultValue);
+    return UnitsXml.option(game, unitType, stat).flatMap(MapXml::parseInt).orElse(defaultValue);
   }
 
   /** A yes or no stat of the unit type, eg "isAir". */
   static boolean unitFlag(final Game game, final String unitType, final String flag) {
-    return option(game, UNIT, unitType, flag).map(Boolean::parseBoolean).orElse(false);
+    return UnitsXml.option(game, unitType, flag).map(Boolean::parseBoolean).orElse(false);
   }
 
   /** The game with the unit type's option set to the value. */

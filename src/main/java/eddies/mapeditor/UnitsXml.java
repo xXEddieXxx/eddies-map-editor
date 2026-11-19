@@ -2,10 +2,13 @@ package eddies.mapeditor;
 
 import games.strategy.triplea.Constants;
 import games.strategy.triplea.attachments.UnitSupportAttachment;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.WeakHashMap;
 import java.util.function.UnaryOperator;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -28,13 +31,68 @@ class UnitsXml {
 
   // ---- the unit's options
 
-  /** The options of the unit type's unitAttachment in their order. */
+  /**
+   * The options of the unit type's unitAttachment in their order, as TripleA reads them: also of
+   * one written once for each element of a variable.
+   */
   static List<Option> options(final Game game, final String unit) {
-    return attachmentIndex(game, UNIT, unit)
-        .stream()
-        .mapToObj(i -> AttachmentsXml.options(AttachmentsXml.attachments(game).get(i)))
-        .flatMap(List::stream)
-        .toList();
+    return read(game, unit).map(Read::made).map(AttachmentsXml::options).orElse(List.of());
+  }
+
+  /** The option's value as the game file gives it to the unit type; none when it does not. */
+  static Optional<String> option(final Game game, final String unit, final String option) {
+    return options(game, unit).stream()
+        .filter(o -> AttachmentsXml.isOption(o, option))
+        .map(Option::getValue)
+        .filter(Objects::nonNull)
+        .findFirst();
+  }
+
+  /**
+   * The attachment written once for each element of a variable (foreach) that makes the unit
+   * type's unitAttachment, as written: its options are read here but changed in Attachments, at
+   * the one written, as one written here for this unit type alone would replace all it gives.
+   */
+  static Optional<Attachment> loop(final Game game, final String unit) {
+    return read(game, unit).flatMap(Read::loop);
+  }
+
+  /** A unit type's unitAttachment as the game reads it, and the loop that makes it, if one does. */
+  private record Read(Attachment made, Optional<Attachment> loop) {}
+
+  // by the game, which every change makes anew; kept while it is, as the list's line asks three
+  // numbers of every unit type
+  private static final Map<Game, Map<String, Read>> READ = new WeakHashMap<>();
+
+  private static Optional<Read> read(final Game game, final String unit) {
+    synchronized (READ) {
+      return Optional.ofNullable(READ.computeIfAbsent(game, UnitsXml::read).get(unit));
+    }
+  }
+
+  // of two for a unit type the last, as TripleA keeps one per name, written for it or by a loop
+  private static Map<String, Read> read(final Game game) {
+    final Map<String, List<String>> variables = AttachmentsXml.variables(game);
+    final Map<String, Read> last = new HashMap<>();
+    for (final Attachment written : AttachmentsXml.attachments(game)) {
+      if (!AttachmentsXml.isForEach(written)) {
+        if (AttachmentsXml.isNamed(written, UNIT) && written.getAttachTo() != null) {
+          last.put(written.getAttachTo(), new Read(written, Optional.empty()));
+        }
+        continue;
+      }
+      // only the loops that can make one: a big map has thousands of others
+      if (written.getName() == null
+          || !(AttachmentsXml.isNamed(written, UNIT) || written.getName().contains("@"))) {
+        continue;
+      }
+      for (final Attachment made : AttachmentsXml.madeBy(written, variables)) {
+        if (AttachmentsXml.isNamed(made, UNIT) && made.getAttachTo() != null) {
+          last.put(made.getAttachTo(), new Read(made, Optional.of(written)));
+        }
+      }
+    }
+    return last;
   }
 
   private static OptionalInt attachmentIndex(
@@ -60,7 +118,7 @@ class UnitsXml {
 
   /** The option's value, its default when the game does not give it. */
   static String value(final Game game, final String unit, final UnitOptions.UnitOption option) {
-    return MapXml.option(game, UNIT, unit, option.name()).orElse(option.defaultValue());
+    return option(game, unit, option.name()).orElse(option.defaultValue());
   }
 
   /** The game with the option set; set to its default or to nothing, it is left out. */
@@ -69,6 +127,10 @@ class UnitsXml {
       final String unit,
       final UnitOptions.UnitOption option,
       final String value) {
+    if (loop(game, unit).isPresent()) {
+      // not for this unit type alone: see loop
+      return game;
+    }
     final String typed = value.strip();
     return typed.isEmpty() || typed.equals(option.defaultValue())
         ? MapXml.withoutUnitOption(game, unit, option.name())
@@ -216,6 +278,9 @@ class UnitsXml {
 
   private static Game withAttachmentChanged(
       final Game game, final String unit, final UnaryOperator<Attachment> change) {
+    if (loop(game, unit).isPresent()) {
+      return game;
+    }
     final int index = attachmentIndex(game, UNIT, unit).orElseThrow();
     return AttachmentsXml.withAttachment(
         game, index, change.apply(AttachmentsXml.attachments(game).get(index)));
@@ -226,6 +291,9 @@ class UnitsXml {
    * some take several, eg createsUnitsList.
    */
   static Game withNewOption(final Game game, final String unit, final Option option) {
+    if (loop(game, unit).isPresent()) {
+      return game;
+    }
     final OptionalInt index = attachmentIndex(game, UNIT, unit);
     if (index.isEmpty()) {
       return MapXml.withUnitOption(game, unit, option.getName(), option.getValue());

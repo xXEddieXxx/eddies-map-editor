@@ -37,6 +37,13 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 
 ### Fixed
 
+- **Units showed 0-0-0 for unit types whose options a loop writes** (#31). A map like 11 Rings
+  of Power writes one unitAttachment for each unit of a variable (`foreach`). Units now reads
+  these as the game does: the Leader of each nation shows its 4-4-2 with 2 hit points. Such a
+  unit's options are shown but not changed in Units, with a link to **Attachments**, where the
+  loop is changed for all its unit types at once; the cost and the unit's own supports stay to
+  change. Loops over two variables side by side (`$A$:$B$`) are read too.
+
 - **The installer did not say where it installs, and its Start menu entry was hard to find**
   (#28). The entry sat in a Start menu folder called "Unknown". It is now under **Eddies Map
   Editor**, and the installer offers a desktop shortcut as well. A new page shows the folder the

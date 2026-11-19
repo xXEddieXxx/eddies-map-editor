@@ -166,6 +166,11 @@ final class Form extends JPanel implements Scrollable {
     return add(separated, dense ? Theme.GAP_M : Theme.GAP_XL, gap(Theme.GAP_S));
   }
 
+  /** The section being filled after {@link #columns}, a block of its own; else the form. */
+  JComponent section() {
+    return block == null ? this : block;
+  }
+
   private Form newBlock() {
     final Form inner = new Form(textWidth);
     inner.setBorder(BorderFactory.createEmptyBorder());

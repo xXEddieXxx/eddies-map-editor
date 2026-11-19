@@ -88,3 +88,7 @@ units" with the others.
    of unit types, nations or territories ends with the game's variables of that kind,
    `$All-Fighters$` say; TripleA puts their elements in when it reads the file.
 3. **Remove unit** takes the unit type out of the game, its rules and starting units with it.
+
+A unit type whose options the game file writes once for every unit of a variable (`foreach`)
+shows them read-only, under a line with a link to **Attachments**: the loop is changed there,
+for all its unit types at once. Its cost stays a field.

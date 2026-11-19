@@ -642,4 +642,57 @@ final class UnitsEditorTest {
         .as("-1 PUs of upkeep; 2 PUs typed; 0 leaves the option out")
         .containsExactly(-1, "PUs", Optional.of("2:PUs"), Optional.empty());
   }
+
+  @DisplayName("A unit whose options are written for each unit of a variable shows them, locked")
+  @Test
+  void loopMadeUnitIsShownButNotChanged() throws Exception {
+    // given
+    final MapProject project = givenG40();
+    project.edit(UnitsXmlTest::givenWalkersLoop);
+    final List<JSpinner> numbers = new ArrayList<>();
+    final List<String> buttons = new ArrayList<>();
+    final List<JLabel> labels = new ArrayList<>();
+    final List<String> enabled = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          try {
+            final Component page = givenEditor(project, "artillery", "none").page();
+            numbers.addAll(collect(page, JSpinner.class));
+            buttons.addAll(givenButtonTexts(page));
+            labels.addAll(collect(page, JLabel.class));
+            collect(page, AbstractButton.class).stream()
+                .filter(AbstractButton::isEnabled)
+                .map(AbstractButton::getText)
+                .forEach(enabled::add);
+          } catch (final Exception e) {
+            throw new IllegalStateException(e);
+          }
+        });
+
+    // then
+    assertThat(numbers)
+        .as("the loop's attack shows")
+        .anyMatch(number -> Integer.valueOf(4).equals(number.getValue()));
+    assertThat(numbers)
+        .as("only the cost, which a production rule gives, is changed here")
+        .filteredOn(JSpinner::isEnabled)
+        .extracting(JSpinner::getToolTipText)
+        .containsExactly("PUs to buy one");
+    assertThat(numbers)
+        .as("a field that is off says why")
+        .filteredOn(number -> !number.isEnabled())
+        .allMatch(number -> number.getToolTipText().startsWith("Can't be changed here"));
+    assertThat(labels)
+        .as("the label of a field that is off says why too")
+        .filteredOn(label -> "Attack".equals(label.getText()))
+        .allMatch(label -> label.getToolTipText().startsWith("Can't be changed here"));
+    assertThat(buttons).as("the way to where the loop is changed").contains("Attachments ›");
+    assertThat(buttons).as("the buttons that are off are there").contains("+ Add option…", "Land");
+    assertThat(enabled)
+        .as("its support is an attachment of its own and stays to change; no option is added")
+        .contains("+ Add support")
+        .doesNotContain("+ Add option…", "Land", "Sea", "Air");
+  }
 }

@@ -68,6 +68,7 @@ import javax.swing.JSplitPane;
 import javax.swing.KeyStroke;
 import javax.swing.MenuSelectionManager;
 import javax.swing.SwingUtilities;
+import javax.swing.ToolTipManager;
 import javax.swing.SwingWorker;
 import javax.swing.WindowConstants;
 import javax.swing.plaf.basic.BasicSplitPaneUI;
@@ -212,6 +213,8 @@ public final class MapMakerWindow extends JFrame {
   }
 
   /** Starts the editor on its own, with TripleA's settings and look. */
+  private static final int TOOL_TIP_DELAY_MS = 300;
+
   static void start() {
     // TripleA's settings hold the maps folder; its look gives the editor its colors and styles
     HeadedGameRunner.initializeClientSettingAndLogging();
@@ -221,6 +224,8 @@ public final class MapMakerWindow extends JFrame {
     SwingUtilities.invokeLater(
         () -> {
           Theme.useFlatLaf();
+          // Swing waits 750 ms: too long for a tip that says why a field is off
+          ToolTipManager.sharedInstance().setInitialDelay(TOOL_TIP_DELAY_MS);
           openStandalone();
         });
   }
