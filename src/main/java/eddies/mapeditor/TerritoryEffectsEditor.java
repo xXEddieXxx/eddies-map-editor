@@ -287,7 +287,7 @@ final class TerritoryEffectsEditor implements Editor {
     final Map<String, List<Point>> placed = files.places().markers(MapFiles.Marker.EFFECT);
     final JLabel inGame =
         Theme.newSecondaryLabel(
-            "<html><div style='width:" + SHOWN_WIDTH + "px'>"
+            "<html><div style='width:" + Theme.htmlWidth(SHOWN_WIDTH) + "'>"
                 + SearchList.escape(
                     shownInGame(
                         effect,

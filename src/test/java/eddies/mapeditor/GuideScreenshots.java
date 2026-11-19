@@ -1,593 +1,896 @@
 package eddies.mapeditor;
 
-import java.awt.BasicStroke;
-import java.awt.Color;
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.awt.AWTEvent;
 import java.awt.Component;
 import java.awt.Container;
-import java.awt.Font;
+import java.awt.Dimension;
 import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.Rectangle;
-import java.awt.RenderingHints;
+import java.awt.Toolkit;
+import java.awt.Window;
+import java.awt.event.ComponentEvent;
+import java.awt.event.HierarchyEvent;
+import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Predicate;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import javax.accessibility.AccessibleContext;
 import javax.imageio.ImageIO;
 import javax.swing.AbstractButton;
+import javax.swing.JComboBox;
 import javax.swing.JComponent;
-import javax.swing.JFrame;
+import javax.swing.JDialog;
 import javax.swing.JLabel;
+import javax.swing.JList;
+import javax.swing.JMenu;
 import javax.swing.JPopupMenu;
+import javax.swing.JRootPane;
+import javax.swing.JTabbedPane;
+import javax.swing.JTable;
+import javax.swing.JTextField;
+import javax.swing.JViewport;
+import javax.swing.MenuElement;
+import javax.swing.MenuSelectionManager;
 import javax.swing.SwingUtilities;
 import javax.swing.text.JTextComponent;
+import games.strategy.triplea.settings.ClientSetting;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.junit.jupiter.api.io.TempDir;
+import org.triplea.map.data.elements.Game;
 
 /**
- * Writes the user guide's screenshots (docs/guide/img) from the editor as it runs, each tool once,
- * with numbered callouts at the controls the guide describes. Not a test of the editor: it runs
- * only with -Dguide.screenshots=true, on a screen, and shows the map folder -Dguide.map names,
- * else a map of the tests. Beside each picture it leaves a list of the controls it saw
- * (build/guide-dump), to write the guide from.
+ * Writes the user guide's pictures (docs/guide/img) from the editor as it runs: for each {@link
+ * Shot} of {@link #SHOTS} the part of the window around the controls it names, as it is at 100 %
+ * and without marks, once in FlatLaf light (name.png) and once in dark (name-dark.png), which the
+ * guide swaps with its theme. Not a test of the editor: it runs only with
+ * -Dguide.screenshots=true (-Dguide.only=units.* for the pictures whose names match), on a
+ * computer with a screen. The window is far off it, never focused and not in the task bar; a
+ * dialog or a menu shows on the screen for a moment, as Swing puts it there. No mouse, no keys.
+ *
+ * <p>It shows copies of its maps, so nothing it does reaches a map, and every shot starts from
+ * the map as opened: the pictured map (the folder -Dguide.map names, else the downloaded 270BC),
+ * the WW2 Global 1940 game of the tests and a new map made from the guide's example picture,
+ * first-map.png, which it only reads. Beside each light picture it leaves the whole window and a
+ * list of the controls it saw (build/guide-dump), to write the guide and a new shot from. It fails
+ * for a control a shot names that is not there or not in view, and for a picture bigger than its
+ * shot allows.
  */
 @EnabledIfSystemProperty(named = "guide.screenshots", matches = "true")
 final class GuideScreenshots {
+  static {
+    // in English as the editor runs, before AWT reads a key's name for the menus: "Ctrl+O"
+    Locale.setDefault(Locale.ENGLISH);
+  }
+
   private static final Path IMAGES = Path.of("docs/guide/img");
   private static final Path DUMP = Path.of("build/guide-dump");
-  private static final int WIDTH = 1600;
-  private static final int HEIGHT = 900;
+  private static final Dimension WINDOW = new Dimension(1280, 800);
+  private static final Point OFF_SCREEN = new Point(-30000, -30000);
+  // around the controls of a cut
+  private static final int PADDING = 12;
+  private static final Pattern PART = Pattern.compile("(.+):(\\d+)x(\\d+)");
 
-  /** A numbered callout: the control found by its text, accessible name or tool tip, labelled. */
-  private record Callout(String find, String label) {}
+  /** The maps shown: copies, each opened anew for light and dark. */
+  private enum On {
+    /** A finished map with its picture. */
+    PICTURED,
+    /** No picture, every rule: canals, politics, objectives, technologies, actions, triggers. */
+    WW2,
+    /** "Island Wars", as the New map wizard makes it from the example picture, Red and Blue. */
+    ISLANDS
+  }
+
+  private static final Map<On, MapProject> MAPS = new EnumMap<>(On.class);
+
+  /** What is chosen, opened or scrolled before a picture; run off the Swing thread. */
+  @FunctionalInterface
+  private interface Step {
+    void run() throws Exception;
+  }
 
   /**
-   * A page of the guide: its picture's name, the tool to show, the map it shows (the pictured
-   * one, or the WW2 Global 1940 game of the tests, which has canals, politics, objectives,
-   * technologies, actions and triggers) and its callouts in order.
+   * A picture of the guide: its file's name, the map and the tool shown (as in the sidebar), what
+   * is done first, the size of the window, the most the picture may measure, and the controls it
+   * is cut around, each found by its text, accessible name or tool tip, else by its class's name;
+   * "Units:300x40" takes only that much of the control from its top left corner, eg of the map.
    */
-  private record Page(
-      String slug, String tool, boolean ww2, String scrollTo, List<Callout> callouts) {
-    Page(final String slug, final String tool, final List<Callout> callouts) {
-      this(slug, tool, false, "", callouts);
+  private record Shot(
+      String name,
+      On map,
+      String tool,
+      List<Step> first,
+      Dimension window,
+      Dimension most,
+      List<String> cut) {
+    Shot within(final int width, final int height) {
+      return new Shot(name, map, tool, first, window, new Dimension(width, height), cut);
     }
 
-    Page(final String slug, final String tool, final boolean ww2, final List<Callout> callouts) {
-      this(slug, tool, ww2, "", callouts);
-    }
-
-    /** The page scrolled so that the control found by the text is at the top. */
-    Page(final String slug, final String tool, final String scrollTo, final List<Callout> callouts) {
-      this(slug, tool, false, scrollTo, callouts);
+    /** In a window of this size, also narrower than the editor's goes: a row comes together. */
+    Shot in(final int width, final int height) {
+      return new Shot(name, map, tool, first, new Dimension(width, height), most, cut);
     }
   }
 
-  private static Callout c(final String find, final String label) {
-    return new Callout(find, label);
+  /** A small picture beside a task's steps. */
+  private static Shot shot(
+      final String name, final On map, final String tool, final List<Step> first,
+      final String... cut) {
+    return new Shot(name, map, tool, first, WINDOW, new Dimension(700, 420), List.of(cut));
   }
 
-  /** A menu opened from a button of the tool shown, cut to the button and the menu. */
-  private record Menu(String slug, String tool, String button) {}
+  /** A picture the guide shows wide, below the steps: the map, a whole table. */
+  private static Shot wide(
+      final String name, final On map, final String tool, final List<Step> first,
+      final String... cut) {
+    return shot(name, map, tool, first, cut).within(1100, 420);
+  }
 
-  private static final List<Menu> MENUS =
+  private static final List<Step> NOTHING = List.of();
+
+  /** The New map wizard at its second step, with the example picture read. */
+  private static final List<Step> WIZARD_PICTURE =
+      List.of(click("File"), click("New map…"), type("Island Wars"), click("Next"),
+          GuideScreenshots::readExample, await("first-map.png"));
+
+  private static final List<Shot> SHOTS =
       List.of(
-          new Menu("menu-file", "Home", "File"),
-          new Menu("menu-view", "Territories", "View: Game"),
-          new Menu("menu-paint", "Territories", "Paint"),
-          new Menu("menu-places", "Territories", "Places"),
-          new Menu("menu-picture", "Territories", "Map picture"),
-          new Menu("menu-sort", "Territories", "Sort: Name ▾"),
-          new Menu("menu-many", "Territories", "Many territories at once: names and pictures as files, remove"));
+          // the new map, in the order of Getting started
+          shot("new-map-folder", On.PICTURED, "Home",
+              List.of(click("File"), click("New map…"), type("Island Wars")),
+              "1 Name", "What is your map called?", "JTextField", "Change…",
+              "TripleA lists the maps"),
+          shot("new-map", On.PICTURED, "Home", WIZARD_PICTURE,
+              "✓ Name", "A suitable picture", "Next").within(700, 520),
+          shot("getting-started", On.PICTURED, "Home", WIZARD_PICTURE,
+              "✓ Name", "A suitable picture", "Next").within(700, 520),
+          shot("getting-started-guide", On.ISLANDS, "Home", NOTHING,
+              "Steps to a playable map", "Check: Check the map and play it"),
+          shot("home", On.ISLANDS, "Home", NOTHING,
+              "Guide", "Next step", "Steps to a playable map", "3 of 7"),
+          shot("publish", On.ISLANDS, "Publish", NOTHING,
+              "Before you upload", "✓ No backup files in the folder"),
+          shot("publish-version", On.ISLANDS, "Publish", NOTHING,
+              "Map details", "Map name", "Game version"),
+          shot("getting-started-game", On.ISLANDS, "Territories",
+              List.of(GuideScreenshots::startTheIslands, show("Territories", "Territory 1")),
+              "Units at the start", "Remove factory", "+ Add units"),
+          shot("getting-started-play", On.ISLANDS, "Home",
+              List.of(GuideScreenshots::startTheIslands),
+              "Undo (Ctrl+Z)", "Redo (Ctrl+Y)", "Check", "Save", "Play"),
+          shot("window-header", On.ISLANDS, "Home", List.of(GuideScreenshots::startTheIslands),
+              "File", "Play").in(760, 800).within(740, 420),
+          shot("window-sidebar", On.ISLANDS, "Home", NOTHING, "Sidebar").in(1280, 900)
+              .within(320, 900),
+          shot("home-problems", On.ISLANDS, "Home",
+              List.of(GuideScreenshots::breakTheIslands, scroll("Problems")),
+              "Problems", "Show: Territory 2", "Sea Zone 1 is a sea zone:469x40"),
+          // the pictured map
+          shot("home-tools", On.PICTURED, "Home", NOTHING,
+              "Tools", "Territories:", "Game options::134x76"),
+          shot("menus", On.PICTURED, "Home", List.of(click("File")), "File", "JPopupMenu"),
+          shot("menus-picture", On.PICTURED, "Territories", List.of(click("Map picture")),
+              "Map picture", "JPopupMenu"),
+          shot("menus-view", On.PICTURED, "Territories", List.of(click("View: Game")),
+              "View: Game", "JPopupMenu"),
+          shot("menus-paint", On.PICTURED, "Territories", List.of(click("Paint")),
+              "Paint", "JPopupMenu"),
+          shot("territories", On.PICTURED, "Territories",
+              List.of(click("Select"), show("Territories", "Sparta")),
+              "← All territories", "Name", "+ Add units").within(700, 560),
+          wide("territories-paint", On.PICTURED, "Territories",
+              List.of(GuideScreenshots::zoom, show("Territories", "Sparta"),
+                  click("Paint"), click("Owner"), click("RomanRepublic")),
+              "View: Game", "Map picture", "MapView:2000x240"),
+          shot("connections-find", On.PICTURED, "Connections", NOTHING,
+              "697 connections", "Find neighbours again…"),
+          wide("connections", On.PICTURED, "Connections",
+              List.of(GuideScreenshots::zoom, show("Connections", "Sparta")), "MapView")
+              .in(1280, 620).within(1100, 560),
+          shot("terrain-effects", On.PICTURED, "Terrain effects",
+              List.of(click("Add effect…"), type("Forest"), click("Add"),
+                  click("+ Add unit type"), choose("archer"), click("Add")),
+              "Forest:300x25", "Choose…", "Name", "In battle and on the move", "+ Add unit type",
+              "Added to the unit's strength"),
+          shot("map-look", On.PICTURED, "Map look", NOTHING,
+              "Units", "Smaller units", "now 3600", "Stack up to"),
+          shot("map-look-relief", On.PICTURED, "Map look",
+              List.of(scroll("Relief"), open("Blending")),
+              "Relief", "Create relief…", "Textures for the relief", "Strength in %"),
+          shot("map-look-resize", On.PICTURED, "Map look", List.of(click("Resize map…")),
+              "JRootPane"),
+          shot("nations", On.PICTURED, "Nations", List.of(choose("")),
+              "← All nations", "Name", "PUs at the start", "Its territories are worth"),
+          shot("nations-limits", On.PICTURED, "Nations",
+              List.of(choose(""), open("More options"), click("+ Add limit"), click("archer"),
+                  click("hoplite"), click("Choose"), scroll("Stacking limits")),
+              "Stacking limits", "A limit holds in every territory", "When", "Remove this limit",
+              "+ Add limit"),
+          shot("units", On.PICTURED, "Units", List.of(choose("archer")),
+              "archer", "Hit points", "Draw it on the map", "Search options"),
+          shot("production", On.PICTURED, "Production", List.of(choose("Macedonia")),
+              "Macedonia:300x25", "Used by Macedonia", "Copy from…", "Show", "All rules ("),
+          wide("production-rules", On.PICTURED, "Production",
+              List.of(choose("Macedonia"), click("All rules (")),
+              "Show", "+ Add rule…", "JTableHeader", "JTable:2000x156"),
+          shot("turn-order", On.PICTURED, "Turn order", NOTHING,
+              "The first round is round", "Help: The first round", "+ Add step…", "JTableHeader",
+              "JTable:2000x72").in(760, 800),
+          wide("turn-order-table", On.PICTURED, "Turn order",
+              List.of(pick("JComboBox", 2), GuideScreenshots::chooseStep),
+              "JTableHeader", "JTable:2000x268", "Buy units:320x25", "Name in game:320x22",
+              "+ Add property…"),
+          shot("game-options", On.PICTURED, "Game options", NOTHING,
+              "Search options", "+ Add option…", "Dice sides", "8 Capital Victory: Players")
+              .in(760, 800),
+          shot("game-notes", On.PICTURED, "Game notes", List.of(click("Split")),
+              "Bold (Ctrl+B)", "Preview", "CodeArea:2000x82").in(760, 800),
+          shot("texts", On.PICTURED, "Texts", List.of(click("Messages"), choose("")),
+              "JTabbedPane", "+ Add text…", "GameNotesView:2000x46").in(820, 800)
+              .within(760, 420),
+          shot("sounds", On.PICTURED, "Sounds",
+              List.of(click("Your own"), choose("Your turn starts")),
+              "Your turn starts", "Plays", "Add file…", "Add folder…"),
+          shot("attachments", On.PICTURED, "Attachments", List.of(choose("archer")),
+              "archer:300x25", "Name", "Attached to", "Options (", "+ Add option…",
+              "JTableHeader", "JTable:2000x140"),
+          shot("files", On.PICTURED, "Files", NOTHING,
+              "What's in a map folder", "Games…", "vc.txt", "name_place.txt:1x12")
+              .in(1480, 800).within(960, 420),
+          // the game with every rule
+          shot("production-resources", On.WW2, "Production", List.of(click("Resources")),
+              "JTabbedPane:780x30", "+ Add resource…", "At the start", "JTableHeader",
+              "JTable:2000x128")
+              .within(800, 420),
+          shot("canals", On.WW2, "Canals", List.of(choose("Suez")),
+              "← All canals", "Name", "Choose the unit types that pass freely").within(700, 460),
+          shot("politics", On.WW2, "Politics", NOTHING,
+              "Click a cell to choose:580x16", "British and UK_Pacific:82x44"),
+          shot("politics-types", On.WW2, "Politics",
+              List.of(click("Relationship types"), choose("Neutrality")),
+              "JTabbedPane:400x30", "Neutrality:300x25", "What nations in it may do:420x16",
+              "Planes land:160x15").within(800, 420),
+          shot("objectives", On.WW2, "Objectives", NOTHING,
+              "Objectives of which nation", "SearchList:2000x320"),
+          shot("objectives-checks", On.WW2, "Objectives",
+              List.of(choose("Volgograd"), scroll("Pays while")),
+              "Pays while", "Remove check", "+ Add check"),
+          shot("technology", On.WW2, "Technology", NOTHING,
+              "This game uses", "+ Add technology…", "SearchList:2000x230"),
+          shot("technology-bonus", On.WW2, "Technology",
+              List.of(choose("superSub"), click("+ Add bonus…"), click("Add"),
+                  scroll("What it gives")),
+              "What it gives", "Remove Attack for infantry", "+ Add bonus…",
+              "Rockets, war bonds:440x22"),
+          shot("actions", On.WW2, "Actions", List.of(choose("")),
+              "Declare War!", "Message to the others when it succeeds"),
+          shot("actions-does", On.WW2, "Actions",
+              List.of(choose("Japanese To War With Russians"), scroll("What it does")),
+              "What it does", "+ Add change", "Succeeds on a roll of").within(700, 450),
+          shot("triggers", On.WW2, "Triggers", NOTHING,
+              "JComboBox", "Group the triggers by", "SearchList:2000x270"),
+          shot("triggers-when", On.WW2, "Triggers",
+              List.of(choose("Germans 3 Presence"), click("Change"),
+                  click("Step When and how often")),
+              "When and how often:440x25", "A use is taken", "Only by chance"));
 
-  private static final List<Page> PAGES =
-      List.of(
-          new Page(
-              "window",
-              "Home",
-              List.of(
-                  c("File", "File menu"),
-                  c("All saved", "Save state"),
-                  c("Undo (Ctrl+Z)", "Undo"),
-                  c("Redo (Ctrl+Y)", "Redo"),
-                  c("Check", "Check"),
-                  c("Play", "Play"),
-                  c("Territories", "A tool in the sidebar"),
-                  c("Advanced", "Advanced group"),
-                  c("Guides & links", "Guides & links"),
-                  c("Icons only", "Icons only"),
-                  c("Help: Home", "Help ?"),
-                  c("Hide", "Hide the hint"))),
-          new Page(
-              "home",
-              "Home",
-              List.of(
-                  c("Rename…", "Rename"),
-                  c("Check (F6)", "Next step"),
-                  c("Steps to a playable map", "Steps"),
-                  c("Problems", "Problems"),
-                  c("Map overview", "Overview"),
-                  c("Territories:", "Tool tiles"))),
-          new Page(
-              "territories-list",
-              "Territories",
-              "-",
-              List.of(
-                  c("Sort: Name ▾", "Sort"),
-                  c("Many territories at once", "Many at once"),
-                  c("253 territories", "Count"))),
-          new Page(
-              "territories",
-              "Territories",
-              List.of(
-                  c("View: Game", "View"),
-                  c("Select", "Select"),
-                  c("Paint", "Paint"),
-                  c("Places", "Places"),
-                  c("Draw borders", "Draw borders"),
-                  c("Zoom out (Ctrl+wheel)", "Zoom"),
-                  c("Fit the map (Ctrl+0)", "Fit"),
-                  c("Map picture", "Map picture menu"),
-                  c("← All territories", "Back to the list"),
-                  c("Owner", "Owner"),
-                  c("PUs per turn", "PUs"),
-                  c("Capital of its owner", "Capital"),
-                  c("+ Add units", "Starting units"))),
-          new Page(
-              "territories-2",
-              "Territories",
-              "Rules (",
-              List.of(
-                  c("Rules (", "Rules"),
-                  c("Move places", "Move places"),
-                  c("Split with a line…", "Split"),
-                  c("Merge into this…", "Merge"),
-                  c("Find places again", "Find places"),
-                  c("More options (", "More options"),
-                  c("Edit in Connections", "Neighbours"),
-                  c("Remove territory", "Remove"))),
-          new Page(
-              "connections",
-              "Connections",
-              List.of(
-                  c("View: Connections", "View"),
-                  c("Find neighbours again…", "Find neighbours again"))),
-          new Page(
-              "canals",
-              "Canals",
-              true,
-              List.of(
-                  c("← All canals", "Back"),
-                  c("Name of the canal", "Name"),
-                  c("Take 81 Sea Zone out of the canal", "Sea zones"),
-                  c("Take Egypt out of the canal", "Land"),
-                  c("Choose the unit types that pass freely", "Units that pass"),
-                  c("Remove canal", "Remove"))),
-          new Page("terrain-effects", "Terrain effects", List.of(c("Add effect…", "Add effect"))),
-          new Page(
-              "map-look",
-              "Map look",
-              List.of(
-                  c("Territory names", "On the map"),
-                  c("Size", "Unit size"),
-                  c("Resize map…", "Resize map"),
-                  c("Stack up to", "Stack"),
-                  c("Picture size and count position (", "Picture size"),
-                  c("A nation's units: tint, brightness", "Tint"))),
-          new Page(
-              "map-look-2",
-              "Map look",
-              "Relief",
-              List.of(
-                  c("Create relief…", "Create relief"),
-                  c("Load picture…", "Load relief picture"),
-                  c("Show the relief", "Show the relief"),
-                  c("Blending", "Blending"),
-                  c("Around left and right", "Scrolling"),
-                  c("Small map (", "Small map"),
-                  c("Update the small map", "Update the small map"),
-                  c("Exported map picture (", "Exported picture"),
-                  c("Mouse pointer (", "Mouse pointer"))),
-          new Page(
-              "nations",
-              "Nations",
-              List.of(
-                  c("← All nations", "Back"),
-                  c("Change color", "Color"),
-                  c("Flag…", "Flag"),
-                  c("Alliance", "Alliance"),
-                  c("PUs at the start", "PUs at the start"),
-                  c("Has no capital", "Has no capital"),
-                  c("Played by default", "Played by"),
-                  c("Can be switched off at the start", "Switched off"))),
-          new Page(
-              "nations-2",
-              "Nations",
-              "Unit pictures",
-              List.of(
-                  c("In the nation's color", "In its color"),
-                  c("Import pictures…", "Import pictures"),
-                  c("+ Add limit", "Stacking limits"),
-                  c("Capitals needed to keep its PUs", "Capitals"),
-                  c("Hands its units over to", "Sharing"),
-                  c("Units it holds at the start", "Held units"))),
-          new Page(
-              "nations-3",
-              "Nations",
-              "Placing units",
-              List.of(
-                  c("May place in any land it owns", "Placing"),
-                  c("A free unit per this many territories", "Free unit"),
-                  c("Movement", "Moving and attacking"),
-                  c("+ Add rule…", "Other rules"),
-                  c("Remove nation", "Remove"))),
-          new Page(
-              "politics",
-              "Politics",
-              true,
-              List.of(c("Germans and Russians: Neutrality", "A pair's cell"))),
-          new Page(
-              "objectives",
-              "Objectives",
-              true,
-              List.of(
-                  c("Objectives of which nation", "Nation"),
-                  c("+ Add objective…", "Add objective"))),
-          new Page(
-              "technology",
-              "Technology",
-              true,
-              List.of(
-                  c("Open Game options", "Chosen in"),
-                  c("+ Add technology…", "Add technology"),
-                  c("+ Add bonus…", "What it gives"),
-                  c("Rockets, war bonds, factories, airborne forces (", "More"),
-                  c("Remove technology", "Remove"))),
-          new Page(
-              "units",
-              "Units",
-              List.of(
-                  c("+ Add unit…", "Add unit"),
-                  c("Upload picture…", "Upload picture"),
-                  c("Cost", "Cost"),
-                  c("Value", "Value"),
-                  c("Attack", "Attack"),
-                  c("Hit points", "Hit points"),
-                  c("Land", "Kind"),
-                  c("Draw it on the map", "Draw it"),
-                  c("Search options", "Search options"),
-                  c("More combat options (", "More options"),
-                  c("Cannot hit", "Choose… lists"))),
-          new Page(
-              "units-2",
-              "Units",
-              "Gives support",
-              List.of(
-                  c("+ Add support", "Add support"),
-                  c("Can blitz through empty territories", "Movement"),
-                  c("Transport capacity", "Transport"))),
-          new Page(
-              "units-3",
-              "Units",
-              "Miscellaneous",
-              List.of(
-                  c("When placing", "Stacking limits"),
-                  c("Not for land units (", "Not for this kind"),
-                  c("Destroyer: cancels the first strike of subs", "Sea"))),
-          new Page(
-              "units-4",
-              "Units",
-              "Special",
-              List.of(
-                  c("Damage when captured", "Special"),
-                  c("+ Add option…", "Add option"),
-                  c("Remove unit", "Remove"))),
-          new Page(
-              "production",
-              "Production",
-              List.of(
-                  c("+ Add list…", "Add list"),
-                  c("Choose nations…", "Used by"),
-                  c("Copy from…", "Copy from"),
-                  c("Sold here (", "Show"),
-                  c("+ Add rule…", "Add rule"),
-                  c("Remove list", "Remove list"))),
-          new Page(
-              "turn-order",
-              "Turn order",
-              List.of(
-                  c("The first round is round", "First round"),
-                  c("+ Add step…", "Add step"),
-                  c("Move the step up", "Move"),
-                  c("Shows one nation's steps", "Nation filter"),
-                  c("Shows the steps where this happens", "What filter"))),
-          new Page(
-              "game-options",
-              "Game options",
-              List.of(
-                  c("Search options", "Search"),
-                  c("Only what players may change", "Only changeable"),
-                  c("+ Add option…", "Add option"),
-                  c("Dice sides", "A number option"),
-                  c("8 Capital Victory", "A yes/no option"),
-                  c("8 Capital Victory: Players may change it before a game", "Lock"),
-                  c("Remove option from the game", "Remove"),
-                  c("The least and most players may set", "Range"))),
-          new Page(
-              "actions",
-              "Actions",
-              true,
-              List.of(
-                  c("+ Add action…", "Add action"),
-                  c("Button", "Button text"),
-                  c("Text key", "Text key"),
-                  c("+ Add condition…", "Conditions"))),
-          new Page(
-              "actions-2",
-              "Actions",
-              true,
-              "What it does",
-              List.of(
-                  c("+ Add change", "Changes"),
-                  c("+ Add cost", "Costs"),
-                  c("Attempts per turn", "Attempts"),
-                  c("Nobody", "Must be accepted by"),
-                  c("Remove action", "Remove"))),
-          new Page(
-              "triggers",
-              "Triggers",
-              true,
-              List.of(
-                  c("Group the triggers by", "Group by"),
-                  c("+ Add trigger…", "Add trigger"))),
-          new Page(
-              "game-notes",
-              "Game notes",
-              List.of(
-                  c("Bold (Ctrl+B)", "Bold"),
-                  c("Heading", "Heading"),
-                  c("List", "List"),
-                  c("Link…", "Link"),
-                  c("Picture…", "Picture"),
-                  c("Text", "Text"),
-                  c("Split", "Split"),
-                  c("Preview", "Preview"))),
-          new Page("texts", "Texts", List.of(c("+ Add text…", "Add text"))),
-          new Page(
-              "sounds",
-              "Sounds",
-              List.of(c("All 48", "All"), c("Your own 3", "Your own"), c("Folder", "Default folder"))),
-          new Page(
-              "publish",
-              "Publish",
-              List.of(
-                  c("Map name", "Map name"),
-                  c("Raise", "Version"),
-                  c("5 of 7 are ready.", "Before you upload"),
-                  c("Description", "Description"))),
-          new Page(
-              "publish-2",
-              "Publish",
-              "Upload",
-              List.of(c("Open github.com in the browser", "Upload steps"))),
-          new Page(
-              "attachments",
-              "Attachments",
-              List.of(
-                  c("Which kind of attachments are listed", "Kind"),
-                  c("+ Add attachment…", "Add attachment"),
-                  c("Attached to", "Attached to"),
-                  c("+ Add option…", "Add option"),
-                  c("Remove attachment", "Remove"))),
-          new Page(
-              "files",
-              "Files",
-              List.of(
-                  c("More", "More"),
-                  c("map.yml", "A file"),
-                  c("Games…", "Games"),
-                  c("Edit in Territories", "Edit in a tool"))));
+  // the copies of the maps, removed with it
+  @TempDir Path folder;
 
+  @DisplayName("Writes the guide's pictures, light and dark")
   @Test
-  void writeScreenshots() throws Exception {
+  void writePictures() throws Exception {
     Files.createDirectories(IMAGES);
     Files.createDirectories(DUMP);
-    final MapProject project = MapProject.open(givenMapXml());
-    final MapProject ww2 = MapProject.open(givenWw2Xml());
-    final MapMakerWindow[] window = new MapMakerWindow[1];
-    SwingUtilities.invokeAndWait(
-        () -> {
-          // the dark theme, as the editor shows it on a dark TripleA; -Dguide.dark=false for light
-          Theme.install();
-          if (!"false".equals(System.getProperty("guide.dark", "true"))) {
-            com.formdev.flatlaf.FlatDarkLaf.setup();
-          } else {
-            com.formdev.flatlaf.FlatLightLaf.setup();
+    final String only = System.getProperty("guide.only", "");
+    // TripleA's settings, which the New map wizard asks for the maps folder
+    ClientSetting.initialize();
+    final List<String> missed = new ArrayList<>();
+    Toolkit.getDefaultToolkit()
+        .addAWTEventListener(
+            GuideScreenshots::keepAway,
+            AWTEvent.HIERARCHY_EVENT_MASK
+                | AWTEvent.WINDOW_EVENT_MASK
+                | AWTEvent.COMPONENT_EVENT_MASK);
+    for (final boolean dark : List.of(false, true)) {
+      final MapMakerWindow[] window = new MapMakerWindow[1];
+      givenMaps(folder);
+      onSwing(
+          () -> {
+            Theme.install();
+            if (dark) {
+              com.formdev.flatlaf.FlatDarkLaf.setup();
+            } else {
+              com.formdev.flatlaf.FlatLightLaf.setup();
+            }
+            window[0] = new MapMakerWindow();
+            window[0].setMinimumSize(new Dimension(600, 400));
+            window[0].setSize(WINDOW);
+            window[0].setFocusableWindowState(false);
+            // not in the task bar, where a window nobody sees would be closed by hand
+            window[0].setType(Window.Type.UTILITY);
+            window[0].setLocation(OFF_SCREEN);
+            window[0].setVisible(true);
+          });
+      try {
+        for (final Shot shot : SHOTS) {
+          if (!only.isBlank() && !shot.name().matches(only)) {
+            continue;
           }
-          window[0] = new MapMakerWindow();
-          window[0].setSize(WIDTH, HEIGHT);
-          window[0].setLocation(0, 0);
-          window[0].setVisible(true);
-          window[0].showProject(project);
-        });
-    try {
-      settle(2500);
-      // every "More" row open, so the guide sees every option
-      SwingUtilities.invokeAndWait(
-          () -> {
-            if (!Folds.showsAll()) {
-              Folds.toggleShowAll();
-              project.showAgain();
-            }
-          });
-      boolean showingWw2 = false;
-      for (final Page page : PAGES) {
-        if (page.ww2() != showingWw2) {
-          showingWw2 = page.ww2();
-          final MapProject shown = showingWw2 ? ww2 : project;
-          SwingUtilities.invokeAndWait(() -> window[0].showProject(shown));
-          settle(2000);
-        }
-        SwingUtilities.invokeAndWait(() -> click(window[0], page.tool()));
-        settle(900);
-        if (!"-".equals(page.scrollTo())) {
-          SwingUtilities.invokeAndWait(() -> chooseFirst(window[0]));
-          settle(900);
-        }
-        if (!page.scrollTo().isEmpty() && !"-".equals(page.scrollTo())) {
-          SwingUtilities.invokeAndWait(() -> scrollTo(window[0], page.scrollTo()));
-          settle(400);
-        }
-        SwingUtilities.invokeAndWait(() -> shootQuietly(window[0], page));
-      }
-      if (showingWw2) {
-        SwingUtilities.invokeAndWait(() -> window[0].showProject(project));
-        settle(2000);
-      }
-      for (final Menu menu : MENUS) {
-        SwingUtilities.invokeAndWait(() -> click(window[0], menu.tool()));
-        settle(600);
-        SwingUtilities.invokeAndWait(() -> shootMenuQuietly(window[0], menu));
-        settle(200);
-      }
-      SwingUtilities.invokeAndWait(
-          () -> {
-            try {
-              shootComponent(new ResizeDialog(project.getFiles()).content(), "dialog-resize", 520);
-            } catch (final IOException e) {
-              throw new IllegalStateException(e);
-            }
-          });
-      shootWizard();
-    } finally {
-      SwingUtilities.invokeAndWait(window[0]::dispose);
-    }
-  }
-
-  private static void shootQuietly(final JFrame window, final Page page) {
-    try {
-      shoot(window, page);
-    } catch (final IOException e) {
-      throw new IllegalStateException(e);
-    }
-  }
-
-  /** The first row of the tool's list chosen as a click chooses it, so the tool shows it. */
-  private static void chooseFirst(final JFrame window) {
-    all(window.getContentPane())
-        .filter(SearchList.class::isInstance)
-        .filter(Component::isShowing)
-        .findFirst()
-        .flatMap(list -> all(list).filter(javax.swing.JList.class::isInstance).findFirst())
-        .map(javax.swing.JList.class::cast)
-        .ifPresent(
-            list -> {
-              for (int i = 0; i < list.getModel().getSize(); i++) {
-                final String row = String.valueOf(list.getModel().getElementAt(i));
-                if (!row.startsWith("▸") && !row.startsWith("▾") && !row.startsWith("\u0000")) {
-                  list.setSelectedIndex(i);
-                  return;
+          final String name = shot.name() + (dark ? "-dark" : "");
+          // the map as it was opened and every tool as it opens, whatever the shot before did
+          onSwing(
+              () -> {
+                final MapProject map = MAPS.get(shot.map());
+                while (map.canUndo()) {
+                  map.undo();
                 }
+                window[0].setSize(shot.window());
+                window[0].showProject(map);
+              });
+          Thread.sleep(1500);
+          try {
+            run(clickTool(shot.tool()));
+            for (final Step step : shot.first()) {
+              run(step);
+            }
+          } catch (final RuntimeException e) {
+            missed.add(name + ": " + e);
+          }
+          try {
+            onSwing(() -> missed.addAll(cut(shot, name)));
+          } finally {
+            onSwing(GuideScreenshots::closeDialogsAndMenus);
+          }
+        }
+      } finally {
+        onSwing(window[0]::dispose);
+      }
+    }
+    assertThat(missed).as("pictures not as their shots say").isEmpty();
+  }
+
+  private static void run(final Step step) throws Exception {
+    step.run();
+    Thread.sleep(500);
+  }
+
+  /**
+   * A dialog is never focused, and it and a menu go off the screen as soon as they show there,
+   * where Swing puts them.
+   */
+  private static void keepAway(final AWTEvent event) {
+    if (event.getSource() instanceof Window window && !(window instanceof MapMakerWindow)) {
+      if (event instanceof HierarchyEvent && !window.isVisible()) {
+        window.setFocusableWindowState(false);
+      } else if (event.getID() == WindowEvent.WINDOW_OPENED
+          || event.getID() == ComponentEvent.COMPONENT_SHOWN) {
+        window.setLocation(OFF_SCREEN);
+      }
+    }
+  }
+
+  private static void closeDialogsAndMenus() {
+    MenuSelectionManager.defaultManager().clearSelectedPath();
+    Stream.of(Window.getWindows())
+        .filter(JDialog.class::isInstance)
+        .filter(Component::isShowing)
+        .forEach(Window::dispose);
+  }
+
+  // ---- the steps
+
+  /** Clicks the sidebar's row of the tool. */
+  private static Step clickTool(final String tool) {
+    return () ->
+        onSwing(
+            () ->
+                all(root())
+                    .filter(AbstractButton.class::isInstance)
+                    .map(AbstractButton.class::cast)
+                    .filter(b -> tool.equals(accessibleNameOf(b)))
+                    .filter(b -> SwingUtilities.getAncestorOfClass(Sidebar.class, b) != null)
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalStateException("no tool " + tool))
+                    .doClick());
+  }
+
+  /**
+   * Clicks the button, menu item or tab found by the text. Not waited for, as a click may open a
+   * dialog, which ends only when it is closed.
+   */
+  private static Step click(final String text) {
+    return () ->
+        onSwing(
+            () -> {
+              final Component found =
+                  find(text, c -> c instanceof AbstractButton)
+                      .or(() -> tabOf(text))
+                      .orElseThrow(() -> new IllegalStateException("nothing to click: " + text));
+              if (found instanceof JTabbedPane tabs) {
+                tabs.setSelectedIndex(tabIndex(tabs, text));
+              } else if (found instanceof JMenu menu) {
+                // a menu in a menu opens beside it
+                final MenuSelectionManager menus = MenuSelectionManager.defaultManager();
+                final List<MenuElement> path = new ArrayList<>(List.of(menus.getSelectedPath()));
+                path.add(menu);
+                path.add(menu.getPopupMenu());
+                menus.setSelectedPath(path.toArray(MenuElement[]::new));
+              } else {
+                MenuSelectionManager.defaultManager().clearSelectedPath();
+                SwingUtilities.invokeLater(() -> ((AbstractButton) found).doClick(0));
               }
             });
   }
 
-  /** The menu a button opens, with the button, cut from the window with a margin. */
-  private static void shootMenuQuietly(final JFrame window, final Menu menu) {
-    try {
-      final JComponent content = (JComponent) window.getContentPane();
-      final Optional<Component> button =
-          find(content, menu.button()).filter(AbstractButton.class::isInstance);
-      if (button.isEmpty()) {
-        return;
+  /** Opens the fold row found by the text, unless it is open: folds stay for the session. */
+  private static Step open(final String text) {
+    return () -> {
+      final boolean[] folded = new boolean[1];
+      onSwing(
+          () ->
+              folded[0] =
+                  find(text, AbstractButton.class::isInstance)
+                      .filter(fold -> textOf(fold).startsWith("▸"))
+                      .isPresent());
+      if (folded[0]) {
+        click(text).run();
       }
-      ((AbstractButton) button.get()).doClick();
-      settle(400);
-      final Optional<Component> popup =
-          all(window.getRootPane()).filter(JPopupMenu.class::isInstance).filter(Component::isShowing).findFirst();
-      final JComponent root = window.getRootPane();
-      final BufferedImage whole =
-          new BufferedImage(root.getWidth(), root.getHeight(), BufferedImage.TYPE_INT_RGB);
-      final Graphics2D g = whole.createGraphics();
-      root.printAll(g);
-      g.dispose();
-      final Rectangle at =
-          SwingUtilities.convertRectangle(button.get().getParent(), button.get().getBounds(), root);
-      final Rectangle cut = new Rectangle(at);
-      popup.ifPresent(
-          m -> cut.add(SwingUtilities.convertRectangle(m.getParent(), m.getBounds(), root)));
-      cut.grow(24, 24);
-      final Rectangle within = cut.intersection(new Rectangle(whole.getWidth(), whole.getHeight()));
-      ImageIO.write(
-          whole.getSubimage(within.x, within.y, within.width, within.height),
-          "png",
-          IMAGES.resolve(menu.slug() + ".png").toFile());
-      if (popup.isPresent()) {
-        Files.writeString(DUMP.resolve(menu.slug() + ".txt"), dump((Container) popup.get()));
+    };
+  }
+
+  private static Optional<Component> tabOf(final String text) {
+    return shown().stream()
+        .filter(c -> c instanceof JTabbedPane tabs && tabIndex(tabs, text) >= 0)
+        .findFirst();
+  }
+
+  private static int tabIndex(final JTabbedPane tabs, final String text) {
+    for (int i = 0; i < tabs.getTabCount(); i++) {
+      if (oneLine(String.valueOf(tabs.getTitleAt(i))).startsWith(text)) {
+        return i;
       }
-      javax.swing.MenuSelectionManager.defaultManager().clearSelectedPath();
-      popup.ifPresent(m -> m.setVisible(false));
-      // a toggle pressed to open its menu is released again
-      if (button.get() instanceof javax.swing.JToggleButton toggle && toggle.isSelected()) {
-        find(content, "Select").filter(AbstractButton.class::isInstance).ifPresent(b -> ((AbstractButton) b).doClick());
-      }
-    } catch (final IOException | InterruptedException e) {
-      throw new IllegalStateException(e);
     }
+    return -1;
   }
 
   /**
-   * The New map wizard's three steps with the guide's example picture, which is written beside
-   * the pictures for readers to follow the Getting started page with.
+   * Chooses the first row with the text in a list, as a click does: in a tool's list a row with
+   * it in its title, the line below or its id, as its search finds it.
    */
-  private static void shootWizard() throws Exception {
-    final Path example = IMAGES.resolve("first-map.png");
-    ImageIO.write(examplePicture(), "png", example.toFile());
-    final NewMapWizard[] wizard = new NewMapWizard[1];
-    final JFrame holder = new JFrame();
-    SwingUtilities.invokeAndWait(
+  private static Step choose(final String text) {
+    return () ->
+        onSwing(
+            () -> {
+              final java.lang.reflect.Method searchText =
+                  SearchList.class.getDeclaredMethod("searchText", String.class);
+              searchText.setAccessible(true);
+              for (final Component c : shown()) {
+                if (c instanceof JList<?> list) {
+                  final SearchList rows =
+                      (SearchList) SwingUtilities.getAncestorOfClass(SearchList.class, list);
+                  for (int i = 0; i < list.getModel().getSize(); i++) {
+                    final String row = String.valueOf(list.getModel().getElementAt(i));
+                    // a group's header is shown as another text than it is
+                    final boolean has =
+                        rows == null
+                            ? row.contains(text)
+                            : row.equals(rows.rows().get(i))
+                                && String.valueOf(searchText.invoke(rows, row))
+                                    .contains(text.toLowerCase(Locale.ROOT));
+                    if (has) {
+                      list.setSelectedIndex(i);
+                      list.ensureIndexIsVisible(i);
+                      return;
+                    }
+                  }
+                }
+              }
+              throw new IllegalStateException("no row to choose: " + text);
+            });
+  }
+
+  /** Shows the territory in the tool, as a click on the map does. */
+  private static Step show(final String tool, final String territory) {
+    return () ->
+        onSwing(
+            () -> {
+              final Object window = SwingUtilities.getWindowAncestor(root());
+              final java.lang.reflect.Field editors =
+                  MapMakerWindow.class.getDeclaredField("editors");
+              editors.setAccessible(true);
+              ((Editor) ((Map<?, ?>) editors.get(window)).get(tool)).show(territory);
+            });
+  }
+
+  /** The map at 100 %. */
+  private static void zoom() throws Exception {
+    onSwing(
         () -> {
-          wizard[0] =
-              new NewMapWizard(
-                  Path.of(System.getProperty("user.home"), "triplea", "downloadedMaps"),
-                  made -> {});
-          holder.setUndecorated(true);
-          holder.getContentPane().add(wizard[0]);
-          holder.setSize(760, 560);
-          holder.setLocation(0, 0);
-          holder.setVisible(true);
+          final MapCanvas map = (MapCanvas) find("MapCanvas", c -> true).orElseThrow();
+          map.zoomBy(1 / map.getZoom());
         });
-    try {
-      onSwing(() -> set(wizard[0], "name", "Island Wars"));
-      onSwing(() -> shootShown(holder, "dialog-new-map"));
-      onSwing(() -> wizard[0].next.doClick());
-      onSwing(() -> call(wizard[0], "readPicture", Path.class, example));
-      final java.lang.reflect.Field progress = NewMapWizard.class.getDeclaredField("progress");
-      progress.setAccessible(true);
+  }
+
+  /** Chooses the entry at the index in the box found by the text. */
+  private static Step pick(final String box, final int index) {
+    return () ->
+        onSwing(
+            () ->
+                ((JComboBox<?>) find(box, JComboBox.class::isInstance).orElseThrow())
+                    .setSelectedIndex(index));
+  }
+
+  /** Turn order: a step of the nation's band chosen. */
+  private static void chooseStep() throws Exception {
+    onSwing(
+        () ->
+            ((JTable) find("JTable", c -> true).orElseThrow()).setRowSelectionInterval(5, 5));
+  }
+
+  /** Scrolls the control found by the text to the top of its scroll pane. */
+  private static Step scroll(final String text) {
+    return () ->
+        onSwing(
+            () -> {
+              final Component found =
+                  find(text, c -> true)
+                      .orElseThrow(() -> new IllegalStateException("not there: " + text));
+              final JViewport viewport =
+                  (JViewport) SwingUtilities.getAncestorOfClass(JViewport.class, found);
+              if (viewport != null) {
+                final Rectangle at =
+                    SwingUtilities.convertRectangle(
+                        found.getParent(), found.getBounds(), viewport.getView());
+                viewport.setViewPosition(new Point(0, Math.max(0, at.y - PADDING)));
+              }
+            });
+  }
+
+  /** Waits until a control with the text shows, eg what a search in the background found. */
+  private static Step await(final String text) {
+    return () -> {
       final long until = System.currentTimeMillis() + 30_000;
-      Thread.sleep(500);
-      while (System.currentTimeMillis() < until
-          && ((Component) progress.get(wizard[0])).isVisible()) {
+      final boolean[] there = new boolean[1];
+      while (!there[0] && System.currentTimeMillis() < until) {
         Thread.sleep(200);
+        onSwing(() -> there[0] = find(text, c -> true).isPresent());
       }
-      Thread.sleep(500);
-      onSwing(() -> shootShown(holder, "dialog-new-map-2"));
-      onSwing(() -> wizard[0].next.doClick());
-      Thread.sleep(300);
-      onSwing(() -> set(wizard[0], "nations", "Red\nBlue"));
-      Thread.sleep(300);
-      onSwing(() -> shootShown(holder, "dialog-new-map-3"));
-    } finally {
-      SwingUtilities.invokeAndWait(holder::dispose);
+      if (!there[0]) {
+        throw new IllegalStateException("never shown: " + text);
+      }
+    };
+  }
+
+  /** Types the text into the first text field, eg of the dialog just opened. */
+  private static Step type(final String text) {
+    return () ->
+        onSwing(
+            () ->
+                ((JTextField) find("JTextField", c -> true).orElseThrow()).setText(text));
+  }
+
+  /** The wizard reads the guide's example picture, as after Choose picture…. */
+  private static void readExample() throws Exception {
+    onSwing(
+        () -> {
+          final Component wizard = find("NewMapWizard", c -> true).orElseThrow();
+          final java.lang.reflect.Method read =
+              NewMapWizard.class.getDeclaredMethod("readPicture", Path.class);
+          read.setAccessible(true);
+          read.invoke(wizard, IMAGES.resolve("first-map.png"));
+        });
+  }
+
+  /** Getting started's game: Red's first land is its capital, with infantry and a factory. */
+  private static void startTheIslands() throws Exception {
+    final MapProject project = MAPS.get(On.ISLANDS);
+    onSwing(
+        () ->
+            project.edit(
+                game -> {
+                  final String land =
+                      MapXml.territories(game).stream()
+                          .filter(t -> !MapXml.isWater(game, t))
+                          .sorted()
+                          .findFirst()
+                          .orElseThrow();
+                  Game changed = MapXml.withOwner(game, land, "Red");
+                  changed = MapXml.withCapital(changed, land, "Red");
+                  changed = MapXml.withUnits(changed, land, "Red", "infantry", 2);
+                  return MapXml.withUnits(changed, land, "Red", "factory", 1);
+                }));
+  }
+
+  /** Home's problems: land of a nation that is none, and land units in the sea. */
+  private static void breakTheIslands() throws Exception {
+    final MapProject project = MAPS.get(On.ISLANDS);
+    onSwing(
+        () ->
+            project.edit(
+                game -> {
+                  final List<String> all = MapXml.territories(game).stream().sorted().toList();
+                  final String sea =
+                      all.stream().filter(t -> MapXml.isWater(game, t)).findFirst().orElseThrow();
+                  final String land =
+                      all.stream().filter(t -> !MapXml.isWater(game, t)).skip(1).findFirst()
+                          .orElseThrow();
+                  return MapXml.withUnits(
+                      MapXml.withOwner(game, land, "Green"), sea, "Red", "infantry", 1);
+                }));
+  }
+
+  // ---- the picture
+
+  /**
+   * Writes the shot's picture: the window, or the dialog over it, with its open menus, cut around
+   * the shot's controls. Returns what is not as the shot says.
+   */
+  private static List<String> cut(final Shot shot, final String name) throws IOException {
+    final List<String> missed = new ArrayList<>();
+    final JRootPane root = root();
+    // no folder of this computer in a picture, eg where the wizard puts a new map
+    final String home = System.getProperty("user.home");
+    for (final Component c : shown()) {
+      if (c instanceof JLabel label && String.valueOf(label.getText()).contains(home)) {
+        label.setText(label.getText().replace(home, "C:\\Users\\you"));
+      }
+    }
+    final List<JPopupMenu> menus =
+        Stream.of(MenuSelectionManager.defaultManager().getSelectedPath())
+            .filter(JPopupMenu.class::isInstance)
+            .map(JPopupMenu.class::cast)
+            .filter(Component::isShowing)
+            .toList();
+    // a menu may reach beyond the window
+    final Rectangle all = new Rectangle(root.getSize());
+    menus.forEach(menu -> all.add(boundsIn(menu, root)));
+    final BufferedImage image =
+        new BufferedImage(all.width, all.height, BufferedImage.TYPE_INT_RGB);
+    final Graphics2D g = image.createGraphics();
+    g.setColor(root.getBackground());
+    g.fillRect(0, 0, all.width, all.height);
+    g.translate(-all.x, -all.y);
+    // painted, not printed: a table printed leaves out which row is chosen
+    root.paint(g);
+    for (final JPopupMenu menu : menus) {
+      final Rectangle at = boundsIn(menu, root);
+      final Graphics2D inMenu = (Graphics2D) g.create(at.x, at.y, at.width, at.height);
+      menu.printAll(inMenu);
+      inMenu.dispose();
+    }
+    g.dispose();
+    if (!name.endsWith("-dark")) {
+      ImageIO.write(image, "png", DUMP.resolve(name + ".png").toFile());
+      Files.writeString(DUMP.resolve(name + ".txt"), dump(root, shown()));
+    }
+    Rectangle around = null;
+    for (final String entry : shot.cut()) {
+      final Matcher part = PART.matcher(entry);
+      final String text = part.matches() ? part.group(1) : entry;
+      final Optional<Component> found = find(text, c -> true);
+      if (found.isEmpty()) {
+        missed.add(name + ": no " + text);
+        continue;
+      }
+      final Rectangle at = boundsIn(found.get(), root);
+      if (at.isEmpty()) {
+        missed.add(name + ": not in view: " + text);
+        continue;
+      }
+      if (part.matches()) {
+        at.setSize(
+            Math.min(at.width, Integer.parseInt(part.group(2))),
+            Math.min(at.height, Integer.parseInt(part.group(3))));
+      }
+      around = around == null ? at : around.union(at);
+    }
+    if (around == null) {
+      return missed;
+    }
+    around.grow(PADDING, PADDING);
+    around.translate(-all.x, -all.y);
+    if (around.width > shot.most().width + 2 * PADDING
+        || around.height > shot.most().height + 2 * PADDING) {
+      missed.add(name + ": " + around.width + " x " + around.height + " is too big");
+    }
+    final Rectangle within = around.intersection(new Rectangle(all.width, all.height));
+    ImageIO.write(
+        image.getSubimage(within.x, within.y, within.width, within.height),
+        "png",
+        IMAGES.resolve(name + ".png").toFile());
+    return missed;
+  }
+
+  /** The dialog that is open, else the editor's window. */
+  private static JRootPane root() {
+    final List<Window> windows =
+        Stream.of(Window.getWindows()).filter(Component::isShowing).toList();
+    return windows.stream()
+        .filter(JDialog.class::isInstance)
+        .map(w -> ((JDialog) w).getRootPane())
+        .reduce((first, last) -> last)
+        .orElseGet(
+            () ->
+                windows.stream()
+                    .filter(MapMakerWindow.class::isInstance)
+                    .map(w -> ((MapMakerWindow) w).getRootPane())
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalStateException("the editor's window is gone")));
+  }
+
+  /**
+   * The part of the component that shows, eg in its scroll pane, as the root pane has it. A menu
+   * is where the editor opens it, under its button, a menu in a menu beside its row: Swing shows
+   * it on the screen instead, as the window is off it.
+   */
+  private static Rectangle boundsIn(final Component component, final JRootPane root) {
+    if (component instanceof JPopupMenu menu) {
+      final Rectangle by = boundsIn(menu.getInvoker(), root);
+      return menu.getInvoker() instanceof JMenu
+          ? new Rectangle(by.x + by.width, by.y, menu.getWidth(), menu.getHeight())
+          : new Rectangle(by.x, by.y + by.height, menu.getWidth(), menu.getHeight());
+    }
+    final Component menu = SwingUtilities.getAncestorOfClass(JPopupMenu.class, component);
+    if (menu != null) {
+      final Rectangle in = boundsIn(menu, root);
+      final Point at = SwingUtilities.convertPoint(component, 0, 0, menu);
+      return new Rectangle(in.x + at.x, in.y + at.y, component.getWidth(), component.getHeight());
+    }
+    final Rectangle shown =
+        component instanceof JComponent j ? j.getVisibleRect() : new Rectangle(component.getSize());
+    final Point at = component.getLocationOnScreen();
+    final Point origin = root.getLocationOnScreen();
+    return new Rectangle(
+        at.x - origin.x + shown.x, at.y - origin.y + shown.y, shown.width, shown.height);
+  }
+
+  /** Everything showing in the open dialog, else the window, and in the open menus. */
+  private static List<Component> shown() {
+    final List<Component> roots = new ArrayList<>();
+    roots.add(root());
+    for (final MenuElement element : MenuSelectionManager.defaultManager().getSelectedPath()) {
+      if (element instanceof JPopupMenu menu) {
+        roots.add(menu);
+      }
+    }
+    final List<Component> showing =
+        roots.stream()
+            .flatMap(GuideScreenshots::all)
+            .distinct()
+            .filter(Component::isShowing)
+            .toList();
+    // first what is in view, then what its scroll pane hides
+    final Predicate<Component> inView =
+        c -> !(c instanceof JComponent j) || !j.getVisibleRect().isEmpty();
+    return Stream.concat(showing.stream().filter(inView), showing.stream().filter(inView.negate()))
+        .toList();
+  }
+
+  /**
+   * The first shown component of the kind with the text as its text or accessible name, else the
+   * first whose text, accessible name or tool tip starts with it, else the first of a class of
+   * that name or made from one; a label only when nothing else has the text. Not in the sidebar.
+   */
+  private static Optional<Component> find(final String text, final Predicate<Component> kind) {
+    final Predicate<Component> exact =
+        c -> text.equals(textOf(c)) || text.equals(accessibleNameOf(c));
+    final Predicate<Component> starts =
+        c ->
+            textOf(c).startsWith(text)
+                || accessibleNameOf(c).startsWith(text)
+                || (c instanceof JComponent j
+                    && j.getToolTipText() != null
+                    && j.getToolTipText().startsWith(text));
+    // the sidebar's rows have the tools' names, which are also words in the tools
+    final List<Component> shown =
+        shown().stream()
+            .filter(kind)
+            .filter(c -> SwingUtilities.getAncestorOfClass(Sidebar.class, c) == null)
+            .toList();
+    return shown.stream()
+        .filter(exact)
+        .filter(
+            c ->
+                !(c instanceof JLabel)
+                    || shown.stream().noneMatch(o -> exact.test(o) && !(o instanceof JLabel)))
+        .findFirst()
+        .or(() -> shown.stream().filter(starts).findFirst())
+        .or(() -> shown.stream().filter(c -> isA(c.getClass(), text)).findFirst());
+  }
+
+  private static boolean isA(final Class<?> type, final String name) {
+    return type != null && (type.getSimpleName().equals(name) || isA(type.getSuperclass(), name));
+  }
+
+  // ---- the maps
+
+  private static void givenMaps(final Path folder) throws Exception {
+    MAPS.put(On.PICTURED, MapProject.open(givenMapXml(folder)));
+    MAPS.put(On.WW2, MapProject.open(givenWw2Xml(folder)));
+    MAPS.put(
+        On.ISLANDS,
+        MapProject.newMap(
+                "Island Wars",
+                ImageIO.read(IMAGES.resolve("first-map.png").toFile()),
+                List.of("Red", "Blue"),
+                Files.createTempDirectory(folder, "new"))
+            .project());
+  }
+
+  /**
+   * The WW2 Global 1940 game of the tests, in a folder of its own: no picture, every rule; with
+   * the flags and texts of the downloaded map when it is there, so Nations and Politics show
+   * flags and Actions the buttons' texts.
+   */
+  private static Path givenWw2Xml(final Path in) throws IOException {
+    final Path folder = Files.createTempDirectory(in, "ww2");
+    final Path games = Files.createDirectories(folder.resolve("games"));
+    final Path xml = games.resolve("ww2global40.xml");
+    try (java.io.InputStream original =
+        GuideScreenshots.class.getClassLoader().getResourceAsStream("ww2global40.xml")) {
+      Files.copy(original, xml);
+    }
+    final Path downloaded =
+        Path.of(System.getProperty("user.home"), "triplea/downloadedMaps/world_war_ii_global/map");
+    for (final String name :
+        List.of("flags", "politicstext.properties")) {
+      if (Files.exists(downloaded.resolve(name))) {
+        copy(downloaded.resolve(name), folder.resolve(name));
+      }
+    }
+    return xml;
+  }
+
+  /** The first game of a copy of the pictured map, with its map.yml when that is a folder up. */
+  private static Path givenMapXml(final Path folder) throws IOException {
+    final String named = System.getProperty("guide.map", "");
+    final Path content =
+        (named.isBlank()
+                ? Path.of(System.getProperty("user.home"), "triplea/downloadedMaps/270bc/map")
+                : Path.of(named))
+            .toAbsolutePath();
+    final Path map =
+        Files.isRegularFile(content.resolveSibling("map.yml")) ? content.getParent() : content;
+    final Path copied = Files.createTempDirectory(folder, "map").resolve(map.getFileName());
+    copy(map, copied);
+    final Path games = copied.resolve(map.relativize(content)).resolve("games");
+    try (Stream<Path> files = Files.list(games)) {
+      return files.filter(f -> f.toString().endsWith(".xml")).sorted().findFirst().orElseThrow();
     }
   }
+
+  private static void copy(final Path from, final Path to) throws IOException {
+    try (Stream<Path> files = Files.walk(from)) {
+      for (final Path file : files.toList()) {
+        final Path copied = to.resolve(from.relativize(file).toString());
+        if (Files.isDirectory(file)) {
+          Files.createDirectories(copied);
+        } else {
+          Files.copy(file, copied);
+        }
+      }
+    }
+  }
+
+  // ---- shared
 
   /** Work that may fail, run on the Swing thread. */
   @FunctionalInterface
@@ -610,226 +913,6 @@ final class GuideScreenshots {
     }
   }
 
-  private static void shootShown(final JFrame holder, final String slug) throws IOException {
-    holder.validate();
-    holder.repaint();
-    final JComponent content = (JComponent) holder.getContentPane();
-    final BufferedImage image =
-        new BufferedImage(content.getWidth(), content.getHeight(), BufferedImage.TYPE_INT_RGB);
-    final Graphics2D g = image.createGraphics();
-    content.printAll(g);
-    g.dispose();
-    ImageIO.write(image, "png", IMAGES.resolve(slug + ".png").toFile());
-    Files.writeString(DUMP.resolve(slug + ".txt"), dump(content));
-  }
-
-  private static void set(final Object target, final String field, final String text)
-      throws ReflectiveOperationException {
-    final java.lang.reflect.Field f = target.getClass().getDeclaredField(field);
-    f.setAccessible(true);
-    ((javax.swing.text.JTextComponent) f.get(target)).setText(text);
-  }
-
-  private static void call(
-      final Object target, final String method, final Class<?> type, final Object argument)
-      throws ReflectiveOperationException {
-    final java.lang.reflect.Method m = target.getClass().getDeclaredMethod(method, type);
-    m.setAccessible(true);
-    m.invoke(target, argument);
-  }
-
-  /**
-   * The guide's example picture: an island world of 800 x 600 with two islands of three land
-   * territories each, drawn in flat colors with black borders, as a map picture is drawn.
-   */
-  private static BufferedImage examplePicture() {
-    final BufferedImage image = new BufferedImage(800, 600, BufferedImage.TYPE_INT_RGB);
-    final Graphics2D g = image.createGraphics();
-    g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
-    g.setColor(new Color(70, 120, 200));
-    g.fillRect(0, 0, 800, 600);
-    // two islands, each a rounded shape cut into three by lines
-    final Color land = new Color(236, 224, 190);
-    final int[][] west = {{80, 120}, {340, 90}, {380, 300}, {300, 480}, {110, 450}, {60, 280}};
-    final int[][] east = {{450, 150}, {720, 110}, {760, 330}, {680, 520}, {470, 480}, {420, 320}};
-    for (final int[][] island : List.of(west, east)) {
-      final java.awt.Polygon shape = new java.awt.Polygon();
-      for (final int[] point : island) {
-        shape.addPoint(point[0], point[1]);
-      }
-      g.setColor(land);
-      g.fillPolygon(shape);
-      g.setColor(Color.BLACK);
-      g.setStroke(new BasicStroke(3f));
-      g.drawPolygon(shape);
-    }
-    g.setColor(Color.BLACK);
-    g.setStroke(new BasicStroke(3f));
-    // the west island: a line across and one down from it
-    g.drawLine(60, 280, 380, 300);
-    g.drawLine(220, 290, 212, 468);
-    // the east island: a line down, and one across its eastern half only: three territories
-    g.drawLine(590, 126, 581, 503);
-    g.drawLine(585, 320, 760, 330);
-    g.dispose();
-    return image;
-  }
-
-  /** A component on its own, eg a dialog's content, laid out at the width. */
-  private static void shootComponent(final JComponent component, final String slug, final int width)
-      throws IOException {
-    final JFrame holder = new JFrame();
-    holder.setUndecorated(true);
-    holder.getContentPane().add(component);
-    holder.pack();
-    holder.setSize(width, Math.max(component.getPreferredSize().height + 20, holder.getHeight()));
-    holder.validate();
-    final BufferedImage image =
-        new BufferedImage(holder.getWidth(), holder.getHeight(), BufferedImage.TYPE_INT_RGB);
-    final Graphics2D g = image.createGraphics();
-    g.setColor(javax.swing.UIManager.getColor("Panel.background"));
-    g.fillRect(0, 0, image.getWidth(), image.getHeight());
-    holder.getContentPane().printAll(g);
-    g.dispose();
-    ImageIO.write(image, "png", IMAGES.resolve(slug + ".png").toFile());
-    Files.writeString(DUMP.resolve(slug + ".txt"), dump(holder.getContentPane()));
-    holder.dispose();
-  }
-
-  /**
-   * The WW2 Global 1940 game of the tests, in a folder of its own: no picture, every rule; with
-   * the flags of the downloaded map when it is there, so Nations and Politics show them.
-   */
-  private static Path givenWw2Xml() throws IOException {
-    final Path folder = Files.createTempDirectory("eddies-guide-ww2");
-    final Path games = Files.createDirectories(folder.resolve("games"));
-    final Path xml = games.resolve("ww2global40.xml");
-    try (java.io.InputStream original =
-        GuideScreenshots.class.getClassLoader().getResourceAsStream("ww2global40.xml")) {
-      Files.copy(original, xml);
-    }
-    final Path flags =
-        Path.of(
-            System.getProperty("user.home"),
-            "triplea/downloadedMaps/world_war_ii_global/map/flags");
-    if (Files.isDirectory(flags)) {
-      final Path copied = Files.createDirectories(folder.resolve("flags"));
-      try (Stream<Path> files = Files.list(flags)) {
-        for (final Path flag : files.toList()) {
-          Files.copy(flag, copied.resolve(flag.getFileName().toString()));
-        }
-      }
-    }
-    return xml;
-  }
-
-  private static Path givenMapXml() throws IOException {
-    final String named = System.getProperty("guide.map", "");
-    final Path folder =
-        named.isBlank()
-            ? Path.of(System.getProperty("user.home"), "triplea/downloadedMaps/270bc/map")
-            : Path.of(named);
-    try (Stream<Path> games = Files.list(folder.resolve("games"))) {
-      return games.filter(f -> f.toString().endsWith(".xml")).sorted().findFirst().orElseThrow();
-    }
-  }
-
-  private static void settle(final long millis) throws InterruptedException {
-    Thread.sleep(millis);
-  }
-
-  /** Clicks the sidebar's row of the tool. */
-  private static void click(final JFrame window, final String tool) {
-    all(window.getContentPane())
-        .filter(AbstractButton.class::isInstance)
-        .map(AbstractButton.class::cast)
-        .filter(b -> tool.equals(b.getAccessibleContext().getAccessibleName()))
-        .filter(b -> "Sidebar".equals(ownerName(b)))
-        .findFirst()
-        .or(
-            () ->
-                all(window.getContentPane())
-                    .filter(AbstractButton.class::isInstance)
-                    .map(AbstractButton.class::cast)
-                    .filter(b -> tool.equals(b.getAccessibleContext().getAccessibleName()))
-                    .findFirst())
-        .ifPresent(AbstractButton::doClick);
-  }
-
-  private static String ownerName(final Component component) {
-    for (Component c = component; c != null; c = c.getParent()) {
-      if (c instanceof Sidebar) {
-        return "Sidebar";
-      }
-    }
-    return "";
-  }
-
-  private static void shoot(final JFrame window, final Page page) throws IOException {
-    final JComponent content = (JComponent) window.getContentPane();
-    final BufferedImage image =
-        new BufferedImage(content.getWidth(), content.getHeight(), BufferedImage.TYPE_INT_RGB);
-    final Graphics2D g = image.createGraphics();
-    content.printAll(g);
-    g.dispose();
-    final List<Rectangle> marked = new ArrayList<>();
-    int number = 1;
-    for (final Callout callout : page.callouts()) {
-      final Optional<Component> found = find(content, callout.find());
-      if (found.isPresent()) {
-        final Rectangle bounds =
-            SwingUtilities.convertRectangle(
-                found.get().getParent(), found.get().getBounds(), content);
-        drawCallout(image, bounds, number, marked);
-      }
-      number++;
-    }
-    ImageIO.write(image, "png", IMAGES.resolve(page.slug() + ".png").toFile());
-    Files.writeString(DUMP.resolve(page.slug() + ".txt"), dump(content));
-  }
-
-  /**
-   * The first shown component with the text as its text or accessible name, else the first
-   * whose text, accessible name or tool tip starts with it; the sidebar's rows and the hint
-   * line's parts are skipped unless asked for by their own words.
-   */
-  private static Optional<Component> find(final Container in, final String text) {
-    final Predicate<Component> exact =
-        c -> c.isShowing() && (text.equals(textOf(c)) || text.equals(accessibleNameOf(c)));
-    final Predicate<Component> starts =
-        c ->
-            c.isShowing()
-                && (textOf(c).startsWith(text)
-                    || accessibleNameOf(c).startsWith(text)
-                    || (c instanceof JComponent j
-                        && j.getToolTipText() != null
-                        && j.getToolTipText().startsWith(text)));
-    final List<Component> shown = all(in).toList();
-    return shown.stream()
-        .filter(exact)
-        .filter(c -> !(c instanceof JLabel) || shown.stream().noneMatch(o -> exact.test(o) && !(o instanceof JLabel)))
-        .findFirst()
-        .or(() -> shown.stream().filter(starts).findFirst());
-  }
-
-  /** Scrolls the control found by the text to the top of its scroll pane. */
-  private static void scrollTo(final JFrame window, final String text) {
-    find(window.getContentPane(), text)
-        .ifPresent(
-            c -> {
-              if (c instanceof JComponent j) {
-                final javax.swing.JViewport viewport =
-                    (javax.swing.JViewport)
-                        SwingUtilities.getAncestorOfClass(javax.swing.JViewport.class, j);
-                if (viewport != null) {
-                  final Rectangle at =
-                      SwingUtilities.convertRectangle(j.getParent(), j.getBounds(), viewport.getView());
-                  viewport.setViewPosition(new Point(0, Math.max(0, at.y - 12)));
-                }
-              }
-            });
-  }
-
   private static Stream<Component> all(final Component component) {
     final Stream<Component> own = Stream.of(component);
     return component instanceof Container container
@@ -839,10 +922,10 @@ final class GuideScreenshots {
 
   private static String textOf(final Component c) {
     if (c instanceof AbstractButton b) {
-      return Optional.ofNullable(b.getText()).orElse("");
+      return oneLine(Optional.ofNullable(b.getText()).orElse(""));
     }
     if (c instanceof JLabel l) {
-      return Optional.ofNullable(l.getText()).orElse("");
+      return oneLine(Optional.ofNullable(l.getText()).orElse(""));
     }
     return "";
   }
@@ -853,101 +936,44 @@ final class GuideScreenshots {
   }
 
   /** Every shown control with a word on it, with where it is: to write the guide from. */
-  private static String dump(final Container content) {
+  private static String dump(final JRootPane root, final List<Component> shown) {
     final StringBuilder out = new StringBuilder();
     final Map<String, Integer> seen = new LinkedHashMap<>();
-    all(content)
-        .filter(c -> c.isShowing() || content instanceof JPopupMenu)
-        .forEach(
-            c -> {
-              final String kind = c.getClass().getSimpleName();
-              final String text = textOf(c);
-              final String name = accessibleNameOf(c);
-              final String tip = c instanceof JComponent j ? Optional.ofNullable(j.getToolTipText()).orElse("") : "";
-              final String typed = c instanceof JTextComponent t ? Optional.ofNullable(t.getText()).orElse("") : "";
-              if (text.isBlank() && name.isBlank() && tip.isBlank() && typed.isBlank()) {
-                return;
-              }
-              final Rectangle at = SwingUtilities.convertRectangle(c.getParent(), c.getBounds(), content);
-              final String line =
-                  kind
-                      + " @"
-                      + at.x
-                      + ","
-                      + at.y
-                      + " "
-                      + at.width
-                      + "x"
-                      + at.height
-                      + (text.isBlank() ? "" : " text=\"" + oneLine(text) + "\"")
-                      + (name.isBlank() || name.equals(text) ? "" : " name=\"" + oneLine(name) + "\"")
-                      + (typed.isBlank() ? "" : " typed=\"" + oneLine(typed) + "\"")
-                      + (tip.isBlank() ? "" : " tip=\"" + oneLine(tip) + "\"");
-              if (seen.merge(line, 1, Integer::sum) == 1) {
-                out.append(line).append('\n');
-              }
-            });
+    for (final Component c : shown) {
+      final String kind = c.getClass().getSimpleName();
+      final String text = textOf(c);
+      final String name = accessibleNameOf(c);
+      final String tip =
+          c instanceof JComponent j ? Optional.ofNullable(j.getToolTipText()).orElse("") : "";
+      final String typed =
+          c instanceof JTextComponent t ? Optional.ofNullable(t.getText()).orElse("") : "";
+      if (text.isBlank() && name.isBlank() && tip.isBlank() && typed.isBlank()) {
+        continue;
+      }
+      final Rectangle at = boundsIn(c, root);
+      final String line =
+          kind
+              + " @"
+              + at.x
+              + ","
+              + at.y
+              + " "
+              + at.width
+              + "x"
+              + at.height
+              + (text.isBlank() ? "" : " text=\"" + text + "\"")
+              + (name.isBlank() || name.equals(text) ? "" : " name=\"" + oneLine(name) + "\"")
+              + (typed.isBlank() ? "" : " typed=\"" + oneLine(typed) + "\"")
+              + (tip.isBlank() ? "" : " tip=\"" + oneLine(tip) + "\"");
+      if (seen.merge(line, 1, Integer::sum) == 1) {
+        out.append(line).append('\n');
+      }
+    }
     return out.toString();
   }
 
   private static String oneLine(final String text) {
     final String flat = text.replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").strip();
     return flat.length() > 160 ? flat.substring(0, 157) + "…" : flat;
-  }
-
-  /**
-   * A red ring around the control and a numbered badge beside it, above it where there is room,
-   * else below, right or left, never over another ring or badge, with a line between.
-   */
-  private static void drawCallout(
-      final BufferedImage image, final Rectangle bounds, final int number, final List<Rectangle> marked) {
-    final Graphics2D g = image.createGraphics();
-    g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-    g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-    final Color red = new Color(230, 60, 50);
-    final Rectangle ring = new Rectangle(bounds.x - 3, bounds.y - 3, bounds.width + 6, bounds.height + 6);
-    g.setColor(red);
-    g.setStroke(new BasicStroke(2.5f));
-    g.drawRoundRect(ring.x, ring.y, ring.width, ring.height, 8, 8);
-    final int size = 24;
-    final int gap = 10;
-    final List<Point> places =
-        List.of(
-            new Point(ring.x + ring.width / 2 - size / 2, ring.y - size - gap),
-            new Point(ring.x + ring.width / 2 - size / 2, ring.y + ring.height + gap),
-            new Point(ring.x + ring.width + gap, ring.y + ring.height / 2 - size / 2),
-            new Point(ring.x - size - gap, ring.y + ring.height / 2 - size / 2));
-    final Rectangle within = new Rectangle(2, 2, image.getWidth() - 4, image.getHeight() - 4);
-    Rectangle badge = null;
-    for (final Point place : places) {
-      final Rectangle candidate = new Rectangle(place.x, place.y, size, size);
-      if (within.contains(candidate) && marked.stream().noneMatch(candidate::intersects)) {
-        badge = candidate;
-        break;
-      }
-    }
-    if (badge == null) {
-      // no room: below, pushed right until free
-      badge = new Rectangle(ring.x, ring.y + ring.height + gap, size, size);
-      while (marked.stream().anyMatch(badge::intersects) && badge.x + size < image.getWidth()) {
-        badge.translate(size + 4, 0);
-      }
-    }
-    marked.add(ring);
-    marked.add(badge);
-    final Point from = new Point(badge.x + size / 2, badge.y + size / 2);
-    final Point to =
-        new Point(
-            Math.max(ring.x, Math.min(ring.x + ring.width, from.x)),
-            Math.max(ring.y, Math.min(ring.y + ring.height, from.y)));
-    g.setStroke(new BasicStroke(2f));
-    g.drawLine(from.x, from.y, to.x, to.y);
-    g.fillOval(badge.x, badge.y, size, size);
-    g.setColor(Color.WHITE);
-    g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 14));
-    final String digits = String.valueOf(number);
-    final int textWidth = g.getFontMetrics().stringWidth(digits);
-    g.drawString(digits, badge.x + (size - textWidth) / 2, badge.y + size / 2 + 5);
-    g.dispose();
   }
 }

@@ -45,10 +45,13 @@ tasks.test {
     // Java preferences in memory: no test reads or writes what the developer chose here
     systemProperty("java.util.prefs.PreferencesFactory", "eddies.mapeditor.MemoryPreferencesFactory")
     // the user guide's screenshots: -Dguide.screenshots=true runs GuideScreenshots, which writes
-    // docs/guide/img from the editor as it runs; a map's folder to show with -Dguide.map=<folder>
+    // docs/guide/img from the editor as it runs; a map's folder to show with -Dguide.map=<folder>,
+    // only the pictures whose names match with -Dguide.only=<regex>
     systemProperty("guide.screenshots", System.getProperty("guide.screenshots") ?: "")
     systemProperty("guide.map", System.getProperty("guide.map") ?: "")
-    systemProperty("guide.dark", System.getProperty("guide.dark") ?: "true")
+    systemProperty("guide.only", System.getProperty("guide.only") ?: "")
+    // it holds three maps with their pictures, for light and again for dark: 512 MB run out
+    if (System.getProperty("guide.screenshots") == "true") maxHeapSize = "2g"
     // the editor's Backups folder for the tests, emptied first: the developer's own stays as it is
     val testBackups = layout.buildDirectory.dir("test-backups").get().asFile
     systemProperty("eddies.backups", testBackups.path)

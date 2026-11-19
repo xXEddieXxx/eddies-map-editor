@@ -11,6 +11,8 @@ site_dir: build/site
 
 theme:
   name: material
+  # the row of a group's tools above each page, and the heading face
+  custom_dir: docs/theme
   language: en
   logo: img/icon.png
   favicon: img/icon.png
@@ -20,7 +22,6 @@ theme:
   features:
     - navigation.tabs
     - navigation.tabs.sticky
-    - navigation.sections
     - navigation.top
     - navigation.footer
     - navigation.instant
@@ -32,21 +33,25 @@ theme:
   palette:
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: black
-      accent: cyan
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-sunny
         name: Light
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: blue grey
-      accent: cyan
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-night
         name: Dark
 
 extra_css:
   - assets/extra.css
+
+# a click on a picture shows it big
+extra_javascript:
+  - assets/zoom.js
 
 markdown_extensions:
   - tables

@@ -1,118 +1,286 @@
-/* The guide's look on top of Material: the editor's colours, pictures as cards, numbered
-   callouts that match the red badges in the pictures. */
+/* The guide's look on top of Material: a quiet page without frames. The editor's groups are the
+   tabs on top, the tools of a group a row of words above the page, a page a list of tasks that
+   open in place, each with short steps and a small picture of the editor. Space and type do the
+   grouping: no borders, cards or shadows. */
 
 :root {
-  --guide-badge: #e63c32;
+  --guide-soft: #f1f3f6;
+  --guide-tip: #eef4ff;
+  --guide-heading: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
 }
 
+[data-md-color-scheme="default"] {
+  --md-default-bg-color: #ffffff;
+  --md-default-fg-color: #161b21;
+  --md-default-fg-color--light: #626d79;
+  --md-primary-fg-color: #ffffff;
+  --md-primary-bg-color: #161b21;
+  --md-primary-bg-color--light: #626d79;
+  --md-accent-fg-color: #2159d6;
+  --md-typeset-a-color: #2159d6;
+}
+
+[data-md-color-scheme="slate"] {
+  --guide-soft: #1d232b;
+  --guide-tip: #18243a;
+  --md-default-bg-color: #13171c;
+  --md-default-fg-color: #e8ecf1;
+  --md-default-fg-color--light: #93a0ad;
+  --md-primary-fg-color: #13171c;
+  --md-primary-bg-color: #e8ecf1;
+  --md-primary-bg-color--light: #93a0ad;
+  --md-accent-fg-color: #86b6ff;
+  --md-typeset-a-color: #86b6ff;
+}
+
+/* the header and the groups: one calm band in the page's own color */
 .md-header,
 .md-tabs {
   box-shadow: none;
 }
 
-.md-tabs {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+.md-header[data-md-state="shadow"],
+.md-header--shadow {
+  box-shadow: none;
 }
 
+.md-tabs__link {
+  opacity: 1;
+  color: var(--md-default-fg-color--light);
+}
+
+.md-tabs__item--active .md-tabs__link {
+  color: var(--md-accent-fg-color);
+  font-weight: 600;
+}
+
+.md-search__form,
+.md-search__form:hover {
+  background: var(--guide-soft);
+  border-radius: 8px;
+}
+
+/* no side columns on a wide screen: the tabs and the row of tools lead; the drawer stays on a
+   phone */
+@media screen and (min-width: 76.25em) {
+  .md-sidebar--primary {
+    display: none;
+  }
+}
+
+.md-sidebar--secondary {
+  display: none;
+}
+
+.md-content {
+  max-width: 46rem;
+  margin: 0 auto;
+}
+
+/* the tools of the page's group */
+.guide-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  margin: 0 0 1.6rem -0.6rem;
+  font-size: 0.72rem;
+}
+
+.guide-tools a {
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  color: var(--md-default-fg-color--light);
+}
+
+.guide-tools a:hover,
+.guide-tools a:focus-visible {
+  color: var(--md-default-fg-color);
+}
+
+.guide-tools a.on {
+  background: var(--guide-soft);
+  color: var(--md-default-fg-color);
+  font-weight: 600;
+}
+
+/* type */
 .md-typeset h1 {
-  font-weight: 700;
+  font-family: var(--guide-heading);
+  font-weight: 600;
   letter-spacing: -0.01em;
+  color: var(--md-default-fg-color);
+  margin-bottom: 0.3em;
 }
 
 .md-typeset h2 {
-  font-weight: 650;
-  margin-top: 2.2em;
+  font-family: var(--guide-heading);
+  font-weight: 600;
+  margin-top: 2em;
 }
 
-/* a picture is a card: rounded, with a shadow, never wider than the text */
-.md-typeset img {
-  border-radius: 10px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
-  margin: 0.6em 0 1.4em;
+.md-typeset h1 + p,
+.md-typeset p:has(> a.back) + p {
+  color: var(--md-default-fg-color--light);
+  max-width: 34rem;
 }
 
-[data-md-color-scheme="default"] .md-typeset img {
-  box-shadow: 0 6px 22px rgba(20, 28, 39, 0.18);
-  border: 1px solid rgba(20, 28, 39, 0.08);
+/* the link back to the start: the tabs do that on the site */
+.md-typeset p:has(> a.back) {
+  display: none;
 }
 
-/* the numbered list after a picture: red badges like the callouts in the picture */
-.md-typeset img + ol,
-.md-typeset p:has(> img) + ol {
-  list-style: none;
-  counter-reset: callout;
-  margin-left: 0;
-  padding-left: 0;
+/* a task: one line that opens in place, without a frame */
+.md-typeset details.task {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: none;
+  margin: 0;
+  padding: 0;
+  font-size: inherit;
+  overflow: visible;
 }
 
-.md-typeset img + ol > li,
-.md-typeset p:has(> img) + ol > li {
-  counter-increment: callout;
-  position: relative;
-  padding-left: 2.4em;
-  margin-bottom: 0.55em;
+.md-typeset details.task > summary {
+  background: none;
+  border: 0;
+  margin: 0;
+  padding: 0.4rem 0 0.4rem 1.2rem;
+  font-weight: 500;
+  color: var(--md-default-fg-color--light);
 }
 
-.md-typeset img + ol > li::before,
-.md-typeset p:has(> img) + ol > li::before {
-  content: counter(callout);
-  position: absolute;
+.md-typeset details.task > summary:hover,
+.md-typeset details.task > summary:focus-visible {
+  color: var(--md-default-fg-color);
+}
+
+.md-typeset details.task[open] > summary {
+  color: var(--md-default-fg-color);
+  font-weight: 600;
+}
+
+/* no kind icon; the arrow before the words */
+.md-typeset details.task > summary::before {
+  display: none;
+}
+
+.md-typeset details.task > summary::after {
   left: 0;
-  top: 0.1em;
-  width: 1.7em;
-  height: 1.7em;
-  border-radius: 50%;
-  background: var(--guide-badge);
-  color: #fff;
-  font-weight: 700;
-  font-size: 0.85em;
-  line-height: 1.7em;
-  text-align: center;
+  right: auto;
+  top: 0.62em;
+  width: 0.9rem;
+  height: 0.9rem;
+  background-color: var(--md-default-fg-color--light);
 }
 
-/* the start page's tiles */
-.md-typeset .grid.cards > ul > li {
-  border-radius: 10px;
-  transition: transform 0.12s ease, box-shadow 0.12s ease;
+.md-typeset details.task[open] > summary::after {
+  background-color: var(--md-accent-fg-color);
 }
 
-.md-typeset .grid.cards > ul > li:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+.md-typeset details.task > :not(summary) {
+  margin-left: 1.2rem;
 }
 
-.md-typeset .grid.cards > ul > li > p:first-child {
-  font-weight: 650;
-  font-size: 1.02em;
+.md-typeset details.task[open] {
+  padding-bottom: 0.8rem;
 }
 
-/* the key table and others: tighter, with a soft header */
-.md-typeset table:not([class]) {
-  font-size: 0.8rem;
+/* a picture of the editor above the steps of its task, at its own size so its text reads, in the
+   page's theme; a click shows it big (zoom.js) */
+/* no display here: Material hides the other theme's picture with it */
+.md-typeset img.shot,
+.md-typeset img.wide {
+  max-width: 100%;
   border-radius: 8px;
-  overflow: hidden;
+  margin: 0.3rem 0 0.9rem;
+  cursor: zoom-in;
+}
+
+.md-typeset img.shot:focus-visible,
+.md-typeset img.wide:focus-visible,
+.guide-zoom:focus-visible {
+  outline: 2px solid var(--md-accent-fg-color);
+  outline-offset: 3px;
+}
+
+.guide-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 2vh 2vw;
+  background: color-mix(in srgb, var(--md-default-bg-color) 92%, transparent);
+  cursor: zoom-out;
+}
+
+.guide-zoom img {
+  width: auto;
+  height: auto;
+  min-width: min(96vw, 1000px);
+  max-width: 96vw;
+  max-height: 94vh;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+/* a tip: a soft tint, no frame, its word and its text in one line */
+.md-typeset .admonition.tip {
+  border: 0;
+  border-radius: 8px;
+  box-shadow: none;
+  background: var(--guide-tip);
+  padding: 0.45rem 0.75rem;
+  font-size: 0.7rem;
+}
+
+.md-typeset .admonition.tip > .admonition-title {
+  display: inline;
+  background: none;
+  margin: 0 0.4rem 0 0;
+  padding: 0;
+  font-weight: 700;
+}
+
+.md-typeset .admonition.tip > .admonition-title::before {
+  display: none;
+}
+
+.md-typeset .admonition.tip > p:not(.admonition-title) {
+  display: inline;
+  margin: 0;
+}
+
+/* tables: plain rows */
+.md-typeset table:not([class]) {
+  border: 0;
+  box-shadow: none;
+  font-size: 0.76rem;
 }
 
 .md-typeset table:not([class]) th {
-  background: rgba(127, 127, 127, 0.12);
-  font-weight: 650;
+  font-weight: 600;
+  color: var(--md-default-fg-color--light);
 }
 
-/* the "← Guide" line under a page's title */
-.md-typeset h1 + p a[href="README.md"],
-.md-typeset h1 + p a[href="../"],
-.md-typeset h1 + p a[href="index.html"] {
-  font-size: 0.8rem;
-  opacity: 0.75;
-}
-
-.hero {
-  padding: 1.2rem 1.4rem;
-  border-radius: 12px;
-  background: linear-gradient(135deg, rgba(0, 188, 212, 0.14), rgba(31, 42, 58, 0.14));
-  margin-bottom: 1.6rem;
-}
-
+/* the start page */
 .hero p {
   margin: 0.3em 0;
+}
+
+.md-typeset .grid.cards > ul > li {
+  border: 0;
+  border-radius: 8px;
+  box-shadow: none;
+  background: var(--guide-soft);
+}
+
+.md-typeset .grid.cards > ul > li:hover {
+  border: 0;
+  box-shadow: none;
+}
+
+.md-typeset .grid.cards > ul > li > p:first-child {
+  font-weight: 600;
 }

@@ -87,7 +87,9 @@ final class UserGuideTest {
         continue;
       }
       if (!Files.readString(page).contains("img/" + slug + ".png")
-          || !Files.isRegularFile(GUIDE.resolve("img").resolve(slug + ".png"))) {
+          || !Files.isRegularFile(GUIDE.resolve("img").resolve(slug + ".png"))
+          // the site shows this one in its dark theme
+          || !Files.isRegularFile(GUIDE.resolve("img").resolve(slug + "-dark.png"))) {
         withoutPicture.add(title);
       }
       if (!overview.contains("](" + slug + ".md)")) {
@@ -97,7 +99,7 @@ final class UserGuideTest {
 
     assertThat(titles).as("the tools, read from the sources").hasSizeGreaterThan(15);
     assertThat(withoutPage).as("tools without a page docs/guide/<tool>.md").isEmpty();
-    assertThat(withoutPicture).as("pages without their picture docs/guide/img/<tool>.png").isEmpty();
+    assertThat(withoutPicture).as("pages without their picture docs/guide/img/<tool>.png and <tool>-dark.png").isEmpty();
     assertThat(notLinked).as("pages the overview does not link").isEmpty();
   }
 

@@ -9,6 +9,7 @@ on:
     branches: [main]
     paths:
       - "docs/guide/**"
+      - "docs/theme/**"
       - "mkdocs.yml"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
@@ -31,7 +32,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: MkDocs Material
-        run: pip install mkdocs-material
+        run: pip install "mkdocs-material==9.*"
       - name: Build, refusing a broken link
         run: mkdocs build --strict
       - uses: actions/upload-pages-artifact@v3

@@ -224,6 +224,12 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
   made from the running editor (GuideScreenshots) in the dark theme; a test keeps every tool,
   view and menu item named in the guide. The guide is published as a site at
   https://xxeddiexxx.github.io/eddies-map-editor/ by MkDocs Material, built on each push.
+- **The user guide in a new design** (#39). A quiet site without frames: the editor's groups
+  as tabs on top, the tools of a group as a row above each page, and each page a list of tasks
+  ("Add a unit type", "Move a capital") that open in place, with short steps, a tip where one
+  helps, and a small picture of that part of the editor. The pictures follow the site's light
+  or dark theme and show big on a click. "Every control" at the end of a page keeps the full
+  description of each control. The whole-window pictures with numbered callouts are gone.
 
 ### For developers
 

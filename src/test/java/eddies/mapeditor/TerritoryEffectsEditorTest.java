@@ -204,6 +204,36 @@ final class TerritoryEffectsEditorTest {
         .contains("the game shows none itself");
   }
 
+  @DisplayName("The line on how the game shows the effect fits beside the picture, uncut")
+  @Test
+  void inTheGameLineIsNotCut() throws Exception {
+    final MapProject project = givenForest();
+    final List<JLabel> lines = new ArrayList<>();
+
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final TerritoryEffectsEditor editor = new TerritoryEffectsEditor(project);
+          // the page as a window 1280 px wide gives it
+          editor.page().setSize(1031, 650);
+          layOut(editor.page());
+          visible(editor, JLabel.class)
+              .filter(l -> String.valueOf(l.getText()).contains("In the game:"))
+              .forEach(lines::add);
+        });
+
+    assertThat(lines).as("the line on how the game shows the effect").hasSize(1);
+    assertThat(lines.getFirst().getWidth())
+        .as("the room the line has is what its wrapped text needs")
+        .isGreaterThanOrEqualTo(lines.getFirst().getPreferredSize().width);
+  }
+
+  private static void layOut(final Component component) {
+    component.doLayout();
+    if (component instanceof Container container) {
+      Stream.of(container.getComponents()).forEach(TerritoryEffectsEditorTest::layOut);
+    }
+  }
+
   @DisplayName("An effect no territory has yet still offers Show on map, to paint it there")
   @Test
   void showOnMapWithoutTerritories() throws Exception {

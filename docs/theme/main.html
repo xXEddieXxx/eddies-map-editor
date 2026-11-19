@@ -1,0 +1,22 @@
+{#- The guide's own parts on top of Material: the heading face, and above each page the tools of
+    its group as a row to choose from, as the editor's sidebar lists them. -#}
+{% extends "base.html" %}
+
+{% block extrahead %}
+  <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&display=swap">
+{% endblock %}
+
+{% block content %}
+  {% if page and page.parent and page.parent.children %}
+    <nav class="guide-tools" aria-label="{{ page.parent.title }}">
+      {% for sibling in page.parent.children %}
+        {% if sibling.is_page %}
+          <a href="{{ sibling.url | url }}"
+             {% if sibling == page %}class="on" aria-current="page"{% endif %}>{{ sibling.title }}</a>
+        {% endif %}
+      {% endfor %}
+    </nav>
+  {% endif %}
+  {{ super() }}
+{% endblock %}
