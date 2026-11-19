@@ -129,6 +129,10 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 
 ### Changed
 
+- **Units' Value says what it is** (#34). Its tool tip names the TUV and says what the grey "its
+  cost" in the empty field means: TripleA takes what the unit costs. A "?" beside it has a short
+  guide: when to set it, and a rule of thumb to work it out.
+
 - **Flags in Nations and Politics** (#19). The Nations list shows each nation's colour and flag side
   by side; the Politics matrix shows the flag before each row and above each column.
 - **Politics says what a change costs and how it holds** (#20). A relationship type's page lists the

@@ -798,4 +798,41 @@ final class UnitsEditorTest {
         .findFirst()
         .orElse("");
   }
+
+  @DisplayName("Value says it is the TUV and what an empty field means, with a guide behind ?")
+  @Test
+  void valueSaysWhatItIs() throws Exception {
+    // given
+    final MapProject project = givenG40();
+    final List<String> tips = new ArrayList<>();
+    final List<String> helps = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          try {
+            final Component page = givenEditor(project, "artillery", "none").page();
+            collect(page, JLabel.class).stream()
+                .filter(label -> "Value".equals(label.getText()))
+                .map(JLabel::getToolTipText)
+                .forEach(tips::add);
+            collect(page, AbstractButton.class).stream()
+                .map(button -> button.getAccessibleContext().getAccessibleName())
+                .filter("Help: Value"::equals)
+                .forEach(helps::add);
+          } catch (final Exception e) {
+            throw new IllegalStateException(e);
+          }
+        });
+
+    // then
+    assertThat(tips)
+        .as("the label's tool tip names the TUV and the grey word of the empty field")
+        .isNotEmpty()
+        .allMatch(tip -> tip.startsWith("TUV: ") && tip.contains("\"its cost\""));
+    assertThat(helps).as("the guide's ? beside the label").hasSize(1);
+    assertThat(UnitOptions.VALUE_GUIDE)
+        .as("the rule of thumb")
+        .contains("attack + defense + movement");
+  }
 }

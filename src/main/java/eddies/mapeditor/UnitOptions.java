@@ -268,8 +268,9 @@ class UnitOptions {
                       "tuv",
                       "Value",
                       -1,
-                      "What it is worth to the AI and the battle calculator; empty for its cost."
-                          + " Set it for a unit that is free or cheap but strong."),
+                      "TUV: what it is worth to the AI and the battle calculator. Left empty"
+                          + " (\"its cost\"), TripleA takes what the unit costs. Set it for a unit"
+                          + " that is free or cheap but strong."),
                   number(
                       "whenCapturedSustainsDamage",
                       "Damage when captured",
@@ -283,6 +284,16 @@ class UnitOptions {
                       "canBeGivenByTerritoryTo",
                       "Given with its territory to",
                       "Nations it goes to with its territory."))));
+
+  /** How to find a unit's value (tuv), behind the "?" of its field. */
+  static final String VALUE_GUIDE =
+      "The value (TUV, total unit value) is what the AI and the battle calculator count a unit"
+          + " as. Left empty, TripleA takes the unit's cost. Set it for a unit that costs 0 or 1:"
+          + " its cost says nothing of its worth. From a cost of 2 it is usually left empty. A"
+          + " rule of thumb for a unit with 1 hit point: attack + defense + movement. More"
+          + " exactly: (attack × attack dice + defense × defense dice + movement + extras) × (hit"
+          + " points + 1) / 2, the extras being the supports it gives and 1 for each ability, eg"
+          + " anti-air, bombarding or being a destroyer; how much they count depends on the map.";
 
   /** With the cost, the numbers in the row at the top, out of their sections. */
   static final List<String> ESSENTIALS =

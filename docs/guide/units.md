@@ -19,8 +19,10 @@ for an option is in the tool tip of its label.
 3. **Cost**: PUs to buy one, from the purchase list that sells it; "–" when no rule sells it for PUs.
    A unit that costs other resources too shows them all in the list and under its name, "1 PU +
    5 Fame"; they are changed in Production.
-4. **Value** (tuv): what the unit is worth to the AI and the battle calculator; empty for its
-   cost. Set it for a unit that is free or cheap but strong.
+4. **Value** (TUV): what the unit is worth to the AI and the battle calculator. Left empty,
+   shown as a grey "its cost", TripleA takes what the unit costs. Set it for a unit that costs 0
+   or 1 but is strong; from a cost of 2 it is usually left empty. The "?" has a rule of thumb:
+   attack + defense + movement for a unit with 1 hit point.
 5. **Attack**, **Defense**, **Movement**: the numbers of the list's line. **Attack** hits on a
    die roll of this or less, **Defense** when defending, **Movement** territories per turn.
 6. **Hit points**: hits it takes to destroy, for example 2 for a battleship.

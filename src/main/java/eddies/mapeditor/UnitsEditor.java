@@ -770,7 +770,7 @@ final class UnitsEditor implements Editor {
       final JLabel label = new JLabel(labels.get(i));
       label.setLabelFor(fields.get(i));
       label.setToolTipText(fields.get(i).getToolTipText());
-      cells.add(label);
+      cells.add("Value".equals(labels.get(i)) ? Help.with(label, UnitOptions.VALUE_GUIDE) : label);
     }
     fields.forEach(
         field -> {
