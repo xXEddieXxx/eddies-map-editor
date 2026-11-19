@@ -59,7 +59,7 @@ final class ConnectionsEditor implements Editor {
     this.map = map;
     page = SwingComponents.newJScrollPane(inspector);
     backToInstruction.setRepeats(false);
-    project.onChange(this::showInspector);
+    project.onChange(Panels.whenShown(page, this::showInspector));
     showInspector();
   }
 

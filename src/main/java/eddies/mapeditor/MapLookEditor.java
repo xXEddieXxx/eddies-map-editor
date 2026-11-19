@@ -135,7 +135,7 @@ final class MapLookEditor implements Editor {
     capped.setLayout(new BoxLayout(capped, BoxLayout.X_AXIS));
     capped.add(scrolled);
     page.add(capped, BorderLayout.CENTER);
-    project.onChange(this::fill);
+    project.onChange(Panels.whenShown(page, this::fill));
     fill();
   }
 

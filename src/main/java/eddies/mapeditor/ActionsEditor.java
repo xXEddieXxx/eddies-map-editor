@@ -103,13 +103,15 @@ final class ActionsEditor implements Editor {
         EMPTY);
     page.add(Panels.sideBySide(listColumn, details), LIST);
     project.onChange(
-        () -> {
-          fillNationFilter();
-          list.refresh();
-          if (!editingHere) {
-            showInspector();
-          }
-        });
+        Panels.whenShown(
+            page,
+            () -> {
+              fillNationFilter();
+              list.refresh();
+              if (!editingHere) {
+                showInspector();
+              }
+            }));
     fillNationFilter();
     showInspector();
   }

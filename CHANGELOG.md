@@ -41,6 +41,11 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
   tool, read a text file again for each row of the Actions list, and built the Units page anew
   although it was not on screen: on 11 Rings of Power over a second per tick. A text file is now
   read once, and Units waits until it shows: a tick there takes under a tenth of a second.
+- **Every change is quicker on big maps.** A tool that is not on screen (Actions, Sounds,
+  Politics, Technology, Terrain effects, Connections, Map look, Game options, Attachments, Units)
+  no longer builds its page anew at every change, only when it shows again; and Actions finds
+  its actions' texts without looking through all attachments for each. On 270BC Wars a change
+  took 0.6 s in any tool and now takes about 0.1 s.
 
 - **Units showed 0-0-0 for unit types whose options a loop writes** (#31). A map like 11 Rings
   of Power writes one unitAttachment for each unit of a variable (`foreach`). Units now reads

@@ -138,12 +138,14 @@ final class TechnologyEditor implements Editor {
         Panels.sideBySide(listColumn, SwingComponents.newJScrollPane(details)),
         BorderLayout.CENTER);
     project.onChange(
-        () -> {
-          list.refresh();
-          if (!editingHere) {
-            showDetails();
-          }
-        });
+        Panels.whenShown(
+            page,
+            () -> {
+              list.refresh();
+              if (!editingHere) {
+                showDetails();
+              }
+            }));
     // the first technology chosen on open
     showDetails();
   }

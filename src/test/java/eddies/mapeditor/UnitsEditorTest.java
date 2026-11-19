@@ -2,6 +2,7 @@ package eddies.mapeditor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.awt.CardLayout;
 import java.awt.Component;
 import java.awt.Container;
 import java.io.InputStream;
@@ -25,7 +26,9 @@ import javax.swing.JList;
 import javax.swing.JSpinner;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
+import javax.swing.JPanel;
 import javax.swing.JTextField;
+import javax.swing.JWindow;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -699,31 +702,46 @@ final class UnitsEditorTest {
   @DisplayName("A change made while another tool shows reaches Units when it shows again")
   @Test
   void hiddenUnitsWaitWithShowingAChange() throws Exception {
-    // given: Units built but not on screen, as while Production shows
+    // given: Units as a card of a window that shows another card, as while Production shows
     final MapProject project = givenG40();
-    final List<Object> attacks = new ArrayList<>();
+    final List<Boolean> showsSeven = new ArrayList<>();
 
     // when
     SwingUtilities.invokeAndWait(
         () -> {
+          // far off the screen, and never focused
+          final JWindow window = new JWindow();
+          window.setFocusableWindowState(false);
+          window.setBounds(-20000, -20000, 900, 700);
           try {
             final UnitsEditor editor = givenEditor(project, "artillery", "none");
+            final CardLayout cards = new CardLayout();
+            final JPanel workspace = new JPanel(cards);
+            workspace.add(new JPanel(), "Production");
+            workspace.add(editor.page(), "Units");
+            window.add(workspace);
+            window.setVisible(true);
             project.edit(g -> MapXml.withUnitOption(g, "artillery", "attack", "7"));
-            attacks.add(givenNumbers(editor).contains(7));
-            editor.showing();
-            attacks.add(givenNumbers(editor).contains(7));
+            showsSeven.add(numbersOf(editor).contains(7));
+            cards.show(workspace, "Units");
+            showsSeven.add(numbersOf(editor).contains(7));
+            project.edit(g -> MapXml.withUnitOption(g, "artillery", "attack", "8"));
+            showsSeven.add(numbersOf(editor).contains(7));
           } catch (final Exception e) {
             throw new IllegalStateException(e);
+          } finally {
+            window.dispose();
           }
         });
 
     // then
-    assertThat(attacks)
-        .as("not built anew while hidden, which would slow every step; anew when shown")
-        .containsExactly(false, true);
+    assertThat(showsSeven)
+        .as("not built anew while hidden, which would slow every step; anew when it shows; at"
+            + " once while it shows")
+        .containsExactly(false, true, false);
   }
 
-  private static List<Object> givenNumbers(final UnitsEditor editor) {
+  private static List<Object> numbersOf(final UnitsEditor editor) {
     return collect(editor.page(), JSpinner.class).stream().map(JSpinner::getValue).toList();
   }
 }

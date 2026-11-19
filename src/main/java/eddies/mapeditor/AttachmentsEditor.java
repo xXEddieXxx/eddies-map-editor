@@ -132,7 +132,7 @@ final class AttachmentsEditor implements Editor {
         EMPTY);
     detailsCard.add(newDetails(), DETAILS);
     page.add(Panels.sideBySide(listColumn, detailsCard), BorderLayout.CENTER);
-    project.onChange(this::refresh);
+    project.onChange(Panels.whenShown(page, this::refresh));
     refresh();
   }
 

@@ -3,12 +3,14 @@ package eddies.mapeditor;
 import games.strategy.triplea.Constants;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 import lombok.experimental.ExtensionMethod;
 import lombok.experimental.UtilityClass;
 import org.triplea.map.data.elements.AttachmentList.Attachment;
@@ -112,11 +114,31 @@ class ActionsXml {
   }
 
   private static int indexOf(final Game game, final Action action) {
+    final Integer index;
+    synchronized (INDEXES) {
+      index = INDEXES.computeIfAbsent(game, ActionsXml::indexes).get(action);
+    }
+    if (index == null) {
+      throw new IllegalArgumentException("No action " + action);
+    }
+    return index;
+  }
+
+  // by the game, which every change makes anew: the list asks for every action's text at every
+  // change, and a big map has 35,000 attachments to look through for each
+  private static final Map<Game, Map<Action, Integer>> INDEXES = new WeakHashMap<>();
+
+  // where each action is, the first of two alike
+  private static Map<Action, Integer> indexes(final Game game) {
     final List<Attachment> attachments = AttachmentsXml.attachments(game);
-    return IntStream.range(0, attachments.size())
-        .filter(i -> action.matches(attachments.get(i)))
-        .findFirst()
-        .orElseThrow(() -> new IllegalArgumentException("No action " + action));
+    final Map<Action, Integer> indexes = new HashMap<>();
+    for (int i = 0; i < attachments.size(); i++) {
+      final Attachment attachment = attachments.get(i);
+      if (attachment.getName() != null && attachment.getAttachTo() != null) {
+        indexes.putIfAbsent(new Action(attachment.getName(), attachment.getAttachTo()), i);
+      }
+    }
+    return indexes;
   }
 
   /** The values the option has, each where it is given, eg every relationshipChange. */

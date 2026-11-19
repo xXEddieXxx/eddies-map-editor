@@ -180,12 +180,14 @@ class RulesEditors {
       page.add(SwingComponents.newJScrollPane(form), BorderLayout.CENTER);
       page.add(newVariablesBar(), BorderLayout.SOUTH);
       project.onChange(
-          () -> {
-            if (!editingHere) {
-              rebuild();
-            }
-            showVariablesToggle();
-          });
+          Panels.whenShown(
+              page,
+              () -> {
+                if (!editingHere) {
+                  rebuild();
+                }
+                showVariablesToggle();
+              }));
       rebuild();
     }
 
@@ -657,10 +659,12 @@ class RulesEditors {
       none = noVariables;
       page.add(none, NONE);
       project.onChange(
-          () -> {
-            list.refresh();
-            show();
-          });
+          Panels.whenShown(
+              page,
+              () -> {
+                list.refresh();
+                show();
+              }));
       show();
     }
 

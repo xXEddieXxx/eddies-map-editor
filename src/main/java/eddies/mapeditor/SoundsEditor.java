@@ -130,14 +130,16 @@ final class SoundsEditor implements Editor {
     page.add(
         Panels.sideBySide(column, SwingComponents.newJScrollPane(inspector)), BorderLayout.CENTER);
     project.onChange(
-        () -> {
-          found.clear();
-          showSwitchCounts();
-          list.refresh();
-          if (!editingHere) {
-            showInspector();
-          }
-        });
+        Panels.whenShown(
+            page,
+            () -> {
+              found.clear();
+              showSwitchCounts();
+              list.refresh();
+              if (!editingHere) {
+                showInspector();
+              }
+            }));
     showInspector();
   }
 

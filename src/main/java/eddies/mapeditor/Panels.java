@@ -9,6 +9,7 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.GridBagLayout;
 import java.awt.Point;
+import java.awt.event.HierarchyEvent;
 import java.awt.image.BufferedImage;
 import java.util.List;
 import java.util.Optional;
@@ -68,6 +69,32 @@ class Panels {
     preview.setText(html);
     // the view scrolls to its top after a new text, later: back to where the reader was
     SwingUtilities.invokeLater(() -> viewport.ifPresent(v -> v.setViewPosition(at)));
+  }
+
+  /**
+   * A tool's listener for changes of the map that waits while the tool is not on screen: every
+   * step runs every tool's listener, and a big map's lists take long to build. Run at once while
+   * the page shows, or is in no window (a page built alone); while another tool's card shows, it
+   * runs once when the page shows again, before anything else happens there.
+   */
+  static Runnable whenShown(final Component page, final Runnable refresh) {
+    final boolean[] waits = {false};
+    page.addHierarchyListener(
+        e -> {
+          if ((e.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) != 0
+              && page.isShowing()
+              && waits[0]) {
+            waits[0] = false;
+            refresh.run();
+          }
+        });
+    return () -> {
+      if (page.isShowing() || !page.isDisplayable()) {
+        refresh.run();
+      } else {
+        waits[0] = true;
+      }
+    };
   }
 
   /** Nothing there yet: glyph, title, one line and the tool's main action. */

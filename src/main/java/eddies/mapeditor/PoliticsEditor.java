@@ -136,14 +136,16 @@ final class PoliticsEditor implements Editor {
     page.addChangeListener(e -> showing());
     page.addTab("", Panels.sideBySide(types, SwingComponents.newJScrollPane(typeForm)));
     project.onChange(
-        () -> {
-          types.refresh();
-          refreshStart();
-          if (!editingHere) {
-            showType();
-          }
-          showTypeCount();
-        });
+        Panels.whenShown(
+            page,
+            () -> {
+              types.refresh();
+              refreshStart();
+              if (!editingHere) {
+                showType();
+              }
+              showTypeCount();
+            }));
     // built once the tool shows: 900 cells on a big map
     startStale = true;
     showType();

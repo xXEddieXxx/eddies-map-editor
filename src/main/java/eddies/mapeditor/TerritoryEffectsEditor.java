@@ -116,12 +116,14 @@ final class TerritoryEffectsEditor implements Editor {
     page.add(
         Panels.sideBySide(list, SwingComponents.newJScrollPane(details)), EFFECTS);
     project.onChange(
-        () -> {
-          list.refresh();
-          if (!editingHere) {
-            showDetails();
-          }
-        });
+        Panels.whenShown(
+            page,
+            () -> {
+              list.refresh();
+              if (!editingHere) {
+                showDetails();
+              }
+            }));
     showDetails();
   }
 
