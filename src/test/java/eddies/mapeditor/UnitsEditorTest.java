@@ -695,4 +695,35 @@ final class UnitsEditorTest {
         .contains("+ Add support")
         .doesNotContain("+ Add option…", "Land", "Sea", "Air");
   }
+
+  @DisplayName("A change made while another tool shows reaches Units when it shows again")
+  @Test
+  void hiddenUnitsWaitWithShowingAChange() throws Exception {
+    // given: Units built but not on screen, as while Production shows
+    final MapProject project = givenG40();
+    final List<Object> attacks = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          try {
+            final UnitsEditor editor = givenEditor(project, "artillery", "none");
+            project.edit(g -> MapXml.withUnitOption(g, "artillery", "attack", "7"));
+            attacks.add(givenNumbers(editor).contains(7));
+            editor.showing();
+            attacks.add(givenNumbers(editor).contains(7));
+          } catch (final Exception e) {
+            throw new IllegalStateException(e);
+          }
+        });
+
+    // then
+    assertThat(attacks)
+        .as("not built anew while hidden, which would slow every step; anew when shown")
+        .containsExactly(false, true);
+  }
+
+  private static List<Object> givenNumbers(final UnitsEditor editor) {
+    return collect(editor.page(), JSpinner.class).stream().map(JSpinner::getValue).toList();
+  }
 }

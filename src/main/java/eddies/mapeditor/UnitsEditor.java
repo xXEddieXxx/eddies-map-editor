@@ -134,6 +134,8 @@ final class UnitsEditor implements Editor {
   private @Nullable JLabel headerLine;
   private boolean editingHere;
   private boolean picturesToFind;
+  // the map changed while another tool showed
+  private boolean stale;
   private @Nullable WithoutPicture withoutPicture;
   // the text field typed in and not yet taken, for commit()
   private @Nullable Runnable typing;
@@ -197,6 +199,11 @@ final class UnitsEditor implements Editor {
         Panels.sideBySide(list, SwingComponents.newJScrollPane(inspector)), BorderLayout.CENTER);
     project.onChange(
         () -> {
+          if (!page.isShowing()) {
+            // shown anew when the tool is: a change made in another tool waits for none of this
+            stale = true;
+            return;
+          }
           listIcons.clear();
           list.refresh();
           if (!editingHere) {
@@ -235,6 +242,12 @@ final class UnitsEditor implements Editor {
 
   @Override
   public void showing() {
+    if (stale) {
+      stale = false;
+      listIcons.clear();
+      list.refresh();
+      showInspector();
+    }
     if (picturesToFind) {
       picturesToFind = false;
       // once the page shows, which is right after this call

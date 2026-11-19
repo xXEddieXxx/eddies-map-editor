@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashSet;
@@ -18,6 +19,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
@@ -229,15 +231,33 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable, Map<String, Strin
 
   /** The entries of a .properties text, as {@link #entries(Kind)}. */
   static List<Entry> entries(final String text) {
+    return read(text).entries();
+  }
+
+  Optional<String> value(final Kind kind, final String key) {
+    return Optional.ofNullable(read(text(kind)).byKey().get(key));
+  }
+
+  /** A text's entries, read once: a list asks a text of every row at every change of the map. */
+  private record Read(List<Entry> entries, Map<String, String> byKey) {}
+
+  // by the text, kept while a state of the map holds it
+  private static final Map<String, Read> READ = new WeakHashMap<>();
+
+  private static Read read(final String text) {
+    synchronized (READ) {
+      return READ.computeIfAbsent(text, MapTexts::parsed);
+    }
+  }
+
+  private static Read parsed(final String text) {
     final Map<String, String> entries = new LinkedHashMap<>();
     for (final String chunk : logicalLines(text)) {
       parse(chunk).ifPresent(e -> entries.put(e.key(), e.value()));
     }
-    return entries.entrySet().stream().map(e -> new Entry(e.getKey(), e.getValue())).toList();
-  }
-
-  Optional<String> value(final Kind kind, final String key) {
-    return entries(kind).stream().filter(e -> e.key().equals(key)).map(Entry::value).findFirst();
+    return new Read(
+        entries.entrySet().stream().map(e -> new Entry(e.getKey(), e.getValue())).toList(),
+        Collections.unmodifiableMap(entries));
   }
 
   /**

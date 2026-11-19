@@ -28,6 +28,7 @@ import org.triplea.map.data.elements.Game;
 class UnitsXml {
   private static final String UNIT = Constants.UNIT_ATTACHMENT_NAME;
   static final String SUPPORT_KIND = "UnitSupportAttachment";
+  private static final String UNIT_KIND = "UnitAttachment";
 
   // ---- the unit's options
 
@@ -81,9 +82,8 @@ class UnitsXml {
         }
         continue;
       }
-      // only the loops that can make one: a big map has thousands of others
-      if (written.getName() == null
-          || !(AttachmentsXml.isNamed(written, UNIT) || written.getName().contains("@"))) {
+      // only the loops of its kind: a big map has thousands of others
+      if (written.getName() == null || !UNIT_KIND.equals(AttachmentsXml.kind(written))) {
         continue;
       }
       for (final Attachment made : AttachmentsXml.madeBy(written, variables)) {

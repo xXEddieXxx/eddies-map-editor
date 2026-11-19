@@ -37,6 +37,11 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 
 ### Fixed
 
+- **Ticks in Production › Buy showed late on a big map** (#32). Every change of the map, in any
+  tool, read a text file again for each row of the Actions list, and built the Units page anew
+  although it was not on screen: on 11 Rings of Power over a second per tick. A text file is now
+  read once, and Units waits until it shows: a tick there takes under a tenth of a second.
+
 - **Units showed 0-0-0 for unit types whose options a loop writes** (#31). A map like 11 Rings
   of Power writes one unitAttachment for each unit of a variable (`foreach`). Units now reads
   these as the game does: the Leader of each nation shows its 4-4-2 with 2 hit points. Such a
