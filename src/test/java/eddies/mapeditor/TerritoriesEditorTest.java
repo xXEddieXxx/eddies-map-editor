@@ -1154,6 +1154,10 @@ final class TerritoriesEditorTest {
             "Reload places from the files");
     assertThat(tips.get(0)).as("the file only in the tool tip").endsWith("place.txt");
     assertThat(tips.get(5)).as("the names' file").endsWith("name_place.txt");
+    assertThat(tips.get(6))
+        .as("PUs: where the game draws the number, as the Values view shows it at the center")
+        .startsWith("Where the game draws a territory's PUs; the Values view shows them at its")
+        .endsWith("pu_place.txt");
     assertThat(layOut)
         .as("no territory chosen: each layout for all")
         .containsExactly(

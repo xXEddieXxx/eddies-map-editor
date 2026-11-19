@@ -916,7 +916,11 @@ final class TerritoriesEditor implements Editor {
             shownPlaces.shows(kind));
     item.getAccessibleContext().setAccessibleName(text);
     item.setToolTipText(
-        "Shown on every territory, to drag; a right-click there for more"
+        (kind == Marker.VALUE
+                ? "Where the game draws a territory's PUs; the Values view shows them at its"
+                    + " center. "
+                : "")
+            + "Shown on every territory, to drag; a right-click there for more"
             + (kind == PlaceKind.UNITS
                 ? "; a click in the chosen territory adds a place"
                 : "")

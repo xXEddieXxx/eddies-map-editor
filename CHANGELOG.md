@@ -40,7 +40,8 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 - **Units showed only a unit's PUs** (#33). A unit that costs other resources too, as 11 Rings'
   leaders do, now shows all of them in the list and under its name: "1 PU + 5 Fame". The Cost
   field stays the PUs; its tool tip names the rest, which are changed in Production. A unit that
-  costs no PUs but another resource no longer reads "not for sale".
+  costs no PUs but another resource no longer reads "not for sale". A unit that uses up other
+  units when it is placed, as Total World War's do, says that too: "6 PUs · uses 2 Material".
 
 - **Ticks in Production › Buy showed late on a big map** (#32). Every change of the map, in any
   tool, read a text file again for each row of the Actions list, and built the Units page anew
@@ -132,7 +133,9 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 - **Units' Value says what it is** (#34). Its tool tip names the TUV and says what the grey "its
   cost" in the empty field means: TripleA takes what the unit costs. A "?" beside it has a short
   guide: when to set it, and a rule of thumb to work it out.
-
+- **Values and Places › PUs say how they differ** (#35). Both show a territory's PUs: the Values
+  view at the territory's center, Places › PUs where the game draws the number (pu_place.txt).
+  The view's tool tip and the tool tip of Places › PUs now say so.
 - **Flags in Nations and Politics** (#19). The Nations list shows each nation's colour and flag side
   by side; the Politics matrix shows the flag before each row and above each column.
 - **Politics says what a change costs and how it holds** (#20). A relationship type's page lists the

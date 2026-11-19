@@ -67,7 +67,8 @@ The same map in six colourings. The legend below the map explains the one shown.
 - **Game** as it plays: the picture, the owners' colours and the units.
 - **Owners** each territory in its owner's colour.
 - **Political** each territory in its owner's alliance colour.
-- **Values** what each territory gives per turn, capitals and victory cities.
+- **Values** each territory's PUs per turn, capital and victory city, at its center. Where the
+  game draws the number is set in Territories' Places › PUs.
 - **Units** the units each territory starts with.
 - **Connections** which territories are neighbours, as the Connections tool shows them.
 
