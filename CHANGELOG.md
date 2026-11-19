@@ -130,6 +130,11 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 
 ### Changed
 
+- **Units' sections in a new order** (#36): what a unit does in a battle first (Combat, Gives
+  support, Air and anti-air, Bombing, Sea), then how it moves (Movement, Transport and carrier),
+  then the rest (Miscellaneous, Production and infrastructure, Special). Bombing shows for air
+  units. "Not for land units" now holds only the other kinds' sections; Production and
+  infrastructure and Special, which are for no kind, wait in "More sections".
 - **Units' Value says what it is** (#34). Its tool tip names the TUV and says what the grey "its
   cost" in the empty field means: TripleA takes what the unit costs. A "?" beside it has a short
   guide: when to set it, and a rule of thumb to work it out.

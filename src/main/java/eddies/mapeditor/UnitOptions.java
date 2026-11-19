@@ -49,6 +49,7 @@ class UnitOptions {
 
   static final String COMBAT = "Combat";
   private static final String AIR = "Air and anti-air";
+  static final String PRODUCTION = "Production and infrastructure";
 
   /**
    * What a section's "?" says about all of it. TripleA's battle round (BattleStep.Order) starts
@@ -64,6 +65,10 @@ class UnitOptions {
               + " first strike. What it hits"
               + " is removed at once and does not fire back.");
 
+  /**
+   * The sections in the order Units shows them: what a unit does in a battle first (Gives support
+   * comes right after Combat), then how it moves, then the rest.
+   */
   static final List<Section> SECTIONS =
       List.of(
           new Section(
@@ -101,6 +106,74 @@ class UnitOptions {
                   flag("isSuicideOnAttack", "Dies after it attacks", ""),
                   flag("isSuicideOnDefense", "Dies after it defends", ""),
                   flag("isSuicideOnHit", "Dies when it hits", ""))),
+          new Section(
+              AIR,
+              List.of(
+                  flag("isAir", "Flies", ""),
+                  flag("canIntercept", "Can intercept bombers", ""),
+                  flag("requiresAirbaseToIntercept", "Needs an air base to intercept", ""),
+                  flag("canEscort", "Can escort bombers", ""),
+                  flag("canAirBattle", "Fights in air battles", ""),
+                  number("airAttack", "Air battle attack", 0, ""),
+                  number("airDefense", "Air battle defense", 0, ""),
+                  flag("canScramble", "Can scramble to sea battles", ""),
+                  flag("isAirBase", "Air base: planes may scramble from it", ""),
+                  number("maxScrambleDistance", "Scramble distance", -1, ""),
+                  number("maxScrambleCount", "Planes it lets scramble", -1, ""),
+                  number("maxInterceptCount", "Planes it lets intercept", -1, ""),
+                  flag("isAAforCombatOnly", "Fires at planes in battles", ""),
+                  flag("isAAforBombingThisUnitOnly", "Fires at planes bombing it", ""),
+                  flag("isAAforFlyOverOnly", "Fires at planes flying over", ""),
+                  number("attackAA", "Anti-air defense", 1, "Hits planes on this or less."),
+                  number(
+                      "offensiveAttackAA", "Anti-air attack", 0, "Hits planes on this or less."),
+                  number(
+                      "maxAAattacks",
+                      "Anti-air shots",
+                      -1,
+                      "Shots per round; empty for one at each plane."),
+                  number(
+                      "maxRoundsAA", "Anti-air rounds", 1, -1, "Rounds it fires; empty for all."),
+                  text(
+                      "typeAA",
+                      "Kind of anti-air",
+                      "AA",
+                      "A name; anti-air of the same kind fires together."),
+                  units("targetsAA", "Planes it fires at", "Empty: all planes."),
+                  flag("mayOverStackAA", "May fire more shots than there are planes", ""),
+                  flag("damageableAA", "Its anti-air can be damaged", ""),
+                  flag("isRocket", "Rocket: fires at factories", ""))),
+          new Section(
+              "Bombing",
+              List.of(
+                  flag("isStrategicBomber", "Strategic bomber", ""),
+                  number(
+                      "bombingMaxDieSides",
+                      "Bombing die",
+                      -1,
+                      "Sides of its bombing die."),
+                  number("bombingBonus", "Bombing bonus", 0, "Added to each bombing roll."),
+                  units("bombingTargets", "Bombs", "Unit types it may bomb, empty for all."))),
+          new Section(
+              "Sea",
+              List.of(
+                  flag("isSea", "Sails", ""),
+                  flag(
+                      "isDestroyer",
+                      "Destroyer: cancels the first strike of subs",
+                      "With one in the battle its side also hits units that 'cannot be hit by'"
+                          + " them, eg planes hit submarines."),
+                  flag("canBombard", "Can bombard a shore", ""),
+                  number(
+                      "bombard",
+                      "Bombard strength",
+                      -1,
+                      "Hits on this or less when it bombards; empty for its attack."),
+                  number(
+                      "blockade",
+                      "Blockade",
+                      0,
+                      "PUs an enemy loses when it is in a sea zone beside its territory."))),
           new Section(
               "Movement",
               List.of(
@@ -142,64 +215,7 @@ class UnitOptions {
                   flag("isLandTransport", "Carries land units on land", ""),
                   flag("isLandTransportable", "Can be carried on land", ""))),
           new Section(
-              "Sea",
-              List.of(
-                  flag("isSea", "Sails", ""),
-                  flag(
-                      "isDestroyer",
-                      "Destroyer: cancels the first strike of subs",
-                      "With one in the battle its side also hits units that 'cannot be hit by'"
-                          + " them, eg planes hit submarines."),
-                  flag("canBombard", "Can bombard a shore", ""),
-                  number(
-                      "bombard",
-                      "Bombard strength",
-                      -1,
-                      "Hits on this or less when it bombards; empty for its attack."),
-                  number(
-                      "blockade",
-                      "Blockade",
-                      0,
-                      "PUs an enemy loses when it is in a sea zone beside its territory."))),
-          new Section(
-              AIR,
-              List.of(
-                  flag("isAir", "Flies", ""),
-                  flag("canIntercept", "Can intercept bombers", ""),
-                  flag("requiresAirbaseToIntercept", "Needs an air base to intercept", ""),
-                  flag("canEscort", "Can escort bombers", ""),
-                  flag("canAirBattle", "Fights in air battles", ""),
-                  number("airAttack", "Air battle attack", 0, ""),
-                  number("airDefense", "Air battle defense", 0, ""),
-                  flag("canScramble", "Can scramble to sea battles", ""),
-                  flag("isAirBase", "Air base: planes may scramble from it", ""),
-                  number("maxScrambleDistance", "Scramble distance", -1, ""),
-                  number("maxScrambleCount", "Planes it lets scramble", -1, ""),
-                  number("maxInterceptCount", "Planes it lets intercept", -1, ""),
-                  flag("isAAforCombatOnly", "Fires at planes in battles", ""),
-                  flag("isAAforBombingThisUnitOnly", "Fires at planes bombing it", ""),
-                  flag("isAAforFlyOverOnly", "Fires at planes flying over", ""),
-                  number("attackAA", "Anti-air defense", 1, "Hits planes on this or less."),
-                  number(
-                      "offensiveAttackAA", "Anti-air attack", 0, "Hits planes on this or less."),
-                  number(
-                      "maxAAattacks",
-                      "Anti-air shots",
-                      -1,
-                      "Shots per round; empty for one at each plane."),
-                  number(
-                      "maxRoundsAA", "Anti-air rounds", 1, -1, "Rounds it fires; empty for all."),
-                  text(
-                      "typeAA",
-                      "Kind of anti-air",
-                      "AA",
-                      "A name; anti-air of the same kind fires together."),
-                  units("targetsAA", "Planes it fires at", "Empty: all planes."),
-                  flag("mayOverStackAA", "May fire more shots than there are planes", ""),
-                  flag("damageableAA", "Its anti-air can be damaged", ""),
-                  flag("isRocket", "Rocket: fires at factories", ""))),
-          new Section(
-              "Production and infrastructure",
+              PRODUCTION,
               List.of(
                   flag(
                       "isInfrastructure",
@@ -250,17 +266,6 @@ class UnitOptions {
                       "unitPlacementOnlyAllowedIn",
                       "Placed only in",
                       "Territories where it may be placed, empty for all."))),
-          new Section(
-              "Bombing",
-              List.of(
-                  flag("isStrategicBomber", "Strategic bomber", ""),
-                  number(
-                      "bombingMaxDieSides",
-                      "Bombing die",
-                      -1,
-                      "Sides of its bombing die."),
-                  number("bombingBonus", "Bombing bonus", 0, "Added to each bombing roll."),
-                  units("bombingTargets", "Bombs", "Unit types it may bomb, empty for all."))),
           new Section(
               "Special",
               List.of(

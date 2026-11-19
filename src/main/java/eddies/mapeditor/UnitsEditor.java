@@ -78,6 +78,9 @@ import eddies.mapeditor.UnitOptions.UnitKind;
 /** The unit types: what they cost and how they fight and move. */
 final class UnitsEditor implements Editor {
   private static final String SUPPORT = "Gives support";
+  private static final String BOMBING = "Bombing";
+  // the sections of one kind of unit: folded as "Not for … units" for the other kinds
+  private static final Set<String> KIND_SECTIONS = Set.of("Sea", "Air and anti-air", BOMBING);
   private static final String LOCKED =
       "Can't be changed here: the game file writes it once for several unit types (foreach)."
           + " Change it in Attachments.";
@@ -879,6 +882,10 @@ final class UnitsEditor implements Editor {
         // what the unit gives others in a battle, right after what it does there itself
         found += showSupportSection(game, unit, filter);
       }
+      if (title.equals(UnitOptions.PRODUCTION)) {
+        // the rest starts with Miscellaneous
+        found += showStackingLimits(game, unit, filter);
+      }
       before = title;
       final List<UnitOptions.UnitOption> all =
           section.options().stream()
@@ -920,7 +927,6 @@ final class UnitsEditor implements Editor {
             f -> rest.forEach(o -> showOption(f, game, unit, o)));
       }
     }
-    found += showStackingLimits(game, unit, filter);
     final List<Option> more = moreOptions(game, unit);
     if (!filter.isEmpty()) {
       final List<Option> matching =
@@ -935,25 +941,39 @@ final class UnitsEditor implements Editor {
       }
       return;
     }
-    if (!notForKind.isEmpty()) {
-      below.more(
-          "units.notForKind",
-          notForKindTitle(kind)
-              + " ("
-              + notForKind.values().stream().mapToInt(List::size).sum()
-              + ")",
-          f -> {
-            f.columns();
-            notForKind.forEach(
-                (title, options) -> {
-                  showSectionTitle(f, title);
-                  options.forEach(o -> showOption(f, game, unit, o));
-                });
-          });
-    }
+    // the other kinds' sections apart from those of no kind, which are only rarer
+    final Map<String, List<UnitOptions.UnitOption>> otherKinds = new LinkedHashMap<>(notForKind);
+    otherKinds.keySet().removeIf(title -> !KIND_SECTIONS.contains(title));
+    final Map<String, List<UnitOptions.UnitOption>> rarer = new LinkedHashMap<>(notForKind);
+    rarer.keySet().removeAll(otherKinds.keySet());
+    showFoldedSections("units.notForKind", notForKindTitle(kind), otherKinds, game, unit);
+    showFoldedSections("units.rarerSections", "More sections", rarer, game, unit);
     // with no other option, the way to add one alone
     below.more("units.more", more.size(), form -> showMoreOptions(form, game, unit, more));
     below.row(leftAligned(newAddOption(unit)));
+  }
+
+  /** "▸ Title (n)" with the sections and all their options below it; nothing for none. */
+  private void showFoldedSections(
+      final String id,
+      final String title,
+      final Map<String, List<UnitOptions.UnitOption>> sections,
+      final Game game,
+      final String unit) {
+    if (sections.isEmpty()) {
+      return;
+    }
+    below.more(
+        id,
+        title + " (" + sections.values().stream().mapToInt(List::size).sum() + ")",
+        f -> {
+          f.columns();
+          sections.forEach(
+              (section, options) -> {
+                showSectionTitle(f, section);
+                options.forEach(o -> showOption(f, game, unit, o));
+              });
+        });
   }
 
   /** The section's heading, with a "?" where there is something to say about all of it. */
@@ -1114,7 +1134,8 @@ final class UnitsEditor implements Editor {
     return switch (section) {
       case "Combat", "Movement", "Transport and carrier" -> true;
       case "Sea" -> kind.equals(Optional.of(UnitKind.SEA));
-      case "Air and anti-air" -> kind.equals(Optional.of(UnitKind.AIR));
+      // bombers fly
+      case "Air and anti-air", BOMBING -> kind.equals(Optional.of(UnitKind.AIR));
       default -> false;
     };
   }

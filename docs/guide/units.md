@@ -40,7 +40,10 @@ for an option is in the tool tip of its label.
 
 Each section shows its common options and those set; the rest wait behind its More row. A section
 that is not for the unit's kind, for example Sea for a land unit, is folded into "Not for land
-units" with the others.
+units" with the others; Production and infrastructure and Special, which are for no kind but
+rarer, wait in "More sections". The sections come in this order: what the unit does in a battle (Combat,
+Gives support, Air and anti-air, Bombing, Sea), how it moves (Movement, Transport and carrier),
+then the rest (Miscellaneous, Production and infrastructure, Special).
 
 - **Combat**: Dice when attacking, Dice when defending, Fires first: its hits take no shot back,
   Artillery: supports infantry, Gets the support of artillery; more: Takes its best die instead of
@@ -68,16 +71,19 @@ units" with the others.
    owner's and allies', or everyone's. Blank is no limit. Below, the nations' limits that count
    this unit, from Nations, each once with the nations it holds for.
 2. **Not for land units**: the sections of the other kinds, folded, with their count.
-3. **Sea**: Sails, Destroyer: cancels the first strike of subs, Can bombard a shore, Bombard
-   strength, Blockade. **Air and anti-air**: Flies, Can intercept bombers, Needs an air base to
-   intercept, Can escort bombers, Fights in air battles, Air battle attack and defense, Can
-   scramble to sea battles, Air base, Scramble distance, Planes it lets scramble and intercept,
-   Fires at planes in battles, Fires at planes bombing it, Fires at planes flying over, Anti-air
-   defense and attack, Anti-air shots and rounds, Kind of anti-air, Planes it fires at, May fire
-   more shots than there are planes, Its anti-air can be damaged, Rocket: fires at factories.
-   The "?" of the section explains the order of fire in a battle.
+3. **Air and anti-air**: Flies, Can intercept bombers, Needs an air base to intercept, Can escort
+   bombers, Fights in air battles, Air battle attack and defense, Can scramble to sea battles,
+   Air base, Scramble distance, Planes it lets scramble and intercept, Fires at planes in
+   battles, Fires at planes bombing it, Fires at planes flying over, Anti-air defense and attack,
+   Anti-air shots and rounds, Kind of anti-air, Planes it fires at, May fire more shots than
+   there are planes, Its anti-air can be damaged, Rocket: fires at factories. Its "?" explains
+   the order of fire in a battle. **Bombing**: Strategic bomber, Bombing die, Bombing bonus,
+   Bombs. **Sea**: Sails, Destroyer: cancels the first strike of subs, Can bombard a shore,
+   Bombard strength, Blockade.
 
-![Units, production, bombing, special, more options](img/units-4.png)
+![Units, production, special, more options](img/units-4.png)
+
+"More sections" holds these two, unless the unit has one of their options set:
 
 - **Production and infrastructure**: Infrastructure, eg a factory; Produces units; Units it
   produces; Resources it makes each turn, a count and a resource, a minus count for upkeep such
@@ -85,7 +91,6 @@ units" with the others.
   at its most damage; Construction: placed like a factory; Kind of construction; Constructions
   per turn and per territory; Most a nation may have; Placed only in territories worth; Never
   placed in; Placed only in.
-- **Bombing**: Strategic bomber, Bombing die, Bombing bonus, Bombs.
 1. **Special**: Damage when captured, Captured by entering, Given with its territory to.
 2. **More options**: the options the sections do not show, as the game file has them, each with
    its name, a field and ×; a repeated or counted option is here too. **+ Add option…** adds any

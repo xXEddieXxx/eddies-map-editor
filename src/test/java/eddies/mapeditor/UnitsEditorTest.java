@@ -313,6 +313,10 @@ final class UnitsEditorTest {
         .filteredOn(text -> text.startsWith("▸ Not for"))
         .hasSize(1)
         .allMatch(text -> text.matches("▸ Not for land units \\(\\d+\\)"));
+    assertThat(buttons)
+        .as("the sections of no kind, Production and Special, in a fold of their own")
+        .filteredOn(text -> text.startsWith("▸ More sections"))
+        .hasSize(1);
     assertThat(labels)
         .as("its sections are folded away")
         .contains("Combat", "Movement")
@@ -870,5 +874,48 @@ final class UnitsEditorTest {
         .containsExactly(
             "Land unit · 2-2-1 · 4 PUs · uses 2 Material",
             "PUs to buy one. Placing one uses up 2 Material, set under More options");
+  }
+
+  @DisplayName("The sections come as battle, movement, the rest")
+  @Test
+  void sectionsInOrder() throws Exception {
+    // given G40's fighter, an air unit: its kind's section shows, Sea is folded away
+    final MapProject project = givenG40();
+    final List<String> labels = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          try {
+            labels.addAll(givenLabels(givenEditor(project, "fighter", "none").page()));
+          } catch (final Exception e) {
+            throw new IllegalStateException(e);
+          }
+        });
+
+    // then
+    assertThat(UnitOptions.SECTIONS)
+        .as("every section, in the order Units shows them")
+        .extracting(UnitOptions.Section::title)
+        .containsExactly(
+            "Combat",
+            "Air and anti-air",
+            "Bombing",
+            "Sea",
+            "Movement",
+            "Transport and carrier",
+            "Production and infrastructure",
+            "Special");
+    assertThat(labels)
+        .as("on the page: Gives support after Combat, Bombing open for a plane, Miscellaneous"
+            + " after the movement")
+        .containsSubsequence(
+            "Combat",
+            "Gives support",
+            "Air and anti-air",
+            "Bombing",
+            "Movement",
+            "Transport and carrier",
+            "Miscellaneous");
   }
 }
