@@ -269,9 +269,10 @@ final class UnitsEditor implements Editor {
     return withoutPicture.nations();
   }
 
-  /** eg "1-2-1 · 3 PUs", or "4-4-2 · 1 PU + 5 Fame". */
+  /** eg "1-2-1 · 3 PUs", "4-4-2 · 1 PU + 5 Fame", or "2-2-1 · 6 PUs · uses 2 Material". */
   private String detail(final String unit) {
     final Game game = project.game();
+    final List<String> used = UnitsXml.usedUp(game, unit);
     return MapXml.unitStat(game, unit, "attack", 0)
         + "-"
         + MapXml.unitStat(game, unit, "defense", 0)
@@ -279,7 +280,8 @@ final class UnitsEditor implements Editor {
         + MapXml.unitStat(game, unit, "movement", 0)
         + MapXml.unitCosts(game, unit)
             .map(costs -> " · " + MapXml.costWords(costs))
-            .orElse(" · not for sale");
+            .orElse(" · not for sale")
+        + (used.isEmpty() ? "" : " · uses " + String.join(" + ", used));
   }
 
   /** eg "Land unit · 1-2-1 · 3 PUs". */
@@ -748,7 +750,9 @@ final class UnitsEditor implements Editor {
           Form.newNumber(
               cost.get(), 999, value -> quietly(g -> MapXml.withUnitCost(g, unit, value)));
       spinner.setToolTipText(
-          "PUs to buy one" + (others.isEmpty() ? "" : "; also " + alsoCosts(others)));
+          "PUs to buy one"
+              + (others.isEmpty() ? "" : "; also " + alsoCosts(others))
+              + alsoUses(game, unit));
       fields.add(spinner);
     } else {
       final JLabel none = new JLabel("–");
@@ -778,6 +782,14 @@ final class UnitsEditor implements Editor {
           cells.add(field);
         });
     return cells;
+  }
+
+  // a unit placed uses up others, which the field does not show either
+  private static String alsoUses(final Game game, final String unit) {
+    final List<String> used = UnitsXml.usedUp(game, unit);
+    return used.isEmpty()
+        ? ""
+        : ". Placing one uses up " + String.join(" + ", used) + ", set under More options";
   }
 
   private static String alsoCosts(final List<Cost> others) {

@@ -50,6 +50,26 @@ class UnitsXml {
   }
 
   /**
+   * The units one of the type uses up when it is placed (consumesUnits), eg "2 Material": to the
+   * player a cost beside the rule's, though the game file has it as an option of the unit.
+   */
+  static List<String> usedUp(final Game game, final String unit) {
+    return options(game, unit).stream()
+        .filter(o -> AttachmentsXml.isOption(o, "consumesUnits") && o.getValue() != null)
+        // "count:unit", the count also given apart
+        .map(
+            o ->
+                Optional.ofNullable(o.getCount())
+                    .filter(count -> !count.isEmpty())
+                    .map(count -> count + ":" + o.getValue())
+                    .orElse(o.getValue()))
+        .map(written -> written.split(":"))
+        .filter(parts -> parts.length == 2)
+        .map(parts -> parts[0].strip() + " " + parts[1].strip())
+        .toList();
+  }
+
+  /**
    * The attachment written once for each element of a variable (foreach) that makes the unit
    * type's unitAttachment, as written: its options are read here but changed in Attachments, at
    * the one written, as one written here for this unit type alone would replace all it gives.

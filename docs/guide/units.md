@@ -18,7 +18,8 @@ for an option is in the tool tip of its label.
    nation shows it.
 3. **Cost**: PUs to buy one, from the purchase list that sells it; "–" when no rule sells it for PUs.
    A unit that costs other resources too shows them all in the list and under its name, "1 PU +
-   5 Fame"; they are changed in Production.
+   5 Fame"; they are changed in Production. A unit that uses up other units when placed says
+   "· uses 2 Material" there; that is its option consumesUnits, under More options.
 4. **Value** (TUV): what the unit is worth to the AI and the battle calculator. Left empty,
    shown as a grey "its cost", TripleA takes what the unit costs. Set it for a unit that costs 0
    or 1 but is strong; from a cost of 2 it is usually left empty. The "?" has a rule of thumb:

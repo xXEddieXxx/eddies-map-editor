@@ -835,4 +835,40 @@ final class UnitsEditorTest {
         .as("the rule of thumb")
         .contains("attack + defense + movement");
   }
+
+  @DisplayName("A unit that uses up other units when placed says so under its name")
+  @Test
+  void unitsUsedUpShowWithTheCost() throws Exception {
+    // given: artillery made from 2 Material, as Total World War's units are
+    final MapProject project = givenG40();
+    project.edit(
+        g ->
+            UnitsXml.withNewOption(
+                g, "artillery", Option.builder().name("consumesUnits").value("2:Material").build()));
+    final List<String> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          try {
+            final Component page = givenEditor(project, "artillery", "none").page();
+            seen.add(labelEndingIn(page, "Material"));
+            seen.add(
+                collect(page, JSpinner.class).stream()
+                    .map(JSpinner::getToolTipText)
+                    .filter(tip -> tip != null && tip.startsWith("PUs to buy one"))
+                    .findFirst()
+                    .orElse(""));
+          } catch (final Exception e) {
+            throw new IllegalStateException(e);
+          }
+        });
+
+    // then
+    assertThat(seen)
+        .as("the line under the name and the Cost field's tool tip")
+        .containsExactly(
+            "Land unit · 2-2-1 · 4 PUs · uses 2 Material",
+            "PUs to buy one. Placing one uses up 2 Material, set under More options");
+  }
 }
