@@ -3,7 +3,75 @@
 What changed for map makers, release by release. The GitHub release of each version carries the
 downloads; this file carries the words.
 
-## Unreleased
+## 0.2.6
+
+From the feedback of a map maker on 0.2.5, tried with 11 Rings of Power and Total World War; each
+change under its GitHub issue.
+
+### Fixed
+
+- **Units showed 0-0-0 for unit types whose options a loop writes** (#31). A map like 11 Rings
+  of Power writes one unitAttachment for each unit of a variable (`foreach`). Units now reads
+  these as the game does: the Leader of each nation shows its 4-4-2 with 2 hit points. Such a
+  unit's options are shown but not changed in Units, with a link to **Attachments**, where the
+  loop is changed for all its unit types at once; the cost and the unit's own supports stay to
+  change. Loops over two variables side by side (`$A$:$B$`) are read too.
+- **Ticks in Production › Buy showed late on a big map** (#32). Every change of the map, in any
+  tool, read a text file again for each row of the Actions list, and built the Units page anew
+  although it was not on screen: on 11 Rings of Power over a second per tick. A text file is now
+  read once, and Units waits until it shows: a tick there takes under a tenth of a second.
+- **Every change is quicker on big maps.** A tool that is not on screen (Politics, Technology,
+  Terrain effects, Connections, Map look, Game options, Attachments, Units)
+  no longer builds its page anew at every change, only when it shows again; and Actions finds
+  its actions' texts without looking through all attachments for each. On 270BC Wars a change
+  took 0.6 s in any tool and now takes about 0.1 s.
+- **Units showed only a unit's PUs** (#33). A unit that costs other resources too, as 11 Rings'
+  leaders do, now shows all of them in the list and under its name: "1 PU + 5 Fame". The Cost
+  field stays the PUs; its tool tip names the rest, which are changed in Production. A unit that
+  costs no PUs but another resource no longer reads "not for sale". A unit that uses up other
+  units when it is placed, as Total World War's do, says that too: "6 PUs · uses 2 Material".
+- **Moving and ordering rules in Production did not show** (#40). ▲ ▼ and ⇅ changed the game,
+  but the table kept its old order until another list was chosen. The rows now follow at once.
+  With All rules shown, which is the game's order, the three buttons are off and say why; ▲ ▼
+  without a rule chosen say to choose one.
+- **Terrain effects cut off its "In the game" text** at the right end; it wraps now.
+
+### Changed
+
+- **The map's views are one button** (#38). **View: Game ▾** above the map, in every tool and at
+  every window width, in place of a row of buttons that became this one only when short of room.
+  Its menu has four views: Game, Owners, Political and Values. The Units view is gone, as Game
+  shows the units (zoomed far out, where Units showed a count per territory, zoom in to see
+  them); the neighbours' lines belong to Connections, which shows them always and has
+  no view button.
+- **Units' sections in a new order** (#36): what a unit does in a battle first (Combat, Gives
+  support, Air and anti-air, Bombing, Sea), then how it moves (Movement, Transport and carrier),
+  then the rest (Miscellaneous, Production and infrastructure, Special). Bombing shows for air
+  units. "Not for land units" now holds only the other kinds' sections; Production and
+  infrastructure and Special, which are for no kind, wait in "More sections".
+- **Units' Value says what it is** (#34). Its tool tip names the TUV and says what the grey "its
+  cost" in the empty field means: TripleA takes what the unit costs. A "?" beside it has a short
+  guide: when to set it, and a rule of thumb to work it out.
+- **Values and Places › PUs say how they differ** (#35). Both show a territory's PUs: the Values
+  view at the territory's center, Places › PUs where the game draws the number (pu_place.txt).
+  The view's tool tip and the tool tip of Places › PUs now say so.
+- **Production reads easier** (#37). In Buy and Repair each unit's row shows the unit's picture,
+  as the nation that buys from the list shows it, and the numbers stand in the middle of their columns. In Resources › At the start each
+  resource has its icon above its name, the numbers are centered, and the number columns stay as
+  narrow as they need: room to spare goes to the nations' names.
+- **Tool tips show sooner**, after a third of a second, so the reason why a field is off is not
+  missed.
+
+### Documentation
+
+- **The user guide in a new design** (#39). A quiet site without frames: the editor's groups
+  as tabs on top, the tools of a group as a row above each page, and each page a list of tasks
+  ("Add a unit type", "Move a capital") that open in place, with short steps, a tip where one
+  helps, and a small picture of that part of the editor. The pictures follow the site's light
+  or dark theme and show big on a click. "Every control" at the end of a page keeps the full
+  description of each control. The whole-window pictures with numbered callouts are gone.
+
+## 0.2.5 and earlier
 
 From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 
@@ -36,34 +104,6 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
   version.
 
 ### Fixed
-
-- **Moving and ordering rules in Production did not show** (#40). ▲ ▼ and ⇅ changed the game,
-  but the table kept its old order until another list was chosen. The rows now follow at once.
-  With All rules shown, which is the game's order, the three buttons are off and say why; ▲ ▼
-  without a rule chosen say to choose one.
-
-- **Units showed only a unit's PUs** (#33). A unit that costs other resources too, as 11 Rings'
-  leaders do, now shows all of them in the list and under its name: "1 PU + 5 Fame". The Cost
-  field stays the PUs; its tool tip names the rest, which are changed in Production. A unit that
-  costs no PUs but another resource no longer reads "not for sale". A unit that uses up other
-  units when it is placed, as Total World War's do, says that too: "6 PUs · uses 2 Material".
-
-- **Ticks in Production › Buy showed late on a big map** (#32). Every change of the map, in any
-  tool, read a text file again for each row of the Actions list, and built the Units page anew
-  although it was not on screen: on 11 Rings of Power over a second per tick. A text file is now
-  read once, and Units waits until it shows: a tick there takes under a tenth of a second.
-- **Every change is quicker on big maps.** A tool that is not on screen (Politics, Technology,
-  Terrain effects, Connections, Map look, Game options, Attachments, Units)
-  no longer builds its page anew at every change, only when it shows again; and Actions finds
-  its actions' texts without looking through all attachments for each. On 270BC Wars a change
-  took 0.6 s in any tool and now takes about 0.1 s.
-
-- **Units showed 0-0-0 for unit types whose options a loop writes** (#31). A map like 11 Rings
-  of Power writes one unitAttachment for each unit of a variable (`foreach`). Units now reads
-  these as the game does: the Leader of each nation shows its 4-4-2 with 2 hit points. Such a
-  unit's options are shown but not changed in Units, with a link to **Attachments**, where the
-  loop is changed for all its unit types at once; the cost and the unit's own supports stay to
-  change. Loops over two variables side by side (`$A$:$B$`) are read too.
 
 - **The installer did not say where it installs, and its Start menu entry was hard to find**
   (#28). The entry sat in a Start menu folder called "Unknown". It is now under **Eddies Map
@@ -135,27 +175,6 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 
 ### Changed
 
-- **The map's views are one button** (#38). **View: Game ▾** above the map, in every tool and at
-  every window width, in place of a row of buttons that became this one only when short of room.
-  Its menu has four views: Game, Owners, Political and Values. The Units view is gone, as Game
-  shows the units (zoomed far out, where Units showed a count per territory, zoom in to see
-  them); the neighbours' lines belong to Connections, which shows them always and has
-  no view button.
-- **Production reads easier** (#37). In Buy and Repair each unit's row shows the unit's picture,
-  as the nation that buys from the list shows it, and the numbers stand in the middle of their columns. In Resources › At the start each
-  resource has its icon above its name, the numbers are centered, and the number columns stay as
-  narrow as they need: room to spare goes to the nations' names.
-- **Units' sections in a new order** (#36): what a unit does in a battle first (Combat, Gives
-  support, Air and anti-air, Bombing, Sea), then how it moves (Movement, Transport and carrier),
-  then the rest (Miscellaneous, Production and infrastructure, Special). Bombing shows for air
-  units. "Not for land units" now holds only the other kinds' sections; Production and
-  infrastructure and Special, which are for no kind, wait in "More sections".
-- **Units' Value says what it is** (#34). Its tool tip names the TUV and says what the grey "its
-  cost" in the empty field means: TripleA takes what the unit costs. A "?" beside it has a short
-  guide: when to set it, and a rule of thumb to work it out.
-- **Values and Places › PUs say how they differ** (#35). Both show a territory's PUs: the Values
-  view at the territory's center, Places › PUs where the game draws the number (pu_place.txt).
-  The view's tool tip and the tool tip of Places › PUs now say so.
 - **Flags in Nations and Politics** (#19). The Nations list shows each nation's colour and flag side
   by side; the Politics matrix shows the flag before each row and above each column.
 - **Politics says what a change costs and how it holds** (#20). A relationship type's page lists the
@@ -224,12 +243,6 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
   made from the running editor (GuideScreenshots) in the dark theme; a test keeps every tool,
   view and menu item named in the guide. The guide is published as a site at
   https://xxeddiexxx.github.io/eddies-map-editor/ by MkDocs Material, built on each push.
-- **The user guide in a new design** (#39). A quiet site without frames: the editor's groups
-  as tabs on top, the tools of a group as a row above each page, and each page a list of tasks
-  ("Add a unit type", "Move a capital") that open in place, with short steps, a tip where one
-  helps, and a small picture of that part of the editor. The pictures follow the site's light
-  or dark theme and show big on a click. "Every control" at the end of a page keeps the full
-  description of each control. The whole-window pictures with numbered callouts are gone.
 
 ### For developers
 
