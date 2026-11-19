@@ -102,16 +102,15 @@ final class ActionsEditor implements Editor {
             this::addAction),
         EMPTY);
     page.add(Panels.sideBySide(listColumn, details), LIST);
+    // not Panels.whenShown: commit() writes the fields' texts, which must follow every step
     project.onChange(
-        Panels.whenShown(
-            page,
-            () -> {
-              fillNationFilter();
-              list.refresh();
-              if (!editingHere) {
-                showInspector();
-              }
-            }));
+        () -> {
+          fillNationFilter();
+          list.refresh();
+          if (!editingHere) {
+            showInspector();
+          }
+        });
     fillNationFilter();
     showInspector();
   }

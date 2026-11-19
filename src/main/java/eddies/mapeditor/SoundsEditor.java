@@ -129,17 +129,16 @@ final class SoundsEditor implements Editor {
     list.refresh();
     page.add(
         Panels.sideBySide(column, SwingComponents.newJScrollPane(inspector)), BorderLayout.CENTER);
+    // not Panels.whenShown: commit() writes the field's text, which must follow every step
     project.onChange(
-        Panels.whenShown(
-            page,
-            () -> {
-              found.clear();
-              showSwitchCounts();
-              list.refresh();
-              if (!editingHere) {
-                showInspector();
-              }
-            }));
+        () -> {
+          found.clear();
+          showSwitchCounts();
+          list.refresh();
+          if (!editingHere) {
+            showInspector();
+          }
+        });
     showInspector();
   }
 

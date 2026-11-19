@@ -1,10 +1,12 @@
 package eddies.mapeditor;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 import java.awt.CardLayout;
 import java.awt.Component;
 import java.awt.Container;
+import java.awt.GraphicsEnvironment;
 import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -702,6 +704,7 @@ final class UnitsEditorTest {
   @DisplayName("A change made while another tool shows reaches Units when it shows again")
   @Test
   void hiddenUnitsWaitWithShowingAChange() throws Exception {
+    assumeFalse(GraphicsEnvironment.isHeadless(), "the window needs a screen");
     // given: Units as a card of a window that shows another card, as while Production shows
     final MapProject project = givenG40();
     final List<Boolean> showsSeven = new ArrayList<>();
