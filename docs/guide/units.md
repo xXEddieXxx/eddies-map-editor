@@ -16,7 +16,9 @@ for an option is in the tool tip of its label.
 2. **Upload picture…** gives the unit its own picture, for every nation or tinted per nation;
    **Use the game's picture** takes it back. The list shows each unit's picture as the first
    nation shows it.
-3. **Cost**: PUs to buy one, from the purchase list that sells it; "–" when no rule sells it.
+3. **Cost**: PUs to buy one, from the purchase list that sells it; "–" when no rule sells it for PUs.
+   A unit that costs other resources too shows them all in the list and under its name, "1 PU +
+   5 Fame"; they are changed in Production.
 4. **Value** (tuv): what the unit is worth to the AI and the battle calculator; empty for its
    cost. Set it for a unit that is free or cheap but strong.
 5. **Attack**, **Defense**, **Movement**: the numbers of the list's line. **Attack** hits on a

@@ -747,4 +747,55 @@ final class UnitsEditorTest {
   private static List<Object> numbersOf(final UnitsEditor editor) {
     return collect(editor.page(), JSpinner.class).stream().map(JSpinner::getValue).toList();
   }
+
+  @DisplayName("A unit that costs other resources shows them under its name and in the tool tip")
+  @Test
+  void costInOtherResources() throws Exception {
+    // given: artillery for 4 PUs and 5 Fame, then for 5 Fame alone
+    final MapProject project = givenG40();
+    final List<String> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          try {
+            project.edit(g -> ProductionXml.withCost(g, "buyArtillery", "Fame", 5));
+            final Component both = givenEditor(project, "artillery", "none").page();
+            seen.add(labelEndingIn(both, "Fame"));
+            seen.add(
+                collect(both, JSpinner.class).stream()
+                    .map(JSpinner::getToolTipText)
+                    .filter(tip -> tip != null && tip.startsWith("PUs to buy one"))
+                    .findFirst()
+                    .orElse(""));
+            project.edit(g -> ProductionXml.withCost(g, "buyArtillery", MapXml.PUS, 0));
+            final Component fameOnly = givenEditor(project, "artillery", "none").page();
+            seen.add(labelEndingIn(fameOnly, "Fame"));
+            seen.add(
+                collect(fameOnly, JLabel.class).stream()
+                    .filter(label -> "–".equals(label.getText()))
+                    .map(JLabel::getToolTipText)
+                    .findFirst()
+                    .orElse(""));
+          } catch (final Exception e) {
+            throw new IllegalStateException(e);
+          }
+        });
+
+    // then
+    assertThat(seen)
+        .as("the line under the name and the Cost field's tool tip, for both")
+        .containsExactly(
+            "Land unit · 2-2-1 · 4 PUs + 5 Fame",
+            "PUs to buy one; also 5 Fame, changed in Production",
+            "Land unit · 2-2-1 · 5 Fame",
+            "Costs no PUs: 5 Fame, changed in Production");
+  }
+
+  private static String labelEndingIn(final Component in, final String end) {
+    return givenLabels(in).stream()
+        .filter(text -> text != null && text.endsWith(end) && text.contains(" · "))
+        .findFirst()
+        .orElse("");
+  }
 }

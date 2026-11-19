@@ -37,6 +37,11 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 
 ### Fixed
 
+- **Units showed only a unit's PUs** (#33). A unit that costs other resources too, as 11 Rings'
+  leaders do, now shows all of them in the list and under its name: "1 PU + 5 Fame". The Cost
+  field stays the PUs; its tool tip names the rest, which are changed in Production. A unit that
+  costs no PUs but another resource no longer reads "not for sale".
+
 - **Ticks in Production › Buy showed late on a big map** (#32). Every change of the map, in any
   tool, read a text file again for each row of the Actions list, and built the Units page anew
   although it was not on screen: on 11 Rings of Power over a second per tick. A text file is now

@@ -15,6 +15,8 @@ import java.awt.Point;
 import java.io.InputStream;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -494,5 +496,34 @@ final class MapXmlTest {
     assertThat(MapXml.connections(with))
         .as("the connection it had is not doubled")
         .hasSize(MapXml.connections(minimap).size() + 2);
+  }
+
+  @DisplayName("A unit's cost names every resource of its rule, PUs first")
+  @Test
+  void unitCostsInEveryResource() {
+    // given: infantry for 3 PUs
+    final Game pusOnly = givenMinimap();
+
+    // when: also 5 Fame; then 1 PU; then no PUs at all
+    final Game withFame = ProductionXml.withCost(pusOnly, "buyInfantry", "Fame", 5);
+    final Game onePu = ProductionXml.withCost(withFame, "buyInfantry", MapXml.PUS, 1);
+    final Game fameOnly = ProductionXml.withCost(withFame, "buyInfantry", MapXml.PUS, 0);
+
+    // then
+    assertThat(
+            Stream.of(pusOnly, withFame, onePu, fameOnly)
+                .map(game -> MapXml.unitCosts(game, "infantry").map(MapXml::costWords)))
+        .as("the words of the Units list")
+        .containsExactly(
+            Optional.of("3 PUs"),
+            Optional.of("3 PUs + 5 Fame"),
+            Optional.of("1 PU + 5 Fame"),
+            Optional.of("5 Fame"));
+    assertThat(MapXml.unitCosts(pusOnly, "no such unit")).as("no rule sells it").isEmpty();
+    assertThat(
+            MapXml.unitCosts(MapXml.withUnitCost(pusOnly, "infantry", 0), "infantry")
+                .map(MapXml::costWords))
+        .as("a cost of 0 is none")
+        .contains("free");
   }
 }

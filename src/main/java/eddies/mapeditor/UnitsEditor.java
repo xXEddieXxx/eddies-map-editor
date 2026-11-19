@@ -66,6 +66,7 @@ import javax.swing.SwingUtilities;
 import javax.swing.text.JTextComponent;
 import org.triplea.map.data.elements.AttachmentList.Attachment.Option;
 import org.triplea.map.data.elements.Game;
+import org.triplea.map.data.elements.Production.Rule.Cost;
 import org.triplea.swing.SwingComponents;
 import org.triplea.swing.WrapLayout;
 import eddies.mapeditor.MakerIcon.Glyph;
@@ -268,7 +269,7 @@ final class UnitsEditor implements Editor {
     return withoutPicture.nations();
   }
 
-  /** eg "1-2-1 · 3 PUs". */
+  /** eg "1-2-1 · 3 PUs", or "4-4-2 · 1 PU + 5 Fame". */
   private String detail(final String unit) {
     final Game game = project.game();
     return MapXml.unitStat(game, unit, "attack", 0)
@@ -276,8 +277,8 @@ final class UnitsEditor implements Editor {
         + MapXml.unitStat(game, unit, "defense", 0)
         + "-"
         + MapXml.unitStat(game, unit, "movement", 0)
-        + MapXml.unitCost(game, unit)
-            .map(cost -> " · " + cost + " PUs")
+        + MapXml.unitCosts(game, unit)
+            .map(costs -> " · " + MapXml.costWords(costs))
             .orElse(" · not for sale");
   }
 
@@ -736,15 +737,25 @@ final class UnitsEditor implements Editor {
     cells.setOpaque(false);
     final List<JComponent> fields = new ArrayList<>();
     final Optional<Integer> cost = MapXml.unitCost(game, unit);
+    // what it costs besides PUs, which the field does not show
+    final Optional<List<Cost>> all = MapXml.unitCosts(game, unit);
+    final List<Cost> others =
+        all.orElse(List.of()).stream()
+            .filter(c -> !MapXml.PUS.equals(c.getResource()))
+            .toList();
     if (cost.isPresent()) {
       final JSpinner spinner =
           Form.newNumber(
               cost.get(), 999, value -> quietly(g -> MapXml.withUnitCost(g, unit, value)));
-      spinner.setToolTipText("PUs to buy one");
+      spinner.setToolTipText(
+          "PUs to buy one" + (others.isEmpty() ? "" : "; also " + alsoCosts(others)));
       fields.add(spinner);
     } else {
       final JLabel none = new JLabel("–");
-      none.setToolTipText("No rule sells it; add one in Production");
+      none.setToolTipText(
+          all.isEmpty()
+              ? "No rule sells it; add one in Production"
+              : others.isEmpty() ? "Costs no PUs" : "Costs no PUs: " + alsoCosts(others));
       fields.add(none);
     }
     UnitOptions.ESSENTIALS.forEach(
@@ -767,6 +778,10 @@ final class UnitsEditor implements Editor {
           cells.add(field);
         });
     return cells;
+  }
+
+  private static String alsoCosts(final List<Cost> others) {
+    return MapXml.costWords(others) + ", changed in Production";
   }
 
   /** The number's field, or where it is set instead. */

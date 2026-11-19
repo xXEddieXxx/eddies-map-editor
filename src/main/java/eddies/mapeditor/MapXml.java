@@ -1694,9 +1694,15 @@ class MapXml {
     return game -> ListOrder.byName(unit -> unit);
   }
 
-  /** The unit types that cost least first, by the rule that sells one; without a rule last. */
+  /**
+   * The unit types that cost least PUs first, by the rule that sells one, one that costs only
+   * other resources as 0; without a rule last.
+   */
   static Comparator<String> unitTypesByCost(final Game game) {
-    return Comparator.<String>comparingInt(unit -> unitCost(game, unit).orElse(Integer.MAX_VALUE))
+    return Comparator.<String>comparingInt(
+            unit ->
+                unitCost(game, unit)
+                    .orElse(costRule(game, unit).isPresent() ? 0 : Integer.MAX_VALUE))
         .thenComparing(ListOrder.byName(unit -> unit));
   }
 
@@ -1897,6 +1903,33 @@ class MapXml {
                     .map(Cost::getQuantity)
                     .filter(Objects::nonNull)
                     .findFirst());
+  }
+
+  /**
+   * All a unit of the type costs in its rule, eg 1 PU and 5 Fame: PUs first, then the other
+   * resources in the rule's order, those of 0 left out; empty when no rule buys exactly one.
+   */
+  static Optional<List<Cost>> unitCosts(final Game game, final String unitType) {
+    return costRule(game, unitType)
+        .map(
+            rule ->
+                Optional.ofNullable(rule.getCosts()).orElse(List.of()).stream()
+                    .filter(cost -> cost.getQuantity() != null && cost.getQuantity() > 0)
+                    .sorted(Comparator.comparing(cost -> !PUS.equals(cost.getResource())))
+                    .toList());
+  }
+
+  /** eg "1 PU + 5 Fame"; "free" for no costs. */
+  static String costWords(final List<Cost> costs) {
+    return costs.isEmpty()
+        ? "free"
+        : costs.stream().map(MapXml::costWord).collect(Collectors.joining(" + "));
+  }
+
+  private static String costWord(final Cost cost) {
+    final String resource =
+        PUS.equals(cost.getResource()) && cost.getQuantity() == 1 ? "PU" : cost.getResource();
+    return cost.getQuantity() + " " + resource;
   }
 
   private static Optional<ProductionRule> costRule(final Game game, final String unitType) {
