@@ -10,6 +10,7 @@ import java.awt.Rectangle;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Predicate;
@@ -19,6 +20,7 @@ import javax.swing.Icon;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JRadioButton;
 import javax.swing.JScrollPane;
 import javax.swing.JTable;
 import javax.swing.JTabbedPane;
@@ -233,6 +235,83 @@ final class ProductionEditorTest {
     project.undo();
     table.changed();
     assertThat(table.getRowCount()).as("back after an undo").isEqualTo(6);
+  }
+
+  @DisplayName("A rule moved or the list ordered shows in the rows at once")
+  @Test
+  void rowsFollowAMoveAndAnOrder(@TempDir final Path folder) {
+    // given
+    final MapProject project = givenMinimap(folder);
+    final RulesTable table = new RulesTable(project, Trade.BUY, "production");
+    final String first = table.ruleName(0);
+    final String second = table.ruleName(1);
+
+    // when the first rule moves down
+    project.edit(g -> ProductionXml.withRuleMovedIn(g, "production", 0, 1));
+    table.changed();
+
+    // then
+    assertThat(List.of(table.ruleName(0), table.ruleName(1)))
+        .as("the two rows changed places")
+        .containsExactly(second, first);
+
+    // when the list is ordered A to Z
+    project.edit(
+        g -> ProductionXml.withRulesOrderedIn(g, "production", ProductionXml.rulesByName(g)));
+    table.changed();
+
+    // then
+    assertThat(IntStream.range(0, table.getRowCount()).mapToObj(table::ruleName))
+        .as("the rows in the list's new order")
+        .containsExactlyElementsOf(ProductionXml.rulesIn(project.game(), "production"));
+  }
+
+  @DisplayName("The order buttons are off while All rules shows, and on again with Sold here")
+  @Test
+  void orderButtonsOnlyForSoldHere(@TempDir final Path folder) {
+    // given
+    final JTabbedPane page = (JTabbedPane) new ProductionEditor(givenMinimap(folder)).page();
+    givenLaidOut(page, 1200, 800);
+    final List<JButton> ordering =
+        Stream.of("▲", "▼", "⇅")
+            .map(text -> find(page, JButton.class, b -> text.equals(b.getText())))
+            .toList();
+    final List<String> seen = new ArrayList<>();
+
+    // when
+    find(page, JRadioButton.class, b -> b.getText().startsWith("All rules")).doClick();
+    ordering.forEach(b -> seen.add(b.isEnabled() + " " + b.getToolTipText()));
+    find(page, JRadioButton.class, b -> b.getText().startsWith("Sold here")).doClick();
+    ordering.forEach(b -> seen.add(String.valueOf(b.isEnabled())));
+
+    // then
+    assertThat(seen)
+        .as("off with the reason while the game's order shows; on with the list's")
+        .containsExactly(
+            "false Show Sold here to order its rules",
+            "false Show Sold here to order its rules",
+            "false Show Sold here to order its rules",
+            "true",
+            "true",
+            "true");
+  }
+
+  @DisplayName("A row kept after its tick was taken goes when the list is ordered")
+  @Test
+  void untickedRowGoesWithAnOrder(@TempDir final Path folder) {
+    // given
+    final MapProject project = givenMinimap(folder);
+    final RulesTable table = new RulesTable(project, Trade.BUY, "production");
+    table.setValueAt(false, 0, 0);
+    table.changed();
+    final int kept = table.getRowCount();
+
+    // when
+    project.edit(g -> ProductionXml.withRuleMovedIn(g, "production", 0, 1));
+    table.changed();
+
+    // then
+    assertThat(table.getRowCount()).as("the rows are the list's again").isEqualTo(kept - 1);
   }
 
   @DisplayName("Buy: a unit's row shows its picture, and the numbers stand in the middle")

@@ -37,6 +37,11 @@ From the feedback of map makers on 0.1.91, each change under its GitHub issue.
 
 ### Fixed
 
+- **Moving and ordering rules in Production did not show** (#40). ▲ ▼ and ⇅ changed the game,
+  but the table kept its old order until another list was chosen. The rows now follow at once.
+  With All rules shown, which is the game's order, the three buttons are off and say why; ▲ ▼
+  without a rule chosen say to choose one.
+
 - **Units showed only a unit's PUs** (#33). A unit that costs other resources too, as 11 Rings'
   leaders do, now shows all of them in the list and under its name: "1 PU + 5 Fame". The Cost
   field stays the PUs; its tool tip names the rest, which are changed in Production. A unit that

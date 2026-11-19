@@ -343,7 +343,12 @@ final class ProductionEditor implements Editor {
             chosen
                 .map(model::rowOf)
                 .filter(r -> r >= 0)
-                .ifPresent(r -> table.setRowSelectionInterval(r, r));
+                .ifPresent(
+                    r -> {
+                      table.setRowSelectionInterval(r, r);
+                      // a moved row stays in sight
+                      table.scrollRectToVisible(table.getCellRect(r, 0, true));
+                    });
             showHead(model.frontier, model);
           });
     }
@@ -442,13 +447,32 @@ final class ProductionEditor implements Editor {
       toggle.add(all);
       final JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, Theme.GAP_XS, 0));
       tools.setOpaque(false);
-      tools.add(
-          Theme.newIconButton(
-              "▲", "Move the rule up, as the buy window orders them", () -> move(frontier, -1)));
-      tools.add(
-          Theme.newIconButton(
-              "▼", "Move the rule down, as the buy window orders them", () -> move(frontier, 1)));
-      tools.add(newOrderButton(frontier));
+      final List<JButton> ordering =
+          List.of(
+              Theme.newIconButton(
+                  "▲", "Move the rule up, as the buy window orders them", () -> move(frontier, -1)),
+              Theme.newIconButton(
+                  "▼",
+                  "Move the rule down, as the buy window orders them",
+                  () -> move(frontier, 1)),
+              newOrderButton(frontier));
+      final List<String> tips = ordering.stream().map(JButton::getToolTipText).toList();
+      // All rules shows the game's order, which these do not change: off there, saying why. By
+      // the radio button, as Swing runs these listeners before those above that set the field
+      final Runnable showOrdering =
+          () -> {
+            for (int i = 0; i < ordering.size(); i++) {
+              ordering.get(i).setEnabled(!all.isSelected());
+              ordering
+                  .get(i)
+                  .setToolTipText(
+                      all.isSelected() ? "Show Sold here to order its rules" : tips.get(i));
+            }
+          };
+      here.addActionListener(e -> showOrdering.run());
+      all.addActionListener(e -> showOrdering.run());
+      showOrdering.run();
+      ordering.forEach(tools::add);
       tools.add(addRule);
       final JPanel showRow = new JPanel(new BorderLayout());
       showRow.add(toggle, BorderLayout.WEST);
@@ -468,13 +492,18 @@ final class ProductionEditor implements Editor {
           rulesShown
               .filter(t -> t.getSelectedRow() >= 0)
               .map(t -> ((RulesTable) t.getModel()).ruleName(t.getSelectedRow()));
-      final List<String> sold = ProductionXml.rulesIn(view(), frontier);
-      final int from = rule.map(sold::indexOf).orElse(-1);
-      if (allRules) {
-        Dialogs.toast(page, "Show Sold here to move the rules: All rules is the game's order");
+      if (rule.isEmpty()) {
+        Dialogs.toast(page, "Choose a rule in the table to move it");
         return;
       }
-      if (from >= 0 && from + by >= 0 && from + by < sold.size()) {
+      final List<String> sold = ProductionXml.rulesIn(view(), frontier);
+      final int from = sold.indexOf(rule.get());
+      if (from < 0) {
+        // a row kept after its tick was taken
+        Dialogs.toast(page, "Tick the rule to move it: the list does not sell it");
+        return;
+      }
+      if (!allRules && from + by >= 0 && from + by < sold.size()) {
         edit(g -> ProductionXml.withRuleMovedIn(g, frontier, from, from + by));
       }
     }
@@ -838,16 +867,20 @@ final class ProductionEditor implements Editor {
     }
 
     /**
-     * After a change of the game: the rows anew when the rules changed or one sold here is not
-     * shown (eg after an undo); whether the columns changed.
+     * After a change of the game: the rows anew when the rules changed, one sold here is not
+     * shown (eg after an undo) or those sold here come in another order (a rule moved, the list
+     * ordered: a row kept after its tick was taken goes then); whether the columns changed.
      */
     boolean changed() {
       final Game game = view();
       final List<String> columns = costColumns();
       final boolean structure = !columns.equals(costColumns);
       costColumns = columns;
+      final List<String> sold = ProductionXml.rulesIn(game, frontier);
       if (!ruleNames(game).equals(allRules)
-          || !shown.containsAll(ProductionXml.rulesIn(game, frontier))) {
+          || !shown.containsAll(sold)
+          // moved or ordered: the rows sold here in another order than the list has them
+          || (!all && !shown.stream().filter(sold::contains).toList().equals(sold))) {
         refilter();
       }
       if (structure) {
