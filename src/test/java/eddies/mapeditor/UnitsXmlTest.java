@@ -334,6 +334,59 @@ final class UnitsXmlTest {
     assertThat(changed).as("the game as it was").isSameAs(game);
   }
 
+  @DisplayName("A loop's unit type gets its own attachment with all the loop gives it, and loads")
+  @Test
+  void loopMadeUnitGetsItsOwnAttachment() throws Exception {
+    // given
+    final MapProject project = givenGame("ww2global40.xml");
+    project.edit(UnitsXmlTest::givenWalkersLoop);
+    final Game loop = project.game();
+
+    // when
+    project.edit(g -> UnitsXml.withOwn(g, "infantry"));
+    final Game own = project.game();
+    project.edit(g -> UnitsXml.withValue(g, "infantry", givenOption("attack"), "9"));
+    final Game saved = saveAndReopen(project, "own.xml");
+
+    // then
+    assertThat(UnitsXml.loop(own, "infantry")).as("its own now, changed here").isEmpty();
+    assertThat(UnitsXml.options(own, "infantry"))
+        .as("all the loop gave it, nothing lost")
+        .extracting(Option::getName, Option::getValue)
+        .containsExactly(
+            org.assertj.core.groups.Tuple.tuple("attack", "4"),
+            org.assertj.core.groups.Tuple.tuple("hitPoints", "2"));
+    assertThat(AttachmentsXml.attachments(own))
+        .as("the loop as written stays, one attachment more")
+        .containsAll(AttachmentsXml.attachments(loop))
+        .hasSize(AttachmentsXml.attachments(loop).size() + 1);
+    assertThat(UnitsXml.value(saved, "infantry", givenOption("attack")))
+        .as("changed like any unit, as TripleA reads the saved game")
+        .isEqualTo("9");
+    assertThat(UnitsXml.value(saved, "infantry", givenOption("hitPoints")))
+        .as("the loop's other value stays")
+        .isEqualTo("2");
+    assertThat(UnitsXml.loop(saved, "artillery")).as("the loop's other unit follows it").isPresent();
+    assertThat(UnitsXml.value(saved, "artillery", givenOption("attack")))
+        .as("with the loop's value")
+        .isEqualTo("4");
+    assertThat(UnitsXml.withOwn(own, "fighter")).as("nothing for a unit no loop makes").isSameAs(own);
+  }
+
+  @DisplayName("A loop's unit type is not removed while the loop's variable names it")
+  @Test
+  void loopMadeUnitIsStillNamedByItsVariable() throws Exception {
+    // given
+    final Game game = givenWalkersLoop(givenGame("ww2global40.xml").game());
+
+    // when
+    final List<String> named =
+        RulesXml.whereNamed(MapXml.withoutUnitType(game, "artillery"), "artillery");
+
+    // then
+    assertThat(named).as("what Remove unit refuses with").contains("variable Walkers");
+  }
+
   /** G40 with a unitAttachment written for each of infantry and artillery, after their own. */
   static Game givenWalkersLoop(final Game g40) {
     return givenLoop(

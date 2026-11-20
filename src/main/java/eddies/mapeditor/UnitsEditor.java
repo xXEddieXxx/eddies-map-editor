@@ -83,7 +83,8 @@ final class UnitsEditor implements Editor {
   private static final Set<String> KIND_SECTIONS = Set.of("Sea", "Air and anti-air", BOMBING);
   private static final String LOCKED =
       "Can't be changed here: the game file writes it once for several unit types (foreach)."
-          + " Change it in Attachments.";
+          + " Change it in Attachments, or use \"Change for this unit only\" above the options.";
+  private static final String OWN_ATTACHMENT = "Change for this unit only";
   // marks a part that lock leaves as it is
   private static final String OWN = "UnitsEditor.own";
   // the rows of Stacking limits, as RulesXml.STACKING_LIMITS and STACKING_COUNTS
@@ -475,15 +476,29 @@ final class UnitsEditor implements Editor {
     showHeader(game, unit);
     UnitsXml.loop(game, unit)
         .ifPresent(
-            loop ->
-                inspector.row(
-                    Help.link(
-                        "The grey options can't be changed here: the game file writes them once"
-                            + " for each element of "
-                            + loop.getForeach()
-                            + ". Change them in",
-                        "Attachments",
-                        loop.getName() + " of " + loop.getAttachTo())));
+            loop -> {
+              inspector.row(
+                  Help.link(
+                      "The grey options can't be changed here: the game file writes them once"
+                          + " for each element of "
+                          + loop.getForeach()
+                          + ". Change them in",
+                      "Attachments",
+                      loop.getName() + " of " + loop.getAttachTo()));
+              inspector.row(
+                  Help.with(
+                      newLink(
+                          OWN_ATTACHMENT,
+                          () -> {
+                            commit();
+                            project.edit(g -> UnitsXml.withOwn(g, unit));
+                          }),
+                      unit
+                          + " gets an attachment of its own with all the values it has now, written"
+                          + " after the loop, and is then changed here like any unit. It no longer"
+                          + " follows the loop: a later change there does not reach it. The loop"
+                          + " and its other unit types stay as they are. Undo takes it back."));
+            });
     inspector.row(leftAligned(optionSearch));
     inspector.row(grid);
     inspector.row(below);

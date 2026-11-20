@@ -93,6 +93,15 @@ class UnitsXml {
     return read(game, unit).flatMap(Read::loop);
   }
 
+  /**
+   * The game with the unit type's unitAttachment written for it alone, with all its {@link #loop}
+   * gives it and behind it ({@link AttachmentsXml#withOwn}): then changed here like any other, and
+   * no longer following the loop. The same game for a unit type no loop makes.
+   */
+  static Game withOwn(final Game game, final String unit) {
+    return loop(game, unit).isPresent() ? AttachmentsXml.withOwn(game, UNIT, unit) : game;
+  }
+
   /** A unit type's unitAttachment as the game reads it, and the loop that makes it, if one does. */
   private record Read(Attachment made, Optional<Attachment> loop) {}
 

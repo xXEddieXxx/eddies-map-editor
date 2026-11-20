@@ -705,6 +705,49 @@ final class UnitsEditorTest {
         .doesNotContain("+ Add option…", "Land", "Sea", "Air");
   }
 
+  @DisplayName("Change for this unit only gives a loop's unit its own attachment: one step, unlocked")
+  @Test
+  void loopMadeUnitIsChangedAloneAfterTheButton() throws Exception {
+    // given
+    final MapProject project = givenG40();
+    project.edit(UnitsXmlTest::givenWalkersLoop);
+    final org.triplea.map.data.elements.Game loop = project.game();
+    final List<JSpinner> numbers = new ArrayList<>();
+    final List<String> buttons = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          try {
+            final Component page = givenEditor(project, "artillery", "none").page();
+            collect(page, AbstractButton.class).stream()
+                .filter(button -> "Change for this unit only".equals(button.getText()))
+                .findFirst()
+                .orElseThrow()
+                .doClick();
+            numbers.addAll(collect(page, JSpinner.class));
+            buttons.addAll(givenButtonTexts(page));
+          } catch (final Exception e) {
+            throw new IllegalStateException(e);
+          }
+        });
+    final org.triplea.map.data.elements.Game own = project.game();
+
+    // then
+    assertThat(UnitsXml.loop(own, "artillery")).as("its own attachment now").isEmpty();
+    assertThat(UnitsXml.options(own, "artillery"))
+        .as("with the loop's values")
+        .extracting(o -> o.getName() + "=" + o.getValue())
+        .containsExactly("attack=4", "hitPoints=2");
+    assertThat(UnitsXml.loop(own, "infantry")).as("the loop's other unit follows it").isPresent();
+    assertThat(numbers).as("every number is changed here now").allMatch(JSpinner::isEnabled);
+    assertThat(buttons)
+        .as("no loop, no button")
+        .doesNotContain("Change for this unit only", "Attachments ›");
+    project.undo();
+    assertThat(project.game()).as("one step to undo").isSameAs(loop);
+  }
+
   @DisplayName("A change made while another tool shows reaches Units when it shows again")
   @Test
   void hiddenUnitsWaitWithShowingAChange() throws Exception {

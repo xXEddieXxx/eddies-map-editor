@@ -156,4 +156,8 @@ left shows each with its picture and its numbers; 2-3-1 means attack 2, defense 
 
     A unit type whose options the game file writes once for every unit of a variable (`foreach`)
     shows them read-only, under a line with a link to **Attachments**: the loop is changed there,
-    for all its unit types at once. Its cost stays a field.
+    for all its unit types at once. Its cost stays a field. **Change for this unit only** below
+    that line gives the unit type an attachment of its own with all the values it has, written
+    after the loop: it is then changed here like any unit and no longer follows the loop, whose
+    other unit types stay as they are. A toast says so, with **Undo**. **Remove unit** is refused
+    while the loop's variable still names the unit type.
