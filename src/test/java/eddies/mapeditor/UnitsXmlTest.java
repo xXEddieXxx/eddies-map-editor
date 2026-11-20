@@ -460,4 +460,69 @@ final class UnitsXmlTest {
         .as("one attachment per place, not per pair")
         .containsExactly("5", "6");
   }
+
+  @DisplayName("Units used up are changed in the form the map wrote, added and removed, and load")
+  @Test
+  void usedUpUnitsKeepTheirForm() throws Exception {
+    // given: G40's factory_upgrade uses up "1:factory_minor"; artillery gets one, its count apart
+    final MapProject project = givenGame("ww2global40.xml");
+    project.edit(
+        g ->
+            UnitsXml.withNewOption(
+                g,
+                "artillery",
+                Option.builder().name("consumesUnits").count("2").value("infantry").build()));
+
+    // when
+    project.edit(
+        g -> UnitsXml.withUsedUp(g, "factory_upgrade", 0, new UnitsXml.UsedUp(2, "factory_minor")));
+    project.edit(g -> UnitsXml.withNewUsedUp(g, "factory_upgrade"));
+    project.edit(g -> UnitsXml.withUsedUp(g, "artillery", 0, new UnitsXml.UsedUp(3, "armour")));
+    final Game saved = saveAndReopen(project, "usedUp.xml");
+    final Game removed = UnitsXml.withoutOptionAt(saved, "factory_upgrade", "consumesUnits", 0);
+
+    // then
+    assertThat(UnitsXml.options(saved, "factory_upgrade"))
+        .as("count:unit stays count:unit; the new one, of the first unit type not used yet, last")
+        .filteredOn(o -> "consumesUnits".equals(o.getName()))
+        .extracting(Option::getCount, Option::getValue)
+        .containsExactly(
+            org.assertj.core.groups.Tuple.tuple(null, "2:factory_minor"),
+            org.assertj.core.groups.Tuple.tuple(null, "1:infantry"));
+    assertThat(UnitsXml.options(saved, "factory_upgrade"))
+        .as("the changed one keeps its place among the options")
+        .extracting(Option::getName)
+        .containsSubsequence("maxDamage", "consumesUnits", "whenCapturedChangesInto");
+    assertThat(UnitsXml.options(saved, "artillery"))
+        .as("a count written apart stays apart")
+        .filteredOn(o -> "consumesUnits".equals(o.getName()))
+        .extracting(Option::getCount, Option::getValue)
+        .containsExactly(org.assertj.core.groups.Tuple.tuple("3", "armour"));
+    assertThat(UnitsXml.usedUp(saved, "artillery")).as("read either way").containsExactly("3 armour");
+    assertThat(UnitsXml.usedUp(removed, "factory_upgrade"))
+        .as("the first removed, the second stays")
+        .containsExactly("1 infantry");
+  }
+
+  @DisplayName("A consumesUnits option that does not read as a count and a unit is left as it is")
+  @Test
+  void unreadUsedUpStays() throws Exception {
+    // given
+    final Game game =
+        UnitsXml.withNewOption(
+            givenGame("ww2global40.xml").game(),
+            "artillery",
+            Option.builder().name("consumesUnits").value("some:infantry").build());
+
+    // when
+    final Game changed = UnitsXml.withUsedUp(game, "artillery", 0, new UnitsXml.UsedUp(2, "armour"));
+
+    // then
+    assertThat(changed).as("changed among the raw options, not here").isSameAs(game);
+    assertThat(UnitsXml.usedUp(game, "artillery")).as("not told as a cost").isEmpty();
+    assertThat(UnitsEditor.moreOptions(game, "artillery"))
+        .as("still a raw option under More options")
+        .extracting(Option::getName)
+        .contains("consumesUnits");
+  }
 }

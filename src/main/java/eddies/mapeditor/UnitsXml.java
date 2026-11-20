@@ -29,6 +29,7 @@ class UnitsXml {
   private static final String UNIT = Constants.UNIT_ATTACHMENT_NAME;
   static final String SUPPORT_KIND = "UnitSupportAttachment";
   private static final String UNIT_KIND = "UnitAttachment";
+  static final String USED_UP = "consumesUnits";
 
   // ---- the unit's options
 
@@ -70,18 +71,83 @@ class UnitsXml {
    */
   static List<String> usedUp(final Game game, final String unit) {
     return options(game, unit).stream()
-        .filter(o -> AttachmentsXml.isOption(o, "consumesUnits") && o.getValue() != null)
-        // "count:unit", the count also given apart
-        .map(
-            o ->
-                Optional.ofNullable(o.getCount())
-                    .filter(count -> !count.isEmpty())
-                    .map(count -> count + ":" + o.getValue())
-                    .orElse(o.getValue()))
-        .map(written -> written.split(":"))
-        .filter(parts -> parts.length == 2)
-        .map(parts -> parts[0].strip() + " " + parts[1].strip())
+        .flatMap(o -> UsedUp.read(o).stream())
+        .map(used -> used.count() + " " + used.unit())
         .toList();
+  }
+
+  /**
+   * So many units of a type that one of another uses up when placed: one consumesUnits option, of
+   * which a unit type may have several.
+   */
+  record UsedUp(int count, String unit) {
+    /** As TripleA reads the option; empty for another option or one that does not read so. */
+    static Optional<UsedUp> read(final Option option) {
+      if (!AttachmentsXml.isOption(option, USED_UP) || option.getValue() == null) {
+        return Optional.empty();
+      }
+      // "count:unit", the count also given apart
+      final String[] parts =
+          Optional.ofNullable(option.getCount())
+              .filter(count -> !count.isEmpty())
+              .map(count -> count + ":" + option.getValue())
+              .orElse(option.getValue())
+              .split(":");
+      try {
+        return parts.length == 2 && !parts[1].isBlank()
+            ? Optional.of(new UsedUp(Integer.parseInt(parts[0].strip()), parts[1].strip()))
+            : Optional.empty();
+      } catch (final NumberFormatException e) {
+        return Optional.empty();
+      }
+    }
+  }
+
+  /**
+   * The game with the unit type's consumesUnits option, the given one of them (0 for the first),
+   * saying this, in the form the map wrote it: the count apart or as "count:unit". Unchanged for
+   * one that does not read, which is changed among the unit's other options.
+   */
+  static Game withUsedUp(
+      final Game game, final String unit, final int occurrence, final UsedUp used) {
+    return optionAt(game, unit, USED_UP, occurrence)
+        .filter(had -> UsedUp.read(had).isPresent())
+        .map(
+            had -> {
+              final boolean counted =
+                  Optional.ofNullable(had.getCount()).filter(c -> !c.isEmpty()).isPresent();
+              return withOptionAt(
+                  game,
+                  unit,
+                  USED_UP,
+                  occurrence,
+                  Option.builder()
+                      .name(had.getName())
+                      .count(counted ? String.valueOf(used.count()) : null)
+                      .value(counted ? used.unit() : used.count() + ":" + used.unit())
+                      .build());
+            })
+        .orElse(game);
+  }
+
+  /**
+   * The game with the unit type using up one of one more unit type, the first it does not use up
+   * yet, to choose another from: a new option after its others. Unchanged when there is none.
+   */
+  static Game withNewUsedUp(final Game game, final String unit) {
+    final List<String> used =
+        options(game, unit).stream()
+            .flatMap(o -> UsedUp.read(o).stream())
+            .map(UsedUp::unit)
+            .toList();
+    return MapXml.unitTypes(game).stream()
+        .filter(type -> !type.equals(unit) && !used.contains(type))
+        .findFirst()
+        .map(
+            type ->
+                withNewOption(
+                    game, unit, Option.builder().name(USED_UP).value("1:" + type).build()))
+        .orElse(game);
   }
 
   /**

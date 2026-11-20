@@ -702,7 +702,8 @@ final class UnitsEditorTest {
     assertThat(enabled)
         .as("its support is an attachment of its own and stays to change; no option is added")
         .contains("+ Add support")
-        .doesNotContain("+ Add option…", "Land", "Sea", "Air");
+        .doesNotContain("+ Add option…", "+ Add a unit it uses up", "Land", "Sea", "Air");
+    assertThat(buttons).as("what it uses up is shown, off").contains("+ Add a unit it uses up");
   }
 
   @DisplayName("Change for this unit only gives a loop's unit its own attachment: one step, unlocked")
@@ -916,7 +917,7 @@ final class UnitsEditorTest {
         .as("the line under the name and the Cost field's tool tip")
         .containsExactly(
             "Land unit · 2-2-1 · 4 PUs · uses 2 Material",
-            "PUs to buy one. Placing one uses up 2 Material, set under More options");
+            "PUs to buy one. Placing one uses up 2 Material, set under Uses up units");
   }
 
   @DisplayName("The sections come as battle, movement, the rest")
@@ -960,5 +961,74 @@ final class UnitsEditorTest {
             "Movement",
             "Transport and carrier",
             "Miscellaneous");
+  }
+
+  @DisplayName("Uses up units: a row per unit with count, type and ×, each change one step")
+  @Test
+  void usedUpUnitsAreRows() throws Exception {
+    // given: G40's factory_upgrade, placed on a factory_minor that it uses up
+    final MapProject project = givenG40();
+    final org.triplea.map.data.elements.Game before = project.game();
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          try {
+            final UnitsEditor editor = givenEditor(project, "factory_upgrade", "none");
+            seen.add(givenUsedUpField(editor, JSpinner.class).getValue());
+            seen.add(givenUsedUpField(editor, JComboBox.class).getSelectedItem());
+            seen.add(
+                UnitsEditor.moreOptions(project.game(), "factory_upgrade").stream()
+                    .map(Option::getName)
+                    .anyMatch("consumesUnits"::equals));
+            givenUsedUpField(editor, JSpinner.class).setValue(2);
+            seen.add(UnitsXml.usedUp(project.game(), "factory_upgrade"));
+            project.undo();
+            seen.add(project.game() == before);
+            givenUsedUpField(editor, JComboBox.class).setSelectedItem("infantry");
+            seen.add(UnitsXml.usedUp(project.game(), "factory_upgrade"));
+            givenButton(editor, "+ Add a unit it uses up").doClick();
+            seen.add(UnitsXml.usedUp(project.game(), "factory_upgrade"));
+            givenButton(editor, "×").doClick();
+            seen.add(UnitsXml.usedUp(project.game(), "factory_upgrade"));
+          } catch (final Exception e) {
+            throw new IllegalStateException(e);
+          }
+        });
+
+    // then
+    assertThat(seen)
+        .as("the row as written and not again under More options; the count, undone in one step;"
+            + " the type; a second row of the first unit type not used yet; the first removed")
+        .containsExactly(
+            1,
+            "factory_minor",
+            false,
+            List.of("2 factory_minor"),
+            true,
+            List.of("1 infantry"),
+            List.of("1 infantry", "1 artillery"),
+            List.of("1 artillery"));
+  }
+
+  // the first row's field of the type
+  private static <T extends javax.swing.JComponent> T givenUsedUpField(
+      final UnitsEditor editor, final Class<T> type) {
+    return collect(editor.page(), type).stream()
+        .filter(
+            field ->
+                String.valueOf(field.getAccessibleContext().getAccessibleName())
+                    .startsWith("Uses up units, "))
+        .findFirst()
+        .orElseThrow();
+  }
+
+  // the first on the page: a used-up unit's × stands above those of More options
+  private static AbstractButton givenButton(final UnitsEditor editor, final String text) {
+    return collect(editor.page(), AbstractButton.class).stream()
+        .filter(button -> text.equals(button.getText()))
+        .findFirst()
+        .orElseThrow();
   }
 }

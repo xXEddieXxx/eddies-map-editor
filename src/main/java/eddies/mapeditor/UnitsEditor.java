@@ -99,6 +99,11 @@ final class UnitsEditor implements Editor {
           + " Territories (Units its factories place per turn), where a nation may place in"
           + " Nations (Placing units). A limit for several unit types together is in Nations,"
           + " Stacking limits.";
+  private static final String USES_UP = "Uses up units";
+  private static final String USES_UP_HELP =
+      "Placing one takes these units away from the territory it is placed in, eg a ship made"
+          + " from a hull, or a factory upgraded from a smaller one. They must be there, of the"
+          + " same nation. In the game's XML: consumesUnits.";
   private static final String TRIPLEA_NAME = "In the game's XML: ";
   private static final int STACKING_LABEL_WIDTH = 110;
   private static final int PICTURE_SIZE = 48;
@@ -807,7 +812,7 @@ final class UnitsEditor implements Editor {
     final List<String> used = UnitsXml.usedUp(game, unit);
     return used.isEmpty()
         ? ""
-        : ". Placing one uses up " + String.join(" + ", used) + ", set under More options";
+        : ". Placing one uses up " + String.join(" + ", used) + ", set under " + USES_UP;
   }
 
   private static String alsoCosts(final List<Cost> others) {
@@ -900,6 +905,7 @@ final class UnitsEditor implements Editor {
       if (title.equals(UnitOptions.PRODUCTION)) {
         // the rest starts with Miscellaneous
         found += showStackingLimits(game, unit, filter);
+        found += showUsedUp(game, unit, filter);
       }
       before = title;
       final List<UnitOptions.UnitOption> all =
@@ -1094,6 +1100,86 @@ final class UnitsEditor implements Editor {
       grid.row(leftAligned(text, number, new JLabel("counting"), counting));
     }
     return shown.size();
+  }
+
+  /**
+   * A row per unit type one of this type uses up when it is placed: how many, which, and ×. Each
+   * is an option of its own, as the n-th consumesUnits; one that does not read stays under More
+   * options.
+   */
+  private int showUsedUp(final Game game, final String unit, final String filter) {
+    if (!(USES_UP + "\n" + UnitsXml.USED_UP).toLowerCase(Locale.ROOT).contains(filter)) {
+      return 0;
+    }
+    grid.section(USES_UP, USES_UP_HELP);
+    final List<String> types = MapXml.unitTypes(game);
+    final List<Option> written =
+        UnitsXml.options(game, unit).stream()
+            .filter(o -> AttachmentsXml.isOption(o, UnitsXml.USED_UP))
+            .toList();
+    for (int i = 0; i < written.size(); i++) {
+      final int occurrence = i;
+      UnitsXml.UsedUp.read(written.get(i))
+          .ifPresent(
+              used -> grid.row(newUsedUp(unit, occurrence, used, types)));
+    }
+    final JButton add =
+        Theme.newAddButton(
+            "Add a unit it uses up",
+            "One more unit type that placing one " + unit + " takes away; choose it in its row",
+            () -> {
+              commit();
+              project.edit(g -> UnitsXml.withNewUsedUp(g, unit));
+            });
+    add.setEnabled(UnitsXml.withNewUsedUp(game, unit) != game);
+    grid.row(leftAligned(add));
+    return 1;
+  }
+
+  private JComponent newUsedUp(
+      final String unit, final int occurrence, final UnitsXml.UsedUp used, final List<String> types) {
+    final List<String> choices = new ArrayList<>(types);
+    if (!choices.contains(used.unit())) {
+      // eg a variable, or a unit type the game does not list: kept readable
+      choices.add(used.unit());
+    }
+    final JComboBox<String> type = new JComboBox<>(choices.toArray(String[]::new));
+    type.setSelectedItem(used.unit());
+    type.setToolTipText("The unit type it uses up. " + TRIPLEA_NAME + UnitsXml.USED_UP);
+    type.getAccessibleContext().setAccessibleName(USES_UP + ", unit type");
+    final int[] count = {used.count()};
+    final Runnable write =
+        () ->
+            quietly(
+                g ->
+                    UnitsXml.withUsedUp(
+                        g,
+                        unit,
+                        occurrence,
+                        new UnitsXml.UsedUp(count[0], String.valueOf(type.getSelectedItem()))));
+    final JSpinner number =
+        Form.newNumber(
+            used.count(),
+            1,
+            999,
+            value -> {
+              count[0] = value;
+              write.run();
+            });
+    number.setToolTipText("How many of them one " + unit + " uses up");
+    number.getAccessibleContext().setAccessibleName(USES_UP + ", count");
+    number.setPreferredSize(new Dimension(ESSENTIAL_WIDTH, number.getPreferredSize().height));
+    type.addActionListener(e -> write.run());
+    return leftAligned(
+        number,
+        type,
+        Theme.newIconButton(
+            "×",
+            "No longer uses up " + used.unit(),
+            () -> {
+              commit();
+              project.edit(g -> UnitsXml.withoutOptionAt(g, unit, UnitsXml.USED_UP, occurrence));
+            }));
   }
 
   /**
@@ -1653,6 +1739,8 @@ final class UnitsEditor implements Editor {
                         limit ->
                             AttachmentsXml.isOption(o, limit)
                                 && UnitsXml.stackingLimit(game, unit, limit).isPresent()))
+        // as one that reads shows under Uses up units only
+        .filter(o -> UnitsXml.UsedUp.read(o).isEmpty())
         .filter(
             o ->
                 !UnitOptions.NAMES.contains(AttachmentsXml.optionName(o.getName()))
