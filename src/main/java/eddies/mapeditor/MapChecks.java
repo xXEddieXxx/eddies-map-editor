@@ -219,10 +219,9 @@ class MapChecks {
             nation ->
                 problems.add(
                     Problem.in("Nations", "Held units belong to " + nation + ", no nation")));
-    for (final Attachment attachment : AttachmentsXml.attachments(game)) {
-      // one made by foreach names its nation as a variable, eg capital="@Player@"
+    for (final Attachment attachment : AttachmentsXml.kept(game)) {
+      // a variable no loop fills in, eg capital="@Player@", is not a nation's name
       if (AttachmentsXml.isNamed(attachment, Constants.TERRITORY_ATTACHMENT_NAME)
-          && attachment.getForeach() == null
           && !String.valueOf(attachment.getAttachTo()).contains("@")) {
         AttachmentsXml.options(attachment).stream()
             .filter(
@@ -332,13 +331,9 @@ class MapChecks {
     }
     // each unit type's options, read once: a big map has thousands of attachments
     final Map<String, Attachment> unitTypes = new HashMap<>();
-    AttachmentsXml.attachments(game).stream()
+    AttachmentsXml.kept(game).stream()
         .filter(a -> AttachmentsXml.isNamed(a, Constants.UNIT_ATTACHMENT_NAME))
         .forEach(a -> unitTypes.put(a.getAttachTo(), a));
-    // a loop (foreach) may make the attachment of a unit type without a written one: not known
-    final boolean byForeach =
-        unitTypes.values().stream()
-            .anyMatch(a -> a.getForeach() != null || String.valueOf(a.getAttachTo()).contains("@"));
     final BiFunction<String, String, Optional<String>> option =
         (unit, name) ->
             Optional.ofNullable(unitTypes.get(unit)).map(AttachmentsXml::options).orElse(List.of())
@@ -353,9 +348,6 @@ class MapChecks {
           final List<UnitPlacement> land = new ArrayList<>();
           for (final UnitPlacement units : placements) {
             final String unit = units.getUnitType();
-            if (byForeach && !unitTypes.containsKey(unit)) {
-              continue;
-            }
             if (option.apply(unit, "isSea").filter(Boolean::parseBoolean).isPresent()) {
               final int capacity = number(option.apply(unit, "transportCapacity"));
               for (int i = 0; capacity > 0 && i < units.getQuantity(); i++) {
@@ -521,7 +513,7 @@ class MapChecks {
     final Set<String> savedNations = Set.copyOf(MapXml.nations(saved));
     final List<String> flags = new ArrayList<>(List.of("", "_small", "_large"));
     // the faded flag marks kamikaze zones, the convoy flag convoy zones on a map that asks for it
-    if (AttachmentsXml.attachments(game).stream()
+    if (AttachmentsXml.kept(game).stream()
         .flatMap(a -> Optional.ofNullable(a.getOptions()).orElse(List.of()).stream())
         .anyMatch(o -> "kamikazeZone".equals(o.getName()) && "true".equals(o.getValue()))) {
       flags.add("_fade");

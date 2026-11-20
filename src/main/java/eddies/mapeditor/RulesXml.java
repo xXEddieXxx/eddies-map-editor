@@ -363,9 +363,7 @@ class RulesXml {
 
   /** All options of the type's relationshipTypeAttachment in their order, its archetype too. */
   static List<Option> relationshipOptions(final Game game, final String type) {
-    return AttachmentsXml.attachments(game).stream()
-        .filter(relationshipKey(type)::matches)
-        .findFirst()
+    return AttachmentsXml.kept(game, Constants.RELATIONSHIPTYPE_ATTACHMENT_NAME, type)
         .map(AttachmentsXml::options)
         .orElse(List.of());
   }
@@ -435,7 +433,8 @@ class RulesXml {
 
   /**
    * The variable the nation's playerAttachment is written once for each nation of, eg
-   * "$Players$": its options are read here but changed in Attachments, at the one written.
+   * "$Players$": a change of an option here gives the nation its own ({@link
+   * AttachmentsXml#withOwn}); Nations shows its stacking limits as read, with a link to the loop.
    */
   static Optional<String> playerForEach(final Game game, final String nation) {
     return playerAttachment(game, nation)
@@ -445,7 +444,18 @@ class RulesXml {
 
   // as TripleA reads it: also one written for each nation of a variable
   private static Optional<Attachment> playerAttachment(final Game game, final String nation) {
-    return AttachmentsXml.expanded(game).stream().filter(playerKey(nation)::matches).findFirst();
+    return AttachmentsXml.kept(game, Constants.PLAYER_ATTACHMENT_NAME, nation);
+  }
+
+  // where the nation's own playerAttachment is written, of two the last; -1 without one
+  private static int playerAt(final Game game, final String nation) {
+    return AttachmentsXml.lastIndexOf(
+        AttachmentsXml.attachments(game), Constants.PLAYER_ATTACHMENT_NAME, nation);
+  }
+
+  // the game with the nation's playerAttachment its own, where a loop makes it
+  private static Game withOwnPlayer(final Game game, final String nation) {
+    return AttachmentsXml.withOwn(game, Constants.PLAYER_ATTACHMENT_NAME, nation);
   }
 
   /**
@@ -466,52 +476,50 @@ class RulesXml {
    * none takes it out.
    */
   static Game withPlayerNames(
-      final Game game, final String nation, final String option, final List<String> names) {
-    if (playerNames(game, nation, option).equals(names)) {
-      return game;
+      final Game given, final String nation, final String option, final List<String> names) {
+    if (playerNames(given, nation, option).equals(names)) {
+      return given;
     }
+    final Game game = withOwnPlayer(given, nation);
     final Game without = MapXml.withOption(game, playerKey(nation), option, null);
     if (names.isEmpty()) {
       return without;
     }
     final List<Attachment> attachments = AttachmentsXml.attachments(game);
-    for (int i = 0; i < attachments.size(); i++) {
-      if (playerKey(nation).matches(attachments.get(i))) {
-        final List<Option> options = new ArrayList<>();
-        boolean placed = false;
-        for (final Option o : AttachmentsXml.options(attachments.get(i))) {
-          if (!AttachmentsXml.isOption(o, option)) {
-            options.add(o);
-          } else if (!placed) {
-            options.add(
-                Option.builder().name(o.getName()).value(String.join(":", names)).build());
-            placed = true;
-          }
-        }
-        if (!placed) {
-          options.add(Option.builder().name(option).value(String.join(":", names)).build());
-        }
-        return AttachmentsXml.withAttachment(
-            game, i, attachments.get(i).toBuilder().options(List.copyOf(options)).build());
+    final int at = playerAt(game, nation);
+    if (at < 0) {
+      return MapXml.withOption(without, playerKey(nation), option, String.join(":", names));
+    }
+    final List<Option> options = new ArrayList<>();
+    boolean placed = false;
+    for (final Option o : AttachmentsXml.options(attachments.get(at))) {
+      if (!AttachmentsXml.isOption(o, option)) {
+        options.add(o);
+      } else if (!placed) {
+        options.add(Option.builder().name(o.getName()).value(String.join(":", names)).build());
+        placed = true;
       }
     }
-    return MapXml.withOption(without, playerKey(nation), option, String.join(":", names));
+    if (!placed) {
+      options.add(Option.builder().name(option).value(String.join(":", names)).build());
+    }
+    return AttachmentsXml.withAttachment(
+        game, at, attachments.get(at).toBuilder().options(List.copyOf(options)).build());
   }
 
   /** The game with one more option of the nation, also one it has, eg a second placementLimit. */
   static Game withPlayerOptionAdded(
-      final Game game, final String nation, final String option, final String value) {
-    final List<Attachment> attachments = AttachmentsXml.attachments(game);
-    for (int i = 0; i < attachments.size(); i++) {
-      if (playerKey(nation).matches(attachments.get(i))) {
-        return AttachmentsXml.withAttachment(
+      final Game given, final String nation, final String option, final String value) {
+    final Game game = withOwnPlayer(given, nation);
+    final int at = playerAt(game, nation);
+    return at < 0
+        ? MapXml.withOption(game, playerKey(nation), option, value)
+        : AttachmentsXml.withAttachment(
             game,
-            i,
+            at,
             AttachmentsXml.withNewOption(
-                attachments.get(i), Option.builder().name(option).value(value).build()));
-      }
-    }
-    return MapXml.withOption(game, playerKey(nation), option, value);
+                AttachmentsXml.attachments(game).get(at),
+                Option.builder().name(option).value(value).build()));
   }
 
   private static AttachmentKey playerKey(final String nation) {
@@ -537,6 +545,12 @@ class RulesXml {
   /** The game without the nation's option at this row of {@link #playerOptions}. */
   static Game withoutPlayerOptionAt(final Game game, final String nation, final int row) {
     return withPlayerAttachmentAt(game, nation, row, a -> AttachmentsXml.withoutOption(a, row));
+  }
+
+  private static List<String> written(final Attachment attachment) {
+    return AttachmentsXml.options(attachment).stream()
+        .map(o -> o.getName() + "=" + o.getCount() + ":" + o.getValue())
+        .toList();
   }
 
   // ---- stacking limits, of a unit type or of a nation's group of unit types
@@ -605,24 +619,26 @@ class RulesXml {
       final String nation,
       final int row,
       final UnaryOperator<Attachment> change) {
-    final List<Attachment> attachments = AttachmentsXml.attachments(game);
-    for (int i = 0; i < attachments.size(); i++) {
-      if (playerKey(nation).matches(attachments.get(i))) {
-        return row >= 0 && row < AttachmentsXml.options(attachments.get(i)).size()
-            ? AttachmentsXml.withAttachment(game, i, change.apply(attachments.get(i)))
-            : game;
-      }
+    if (row < 0 || row >= playerOptions(game, nation).size()) {
+      return game;
     }
-    return game;
+    final Game own = withOwnPlayer(game, nation);
+    final int at = playerAt(own, nation);
+    final Attachment was = AttachmentsXml.attachments(own).get(at);
+    final Attachment changed = change.apply(was);
+    // the value it has: no change, and a nation of a loop goes on following it
+    return written(changed).equals(written(was))
+        ? game
+        : AttachmentsXml.withAttachment(own, at, changed);
   }
 
   // ---- a nation's rules for placing and moving, its rulesAttachment
 
   /** All options of the nation's rulesAttachment, where the game looks for its rules. */
   static List<Option> nationRules(final Game game, final String nation) {
-    final List<Attachment> attachments = AttachmentsXml.attachments(game);
-    final int at = nationRulesAt(attachments, nation);
-    return at < 0 ? List.of() : AttachmentsXml.options(attachments.get(at));
+    return AttachmentsXml.kept(game, Constants.RULES_ATTACHMENT_NAME, nation)
+        .map(AttachmentsXml::options)
+        .orElse(List.of());
   }
 
   /** The rule as the game reads it, its count and value joined, eg "4:Peasant"; the first. */
@@ -644,15 +660,16 @@ class RulesXml {
 
   /** As withNationRule, with the count map makers write beside the value, eg count="4". */
   static Game withNationRule(
-      final Game game,
+      final Game given,
       final String nation,
       final String option,
       final String count,
       final String value) {
     final String joined = count.isEmpty() ? value : count + ":" + value;
-    if (nationRule(game, nation, option).filter(joined::equals).isPresent()) {
-      return game;
+    if (nationRule(given, nation, option).filter(joined::equals).isPresent()) {
+      return given;
     }
+    final Game game = AttachmentsXml.withOwn(given, Constants.RULES_ATTACHMENT_NAME, nation);
     final Option rule =
         Option.builder().name(option).value(value).count(count.isEmpty() ? null : count).build();
     final List<Attachment> attachments = AttachmentsXml.attachments(game);
@@ -682,12 +699,13 @@ class RulesXml {
   }
 
   /** The game without the nation's rule, so the game's default applies. */
-  static Game withoutNationRule(final Game game, final String nation, final String option) {
+  static Game withoutNationRule(final Game given, final String nation, final String option) {
+    if (nationRule(given, nation, option).isEmpty()) {
+      return given;
+    }
+    final Game game = AttachmentsXml.withOwn(given, Constants.RULES_ATTACHMENT_NAME, nation);
     final List<Attachment> attachments = AttachmentsXml.attachments(game);
     final int at = nationRulesAt(attachments, nation);
-    if (at < 0 || nationRule(game, nation, option).isEmpty()) {
-      return game;
-    }
     final Attachment rules = attachments.get(at);
     return AttachmentsXml.withAttachment(
         game,

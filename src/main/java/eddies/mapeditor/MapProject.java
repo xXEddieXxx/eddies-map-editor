@@ -236,7 +236,7 @@ final class MapProject {
    */
   private static Set<String> impassable(final Game game) {
     final Map<String, Boolean> last = new HashMap<>();
-    AttachmentsXml.attachments(game).stream()
+    AttachmentsXml.kept(game).stream()
         .filter(a -> AttachmentsXml.isNamed(a, Constants.TERRITORY_ATTACHMENT_NAME))
         .forEach(
             a ->

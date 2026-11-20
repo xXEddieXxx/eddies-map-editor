@@ -3,9 +3,11 @@ package eddies.mapeditor;
 import games.strategy.engine.data.DynamicallyModifiable;
 import games.strategy.engine.data.IAttachment;
 import games.strategy.engine.data.gameparser.XmlGameElementMapper;
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -20,12 +22,14 @@ import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import javax.annotation.Nullable;
 import lombok.experimental.ExtensionMethod;
 import lombok.experimental.UtilityClass;
 import org.triplea.map.data.elements.AttachmentList;
 import org.triplea.map.data.elements.AttachmentList.Attachment;
 import org.triplea.map.data.elements.AttachmentList.Attachment.Option;
 import org.triplea.map.data.elements.Game;
+import org.triplea.map.data.elements.VariableList;
 
 /**
  * The game's attachments as they stand in its XML, for the tool that shows and changes any of them:
@@ -162,26 +166,141 @@ class AttachmentsXml {
    * made keep their foreach, the mark that they are changed at the one written, in Attachments.
    */
   static List<Attachment> expanded(final Game game) {
-    synchronized (EXPANDED) {
-      return EXPANDED.computeIfAbsent(game, AttachmentsXml::expand);
-    }
+    return read(game).expanded();
   }
 
-  // by the game, which every change makes anew; kept while it is: a map like 1941 Global Command
-  // Decision has hundreds, asked for at every support's sentence and every nation's limits
-  private static final Map<Game, List<Attachment>> EXPANDED = new WeakHashMap<>();
+  /**
+   * The attachments TripleA keeps of those it reads ({@link #expanded}): of two of a name on a
+   * thing the last, whether written for it or made by a loop. What a tool shows of every thing
+   * at once, eg all capitals, it reads from these.
+   */
+  static List<Attachment> kept(final Game game) {
+    return read(game).kept();
+  }
+
+  /** The attachment of this name on the thing that TripleA keeps, also one a loop makes. */
+  static Optional<Attachment> kept(final Game game, final String name, final String attachTo) {
+    return Optional.ofNullable(read(game).byKey().get(key(name, attachTo)));
+  }
+
+  /**
+   * The game with the attachment of this name on the thing written for it alone, where TripleA
+   * keeps one a loop (foreach) makes: a copy of all the loop gives it, behind the loops of its
+   * kind, so a change made to it there loses nothing of the loop's and a value of it can be taken
+   * away. The thing no longer follows the loop then. The same game otherwise.
+   */
+  static Game withOwn(final Game game, final String name, final String attachTo) {
+    final Optional<Attachment> made = kept(game, name, attachTo).filter(AttachmentsXml::isForEach);
+    if (made.isEmpty()) {
+      return game;
+    }
+    final List<Attachment> attachments = new ArrayList<>(attachments(game));
+    int place = placeForNew(attachments, name);
+    for (int i = attachments.size() - 1; i >= place; i--) {
+      if (isForEach(attachments.get(i)) && kind(attachments.get(i)).equals(kind(made.get()))) {
+        place = i + 1;
+        break;
+      }
+    }
+    attachments.add(place, made.get().toBuilder().foreach(null).build());
+    return withAttachments(game, attachments);
+  }
+
+  /**
+   * The things that followed a loop in the game before and have their own attachment in the one
+   * after it, as {@link #withOwn} gives them: for the window to say so.
+   */
+  static List<String> leftLoops(final Game before, final Game after) {
+    if (before.getAttachmentList() == after.getAttachmentList()) {
+      return List.of();
+    }
+    // by identity: an attachment has no equals
+    final Set<Attachment> known = new HashSet<>(attachments(before));
+    return attachments(after).stream()
+        .filter(a -> !known.contains(a) && !isForEach(a))
+        .filter(a -> a.getName() != null && a.getAttachTo() != null)
+        .filter(
+            a ->
+                kept(before, a.getName(), a.getAttachTo())
+                    .filter(AttachmentsXml::isForEach)
+                    .isPresent())
+        .filter(a -> kept(after, a.getName(), a.getAttachTo()).filter(own -> own == a).isPresent())
+        .map(Attachment::getAttachTo)
+        .distinct()
+        .toList();
+  }
+
+  /** A game's attachments as TripleA reads them, and those it keeps, also by name and thing. */
+  private record Read(
+      WeakReference<Game> game,
+      List<Attachment> expanded,
+      List<Attachment> kept,
+      Map<String, Attachment> byKey) {}
+
+  // of the two games asked last: a tool asks for many things of one game, a big one has 35,000
+  // attachments, and a save asks the game and the saved one in turn. Not of every undo step's
+  // game, as a big map's loops make 50,000 more. Held weakly, so a closed map's game goes
+  private static volatile List<Read> read = List.of();
+
+  private static Read read(final Game game) {
+    final List<Read> known = read;
+    for (final Read one : known) {
+      if (one.game().get() == game) {
+        return one;
+      }
+    }
+    final List<Attachment> expanded = expand(game);
+    final Map<String, Attachment> last = new LinkedHashMap<>();
+    for (final Attachment attachment : expanded) {
+      final String key = key(attachment.getName(), attachment.getAttachTo());
+      // at the place of the last, as TripleA reads them in order
+      last.remove(key);
+      last.put(key, attachment);
+    }
+    final Read now =
+        new Read(new WeakReference<>(game), expanded, List.copyOf(last.values()), last);
+    // this one and the one asked before it
+    read = Stream.concat(Stream.of(now), known.stream().limit(1)).toList();
+    return now;
+  }
+
+  private static String key(@Nullable final String name, @Nullable final String attachTo) {
+    return (name == null ? null : readName(name)) + "\n" + attachTo;
+  }
 
   private static List<Attachment> expand(final Game game) {
     final Map<String, List<String>> variables = variables(game);
     final List<Attachment> all = new ArrayList<>();
     for (final Attachment attachment : attachments(game)) {
       if (isForEach(attachment)) {
-        all.addAll(madeBy(attachment, variables));
+        all.addAll(madeOnce(attachment, game.getVariableList(), variables));
       } else {
         all.add(attachment);
       }
     }
-    return all;
+    return List.copyOf(all);
+  }
+
+  /** What a loop made with a game's variables. */
+  private record Made(@Nullable VariableList variables, List<Attachment> attachments) {}
+
+  // by the loop, which stays the same attachment from step to step while it and the variables do
+  // not change: a big map's loops make 50,000 attachments, too many to make anew at every step
+  private static final Map<Attachment, Made> MADE = new WeakHashMap<>();
+
+  private static List<Attachment> madeOnce(
+      final Attachment loop,
+      @Nullable final VariableList list,
+      final Map<String, List<String>> variables) {
+    synchronized (MADE) {
+      final Made made = MADE.get(loop);
+      if (made != null && made.variables() == list) {
+        return made.attachments();
+      }
+      final List<Attachment> attachments = madeBy(loop, variables);
+      MADE.put(loop, new Made(list, attachments));
+      return attachments;
+    }
   }
 
   /**
@@ -262,6 +381,18 @@ class AttachmentsXml {
         .attachTo(attachment.getAttachTo() == null ? null : each.apply(attachment.getAttachTo()))
         .options(
             options(attachment).stream()
+                // TripleA skips an option that names a variable whose element is empty, eg a
+                // capital="@Cap@" only some territories of the loop have
+                .filter(
+                    o ->
+                        elements.entrySet().stream()
+                            .noneMatch(
+                                e ->
+                                    e.getValue().isEmpty()
+                                        && (Objects.toString(o.getCount(), "")
+                                                + ":"
+                                                + Objects.toString(o.getValue(), ""))
+                                            .contains("@" + e.getKey() + "@")))
                 .map(
                     o ->
                         Option.builder()

@@ -321,17 +321,20 @@ final class StartsAfterEditsTest {
             });
   }
 
-  @DisplayName("A unit type whose attachment a foreach may make is not taken for a land unit at sea")
+  @DisplayName("A unit type a loop (foreach) makes a ship is not taken for a land unit at sea")
   @Test
   void unitTypeMadeByForeachIsNoLandUnitAtSea() {
     // given: units at sea of a type without a written attachment
     final Game galleys =
-        MapXml.withUnits(MapXmlTest.givenMinimap(), "sea zone 1", "Russians", "galley", 3);
+        GameRulesXml.withVariable(
+            MapXml.withUnits(MapXmlTest.givenMinimap(), "sea zone 1", "Russians", "galley", 3),
+            "Ships",
+            List.of("galley"));
     final List<Attachment> attachments = new ArrayList<>(AttachmentsXml.attachments(galleys));
     attachments.add(
         Attachment.builder()
             .name("unitAttachment")
-            .attachTo("@ship@")
+            .attachTo("@Ships@")
             .foreach("$Ships$")
             .javaClass("games.strategy.triplea.attachments.UnitAttachment")
             .type("unitType")
@@ -347,7 +350,7 @@ final class StartsAfterEditsTest {
         .as("given: without the loop a unit type without attachment is a land unit")
         .anyMatch(text -> text.contains("land units"));
     assertThat(texts(byForeach))
-        .as("the loop may make it a ship: not known here, so nothing is said")
+        .as("the loop makes it a ship, as TripleA reads it")
         .noneMatch(text -> text.contains("land units"));
   }
 

@@ -453,7 +453,7 @@ class MapXml {
   static Set<String> nationsWithCapital(final Game game, final Set<String> territories) {
     final Set<String> seen = new LinkedHashSet<>();
     final Set<String> nations = new LinkedHashSet<>();
-    for (final Attachment attachment : attachments(game)) {
+    for (final Attachment attachment : AttachmentsXml.kept(game)) {
       if (AttachmentsXml.isNamed(attachment, TERRITORY)
           && territories.contains(attachment.getAttachTo())) {
         for (final Option option :
@@ -472,7 +472,7 @@ class MapXml {
   /** The nation's capitals, as {@link #capitalOf} finds them; the attachments read once. */
   static List<String> capitalsOf(final Game game, final String nation) {
     final Set<String> capitals = new LinkedHashSet<>();
-    for (final Attachment attachment : attachments(game)) {
+    for (final Attachment attachment : AttachmentsXml.kept(game)) {
       if (AttachmentsXml.isNamed(attachment, TERRITORY)
           && Optional.ofNullable(attachment.getOptions()).orElse(List.of()).stream()
               .anyMatch(o -> AttachmentsXml.isOption(o, "capital") && nation.equals(o.getValue()))) {
@@ -694,15 +694,14 @@ class MapXml {
 
   /** The territory's effects, eg Forest, in the order the game draws them. */
   static List<String> territoryEffects(final Game game, final String territory) {
-    return attachments(game).stream()
-        .filter(a -> AttachmentsXml.isNamed(a, TERRITORY) && territory.equals(a.getAttachTo()))
+    return AttachmentsXml.kept(game, TERRITORY, territory).stream()
         .flatMap(MapXml::effectsOf)
         .toList();
   }
 
   /** Each territory's effects, as {@link #territoryEffects(Game, String)}, in one pass. */
   static java.util.Map<String, List<String>> territoryEffects(final Game game) {
-    return attachments(game).stream()
+    return AttachmentsXml.kept(game).stream()
         .filter(a -> AttachmentsXml.isNamed(a, TERRITORY) && a.getAttachTo() != null)
         .collect(
             Collectors.groupingBy(
@@ -1754,10 +1753,9 @@ class MapXml {
         Stream.concat(unitElements(game).stream(), Stream.of(Unit.builder().name(unitType).build()))
             .toList();
     final List<Attachment> attachments = new ArrayList<>(attachments(game));
-    attachments.stream()
-        .filter(a -> unitKey(like).matches(a))
-        .findFirst()
-        .map(a -> a.toBuilder().attachTo(unitType).build())
+    // as the game reads the other one, also what a loop gives it
+    AttachmentsXml.kept(game, UNIT, like)
+        .map(a -> a.toBuilder().attachTo(unitType).foreach(null).build())
         .ifPresent(attachments::add);
     final Game withUnit =
         game.toBuilder()
@@ -2090,46 +2088,13 @@ class MapXml {
             .build();
   }
 
-  /** A game's attachments by name and thing, of two alike the last. */
-  private record Indexed(
-      java.lang.ref.WeakReference<Game> game, java.util.Map<String, Attachment> last) {}
-
-  // of the two games asked last: a tool asks for many things of one game, a big one has 35,000
-  // attachments, and a save asks the game and the saved one in turn. Held weakly, so a closed
-  // map's game goes
-  private static volatile List<Indexed> indexed = List.of();
-
   /**
-   * The attachment of this name on the thing; of two the last, as TripleA keeps one per name, eg
-   * G40's second territoryAttachment of Russia, which gives it its 3 PUs.
+   * The option's value in the attachment of this name on the thing, eg its "production": the one
+   * TripleA keeps, of two the last, also one a loop (foreach) makes.
    */
-  private static Optional<Attachment> lastAttachment(
-      final Game game, final String attachment, final String attachTo) {
-    final List<Indexed> known = indexed;
-    final Optional<Indexed> found =
-        known.stream().filter(i -> i.game().get() == game).findFirst();
-    final Indexed now;
-    if (found.isPresent()) {
-      now = found.get();
-    } else {
-      final java.util.Map<String, Attachment> last = new HashMap<>();
-      for (final Attachment a : attachments(game)) {
-        if (a.getName() != null) {
-          last.put(AttachmentsXml.readName(a.getName()) + '\n' + a.getAttachTo(), a);
-        }
-      }
-      now = new Indexed(new java.lang.ref.WeakReference<>(game), last);
-      // this one and the one asked before it
-      indexed = Stream.concat(Stream.of(now), known.stream().limit(1)).toList();
-    }
-    return Optional.ofNullable(
-        now.last().get(AttachmentsXml.readName(attachment) + '\n' + attachTo));
-  }
-
-  /** The option's value in the attachment of this name on the thing, eg its "production". */
   static Optional<String> option(
       final Game game, final String attachment, final String attachTo, final String option) {
-    return lastAttachment(game, attachment, attachTo).stream()
+    return AttachmentsXml.kept(game, attachment, attachTo).stream()
         .flatMap(a -> Optional.ofNullable(a.getOptions()).orElse(List.of()).stream())
         .filter(o -> AttachmentsXml.isOption(o, option))
         .map(Option::getValue)
@@ -2153,10 +2118,16 @@ class MapXml {
   /**
    * The game with the option set in the attachment, or taken out for null. A missing attachment is
    * added behind the last of its name ({@link AttachmentsXml#placeForNew}); options keep their
-   * place.
+   * place. Where a loop (foreach) makes the attachment, the thing first gets its own with all the
+   * loop gives it ({@link AttachmentsXml#withOwn}), unless the option has the value already.
    */
   static Game withOption(
-      final Game game, final AttachmentKey key, final String option, @Nullable final String value) {
+      final Game given, final AttachmentKey key, final String option, @Nullable final String value) {
+    final Game game = AttachmentsXml.withOwn(given, key.name(), key.attachTo());
+    if (game != given
+        && Objects.equals(option(given, key.name(), key.attachTo(), option).orElse(null), value)) {
+      return given;
+    }
     final List<Attachment> attachments = new ArrayList<>(attachments(game));
     // the last of the name, which is the one TripleA keeps and option() reads
     final int at = AttachmentsXml.lastIndexOf(attachments, key.name(), key.attachTo());

@@ -148,6 +148,254 @@ final class AttachmentsXmlTest {
     assertThat(AttachmentsXml.expanded(game)).as("the same game reads once").isSameAs(expanded);
   }
 
+  // the two northern territories' attachments made by a loop behind the ones written for them
+  private Game givenNorthMadeByLoop() throws Exception {
+    return withLoop(
+        GameRulesXml.withVariable(
+            givenMinimap().game(), "North", List.of("red north 1", "red north 2")),
+        "TerritoryAttachment",
+        "territoryAttachment",
+        "North",
+        option("production", "7"),
+        option("victoryCity", "1"));
+  }
+
+  // both nations' attachment of the kind made by a loop
+  private Game givenNationsMadeByLoop(
+      final String kind, final String name, final Option... options) throws Exception {
+    return withLoop(
+        GameRulesXml.withVariable(givenMinimap().game(), "Sides", List.of("Russians", "Italians")),
+        kind,
+        name,
+        "Sides",
+        options);
+  }
+
+  // an attachment written last, once for each element of the variable
+  private static Game withLoop(
+      final Game game,
+      final String kind,
+      final String name,
+      final String variable,
+      final Option... options) {
+    final Game withLoop =
+        AttachmentsXml.withNewAttachment(game, kind, name, "@" + variable + "@");
+    final int loop = AttachmentsXml.attachments(withLoop).size() - 1;
+    return AttachmentsXml.withAttachment(
+        withLoop,
+        loop,
+        Builders.toBuilder(AttachmentsXml.attachments(withLoop).get(loop))
+            .foreach("$" + variable + "$")
+            .options(List.of(options))
+            .build());
+  }
+
+  @DisplayName("An option naming a variable whose element is empty is skipped, as TripleA does")
+  @Test
+  void skipsAnOptionOfAnEmptyElement() throws Exception {
+    // given: a capital only for the first of the loop's two territories
+    final Game withVariables =
+        GameRulesXml.withVariable(
+            GameRulesXml.withVariable(
+                givenMinimap().game(), "North", List.of("red north 1", "red north 2")),
+            "Cap",
+            List.of("Russians", ""));
+    final Game withLoop =
+        AttachmentsXml.withNewAttachment(
+            withVariables, "TerritoryAttachment", "territoryAttachment", "@North@");
+    final int loop = AttachmentsXml.attachments(withLoop).size() - 1;
+    final Game game =
+        AttachmentsXml.withAttachment(
+            withLoop,
+            loop,
+            Builders.toBuilder(AttachmentsXml.attachments(withLoop).get(loop))
+                .foreach("$North$:$Cap$")
+                .options(List.of(option("production", "7"), option("capital", "@Cap@")))
+                .build());
+
+    // when
+    final Game changed = MapXml.withProduction(game, "red north 2", 3);
+
+    // then
+    assertThat(MapXml.capitalOf(game, "red north 1")).as("the element given").contains("Russians");
+    assertThat(MapXml.capitalOf(game, "red north 2")).as("no capital of nobody").isEmpty();
+    assertThat(AttachmentsXml.kept(changed, "territoryAttachment", "red north 2"))
+        .get()
+        .extracting(a -> a.getOptions().stream().map(Option::getName).toList())
+        .as("its own attachment has no option TripleA would not read")
+        .isEqualTo(List.of("production"));
+  }
+
+  @DisplayName("A game changed where a loop makes the attachment still loads in TripleA")
+  @Test
+  void loadsAfterAChangeOfWhatALoopMakes() throws Exception {
+    // given
+    final Game changed = MapXml.withProduction(givenNorthMadeByLoop(), "red north 1", 3);
+    final Path xml = folder.resolve("changed.xml");
+
+    // when
+    GameXmlWriter.exportXml(changed, xml);
+
+    // then
+    assertThat(MapChecks.findError(xml)).as("the engine loads the game").isEmpty();
+  }
+
+  @DisplayName("A nation's player options a loop makes are changed in its own attachment, by option,"
+      + " by list, by row and as one more")
+  @Test
+  void changesANationsLoopMadePlayerOptions() throws Exception {
+    // given
+    final Game game =
+        givenNationsMadeByLoop(
+            "PlayerAttachment",
+            Constants.PLAYER_ATTACHMENT_NAME,
+            option("retainCapitalNumber", "2"),
+            option("shareTechnology", "Italians"));
+
+    // when
+    final Game byOption = RulesXml.withPlayerOption(game, "Russians", "retainCapitalNumber", "3");
+    final Game byList =
+        RulesXml.withPlayerNames(game, "Russians", "shareTechnology", List.of("Russians"));
+    final Game byRow = RulesXml.withPlayerOptionAt(game, "Russians", 0, "4");
+    final Game added =
+        RulesXml.withPlayerOptionAdded(game, "Russians", "placementLimit", "1:owned:all");
+
+    // then
+    assertThat(RulesXml.playerOption(game, "Russians", "retainCapitalNumber"))
+        .as("read from the loop")
+        .contains("2");
+    assertThat(List.of(byOption, byList, byRow, added))
+        .as("each leaves the other nation the loop's and loses none of the loop's options")
+        .allSatisfy(
+            changed -> {
+              assertThat(RulesXml.playerOption(changed, "Italians", "retainCapitalNumber"))
+                  .contains("2");
+              assertThat(RulesXml.playerForEach(changed, "Italians")).isPresent();
+              assertThat(RulesXml.playerForEach(changed, "Russians")).isEmpty();
+              assertThat(RulesXml.playerOptions(changed, "Russians"))
+                  .hasSizeGreaterThanOrEqualTo(2);
+            });
+    assertThat(RulesXml.playerOption(byOption, "Russians", "retainCapitalNumber")).contains("3");
+    assertThat(RulesXml.playerNames(byList, "Russians", "shareTechnology"))
+        .containsExactly("Russians");
+    assertThat(RulesXml.playerOption(byRow, "Russians", "retainCapitalNumber")).contains("4");
+    assertThat(RulesXml.playerOptions(added, "Russians")).hasSize(3);
+    assertThat(RulesXml.withPlayerOptionAt(game, "Russians", 0, "2"))
+        .as("the value it has: it goes on following the loop")
+        .isSameAs(game);
+  }
+
+  @DisplayName("A nation's rules a loop makes are changed and taken away in its own attachment")
+  @Test
+  void changesANationsLoopMadeRules() throws Exception {
+    // given
+    final Game game =
+        givenNationsMadeByLoop(
+            "RulesAttachment",
+            Constants.RULES_ATTACHMENT_NAME,
+            option("placementPerTerritory", "3"),
+            option("placementAnyTerritory", "true"));
+
+    // when
+    final Game changed = RulesXml.withNationRule(game, "Russians", "placementPerTerritory", "5");
+    final Game without = RulesXml.withoutNationRule(game, "Russians", "placementPerTerritory");
+
+    // then
+    assertThat(RulesXml.nationRule(game, "Russians", "placementPerTerritory"))
+        .as("read from the loop")
+        .contains("3");
+    assertThat(RulesXml.nationRule(changed, "Russians", "placementPerTerritory")).contains("5");
+    assertThat(RulesXml.nationRule(changed, "Russians", "placementAnyTerritory"))
+        .as("the loop's other rule is not lost")
+        .contains("true");
+    assertThat(RulesXml.nationRule(without, "Russians", "placementPerTerritory")).isEmpty();
+    assertThat(RulesXml.nationRule(without, "Russians", "placementAnyTerritory")).contains("true");
+    assertThat(RulesXml.nationRule(without, "Italians", "placementPerTerritory"))
+        .as("the other nation still the loop's")
+        .contains("3");
+  }
+
+  @DisplayName("A territory's list option and a new unit type's copy read what a loop makes")
+  @Test
+  void listsAndCopiesReadWhatALoopMakes() throws Exception {
+    // given
+    final Game north = givenNorthMadeByLoop();
+    final Game units =
+        withLoop(
+            GameRulesXml.withVariable(north, "Land", List.of("infantry")),
+            "UnitAttachment",
+            Constants.UNIT_ATTACHMENT_NAME,
+            "Land",
+            option("attack", "4"));
+
+    // when
+    final Game without = TerritoryXml.withValues(north, "red north 1", "victoryCity", List.of());
+    final Game copied = MapXml.withUnitType(units, "guard", "infantry");
+
+    // then
+    assertThat(TerritoryXml.values(north, "red north 1", "victoryCity"))
+        .as("read from the loop")
+        .containsExactly("1");
+    assertThat(TerritoryXml.values(without, "red north 1", "victoryCity")).isEmpty();
+    assertThat(MapXml.production(without, "red north 1"))
+        .as("the loop's other value is not lost")
+        .isEqualTo(7);
+    assertThat(UnitsXml.option(copied, "guard", "attack"))
+        .as("a new unit type starts from what the loop gives the other")
+        .contains("4");
+    assertThat(UnitsXml.loop(copied, "guard")).as("with an attachment of its own").isEmpty();
+  }
+
+  @DisplayName("A territory attachment a loop makes is read as TripleA keeps it, the last")
+  @Test
+  void readsWhatALoopMakes() throws Exception {
+    // given
+    final Game game = givenNorthMadeByLoop();
+
+    // then
+    assertThat(MapXml.production(game, "red north 1"))
+        .as("the loop's 7 PUs, not the 5 written for it before the loop")
+        .isEqualTo(7);
+    assertThat(MapXml.isVictoryCity(game, "red north 2")).as("the loop's option").isTrue();
+    assertThat(MapXml.production(game, "red capitol")).as("one the loop does not make").isEqualTo(10);
+  }
+
+  @DisplayName("A change of what a loop makes gives the thing its own attachment with all the loop"
+      + " gives it; the loop and its other things stay")
+  @Test
+  void changesWhatALoopMakesInACopy() throws Exception {
+    // given
+    final Game game = givenNorthMadeByLoop();
+    final int loop = AttachmentsXml.attachments(game).size() - 1;
+
+    // when
+    final Game changed = MapXml.withProduction(game, "red north 1", 3);
+    final Game without = MapXml.withoutVictoryCity(changed, "red north 1");
+
+    // then
+    assertThat(MapXml.production(changed, "red north 1")).as("the change").isEqualTo(3);
+    assertThat(MapXml.isVictoryCity(changed, "red north 1"))
+        .as("what else the loop gives it is not lost")
+        .isTrue();
+    assertThat(AttachmentsXml.attachments(changed).get(loop))
+        .as("the loop as it was")
+        .isSameAs(AttachmentsXml.attachments(game).get(loop));
+    assertThat(AttachmentsXml.attachments(changed).get(loop + 1))
+        .as("its own attachment, behind the loop, no loop itself")
+        .matches(a -> "red north 1".equals(a.getAttachTo()) && !AttachmentsXml.isForEach(a));
+    assertThat(MapXml.production(changed, "red north 2")).as("the other still the loop's").isEqualTo(7);
+    assertThat(MapXml.isVictoryCity(without, "red north 1"))
+        .as("a value of the loop's can be taken away")
+        .isFalse();
+    assertThat(AttachmentsXml.leftLoops(game, changed))
+        .as("told, as it no longer follows the loop")
+        .containsExactly("red north 1");
+    assertThat(AttachmentsXml.leftLoops(changed, without)).as("only once").isEmpty();
+    assertThat(MapXml.withProduction(game, "red north 1", 7))
+        .as("the value it has: no change, it follows the loop")
+        .isSameAs(game);
+  }
+
   @DisplayName("The option names TripleA's attachment classes take are offered")
   @Test
   void knowsTheOptionsOfEachKind() throws Exception {

@@ -2796,12 +2796,8 @@ final class TerritoriesEditor implements Editor {
       lost.add("Its " + pus(production) + " per turn.");
     }
     final long settings =
-        AttachmentsXml.attachments(game).stream()
-            // not its canals, told with the canal
-            .filter(
-                a ->
-                    AttachmentsXml.isNamed(a, Constants.TERRITORY_ATTACHMENT_NAME)
-                        && other.equals(a.getAttachTo()))
+        // not its canals, told with the canal
+        AttachmentsXml.kept(game, Constants.TERRITORY_ATTACHMENT_NAME, other).stream()
             .flatMap(a -> AttachmentsXml.options(a).stream())
             .map(option -> String.valueOf(option.getName()))
             .filter(name -> !Set.of("production", "capital", "victoryCity").contains(name))
