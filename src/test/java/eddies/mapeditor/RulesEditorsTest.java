@@ -112,6 +112,26 @@ final class RulesEditorsTest {
     assertThat(project.canUndo()).as("no other step was made").isFalse();
   }
 
+  @DisplayName("▲ ▼ are off while a filter hides options, as the neighbour may be a hidden one")
+  @Test
+  void movesNothingWhileFiltered(@TempDir final Path folder) {
+    // given
+    final MapProject project = givenG40Project(folder);
+    final Editor editor = RulesEditors.newGameOptions(project);
+    final boolean before = givenMove(editor, LOW_LUCK, "▼").isEnabled();
+
+    // when
+    givenBox(editor, "Only what players may change").doClick();
+
+    // then
+    assertThat(before).as("given: with all options shown it can go down").isTrue();
+    assertThat(givenMove(editor, LOW_LUCK, "▼"))
+        .as("off with the reason while only some options show")
+        .matches(move -> !move.isEnabled())
+        .extracting(JButton::getToolTipText)
+        .isEqualTo("Show all options to move one: clear the search and the tick");
+  }
+
   private static List<String> givenLuckRows(final Editor editor, final MapProject project) {
     return givenRowNames(editor, project).stream()
         .filter(o -> RulesEditors.group(o).equals("Luck"))

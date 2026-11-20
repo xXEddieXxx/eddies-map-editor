@@ -371,22 +371,26 @@ class RulesEditors {
 
     /**
      * Moves the option past its neighbour in its section: past one of another section the file
-     * would change and the sections look the same. Off at the section's end.
+     * would change and the sections look the same. Off at the section's end, and while a filter
+     * hides options, as the neighbour may be one of those.
      */
     private JButton newMoveButton(final String arrow, final String name, final int by) {
       final String where = by < 0 ? "up" : "down";
       final boolean atEnd =
           GameRulesXml.neighbourInSection(project.game(), name, by, RulesEditors::group).isEmpty();
+      final boolean filtered = !search.getText().isBlank() || onlyChangeable.isSelected();
       final JButton move =
           Theme.newIconButton(
               arrow,
-              atEnd
-                  ? "Already the " + (by < 0 ? "first" : "last") + " option of its section"
-                  : "Move the option " + where + " in its section, the setup screen's order",
+              filtered
+                  ? "Show all options to move one: clear the search and the tick"
+                  : atEnd
+                      ? "Already the " + (by < 0 ? "first" : "last") + " option of its section"
+                      : "Move the option " + where + " in its section, the setup screen's order",
               () ->
                   project.edit(
                       g -> GameRulesXml.withOptionMoved(g, name, by, RulesEditors::group)));
-      move.setEnabled(!atEnd);
+      move.setEnabled(!atEnd && !filtered);
       return move;
     }
 
