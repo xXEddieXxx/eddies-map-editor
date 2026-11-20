@@ -527,4 +527,35 @@ final class MapXmlTest {
         .as("a cost of 0 is none")
         .contains("free");
   }
+
+  @DisplayName("Of two owner lines for a territory the last counts, as in TripleA")
+  @Test
+  void lastOwnerLineCounts() throws Exception {
+    // given: blue capitol given to the Italians and, further down, to the Russians
+    final String line = "<territoryOwner territory=\"blue middle 1\" owner=\"Italians\"/>";
+    final String xml;
+    try (InputStream minimap = MapXmlTest.class.getClassLoader().getResourceAsStream("minimap.xml")) {
+      xml =
+          new String(minimap.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+              .replace(
+                  line, line + "<territoryOwner territory=\"blue capitol\" owner=\"Russians\"/>");
+    }
+    final Game game =
+        new XmlMapper(
+                new java.io.ByteArrayInputStream(xml.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+            .mapXmlToObject(Game.class);
+
+    // when
+    final Game changed = MapXml.withOwner(game, "blue capitol", "Italians");
+
+    // then
+    assertThat(MapXml.owner(givenMinimap(), "blue capitol")).as("given").contains("Italians");
+    assertThat(MapXml.owner(game, "blue capitol")).as("the last line").contains("Russians");
+    assertThat(MapXml.ownersByTerritory(game).get("blue capitol"))
+        .as("also where all owners are read at once")
+        .isEqualTo("Russians");
+    assertThat(MapXml.owner(changed, "blue capitol"))
+        .as("a change leaves one line, with the new owner")
+        .contains("Italians");
+  }
 }

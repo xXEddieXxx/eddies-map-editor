@@ -7,7 +7,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -327,12 +326,16 @@ class MapXml {
             .build();
   }
 
-  /** The nation owning the territory at the start, empty for none (neutral). */
+  /**
+   * The nation owning the territory at the start, empty for none (neutral); of two lines for a
+   * territory the last, as TripleA sets the owner line by line.
+   */
   static Optional<String> owner(final Game game, final String territory) {
     return owners(game).stream()
         .filter(owner -> territory.equals(owner.getTerritory()))
         .map(TerritoryOwner::getOwner)
-        .findFirst();
+        .filter(Objects::nonNull)
+        .reduce((first, last) -> last);
   }
 
   /**
@@ -340,22 +343,23 @@ class MapXml {
    * owners read once, as a big map has hundreds of territories.
    */
   static Set<String> nationsWithLand(final Game game, final Set<String> territories) {
-    final Set<String> seen = new LinkedHashSet<>();
     final Set<String> nations = new LinkedHashSet<>();
-    for (final TerritoryOwner owner : owners(game)) {
-      if (territories.contains(owner.getTerritory()) && seen.add(owner.getTerritory())) {
-        Optional.ofNullable(owner.getOwner()).ifPresent(nations::add);
-      }
-    }
+    ownersByTerritory(game)
+        .forEach(
+            (territory, owner) -> {
+              if (territories.contains(territory)) {
+                nations.add(owner);
+              }
+            });
     return nations;
   }
 
   /** Each owned territory's owner at the start, as {@link #owner} finds it, read once. */
   static java.util.Map<String, String> ownersByTerritory(final Game game) {
-    final java.util.Map<String, String> owners = new HashMap<>();
+    final java.util.Map<String, String> owners = new LinkedHashMap<>();
     for (final TerritoryOwner owner : owners(game)) {
       if (owner.getTerritory() != null && owner.getOwner() != null) {
-        owners.putIfAbsent(owner.getTerritory(), owner.getOwner());
+        owners.put(owner.getTerritory(), owner.getOwner());
       }
     }
     return owners;
