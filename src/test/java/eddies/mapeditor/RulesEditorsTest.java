@@ -82,6 +82,49 @@ final class RulesEditorsTest {
         .isEmpty();
   }
 
+  @DisplayName("▲ ▼ move an option within its section as one undo step, off at the section's ends")
+  @Test
+  void movesWithinSection(@TempDir final Path folder) {
+    // given: Luck's last two options, in the file with options of other sections between them
+    final MapProject project = givenG40Project(folder);
+    final Editor editor = RulesEditors.newGameOptions(project);
+    final List<String> luck = givenLuckRows(editor, project);
+    final String third = "Low Luck for Bombing and Territory Damage";
+    final String last = "Heavy Bomber Dice Rolls";
+    final JButton firstUp = givenMove(editor, LOW_LUCK, "▲");
+    final boolean lastDown = givenMove(editor, last, "▼").isEnabled();
+
+    // when
+    givenMove(editor, third, "▼").doClick();
+
+    // then
+    assertThat(luck).as("the section as the game has it").endsWith(third, last);
+    assertThat(givenLuckRows(editor, project))
+        .as("the section shows the two the other way round")
+        .endsWith(last, third);
+    assertThat(firstUp.isEnabled()).as("the section's first cannot go up").isFalse();
+    assertThat(firstUp.getToolTipText())
+        .as("and says why")
+        .isEqualTo("Already the first option of its section");
+    assertThat(lastDown).as("the section's last cannot go down").isFalse();
+    project.undo();
+    assertThat(givenLuckRows(editor, project)).as("undone in one step").isEqualTo(luck);
+    assertThat(project.canUndo()).as("no other step was made").isFalse();
+  }
+
+  private static List<String> givenLuckRows(final Editor editor, final MapProject project) {
+    return givenRowNames(editor, project).stream()
+        .filter(o -> RulesEditors.group(o).equals("Luck"))
+        .toList();
+  }
+
+  private static JButton givenMove(final Editor editor, final String option, final String arrow) {
+    return givenAll(givenRow(editor, option), JButton.class)
+        .filter(b -> arrow.equals(b.getText()))
+        .findFirst()
+        .orElseThrow();
+  }
+
   @DisplayName("Ticking a yes/no option is one undo step, and the page keeps its box")
   @Test
   void ticksInPlace(@TempDir final Path folder) {

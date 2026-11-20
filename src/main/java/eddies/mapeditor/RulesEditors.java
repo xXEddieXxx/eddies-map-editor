@@ -354,17 +354,9 @@ class RulesEditors {
               "×",
               "Remove option from the game",
               () -> project.edit(g -> GameRulesXml.withoutOption(g, name)));
-      // the file's order is the setup screen's; here it shows within the option's group
-      final JButton up =
-          Theme.newIconButton(
-              "▲",
-              "Move the option up in the game file, the setup screen's order",
-              () -> project.edit(g -> GameRulesXml.withOptionMoved(g, name, -1)));
-      final JButton down =
-          Theme.newIconButton(
-              "▼",
-              "Move the option down in the game file, the setup screen's order",
-              () -> project.edit(g -> GameRulesXml.withOptionMoved(g, name, 1)));
+      // the file's order is the setup screen's; here it shows within the option's section
+      final JButton up = newMoveButton("▲", name, -1);
+      final JButton down = newMoveButton("▼", name, 1);
       // a "?" for what TripleA's own options do; the others keep its place, so the "×" line up
       final JComponent help =
           GameRulesXml.optionHelp(name)
@@ -375,6 +367,27 @@ class RulesEditors {
       row.setName(name);
       showNear(row, remove);
       return row;
+    }
+
+    /**
+     * Moves the option past its neighbour in its section: past one of another section the file
+     * would change and the sections look the same. Off at the section's end.
+     */
+    private JButton newMoveButton(final String arrow, final String name, final int by) {
+      final String where = by < 0 ? "up" : "down";
+      final boolean atEnd =
+          GameRulesXml.neighbourInSection(project.game(), name, by, RulesEditors::group).isEmpty();
+      final JButton move =
+          Theme.newIconButton(
+              arrow,
+              atEnd
+                  ? "Already the " + (by < 0 ? "first" : "last") + " option of its section"
+                  : "Move the option " + where + " in its section, the setup screen's order",
+              () ->
+                  project.edit(
+                      g -> GameRulesXml.withOptionMoved(g, name, by, RulesEditors::group)));
+      move.setEnabled(!atEnd);
+      return move;
     }
 
     private static JPanel newControl(final Component... parts) {

@@ -8,6 +8,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -87,14 +88,35 @@ class GameRulesXml {
   }
 
   /**
-   * The game with the option one up (-1) or down (1) among the options, which is the order of
-   * TripleA's setup screen; the game's hidden properties, eg notes, keep their places.
+   * The game with the option one up (-1) or down (1) among the options of its section, which keeps
+   * the order of TripleA's setup screen: it swaps with that neighbour, the options between them and
+   * the game's hidden properties, eg notes, keep their places. The same game at the section's end.
    */
-  static Game withOptionMoved(final Game game, final String name, final int by) {
-    final List<String> was = options(game).stream().map(Property::getName).toList();
-    final int from = was.indexOf(name);
-    final List<String> now = ListOrder.moved(was, from, from + by);
-    return now.equals(was) ? game : withOptionsIn(game, now);
+  static Game withOptionMoved(
+      final Game game, final String name, final int by, final UnaryOperator<String> section) {
+    final List<String> now =
+        new ArrayList<>(options(game).stream().map(Property::getName).toList());
+    return neighbourInSection(game, name, by, section)
+        .map(
+            other -> {
+              Collections.swap(now, now.indexOf(name), now.indexOf(other));
+              return withOptionsIn(game, now);
+            })
+        .orElse(game);
+  }
+
+  /** The option before (-1) or after (1) this one among those of its section; none at its end. */
+  static Optional<String> neighbourInSection(
+      final Game game, final String name, final int by, final UnaryOperator<String> section) {
+    final List<String> inSection =
+        options(game).stream()
+            .map(Property::getName)
+            .filter(o -> section.apply(o).equals(section.apply(name)))
+            .toList();
+    final int to = inSection.indexOf(name) + by;
+    return inSection.contains(name) && to >= 0 && to < inSection.size()
+        ? Optional.of(inSection.get(to))
+        : Optional.empty();
   }
 
   /** The game with the options A to Z; the same game when they are already. */
