@@ -5,6 +5,7 @@ import games.strategy.triplea.attachments.PlayerAttachment;
 import games.strategy.triplea.attachments.RelationshipTypeAttachment;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -276,6 +277,30 @@ class RulesXml {
         .filter(r -> isPair(r, nation, other))
         .map(Relationship::getType)
         .reduce((first, last) -> last);
+  }
+
+  /**
+   * Whether the two are at war when the game starts, as TripleA has it once the game is read; null
+   * is no nation, TripleA's neutral player, at war with every nation. A pair without a relationship
+   * goes by alliance: allied in one alliance, else at war.
+   */
+  static boolean startAtWar(
+      final Game game, @Nullable final String nation, @Nullable final String other) {
+    if (Objects.equals(nation, other)) {
+      return false;
+    }
+    if (nation == null || other == null) {
+      return true;
+    }
+    return relationship(game, nation, other)
+        .map(
+            type ->
+                !Constants.RELATIONSHIP_TYPE_DEFAULT_ALLIED.equals(type)
+                    && Constants.RELATIONSHIP_ARCHETYPE_WAR.equalsIgnoreCase(archetype(game, type)))
+        .orElseGet(
+            () ->
+                Collections.disjoint(
+                    MapXml.alliances(game, nation), MapXml.alliances(game, other)));
   }
 
   private static boolean isPair(final Relationship r, final String nation, final String other) {

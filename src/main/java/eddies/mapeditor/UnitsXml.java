@@ -50,6 +50,21 @@ class UnitsXml {
   }
 
   /**
+   * Whether the unit type cannot move during combat move, as TripleA keeps it: isAA and
+   * isAAmovement set canNotMoveDuringCombatMove too, so of the three the last written counts.
+   */
+  static boolean cannotMoveInCombatMove(final Game game, final String unit) {
+    return options(game, unit).stream()
+        .filter(
+            o ->
+                Stream.of("isAA", "isAAmovement", "canNotMoveDuringCombatMove")
+                    .anyMatch(name -> AttachmentsXml.isOption(o, name)))
+        .map(o -> Boolean.parseBoolean(o.getValue()))
+        .reduce((first, last) -> last)
+        .orElse(false);
+  }
+
+  /**
    * The units one of the type uses up when it is placed (consumesUnits), eg "2 Material": to the
    * player a cost beside the rule's, though the game file has it as an option of the unit.
    */

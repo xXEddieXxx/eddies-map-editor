@@ -8,6 +8,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -784,6 +785,66 @@ class MapXml {
 
   static List<UnitPlacement> units(final Game game, final String territory) {
     return placements(game).stream().filter(p -> territory.equals(p.getTerritory())).toList();
+  }
+
+  /**
+   * The territory's stacks at the start in the order TripleA puts them on its unit places, the
+   * first on the first place (UnitSeparator.getComparatorUnitCategories, false before true): the
+   * territory owner's first, then owners not at war with it, then by the players' order; of one
+   * owner the unit types that cannot move, that cannot move in combat move (also isAA), sea units,
+   * air units at sea, land units; then by maxBuiltPerPlayer, attack and the unit types' order.
+   * Without the unit types the map does not draw; lines of one type and owner are one stack.
+   */
+  static List<UnitPlacement> unitsAsDrawn(
+      final Game game, final String territory, final Collection<String> undrawn) {
+    final java.util.Map<List<Object>, UnitPlacement> stacks = new LinkedHashMap<>();
+    units(game, territory).stream()
+        // a line of 0 units makes none in the game
+        .filter(unit -> unit.getQuantity() > 0 && !undrawn.contains(unit.getUnitType()))
+        .forEach(
+            unit ->
+                stacks.merge(
+                    // damaged ones are stacks of their own, as in the game
+                    Arrays.asList(
+                        unit.getOwner(),
+                        unit.getUnitType(),
+                        unit.getHitsTaken(),
+                        unit.getUnitDamage()),
+                    unit,
+                    (stack, more) ->
+                        stack.toBuilder()
+                            .quantity(stack.getQuantity() + more.getQuantity())
+                            .build()));
+    if (stacks.size() < 2) {
+      return List.copyOf(stacks.values());
+    }
+    final String landlord = owner(game, territory).orElse(null);
+    final boolean water = isWater(game, territory);
+    final List<String> nations = nations(game);
+    final List<String> types = unitTypes(game);
+    final int dice = GameRulesXml.diceSides(game);
+    // shortcut: movement and attack without a technology's bonus, which a nation has at the start
+    // only on maps that give it one; read the technologies when such a map shows a difference
+    return stacks.values().stream()
+        .sorted(
+            Comparator.<UnitPlacement, Boolean>comparing(
+                    unit -> !Objects.equals(unit.getOwner(), landlord))
+                .thenComparing(unit -> RulesXml.startAtWar(game, unit.getOwner(), landlord))
+                .thenComparing(
+                    unit -> unit.getOwner() == null ? -1 : nations.indexOf(unit.getOwner()))
+                .thenComparing(unit -> unitStat(game, unit.getUnitType(), "movement", 0) > 0)
+                .thenComparing(unit -> !UnitsXml.cannotMoveInCombatMove(game, unit.getUnitType()))
+                .thenComparing(unit -> !unitFlag(game, unit.getUnitType(), "isSea"))
+                .thenComparing(unit -> !(water && unitFlag(game, unit.getUnitType(), "isAir")))
+                .thenComparing(
+                    unit ->
+                        unitFlag(game, unit.getUnitType(), "isSea")
+                            || unitFlag(game, unit.getUnitType(), "isAir"))
+                .thenComparing(unit -> unitStat(game, unit.getUnitType(), "maxBuiltPerPlayer", -1))
+                .thenComparing(
+                    unit -> Math.clamp(unitStat(game, unit.getUnitType(), "attack", 0), 0, dice))
+                .thenComparing(unit -> types.indexOf(unit.getUnitType())))
+        .toList();
   }
 
   /** Every territory's units at the start, in the XML's order. */
