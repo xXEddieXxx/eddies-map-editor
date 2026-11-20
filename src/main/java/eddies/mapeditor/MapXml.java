@@ -2010,32 +2010,16 @@ class MapXml {
         .orElse(List.of());
   }
 
-  /** The game with the unit costing this many PUs in its rule; nothing changes without one. */
-  static Game withUnitCost(final Game game, final String unitType, final int pus) {
-    final Optional<ProductionRule> changed = costRule(game, unitType);
-    if (changed.isEmpty()) {
-      return game;
-    }
-    final List<ProductionRule> rules =
-        productionRules(game).stream()
-            .map(
-                rule ->
-                    rule != changed.get()
-                        ? rule
-                        : rule.toBuilder()
-                            .costs(
-                                Optional.ofNullable(rule.getCosts()).orElse(List.of()).stream()
-                                    .map(
-                                        cost ->
-                                            PUS.equals(cost.getResource())
-                                                ? cost.toBuilder().quantity(pus).build()
-                                                : cost)
-                                    .toList())
-                            .build())
-            .toList();
-    return game.toBuilder()
-        .production(game.getProduction().toBuilder().productionRules(rules).build())
-        .build();
+  /**
+   * The game with the unit costing this much of the resource in the rule that sells it, as
+   * Production changes a rule ({@link ProductionXml#withCost}): 0 takes the resource out of the
+   * cost, a resource the rule does not cost yet is added. Nothing changes without a rule.
+   */
+  static Game withUnitCost(
+      final Game game, final String unitType, final String resource, final int quantity) {
+    return costRule(game, unitType)
+        .map(rule -> ProductionXml.withCost(game, rule.getName(), resource, quantity))
+        .orElse(game);
   }
 
   // ---- game options

@@ -796,48 +796,81 @@ final class UnitsEditorTest {
     return collect(editor.page(), JSpinner.class).stream().map(JSpinner::getValue).toList();
   }
 
-  @DisplayName("A unit that costs other resources shows them under its name and in the tool tip")
+  @DisplayName("Cost: a field per resource of the unit's rule, + adds one the game has; 0 takes it out")
   @Test
   void costInOtherResources() throws Exception {
-    // given: artillery for 4 PUs and 5 Fame, then for 5 Fame alone
+    // given: artillery for 4 PUs, in a game that also has Fame
     final MapProject project = givenG40();
-    final List<String> seen = new ArrayList<>();
+    project.edit(g -> ProductionXml.withResource(g, "Fame"));
+    final org.triplea.map.data.elements.Game before = project.game();
+    final List<Object> seen = new ArrayList<>();
 
     // when
     SwingUtilities.invokeAndWait(
         () -> {
           try {
-            project.edit(g -> ProductionXml.withCost(g, "buyArtillery", "Fame", 5));
-            final Component both = givenEditor(project, "artillery", "none").page();
-            seen.add(labelEndingIn(both, "Fame"));
+            final UnitsEditor editor = givenEditor(project, "artillery", "none");
+            givenResourcesToAdd(editor).stream()
+                .filter(item -> "Fame".equals(item.getText()))
+                .findFirst()
+                .orElseThrow()
+                .doClick();
+            seen.add(labelEndingIn(editor.page(), "Fame"));
+            project.undo();
+            seen.add(project.game() == before);
+            project.redo();
             seen.add(
-                collect(both, JSpinner.class).stream()
-                    .map(JSpinner::getToolTipText)
-                    .filter(tip -> tip != null && tip.startsWith("PUs to buy one"))
-                    .findFirst()
-                    .orElse(""));
-            project.edit(g -> ProductionXml.withCost(g, "buyArtillery", MapXml.PUS, 0));
-            final Component fameOnly = givenEditor(project, "artillery", "none").page();
-            seen.add(labelEndingIn(fameOnly, "Fame"));
-            seen.add(
-                collect(fameOnly, JLabel.class).stream()
-                    .filter(label -> "–".equals(label.getText()))
-                    .map(JLabel::getToolTipText)
-                    .findFirst()
-                    .orElse(""));
+                givenResourcesToAdd(editor).stream().map(AbstractButton::getText).toList());
+            givenCostField(editor, "Fame").setValue(5);
+            seen.add(labelEndingIn(editor.page(), "Fame"));
+            givenCostField(editor, "PUs").setValue(0);
+            seen.add(labelEndingIn(editor.page(), "Fame"));
+            final UnitsEditor again = givenEditor(project, "artillery", "none");
+            seen.add(givenCostField(again, "PUs").getValue());
+            seen.add(givenCostField(again, "Fame").getValue());
+            givenCostField(again, "Fame").setValue(0);
+            seen.add(labelEndingIn(again.page(), "free"));
           } catch (final Exception e) {
             throw new IllegalStateException(e);
           }
         });
+    final Path xml = folder.resolve("costs.xml");
+    org.triplea.map.xml.writer.GameXmlWriter.exportXml(project.game(), xml);
 
     // then
     assertThat(seen)
-        .as("the line under the name and the Cost field's tool tip, for both")
+        .as("+ gives 1 Fame, one step; + then offers the others; Fame typed; PUs at 0 leave"
+            + " the cost, their field stays, at 0; Fame at 0 too: free")
         .containsExactly(
+            "Land unit · 2-2-1 · 4 PUs + 1 Fame",
+            true,
+            List.of("techTokens", "SuicideAttackTokens"),
             "Land unit · 2-2-1 · 4 PUs + 5 Fame",
-            "PUs to buy one; also 5 Fame, changed in Production",
             "Land unit · 2-2-1 · 5 Fame",
-            "Costs no PUs: 5 Fame, changed in Production");
+            0,
+            5,
+            "Land unit · 2-2-1 · free");
+    assertThat(MapChecks.findError(xml)).as("TripleA loads the game").isEmpty();
+  }
+
+  // what the + beside the cost offers
+  private static List<javax.swing.JMenuItem> givenResourcesToAdd(final UnitsEditor editor) {
+    return List.of(
+            ((javax.swing.JComponent) givenButton(editor, "+"))
+                .getComponentPopupMenu()
+                .getComponents())
+        .stream()
+        .map(javax.swing.JMenuItem.class::cast)
+        .toList();
+  }
+
+  private static JSpinner givenCostField(final UnitsEditor editor, final String resource) {
+    return collect(editor.page(), JSpinner.class).stream()
+        .filter(
+            field ->
+                String.valueOf(field.getToolTipText()).startsWith(resource + " to buy one"))
+        .findFirst()
+        .orElseThrow();
   }
 
   private static String labelEndingIn(final Component in, final String end) {

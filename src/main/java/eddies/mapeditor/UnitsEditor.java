@@ -756,44 +756,70 @@ final class UnitsEditor implements Editor {
     inspector.row(leftAligned(perNation, asIs));
   }
 
-  /** Cost, value, attack, defense, movement and hit points in one row, labels above. */
+  /**
+   * What it costs in each resource, value, attack, defense, movement and hit points in one row,
+   * labels above.
+   */
   private JComponent newEssentials(final Game game, final String unit) {
-    final JPanel cells = new JPanel(new GridLayout(2, 6, Theme.GAP_M, Theme.GAP_XS));
-    cells.setOpaque(false);
+    final List<String> labels = new ArrayList<>();
     final List<JComponent> fields = new ArrayList<>();
-    final Optional<Integer> cost = MapXml.unitCost(game, unit);
-    // what it costs besides PUs, which the field does not show
-    final Optional<List<Cost>> all = MapXml.unitCosts(game, unit);
-    final List<Cost> others =
-        all.orElse(List.of()).stream()
-            .filter(c -> !MapXml.PUS.equals(c.getResource()))
-            .toList();
-    if (cost.isPresent()) {
-      final JSpinner spinner =
-          Form.newNumber(
-              cost.get(), 999, value -> quietly(g -> MapXml.withUnitCost(g, unit, value)));
-      spinner.setToolTipText(
-          "PUs to buy one"
-              + (others.isEmpty() ? "" : "; also " + alsoCosts(others))
-              + alsoUses(game, unit));
-      fields.add(spinner);
-    } else {
+    final Optional<List<Cost>> costs = MapXml.unitCosts(game, unit);
+    if (costs.isEmpty()) {
       final JLabel none = new JLabel("–");
-      none.setToolTipText(
-          all.isEmpty()
-              ? "No rule sells it; add one in Production"
-              : others.isEmpty() ? "Costs no PUs" : "Costs no PUs: " + alsoCosts(others));
+      none.setToolTipText("No rule sells it; add one in Production");
+      labels.add("Cost");
       fields.add(none);
+    } else {
+      final List<String> resources = ProductionXml.resources(game);
+      // PUs also for a unit that costs none, then what else its rule costs
+      final List<String> shown =
+          Stream.concat(
+                  Stream.of(MapXml.PUS).filter(resources::contains),
+                  costs.get().stream().map(Cost::getResource))
+              .distinct()
+              .toList();
+      for (final String resource : shown) {
+        final boolean pus = MapXml.PUS.equals(resource);
+        final JSpinner spinner =
+            Form.newNumber(
+                costs.get().stream()
+                    .filter(cost -> resource.equals(cost.getResource()))
+                    .map(Cost::getQuantity)
+                    .findFirst()
+                    .orElse(0),
+                999,
+                value -> quietly(g -> MapXml.withUnitCost(g, unit, resource, value)));
+        spinner.setToolTipText(
+            resource
+                + " to buy one"
+                + (pus ? "" : "; 0 takes it out of the cost")
+                + alsoUses(game, unit));
+        labels.add(pus ? "Cost" : labels.isEmpty() ? "Cost: " + resource : resource);
+        fields.add(spinner);
+      }
+      final List<String> others = resources.stream().filter(r -> !shown.contains(r)).toList();
+      if (!others.isEmpty()) {
+        labels.add("");
+        fields.add(newAddCost(unit, others));
+      }
     }
+    final int ofCost = fields.size();
     UnitOptions.ESSENTIALS.forEach(
         name -> fields.add(newEssential(game, unit, UnitOptions.named(name))));
+    labels.addAll(List.of("Value", "Attack", "Defense", "Movement", "Hit points"));
     if (UnitsXml.loop(game, unit).isPresent()) {
       // not the cost, which a production rule gives
-      fields.stream().skip(1).forEach(UnitsEditor::lock);
+      fields.stream().skip(ofCost).forEach(UnitsEditor::lock);
     }
-    final List<String> labels =
-        List.of("Cost", "Value", "Attack", "Defense", "Movement", "Hit points");
+    final JPanel cells =
+        new JPanel(new GridLayout(2, fields.size(), Theme.GAP_M, Theme.GAP_XS));
+    cells.setOpaque(false);
     for (int i = 0; i < labels.size(); i++) {
+      if (labels.get(i).isEmpty()) {
+        // nothing above the +
+        cells.add(Box.createGlue());
+        continue;
+      }
       final JLabel label = new JLabel(labels.get(i));
       label.setLabelFor(fields.get(i));
       label.setToolTipText(fields.get(i).getToolTipText());
@@ -807,16 +833,34 @@ final class UnitsEditor implements Editor {
     return cells;
   }
 
+  /**
+   * "+" with the game's resources the unit does not cost yet: the one chosen costs 1, a step, and
+   * gets its field.
+   */
+  private JComponent newAddCost(final String unit, final List<String> resources) {
+    final JPopupMenu menu = new JPopupMenu();
+    resources.forEach(
+        resource ->
+            menu.add(resource)
+                .addActionListener(
+                    e -> {
+                      commit();
+                      project.edit(g -> MapXml.withUnitCost(g, unit, resource, 1));
+                    }));
+    final JButton button =
+        Theme.newIconButton("+", "Add a resource it costs: " + String.join(", ", resources), () -> {});
+    button.addActionListener(e -> menu.show(button, 0, button.getHeight()));
+    // by a right-click too
+    button.setComponentPopupMenu(menu);
+    return leftAligned(button);
+  }
+
   // a unit placed uses up others, which the field does not show either
   private static String alsoUses(final Game game, final String unit) {
     final List<String> used = UnitsXml.usedUp(game, unit);
     return used.isEmpty()
         ? ""
         : ". Placing one uses up " + String.join(" + ", used) + ", set under " + USES_UP;
-  }
-
-  private static String alsoCosts(final List<Cost> others) {
-    return MapXml.costWords(others) + ", changed in Production";
   }
 
   /** The number's field, or where it is set instead. */

@@ -295,4 +295,44 @@ final class ProductionXmlTest {
         .as("for 5 PUs")
         .isEqualTo(5);
   }
+
+  @DisplayName("A unit's cost is changed per resource in the rule that sells it, and still loads")
+  @Test
+  void unitCostPerResource(@TempDir final Path temp) throws Exception {
+    // given: infantry for 3 PUs, and a second resource
+    final Game game = ProductionXml.withResource(minimap, "Fame");
+
+    // when
+    final Game both = MapXml.withUnitCost(game, "infantry", "Fame", 5);
+    final Game fameOnly = MapXml.withUnitCost(both, "infantry", MapXml.PUS, 0);
+    final Game free = MapXml.withUnitCost(fameOnly, "infantry", "Fame", 0);
+    final Game pusAgain = MapXml.withUnitCost(free, "infantry", MapXml.PUS, 2);
+
+    // then
+    assertThat(
+            List.of(both, fameOnly, free, pusAgain).stream()
+                .map(g -> MapXml.costWords(MapXml.unitCosts(g, "infantry").orElseThrow())))
+        .as("a resource added, PUs at 0 gone, nothing left, PUs back")
+        .containsExactly("3 PUs + 5 Fame", "5 Fame", "free", "2 PUs");
+    assertThat(
+            List.of(both, fameOnly, free, pusAgain).stream()
+                .map(
+                    g ->
+                        g.getProduction().getProductionRules().stream()
+                            .filter(rule -> "buyInfantry".equals(rule.getName()))
+                            .findFirst()
+                            .orElseThrow()
+                            .getCosts()
+                            .size()))
+        .as("0 goes from the rule, but its last cost stays as 0, also later: TripleA wants one")
+        .containsExactly(2, 1, 1, 2);
+    for (final Game changed : List.of(both, fameOnly, free, pusAgain)) {
+      final Path xml = temp.resolve("costs.xml");
+      GameXmlWriter.exportXml(changed, xml);
+      assertThat(MapChecks.findError(xml)).as("TripleA loads the game").isEmpty();
+    }
+    assertThat(MapXml.withUnitCost(game, "no such unit", "Fame", 1))
+        .as("no rule sells it: nothing changes")
+        .isSameAs(game);
+  }
 }

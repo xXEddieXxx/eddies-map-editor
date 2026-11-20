@@ -218,6 +218,7 @@ final class MapXmlTest {
                 "attack",
                 "2"),
             "infantry",
+            MapXml.PUS,
             4);
 
     assertThat(MapXml.startingResource(game, "Italians", MapXml.PUS))
@@ -521,7 +522,7 @@ final class MapXmlTest {
             Optional.of("5 Fame"));
     assertThat(MapXml.unitCosts(pusOnly, "no such unit")).as("no rule sells it").isEmpty();
     assertThat(
-            MapXml.unitCosts(MapXml.withUnitCost(pusOnly, "infantry", 0), "infantry")
+            MapXml.unitCosts(MapXml.withUnitCost(pusOnly, "infantry", MapXml.PUS, 0), "infantry")
                 .map(MapXml::costWords))
         .as("a cost of 0 is none")
         .contains("free");

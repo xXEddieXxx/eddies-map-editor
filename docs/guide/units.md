@@ -31,10 +31,11 @@ left shows each with its picture and its numbers; 2-3-1 means attack 2, defense 
 
 ??? task "Set what a unit costs and is worth"
 
-    1. **Cost** is the PUs to buy one. It comes from the purchase list that sells the unit; "–"
-       means no rule sells it for PUs.
-    2. Other resources a unit costs show under its name, for example "1 PU + 5 Fame". Change
-       them in [Production](production.md).
+    1. **Cost** is the PUs to buy one. It comes from the rule that sells the unit in
+       [Production](production.md); "–" means no rule sells it.
+    2. A unit that costs other resources too has a field for each beside Cost, named by the
+       resource, for example **Fame**. The **+** after them adds a resource of the game to the
+       cost; set a resource to 0 to take it out again.
     3. **Value** is the TUV, what the unit counts as for the AI and the battle calculator. Leave
        it empty to take the cost; the grey "its cost" says so.
 
@@ -74,9 +75,12 @@ left shows each with its picture and its numbers; 2-3-1 means attack 2, defense 
     - **Upload picture…** gives the unit its own picture, for every nation or tinted per nation;
       **Use the game's picture** takes it back. The list shows each unit's picture as the first
       nation shows it.
-    - **Cost**: PUs to buy one, from the purchase list that sells it; "–" when no rule sells it for PUs.
-      A unit that costs other resources too shows them all in the list and under its name, "1 PU +
-      5 Fame"; they are changed in Production. A unit that uses up other units when placed says
+    - **Cost**: PUs to buy one, from the rule that sells it in Production; "–" when no rule sells
+      it. A unit that costs other resources too has a field for each beside Cost, under the
+      resource's name, and shows them all in the list and under its name, "1 PU + 5 Fame". **+**
+      after the cost fields lists the game's resources the unit does not cost yet: the one chosen
+      costs 1, to change in its field. A resource set to 0 leaves the cost; the PUs field stays,
+      at 0. Production shows the same rule. A unit that uses up other units when placed says
       "· uses 2 Material" there; that is set under **Uses up units**.
     - **Value** (TUV): what the unit is worth to the AI and the battle calculator. Left empty,
       shown as a grey "its cost", TripleA takes what the unit costs. Set it for a unit that costs 0
