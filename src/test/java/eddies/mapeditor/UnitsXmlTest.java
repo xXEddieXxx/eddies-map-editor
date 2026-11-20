@@ -519,6 +519,12 @@ final class UnitsXmlTest {
 
     // then
     assertThat(changed).as("changed among the raw options, not here").isSameAs(game);
+    final Game read = UnitsXml.withNewUsedUp(game, "infantry");
+    assertThat(
+            UnitsXml.withUsedUp(
+                read, "infantry", 0, UnitsXml.UsedUp.read(UnitsXml.options(read, "infantry").getLast()).orElseThrow()))
+        .as("what it says already: no step")
+        .isSameAs(read);
     assertThat(UnitsXml.usedUp(game, "artillery")).as("not told as a cost").isEmpty();
     assertThat(UnitsEditor.moreOptions(game, "artillery"))
         .as("still a raw option under More options")

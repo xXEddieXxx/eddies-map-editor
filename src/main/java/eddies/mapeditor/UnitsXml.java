@@ -106,12 +106,14 @@ class UnitsXml {
   /**
    * The game with the unit type's consumesUnits option, the given one of them (0 for the first),
    * saying this, in the form the map wrote it: the count apart or as "count:unit". Unchanged for
-   * one that does not read, which is changed among the unit's other options.
+   * one that says it already, and for one that does not read, which is changed among the unit's
+   * other options.
    */
   static Game withUsedUp(
       final Game game, final String unit, final int occurrence, final UsedUp used) {
     return optionAt(game, unit, USED_UP, occurrence)
-        .filter(had -> UsedUp.read(had).isPresent())
+        // the same again, eg the unit type chosen once more, is no step
+        .filter(had -> UsedUp.read(had).filter(now -> !now.equals(used)).isPresent())
         .map(
             had -> {
               final boolean counted =
