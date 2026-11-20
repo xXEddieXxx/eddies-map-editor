@@ -175,6 +175,50 @@ final class FilesEditorTest {
         .containsOnly(widths.getFirst());
   }
 
+  @DisplayName("The anatomy shows every file name whole in a 1280 px window and a narrower one")
+  @Test
+  void anatomyNamesAreNotCut() throws Exception {
+    // given: a map from a picture, with long rows, eg a place file with places to create
+    final MapProject made =
+        MapProject.newMap(
+                "Island Wars",
+                MapPictureTest.givenPicture(),
+                List.of("Red"),
+                folder.resolve("maps"))
+            .project();
+    Files.deleteIfExists(made.getFolder().orElseThrow().resolve("name_place.txt"));
+    final MapProject project = MapProject.open(made.getXmlFile().orElseThrow());
+    final List<String> cut = new ArrayList<>();
+
+    // when: the page as a window 1280 px wide gives it, then as narrower ones do
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final FilesEditor files = new FilesEditor(() -> project, () -> true, () -> {}, tool -> {});
+          files.showing();
+          for (final int width : List.of(1031, 900, 760)) {
+            files.page().setSize(width, 650);
+            layOut(files.page());
+            for (final MapGuide.Part part : MapGuide.anatomy(project)) {
+              final Component name = find(files.page(), labelled(part.name())).orElseThrow();
+              if (name.getWidth() < name.getPreferredSize().width) {
+                cut.add(part.name() + " at " + width);
+              }
+            }
+          }
+        });
+
+    // then
+    assertThat(cut).as("names with less room than their text needs").isEmpty();
+  }
+
+  private static void layOut(final Component component) {
+    component.validate();
+    component.doLayout();
+    if (component instanceof Container container) {
+      Stream.of(container.getComponents()).forEach(FilesEditorTest::layOut);
+    }
+  }
+
   private static List<String> awaitTree(
       final FilesEditor files, final Predicate<List<String>> done) throws Exception {
     final long until = System.currentTimeMillis() + 5_000;
