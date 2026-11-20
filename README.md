@@ -58,6 +58,8 @@ Each release names the TripleA release it was tested with.
 
 The [user guide](https://xxeddiexxx.github.io/eddies-map-editor/) walks through every tool, menu
 and key, with a page and a picture per tool. It is built from [docs/guide](docs/guide/README.md).
+For help and to show your map, ask in the
+[map makers' forum](https://forums.triplea-game.org/category/28/map-making).
 
 ## What it does
 

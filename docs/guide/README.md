@@ -173,7 +173,8 @@ show the map.
       Texts & sound, Share. Alt+1 to Alt+9 open the first nine. The chosen tool has a bar at its
       left.
     - **Advanced** folds the Attachments and Files tools in and out. The editor remembers it.
-    - **Guides & links** opens TripleA's map making guides and the places to ask for help.
+    - **Guides & links** opens TripleA's map making guides and the places to ask for help, the
+      map makers' forum among them.
     - **«** at the bottom of the sidebar shows icons only, to give the map room; the icons' tool
       tips still name the tools.
     - **?** beside a tool's title explains the tool. Many fields have their own "?".
@@ -222,7 +223,9 @@ show the map.
 !!! tip "The toolbar's words are cut, like \"Draw bord…\""
     The window is narrow for the inspector shown; widen it, or hide the sidebar's words with «.
 
-Found a bug or miss a feature? Open an issue at
+Stuck, or want to show your map? Ask in the
+[map makers' forum](https://forums.triplea-game.org/category/28/map-making), where the editor is
+talked about too. Found a bug or miss a feature? Open an issue at
 [github.com/xXEddieXxx/eddies-map-editor/issues](https://github.com/xXEddieXxx/eddies-map-editor/issues).
 
 ## About this guide

@@ -12,6 +12,12 @@ import org.triplea.awt.OpenFileUtility;
  */
 @UtilityClass
 class MakerResources {
+  /**
+   * The map makers' forum, where the editor is talked about; the one address the editor, its user
+   * guide and the README give.
+   */
+  static final String FORUM = "https://forums.triplea-game.org/category/28/map-making";
+
   private static final String DOCS =
       "https://github.com/triplea-game/triplea/blob/main/docs/map-making/";
 
@@ -34,8 +40,7 @@ class MakerResources {
           new Link("How to: publish a map", DOCS + "how-to/uploading-a-map-to-triplea.md"),
           new Link("All published maps, to learn from", "https://github.com/triplea-maps"),
           new Link("The maps list", "https://triplea-game.org/maps-list/maps/"),
-          new Link(
-              "The map makers' forum", "https://forums.triplea-game.org/category/5/maps-mods"));
+          new Link("The map makers' forum: ask, show and discuss", FORUM));
 
   /**
    * The menu of the links, guides first; one more entry adds an installed map to the file browser
