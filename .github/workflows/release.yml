@@ -20,7 +20,8 @@ name: Release
 #                                              silicon, for the README's link; not signed
 #      eddies-map-editor-<version>-macos.zip   the same, named by version
 #      eddies-map-editor-<version>.zip         for every system, needs Java 25 installed
-#    and the TripleA release it was built with in the release notes.
+#    and in the release notes the version's section of CHANGELOG.md ("## <version>", without which
+#    it stops before building), then the downloads and the TripleA release it was built with.
 
 on:
   workflow_dispatch:
@@ -48,6 +49,16 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+
+      # as the release job does, before the Mac build: a release without its notes stops at once
+      - name: CHANGELOG.md has the version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          V="${VERSION#v}"
+          if ! grep -qE "^## ${V//./\\.}( |$)" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no section '## $V': write what changed for map makers there first"; exit 1
+          fi
 
       - name: TripleA
         env:
@@ -102,6 +113,16 @@ jobs:
           fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
 
+      - name: What changed, from CHANGELOG.md
+        env:
+          V: ${{ steps.version.outputs.version }}
+        run: |
+          # the version's section: from its heading "## <version>" (a date may follow) to the next
+          awk -v v="## $V" 'index($0, v) == 1 && (length($0) == length(v) || substr($0, length(v) + 1, 1) == " ") {f = 1; next} /^## / {f = 0} f' CHANGELOG.md > changes.md
+          if ! grep -q '[^[:space:]]' changes.md; then
+            echo "::error::CHANGELOG.md has no section '## $V': write what changed for map makers there first"; exit 1
+          fi
+
       - name: TripleA
         id: triplea
         env:
@@ -150,6 +171,27 @@ jobs:
           mv eddies-map-editor.zip "eddies-map-editor-$V.zip"
           ls -l
 
+      - name: Release notes
+        env:
+          V: ${{ steps.version.outputs.version }}
+        run: |
+          # what changed for map makers first, then where to download it
+          {
+            echo "## What's new in $V"
+            echo
+            cat changes.md
+            echo
+            echo "---"
+            echo
+            cat <<'NOTES'
+          **Windows:** [**⬇️ Download the setup**](https://github.com/xXEddieXxx/eddies-map-editor/releases/download/v${{ steps.version.outputs.version }}/eddies-map-editor-setup.exe) and open it: it installs the editor for you alone, without administrator rights, and replaces an older installed version. Its window shows the folder it installs into, `%LOCALAPPDATA%\Eddies Map Editor` (that is `C:\Users\<you>\AppData\Local\Eddies Map Editor`) unless you choose another, and offers a Start menu entry and a desktop shortcut: start the editor from **Eddies Map Editor** in the Start menu or on the desktop. It is not signed: on Windows' warning choose More info › Run anyway. An installed editor installs this version by itself: File › Look for a new version. Without installing: download [`eddies-map-editor-windows.zip`](https://github.com/xXEddieXxx/eddies-map-editor/releases/download/v${{ steps.version.outputs.version }}/eddies-map-editor-windows.zip), unzip it and start `Eddies Map Editor.exe`. Both bring their own Java.
+          **macOS (Apple silicon):** download [`eddies-map-editor-macos.zip`](https://github.com/xXEddieXxx/eddies-map-editor/releases/download/v${{ steps.version.outputs.version }}/eddies-map-editor-macos.zip), unzip it and open `Eddies Map Editor.app`. It brings its own Java. It is not signed: the first time, right-click it and choose Open, or allow it under System Settings › Privacy & Security.
+          **Other systems:** `eddies-map-editor-${{ steps.version.outputs.version }}.zip` needs Java 25; start `bin/eddies-map-editor`.
+
+          **Needs TripleA installed** (triplea-game.org): the editor runs with it and finds it by itself, or asks where it is. Built and tested with TripleA ${{ steps.triplea.outputs.release }}.
+          NOTES
+          } > release-notes.md
+
       - name: Publish release v${{ steps.version.outputs.version }}
         uses: softprops/action-gh-release@v2
         with:
@@ -159,12 +201,7 @@ jobs:
           name: Eddie's Map Editor ${{ steps.version.outputs.version }}
           generate_release_notes: true
           make_latest: true
-          body: |
-            **Windows:** [**⬇️ Download the setup**](https://github.com/xXEddieXxx/eddies-map-editor/releases/download/v${{ steps.version.outputs.version }}/eddies-map-editor-setup.exe) and open it: it installs the editor for you alone, without administrator rights, and replaces an older installed version. Its window shows the folder it installs into, `%LOCALAPPDATA%\Eddies Map Editor` (that is `C:\Users\<you>\AppData\Local\Eddies Map Editor`) unless you choose another, and offers a Start menu entry and a desktop shortcut: start the editor from **Eddies Map Editor** in the Start menu or on the desktop. It is not signed: on Windows' warning choose More info › Run anyway. An installed editor installs this version by itself: File › Look for a new version. Without installing: download [`eddies-map-editor-windows.zip`](https://github.com/xXEddieXxx/eddies-map-editor/releases/download/v${{ steps.version.outputs.version }}/eddies-map-editor-windows.zip), unzip it and start `Eddies Map Editor.exe`. Both bring their own Java.
-            **macOS (Apple silicon):** download [`eddies-map-editor-macos.zip`](https://github.com/xXEddieXxx/eddies-map-editor/releases/download/v${{ steps.version.outputs.version }}/eddies-map-editor-macos.zip), unzip it and open `Eddies Map Editor.app`. It brings its own Java. It is not signed: the first time, right-click it and choose Open, or allow it under System Settings › Privacy & Security.
-            **Other systems:** `eddies-map-editor-${{ steps.version.outputs.version }}.zip` needs Java 25; start `bin/eddies-map-editor`.
-
-            **Needs TripleA installed** (triplea-game.org): the editor runs with it and finds it by itself, or asks where it is. Built and tested with TripleA ${{ steps.triplea.outputs.release }}.
+          body_path: release-notes.md
           files: |
             build/distributions/eddies-map-editor-setup.exe
             build/distributions/eddies-map-editor-${{ steps.version.outputs.version }}-setup.exe
