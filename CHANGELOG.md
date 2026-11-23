@@ -47,6 +47,8 @@ GitHub issue.
   pictures from `doc/images`, and a "?" says which HTML a tool tip takes.
 - **A row's tool tip in Texts said one thing three times** (#59). It leaves out the key now when
   the title or line tells it.
+- **Resize map lost its bar halfway** (#51): the bar now shows until the map is resized. Find
+  textures shows the bar while it looks, and a save on a big map the wait cursor.
 - **Flag… and a unit's picture opened in the home folder** (#57). They start in the map's
   `flags/` or `units/` folder.
 

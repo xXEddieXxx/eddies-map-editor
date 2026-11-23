@@ -1626,7 +1626,8 @@ final class TerritoriesEditor implements Editor {
         files.polygons().keySet().stream()
             .filter(t -> MapXml.isWater(game, t))
             .collect(Collectors.toUnmodifiableSet());
-    Dialogs.toast(page, "Looking for textures in the map…");
+    // a second or so on a big map: the bar in the banner's row, as other work on the picture
+    map.showProgress("Looking for textures in the map…");
     new SwingWorker<List<TextureFinder.Found>, Void>() {
       @Override
       protected List<TextureFinder.Found> doInBackground() {
@@ -1638,6 +1639,7 @@ final class TerritoriesEditor implements Editor {
 
       @Override
       protected void done() {
+        map.endProgress();
         final List<TextureFinder.Found> found;
         try {
           found = get();

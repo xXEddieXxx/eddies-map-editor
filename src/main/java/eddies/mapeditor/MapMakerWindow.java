@@ -1107,6 +1107,8 @@ public final class MapMakerWindow extends JFrame {
           held.picture().ifPresent(resizing::holdPicture);
           held.relief().ifPresent(resizing::holdRelief);
           final MapFiles from = resizing.getFiles();
+          // the read's end took the bar away; the resize itself takes as long again
+          showProgress("Resizing the map…");
           inBackground(
               "Could not resize the map.",
               () ->
@@ -2009,6 +2011,10 @@ public final class MapMakerWindow extends JFrame {
             && project.getFolder().filter(MapFolder::hasSmallMap).isPresent();
     final boolean texturesWait = project.hasTexturesNotInRelief();
     final Optional<Dimension> resized = project.unsavedResize();
+    // a big map's game file takes a second or so to write: the cursor says it is busy, and goes
+    // back to what it was, eg the wait of a resize still running
+    final Cursor before = getCursor();
+    setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
     try {
       final List<Path> written = project.save();
       // with news and an action after it only the count, so the toast stays short; a resized
@@ -2052,6 +2058,8 @@ public final class MapMakerWindow extends JFrame {
       log.warn("Could not save {}", xml, e);
       Dialogs.warn(this, SAVE, "Could not save the map\n" + e.getMessage());
       return false;
+    } finally {
+      setCursor(before);
     }
   }
 

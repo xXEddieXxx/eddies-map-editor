@@ -408,6 +408,41 @@ final class TerritoriesEditorTest {
         .containsExactlyElementsOf(Textures.PREMADE);
   }
 
+  @DisplayName("Find textures shows the bar above the map while it looks, and ends it")
+  @Test
+  void findTexturesShowsTheBar() throws Exception {
+    // given: a saved map with a picture to look in
+    final MapProject project =
+        MapProject.newMap(
+                "Island Wars",
+                MapPictureTest.givenPicture(),
+                List.of("Red"),
+                folder.resolve("maps"))
+            .project();
+    final List<String> shown = new ArrayList<>();
+    final List<MapView> maps = new ArrayList<>();
+
+    // when: started, then the map changed, so the end tells that and asks nothing
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapView map = givenMap(project);
+          maps.add(map);
+          final TerritoriesEditor editor = new TerritoriesEditor(project, map);
+          editor.showing();
+          menuItem(editor, "Find textures in the map…").doClick();
+          shown.add(map.progressText());
+          project.edit(game -> MapXml.withNation(game, "Blue"));
+        });
+    for (int tries = 0; tries < 200 && !maps.getFirst().progressText().isEmpty(); tries++) {
+      Thread.sleep(50);
+      SwingUtilities.invokeAndWait(() -> {});
+    }
+
+    // then
+    assertThat(shown).as("while it looks").containsExactly("Looking for textures in the map…");
+    assertThat(maps.getFirst().progressText()).as("ended once done").isEmpty();
+  }
+
   @DisplayName("A PU brush paints the value typed into the banner's field, each stroke one step")
   @Test
   void puBrushPaintsTheBannersValue() throws Exception {
