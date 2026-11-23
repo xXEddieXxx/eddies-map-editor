@@ -137,10 +137,11 @@ final class UnitsEditor implements Editor {
   private final SearchList list;
   // the list's pictures, read once per change of the map: the renderer asks at every repaint
   private final Map<String, Icon> listIcons = new HashMap<>();
-  // the game's tool tip per unit type for this game, and the game being loaded for it
-  private Map<String, String> toolTips = Map.of();
-  private @Nullable Game toolTipsFor;
-  private @Nullable Game toolTipsLoading;
+  // TripleA's stats per unit type for this game, and the work loading them for a newer one
+  private Map<String, String> stats = Map.of();
+  private @Nullable Game statsFor;
+  private @Nullable Game statsLoading;
+  private @Nullable SwingWorker<Map<String, String>, Void> statsWorker;
   private final Form inspector = new Form(280).dense();
   // the sections, side by side when wide enough
   private final Form grid = new Form(280).dense();
@@ -644,8 +645,8 @@ final class UnitsEditor implements Editor {
     inspector.row(
         Help.link(
             project.texts().value(MapTexts.Kind.TOOLTIPS, tip).isPresent()
-                ? "Its tool tip on the map has a text of its own, in"
-                : "Its tool tip on the map shows these numbers; a text of its own is written in",
+                ? "Its tool tip has its own text in"
+                : "Its tool tip shows its stats; give it a text in",
             TextsEditor.TITLE,
             tip));
   }
@@ -728,50 +729,56 @@ final class UnitsEditor implements Editor {
   }
 
   /**
-   * The unit's tool tip as the game shows it on the map: its name in bold, then the map's text or
-   * TripleA's stats ({@link UnitsXml#gameToolTips}); worked out in the background once per game,
-   * so empty, the list's own line, until it is there or when the game does not load.
+   * The unit's tool tip as the game shows it on the map: its name in bold as the game writes it,
+   * then the map's text or TripleA's stats ({@link UnitsXml#gameToolTip}, with the texts as they
+   * are now); the stats loaded in the background once per game, so empty, the list's own line,
+   * until they are there or when the game does not load.
    */
-  private Optional<String> gameToolTip(final String unit) {
+  Optional<String> gameToolTip(final String unit) {
     final Game game = project.game();
-    if (game != toolTipsFor) {
-      loadToolTips(game);
+    if (game != statsFor) {
+      loadStats(game);
       return Optional.empty();
     }
-    return Optional.ofNullable(toolTips.get(unit))
-        .map(text -> "<html><b>" + SearchList.escape(unit) + "</b><br />" + text + "</html>");
+    final String name =
+        unit.isEmpty() ? unit : unit.substring(0, 1).toUpperCase(Locale.ROOT) + unit.substring(1);
+    return Optional.ofNullable(stats.get(unit))
+        .map(s -> UnitsXml.gameToolTip(unit, s, project.texts(), project.getFolder()))
+        .map(text -> "<html><b>" + SearchList.escape(name) + "</b><br />" + text + "</html>");
   }
 
-  private void loadToolTips(final Game game) {
-    if (game == toolTipsLoading) {
+  private void loadStats(final Game game) {
+    if (game == statsLoading) {
       return;
     }
-    toolTipsLoading = game;
-    final MapTexts texts = project.texts();
-    final Optional<Path> folder = project.getFolder();
-    new SwingWorker<Map<String, String>, Void>() {
-      @Override
-      protected Map<String, String> doInBackground() {
-        return UnitsXml.gameToolTips(game, texts, folder);
-      }
+    // a newer game: the work for the one before is of no use
+    Optional.ofNullable(statsWorker).ifPresent(w -> w.cancel(true));
+    statsLoading = game;
+    statsWorker =
+        new SwingWorker<>() {
+          @Override
+          protected Map<String, String> doInBackground() {
+            return UnitsXml.tripleaStats(game);
+          }
 
-      @Override
-      protected void done() {
-        if (game != toolTipsLoading) {
-          return;
-        }
-        toolTipsLoading = null;
-        try {
-          toolTips = get();
-        } catch (final InterruptedException e) {
-          Thread.currentThread().interrupt();
-          toolTips = Map.of();
-        } catch (final ExecutionException e) {
-          toolTips = Map.of();
-        }
-        toolTipsFor = game;
-      }
-    }.execute();
+          @Override
+          protected void done() {
+            if (game != statsLoading || isCancelled()) {
+              return;
+            }
+            statsLoading = null;
+            try {
+              stats = get();
+            } catch (final InterruptedException e) {
+              Thread.currentThread().interrupt();
+              stats = Map.of();
+            } catch (final ExecutionException e) {
+              stats = Map.of();
+            }
+            statsFor = game;
+          }
+        };
+    statsWorker.execute();
   }
 
   /** The picture at most so many px wide and high, never blown up, so a small one stays sharp. */

@@ -8,6 +8,8 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -20,27 +22,33 @@ final class UnitsXmlTest {
   @DisplayName("A unit's tool tip is the game's: TripleA's stats, the map's own text, or both")
   @Test
   void gameToolTips(@TempDir final Path folder) throws Exception {
-    // given: an own text for the armour, an appended one for the artillery
+    // given: an own text for the armour, an appended one for the artillery, an empty one for the
+    // fighter, which counts as none
     Files.writeString(
         folder.resolve("tooltips.properties"),
         "tooltip.unit.armour=<b>Tanks</b>\n"
-            + "tooltip.unit.artillery.append=<br>* Supports infantry\n");
-    final Game game = MapXmlTest.givenMinimap();
+            + "tooltip.unit.artillery.append=<br>* Supports infantry\n"
+            + "tooltip.unit.fighter=\n");
+    final MapTexts texts = MapTexts.read(folder);
 
     // when
-    final java.util.Map<String, String> tips =
-        UnitsXml.gameToolTips(game, MapTexts.read(folder), java.util.Optional.empty());
+    final Map<String, String> stats = UnitsXml.tripleaStats(MapXmlTest.givenMinimap());
 
     // then
-    assertThat(tips.get("infantry"))
+    assertThat(stats.get("infantry"))
         .as("TripleA's stats: kind and attack, defense, movement")
         .contains("Land")
         .contains("1 | 2 | 1");
-    assertThat(tips.get("armour")).as("the map's own text instead").isEqualTo("<b>Tanks</b>");
-    assertThat(tips.get("artillery"))
+    assertThat(UnitsXml.gameToolTip("armour", stats.get("armour"), texts, Optional.empty()))
+        .as("the map's own text instead")
+        .isEqualTo("<b>Tanks</b>");
+    assertThat(UnitsXml.gameToolTip("artillery", stats.get("artillery"), texts, Optional.empty()))
         .as("an appended text after the stats")
-        .contains("Land")
+        .startsWith(stats.get("artillery"))
         .endsWith("<br>* Supports infantry");
+    assertThat(UnitsXml.gameToolTip("fighter", stats.get("fighter"), texts, Optional.empty()))
+        .as("an empty text is none, as in the game")
+        .isEqualTo(stats.get("fighter"));
   }
 
   @TempDir Path folder;

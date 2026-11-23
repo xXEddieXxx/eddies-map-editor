@@ -37,53 +37,64 @@ class UnitsXml {
   private static final String TOOLTIP = "tooltip.unit.";
 
   /**
-   * Per unit type the text of the tool tip the game shows on the map, without its first line
-   * (TooltipProperties.getTooltip): the map's own text for it, else TripleA's stats of it
-   * (UnitAttachment.toStringShortAndOnlyImportantDifferences, for no nation) and an ".append"
-   * text after them; pictures found in the map's doc/images. Asks TripleA to load the game from a
-   * file, so it takes a moment: empty when the game does not load.
+   * Per unit type TripleA's stats as its tool tip shows them
+   * (UnitAttachment.toStringShortAndOnlyImportantDifferences, for no nation). Asks TripleA to load
+   * the game from a file, so it takes a moment: empty when the game does not load.
    */
-  static Map<String, String> gameToolTips(
-      final Game game, final MapTexts texts, final Optional<Path> mapFolder) {
-    final GameData data;
+  static Map<String, String> tripleaStats(final Game game) {
+    final Optional<GameData> data;
     try {
       final Path xml = Files.createTempFile("map-maker-units", ".xml");
       try {
         GameXmlWriter.exportXml(game, xml);
-        data = GameParser.parse(xml, false).orElse(null);
+        data = GameParser.parse(xml, false);
       } finally {
         Files.deleteIfExists(xml);
       }
     } catch (final IOException | RuntimeException e) {
       return Map.of();
     }
-    if (data == null) {
-      return Map.of();
-    }
-    final Map<String, String> tips = new HashMap<>();
-    for (final UnitType type : data.getUnitTypeList().getAllUnitTypes()) {
-      final Optional<String> own = texts.value(MapTexts.Kind.TOOLTIPS, TOOLTIP + type.getName());
-      final String text;
-      try {
-        text =
-            own.orElseGet(
-                () ->
-                    type.getUnitAttachment()
-                            .toStringShortAndOnlyImportantDifferences(
-                                data.getPlayerList().getNullPlayer())
-                        + texts
-                            .value(MapTexts.Kind.TOOLTIPS, TOOLTIP + type.getName() + ".append")
-                            .orElse(""));
-      } catch (final RuntimeException e) {
-        continue;
-      }
-      tips.put(
-          type.getName(),
-          mapFolder
-              .map(folder -> LocalizeHtml.localizeImgLinksInHtml(text, folder))
-              .orElse(text));
-    }
-    return Map.copyOf(tips);
+    final Map<String, String> stats = new HashMap<>();
+    data.ifPresent(
+        loaded -> {
+          for (final UnitType type : loaded.getUnitTypeList().getAllUnitTypes()) {
+            try {
+              stats.put(
+                  type.getName(),
+                  type.getUnitAttachment()
+                      .toStringShortAndOnlyImportantDifferences(
+                          loaded.getPlayerList().getNullPlayer()));
+            } catch (final RuntimeException e) {
+              // a unit type TripleA cannot describe keeps the list's line
+            }
+          }
+        });
+    return Map.copyOf(stats);
+  }
+
+  /**
+   * The text of the tool tip the game shows on the map for the unit, without its first line, as
+   * TooltipProperties.getTooltip for no nation: the map's own text (of the null player's name
+   * first, then of the unit; an empty one counts as none), else the stats and an ".append" text
+   * after them; pictures found in the map's doc/images.
+   */
+  static String gameToolTip(
+      final String unit, final String stats, final MapTexts texts, final Optional<Path> mapFolder) {
+    final String text =
+        ownToolTip(texts, unit, "")
+            .orElseGet(() -> stats + ownToolTip(texts, unit, ".append").orElse(""));
+    return mapFolder
+        .flatMap(folder -> Optional.ofNullable(LocalizeHtml.localizeImgLinksInHtml(text, folder)))
+        .orElse(text);
+  }
+
+  private static Optional<String> ownToolTip(
+      final MapTexts texts, final String unit, final String append) {
+    return Stream.of(
+            TOOLTIP + unit + "." + Constants.PLAYER_NAME_NEUTRAL + append, TOOLTIP + unit + append)
+        .flatMap(key -> texts.value(MapTexts.Kind.TOOLTIPS, key).stream())
+        .filter(text -> !text.isEmpty())
+        .findFirst();
   }
 
   private static final String UNIT = Constants.UNIT_ATTACHMENT_NAME;

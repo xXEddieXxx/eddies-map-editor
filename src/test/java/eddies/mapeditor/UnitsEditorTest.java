@@ -40,6 +40,43 @@ import org.triplea.map.data.elements.AttachmentList.Attachment.Option;
 final class UnitsEditorTest {
   @TempDir Path folder;
 
+  @DisplayName("A unit's tool tip is the game's once loaded, and follows a text changed in Texts")
+  @Test
+  void showsTheGamesToolTip() throws Exception {
+    // given
+    final MapProject project = givenG40();
+    final UnitsEditor editor = givenEditor(project, "infantry", "Combat");
+    final Optional<String> atFirst = editor.gameToolTip("infantry");
+
+    // when: loaded in the background, then the unit gets a text of its own in Texts
+    final Optional<String> loaded = givenLoaded(editor, "infantry");
+    project.setText(MapTexts.Kind.TOOLTIPS, "tooltip.unit.infantry", "<i>Foot soldiers</i>");
+    final Optional<String> afterText = editor.gameToolTip("infantry");
+
+    // then
+    assertThat(atFirst).as("the list's own line until it is loaded").isEmpty();
+    assertThat(loaded)
+        .as("the name as the game writes it, TripleA's stats")
+        .hasValueSatisfying(
+            tip -> assertThat(tip).startsWith("<html><b>Infantry</b><br />").contains(" | "));
+    assertThat(afterText)
+        .as("the new text at once, as a text step keeps the game")
+        .hasValueSatisfying(tip -> assertThat(tip).contains("<i>Foot soldiers</i>"));
+    assertThat(collect(editor.page(), JLabel.class).stream().map(JLabel::getText))
+        .as("a line to its text in Texts, now its own")
+        .contains("Its tool tip has its own text in");
+  }
+
+  private static Optional<String> givenLoaded(final UnitsEditor editor, final String unit)
+      throws Exception {
+    final List<Optional<String>> tip = new ArrayList<>(List.of(Optional.empty()));
+    for (int tries = 0; tries < 200 && tip.getFirst().isEmpty(); tries++) {
+      Thread.sleep(50);
+      SwingUtilities.invokeAndWait(() -> tip.set(0, editor.gameToolTip(unit)));
+    }
+    return tip.getFirst();
+  }
+
   private MapProject givenG40() throws Exception {
     final Path xml = folder.resolve("ww2global40.xml");
     try (InputStream original =
