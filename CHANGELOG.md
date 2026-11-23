@@ -70,6 +70,11 @@ GitHub issue.
 - **What an objective pays** (#66) beside its text in Texts, with a link to it in Objectives.
 - **Suggested colors** (#67) in a nation's color chooser: colors apart from the other nations'
   and greys for minor nations, taken at a click.
+- **Units at the start, off and on** (#54): the View menu switches the Game view's starting units
+  off, eg to see the picture under them. Territories' Places now says **Unit places** for
+  place.txt, and *Reload all places from the files* what it reads.
+- **Release notes from the changelog** (#29): each release's page starts with its section here,
+  which is now split by release, each with its date.
 - **The map makers' forum** (#42) in Guides & links, the user guide and the README:
   https://forums.triplea-game.org/category/28/map-making
 
