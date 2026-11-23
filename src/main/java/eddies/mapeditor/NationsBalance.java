@@ -47,15 +47,23 @@ import org.triplea.swing.SwingComponents;
  * @param alliances a row per alliance; a nation in several alliances counts in each
  * @param resources the resources nations start with, PUs first: a column each
  * @param withoutCost the unit types at the start that no rule sells, which count 0 in the TUV
+ * @param unitPus whether units make or cost PUs each turn (createsResourcesList), so the two
+ *     columns of it show
  */
 record NationsBalance(
-    List<Row> nations, List<Row> alliances, List<String> resources, List<String> withoutCost) {
+    List<Row> nations,
+    List<Row> alliances,
+    List<String> resources,
+    List<String> withoutCost,
+    boolean unitPus) {
 
   /**
    * What a nation, or an alliance, starts with.
    *
    * @param alliances the nation's alliances, or for an alliance its nations
    * @param income the PUs its territories give each turn
+   * @param fromUnits the PUs its units on the map make each turn, eg factories, oil fields
+   * @param upkeep the PUs its units on the map cost each turn, as a number below 0
    * @param resources what it has of each of the balance's resources
    * @param units how many units it has on the map and held back
    * @param tuv their total unit value: each at what it costs to buy
@@ -65,9 +73,25 @@ record NationsBalance(
       List<String> alliances,
       int territories,
       int income,
+      int fromUnits,
+      int upkeep,
       List<Integer> resources,
       int units,
       int tuv) {}
+
+  /** The cells of the row in the table: the PUs units make and cost only where the game has any. */
+  List<Object> cells(final Row row) {
+    final List<Object> cells =
+        new ArrayList<>(
+            List.of(
+                row.name(), String.join(", ", row.alliances()), row.territories(), row.income()));
+    if (unitPus) {
+      cells.addAll(List.of(row.fromUnits(), row.upkeep()));
+    }
+    cells.addAll(row.resources());
+    cells.addAll(List.of(row.units(), row.tuv()));
+    return List.copyOf(cells);
+  }
 
   static NationsBalance of(final Game game) {
     // production is asked per territory: without the other attachments, a big game's 35,000
@@ -86,6 +110,9 @@ record NationsBalance(
             .sorted((a, b) -> Boolean.compare(b.equals(MapXml.PUS), a.equals(MapXml.PUS)))
             .toList();
     final UnitCosts costs = new UnitCosts(game);
+    final Map<String, Integer> madePus = madePus(game);
+    // TripleA multiplies the PUs units make as it does the territories' (EndTurnDelegate)
+    final int multiplier = puMultiplier(game);
     final Set<String> withoutCost = new TreeSet<>();
     final List<Row> rows = new ArrayList<>();
     for (final String nation : nations) {
@@ -94,9 +121,19 @@ record NationsBalance(
       int units = 0;
       int tuv = 0;
       final Map<String, Integer> counts = new LinkedHashMap<>();
+      int fromUnits = 0;
+      int upkeep = 0;
       for (final UnitPlacement placed : MapXml.placements(game)) {
         if (nation.equals(placed.getOwner())) {
           counts.merge(placed.getUnitType(), placed.getQuantity(), Integer::sum);
+          // held units make nothing: TripleA pays for the units on the map
+          final int pus =
+              madePus.getOrDefault(placed.getUnitType(), 0) * placed.getQuantity() * multiplier;
+          if (pus > 0) {
+            fromUnits += pus;
+          } else {
+            upkeep += pus;
+          }
         }
       }
       for (final HeldUnits held : MapXml.heldUnits(game)) {
@@ -118,6 +155,8 @@ record NationsBalance(
               MapXml.alliances(game, nation),
               lands.size(),
               income(game, slim, nation, lands),
+              fromUnits,
+              upkeep,
               resources.stream().map(r -> MapXml.startingResource(game, nation, r)).toList(),
               units,
               tuv));
@@ -131,6 +170,8 @@ record NationsBalance(
               members.stream().map(Row::name).toList(),
               members.stream().mapToInt(Row::territories).sum(),
               members.stream().mapToInt(Row::income).sum(),
+              members.stream().mapToInt(Row::fromUnits).sum(),
+              members.stream().mapToInt(Row::upkeep).sum(),
               java.util.stream.IntStream.range(0, resources.size())
                   .mapToObj(i -> members.stream().mapToInt(r -> r.resources().get(i)).sum())
                   .toList(),
@@ -138,7 +179,41 @@ record NationsBalance(
               members.stream().mapToInt(Row::tuv).sum()));
     }
     return new NationsBalance(
-        List.copyOf(rows), List.copyOf(alliances), resources, List.copyOf(withoutCost));
+        List.copyOf(rows),
+        List.copyOf(alliances),
+        resources,
+        List.copyOf(withoutCost),
+        !madePus.isEmpty());
+  }
+
+  /**
+   * The PUs one unit of each type makes each turn, below 0 for what it costs, as TripleA's
+   * createsResourcesList ("count:resource", of a resource the last); loops (foreach) read. Types
+   * that make no PUs are left out.
+   */
+  private static Map<String, Integer> madePus(final Game game) {
+    final Map<String, Integer> made = new HashMap<>();
+    for (final Attachment attachment : AttachmentsXml.kept(game)) {
+      if (!AttachmentsXml.isNamed(attachment, Constants.UNIT_ATTACHMENT_NAME)) {
+        continue;
+      }
+      Optional<Integer> pus = Optional.empty();
+      for (final Option option : AttachmentsXml.options(attachment)) {
+        final String[] parts =
+            AttachmentsXml.isOption(option, "createsResourcesList")
+                ? TriggerXml.joined(option).split(":")
+                : new String[0];
+        if (parts.length == 2 && parts[1].strip().equals(MapXml.PUS)) {
+          try {
+            pus = Optional.of(Integer.parseInt(parts[0].strip()));
+          } catch (final NumberFormatException e) {
+            // TripleA does not load such a game: nothing counts
+          }
+        }
+      }
+      pus.filter(n -> n != 0).ifPresent(n -> made.put(attachment.getAttachTo(), n));
+    }
+    return made;
   }
 
   /** What one unit of the type is worth to the nation, as TripleA counts it; empty for no cost. */
@@ -367,10 +442,14 @@ record NationsBalance(
    */
   static JComponent table(final MapProject project, final Consumer<String> open) {
     final NationsBalance balance = of(project.game());
-    final List<String> columns = new ArrayList<>(List.of("Nation", "Alliance", "Territories", "Income"));
+    final List<String> columns =
+        new ArrayList<>(List.of("Nation", "Alliance", "Territories", "Income"));
+    if (balance.unitPus()) {
+      columns.addAll(List.of("PUs from units", "Upkeep"));
+    }
     balance.resources().forEach(r -> columns.add(r.equals(MapXml.PUS) ? "Starting PUs" : r));
     columns.addAll(List.of("Units", "TUV"));
-    final JTable nations = newTable(project, balance.nations(), columns);
+    final JTable nations = newTable(project, balance, balance.nations(), columns);
     nations.setAutoCreateRowSorter(true);
     nations.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
     nations.setToolTipText("Click a nation to open it");
@@ -386,7 +465,7 @@ record NationsBalance(
         });
     columns.set(0, "Alliance");
     columns.set(1, "Nations");
-    final JTable alliances = newTable(project, balance.alliances(), columns);
+    final JTable alliances = newTable(project, balance, balance.alliances(), columns);
     final JPanel all = new JPanel();
     all.setLayout(new BoxLayout(all, BoxLayout.Y_AXIS));
     all.add(scrolled(nations, 12));
@@ -402,6 +481,11 @@ record NationsBalance(
             + " triggers that change owners at the start are not counted. TUV: its units at the start,"
             + " held ones too, each at what it costs to buy, as TripleA's battle calculator"
             + " counts them.");
+    if (balance.unitPus()) {
+      notes.add(
+          "PUs from units and Upkeep: what its units on the map make and cost each turn"
+              + " (createsResourcesList), times Multiply PUs; held ones do not count.");
+    }
     if (balance.nations().stream().anyMatch(r -> r.alliances().size() > 1)) {
       notes.add("A nation in several alliances counts in each.");
     }
@@ -443,8 +527,12 @@ record NationsBalance(
   }
 
   private static JTable newTable(
-      final MapProject project, final List<Row> rows, final List<String> columnNames) {
+      final MapProject project,
+      final NationsBalance balance,
+      final List<Row> rows,
+      final List<String> columnNames) {
     final List<String> columns = List.copyOf(columnNames);
+    final List<List<Object>> cells = rows.stream().map(balance::cells).toList();
     final int numbersFrom = 2;
     final JTable table =
         new JTable(
@@ -471,20 +559,7 @@ record NationsBalance(
 
               @Override
               public Object getValueAt(final int row, final int column) {
-                final Row r = rows.get(row);
-                final int resources = r.resources().size();
-                if (column == 0) {
-                  return r.name();
-                } else if (column == 1) {
-                  return String.join(", ", r.alliances());
-                } else if (column == 2) {
-                  return r.territories();
-                } else if (column == 3) {
-                  return r.income();
-                } else if (column < 4 + resources) {
-                  return r.resources().get(column - 4);
-                }
-                return column == 4 + resources ? r.units() : r.tuv();
+                return cells.get(row).get(column);
               }
             });
     table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);

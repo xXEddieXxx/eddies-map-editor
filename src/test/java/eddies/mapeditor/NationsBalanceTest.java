@@ -8,6 +8,7 @@ import games.strategy.engine.data.GamePlayer;
 import games.strategy.engine.data.UnitType;
 import games.strategy.engine.data.gameparser.GameParser;
 import games.strategy.engine.stats.ProductionStat;
+import games.strategy.triplea.delegate.EndTurnDelegate;
 import java.io.InputStream;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
@@ -254,6 +255,67 @@ final class NationsBalanceTest {
                     .filter(e -> "Russians".equals(e.getValue()))
                     .mapToInt(e -> MapXml.production(game, e.getKey()))
                     .sum());
+  }
+
+  @DisplayName("PUs from units and upkeep are what TripleA's end of turn pays and takes")
+  @Test
+  void unitsMakeAndCostPus() throws Exception {
+    // given: a factory makes 3 PUs (count apart), an infantry costs 1 (of two the last), an
+    // armour makes Fame, which is no PU; PUs doubled
+    final String unit =
+        "attachTo=\"%s\" javaClass=\"games.strategy.triplea.attachments.UnitAttachment\""
+            + " type=\"unitType\">";
+    final String xml;
+    try (InputStream minimap =
+        NationsBalanceTest.class.getClassLoader().getResourceAsStream("minimap.xml")) {
+      xml =
+          new String(minimap.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+              .replace(
+                  unit.formatted("factory"),
+                  unit.formatted("factory")
+                      + "<option name=\"createsResourcesList\" count=\"3\" value=\"PUs\"/>")
+              .replace(
+                  unit.formatted("infantry"),
+                  unit.formatted("infantry")
+                      + "<option name=\"createsResourcesList\" value=\"4:PUs\"/>"
+                      + "<option name=\"createsResourcesList\" value=\"-1:PUs\"/>")
+              .replace(
+                  "<propertyList>",
+                  "<propertyList><property name=\"Multiply PUs\" value=\"2\" editable=\"false\">"
+                      + "<number min=\"1\" max=\"10\"/></property>");
+    }
+    final Path file = folder.resolve("upkeep.xml");
+    Files.writeString(file, xml);
+    final GameData data = GameParser.parse(file, false).orElseThrow();
+    final Game game;
+    try (InputStream read = Files.newInputStream(file)) {
+      game = new org.triplea.generic.xml.reader.XmlMapper(read).mapXmlToObject(Game.class);
+    }
+
+    // when
+    final NationsBalance balance = NationsBalance.of(game);
+
+    // then
+    assertThat(balance.unitPus()).as("the two columns show").isTrue();
+    for (final String nation : List.of("Russians", "Italians")) {
+      final Row row = rowOf(balance.nations(), nation);
+      final int triplea =
+          EndTurnDelegate.findUnitCreatedResources(data.getPlayerList().getPlayerId(nation), data)
+              .getInt(data.getResourceList().getResourceOrThrow("PUs"));
+      assertThat(row.fromUnits() + row.upkeep())
+          .as("%s: what TripleA pays", nation)
+          .isEqualTo(triplea);
+      assertThat(row.fromUnits()).as("%s: factories make", nation).isPositive();
+      assertThat(row.upkeep()).as("%s: infantry cost", nation).isNegative();
+    }
+    final Row russians = rowOf(balance.nations(), "Russians");
+    assertThat(rowOf(balance.alliances(), "Russians"))
+        .as("an alliance's row sums its nations'")
+        .extracting(Row::fromUnits, Row::upkeep)
+        .containsExactly(russians.fromUnits(), russians.upkeep());
+    assertThat(NationsBalance.of(MapXmlTest.givenMinimap()).unitPus())
+        .as("a game whose units make nothing has no such columns")
+        .isFalse();
   }
 
   @DisplayName("Units are worth what TripleA's own calculator says, so the TUV is TripleA's")
