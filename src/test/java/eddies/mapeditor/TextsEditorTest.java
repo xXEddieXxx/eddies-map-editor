@@ -174,6 +174,70 @@ final class TextsEditorTest {
         .allMatch(e -> e.key().startsWith(FOREIGN));
   }
 
+  @DisplayName("A one-line text shows a line at each <br> and <p>, and is written back as one line")
+  @Test
+  void showsLinesWritesOne() throws Exception {
+    // given: a message of one line, as tool tips and messages are in their files
+    final MapProject project = givenMinimapWithTexts();
+    final String value = "<b>Hero</b><br>* Max 1<BR/><p style=\"color:green;\"> * Duel</p>";
+    project.setText(Kind.NOTIFICATIONS, "Welcome", value);
+    final TextsEditor texts = new TextsEditor(project);
+    all(texts.page(), JTabbedPane.class).getFirst().setSelectedIndex(1);
+    choose(texts, 1, "Welcome");
+    final CodeArea field = all(texts.page(), CodeArea.class).getFirst();
+    final String shown = field.getText();
+
+    // when: a word typed on the second line
+    field.setText(shown.replace("* Max 1", "* Max 2"));
+    texts.commit();
+
+    // then
+    assertThat(shown)
+        .as("a line after each <br>, before each <p")
+        .isEqualTo(
+            "<b>Hero</b><br>\n* Max 1<BR/>\n<p style=\"color:green;\"> * Duel</p>");
+    assertThat(project.texts().value(Kind.NOTIFICATIONS, "Welcome"))
+        .as("written as one line, only the typed change")
+        .contains(value.replace("* Max 1", "* Max 2"));
+    assertThat(TextsEditor.oneLine(TextsEditor.withLines("a<br><p>b</p><br/>c")))
+        .as("back as it was, also where <br> and <p> meet")
+        .isEqualTo("a<br><p>b</p><br/>c");
+    assertThat(TextsEditor.withLines("<p>first</p>"))
+        .as("no empty first line")
+        .isEqualTo("<p>first</p>");
+    assertThat(TextsEditor.withLines("a<pre>b</pre><param x>"))
+        .as("<pre> and <param> are no <p>")
+        .isEqualTo("a<pre>b</pre><param x>");
+    assertThat(TextsEditor.oneLine(TextsEditor.withLines("x<P>y")))
+        .as("a <P> in capitals too")
+        .isEqualTo("x<P>y");
+  }
+
+  @DisplayName("A line typed after a <br> stays, also over the next step, and nothing else changes")
+  @Test
+  void keepsTypedLinesOverSteps() throws Exception {
+    // given
+    final MapProject project = givenMinimapWithTexts();
+    project.setText(Kind.NOTIFICATIONS, "Welcome", "a<br>b");
+    final TextsEditor texts = new TextsEditor(project);
+    all(texts.page(), JTabbedPane.class).getFirst().setSelectedIndex(1);
+    choose(texts, 1, "Welcome");
+    final CodeArea field = all(texts.page(), CodeArea.class).getFirst();
+
+    // when: an empty line typed after the <br>, then another step, then the field left again
+    field.setText("a<br>\n\nb");
+    texts.commit();
+    final String typed = project.texts().value(Kind.NOTIFICATIONS, "Welcome").orElseThrow();
+    project.setText(Kind.NOTIFICATIONS, "Other", "x");
+    texts.commit();
+
+    // then
+    assertThat(typed).as("the line typed is kept, the shown one goes").isEqualTo("a<br>\nb");
+    assertThat(project.texts().value(Kind.NOTIFICATIONS, "Welcome"))
+        .as("unchanged by the next step and commit")
+        .contains("a<br>\nb");
+  }
+
   @DisplayName("A chosen message shows a preview of its HTML, a chosen objective none")
   @Test
   void previewForHtmlOnly() throws Exception {

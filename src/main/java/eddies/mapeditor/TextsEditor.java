@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
 import javax.swing.BorderFactory;
@@ -75,6 +76,9 @@ final class TextsEditor implements Editor {
   // the file the text shown belongs to, as the tab changes before the text is kept
   private Kind shownKind = Kind.OBJECTIVES;
   private boolean editingHere;
+  // the text field shows the value with lines at its <br> and <p> (withLines), joined on commit
+  private boolean shownWithLines;
+  private @Nullable String shownKey;
   private final Map<Kind, Map<String, String>> explained = new EnumMap<>(Kind.class);
   private @Nullable Game explainedFor;
 
@@ -408,10 +412,15 @@ final class TextsEditor implements Editor {
           .findFirst()
           .ifPresent(o -> inspector.row(Help.link(pays(o), ObjectivesEditor.TITLE, o.name())));
     }
-    if (!value.get().equals(text.getText())) {
-      text.setText(value.get());
+    // a value with lines of its own is shown as it is, so its lines stay
+    final boolean lines = !value.get().contains("\n");
+    if (!key.equals(shownKey) || !value.get().equals(typedValue())) {
+      // the mode changes only with what the field shows, so a kept field is joined as it was
+      shownWithLines = lines;
+      text.setText(lines ? withLines(value.get()) : value.get());
       text.setCaretPosition(0);
     }
+    shownKey = key;
     final JComponent typed = SwingComponents.newJScrollPane(text);
     // as wide as the column, not as the longest line
     typed.setPreferredSize(new Dimension(0, typed.getPreferredSize().height));
@@ -449,6 +458,29 @@ final class TextsEditor implements Editor {
             .map(uses -> " · at most " + uses + (uses == 1 ? " time" : " times"))
             .orElse("")
         + " · in";
+  }
+
+  /** The value the text field holds, back in one line where it was shown with lines. */
+  private String typedValue() {
+    return shownWithLines ? oneLine(text.getText()) : text.getText();
+  }
+
+  private static final Pattern BREAK = Pattern.compile("(?i)(<br\\s*/?>)(?!\n)");
+  private static final Pattern PARAGRAPH = Pattern.compile("(?i)(?<=[^\n])(?=<p[\\s>])");
+  private static final Pattern BREAK_LINE = Pattern.compile("(?i)(<br\\s*/?>)\n");
+  private static final Pattern PARAGRAPH_LINE = Pattern.compile("(?i)\n(?=<p[\\s>])");
+
+  /**
+   * A one-line HTML value to read: a line after each &lt;br&gt; and before each &lt;p, as long
+   * texts, eg tool tips, are one line in their file.
+   */
+  static String withLines(final String value) {
+    return PARAGRAPH.matcher(BREAK.matcher(value).replaceAll("$1\n")).replaceAll("\n");
+  }
+
+  /** Back to one line: the lines after a &lt;br&gt; and before a &lt;p go, no other. */
+  static String oneLine(final String shown) {
+    return PARAGRAPH_LINE.matcher(BREAK_LINE.matcher(shown).replaceAll("$1")).replaceAll("");
   }
 
   /** A label drawn as the look and feel draws a tool tip: its font, colors and border. */
@@ -530,7 +562,7 @@ final class TextsEditor implements Editor {
       return;
     }
     final String key = selected;
-    final String typed = text.getText();
+    final String typed = typedValue();
     if (shownKind == Kind.TOOLTIPS) {
       tipPreview.setText(
           MapTexts.tooltipAsShown(key, typed, project.game(), project.getFolder()));
