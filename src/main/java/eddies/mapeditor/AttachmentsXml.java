@@ -310,6 +310,38 @@ class AttachmentsXml {
    */
   static List<Attachment> madeBy(
       final Attachment loop, final Map<String, List<String>> variables) {
+    return elementsOf(loop, variables).stream()
+        .map(elements -> made(loop, elements, variables))
+        .toList();
+  }
+
+  /**
+   * What a loop makes for a thing: the elements of its variables that made the one for it, eg
+   * Orc and Black Pool of "$All-Players$^$All-HighPU$", and how many the loop makes in all.
+   */
+  record LoopPart(List<String> elements, int of) {}
+
+  /**
+   * The part of the loop that makes the attachment of this name for the thing, eg the
+   * unitAttachment of a unit type; empty if none of it does.
+   */
+  static Optional<LoopPart> partOf(
+      final Game game, final Attachment loop, final String name, final String attachTo) {
+    final Map<String, List<String>> variables = variables(game);
+    final List<Map<String, String>> each = elementsOf(loop, variables);
+    return each.stream()
+        .filter(
+            elements -> {
+              final Attachment made = made(loop, elements, variables);
+              return attachTo.equals(made.getAttachTo()) && isNamed(made, name);
+            })
+        .reduce((first, last) -> last)
+        .map(elements -> new LoopPart(List.copyOf(elements.values()), each.size()));
+  }
+
+  // per attachment the loop makes, its variables' elements: one per pair of "$A$^$B$"
+  private static List<Map<String, String>> elementsOf(
+      final Attachment loop, final Map<String, List<String>> variables) {
     List<Map<String, String>> each = List.of(Map.of());
     for (final String part : loop.getForeach().split("\\^")) {
       final List<Map<String, String>> rounds = sideBySide(part, variables);
@@ -323,7 +355,7 @@ class AttachmentsXml {
       }
       each = more;
     }
-    return each.stream().map(elements -> made(loop, elements, variables)).toList();
+    return each;
   }
 
   // "$A$:$B$": a round per index, each variable's element of that index

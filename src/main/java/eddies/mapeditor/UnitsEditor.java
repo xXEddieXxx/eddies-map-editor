@@ -1,6 +1,7 @@
 package eddies.mapeditor;
 
 import com.formdev.flatlaf.FlatClientProperties;
+import games.strategy.triplea.Constants;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Container;
@@ -89,6 +90,8 @@ final class UnitsEditor implements Editor {
       "Can't be changed here: the game file writes it once for several unit types (foreach)."
           + " Change it in Attachments, or use \"Change for this unit only\" above the options.";
   private static final String OWN_ATTACHMENT = "Change for this unit only";
+  // a loop that makes more than these is one rule for many: cutting one loose is asked about
+  private static final int MANY_MADE = 20;
   // marks a part that lock leaves as it is
   private static final String OWN = "UnitsEditor.own";
   // the rows of Stacking limits, as RulesXml.STACKING_LIMITS and STACKING_COUNTS
@@ -492,11 +495,14 @@ final class UnitsEditor implements Editor {
     UnitsXml.loop(game, unit)
         .ifPresent(
             loop -> {
+              final Optional<AttachmentsXml.LoopPart> part =
+                  AttachmentsXml.partOf(game, loop, Constants.UNIT_ATTACHMENT_NAME, unit);
               inspector.row(
                   Help.link(
                       "The grey options can't be changed here: the game file writes them once"
                           + " for each element of "
                           + loop.getForeach()
+                          + part.map(UnitsEditor::partWords).orElse("")
                           + ". Change them in",
                       "Attachments",
                       loop.getName() + " of " + loop.getAttachTo()));
@@ -506,7 +512,18 @@ final class UnitsEditor implements Editor {
                           OWN_ATTACHMENT,
                           () -> {
                             commit();
-                            project.edit(g -> UnitsXml.withOwn(g, unit));
+                            if (!asksBeforeOwn(part)
+                                || Dialogs.confirm(
+                                    page,
+                                    OWN_ATTACHMENT,
+                                    "One loop writes this alike for "
+                                        + part.orElseThrow().of()
+                                        + " things. Changed here, "
+                                        + unit
+                                        + " would no longer follow it.",
+                                    "Change it alone")) {
+                              project.edit(g -> UnitsXml.withOwn(g, unit));
+                            }
                           }),
                       unit
                           + " gets an attachment of its own with all the values it has now, written"
@@ -520,6 +537,16 @@ final class UnitsEditor implements Editor {
     showOptions(game, unit);
     inspector.remove("Remove unit", () -> removeUnit(unit));
     inspector.end();
+  }
+
+  /** Whether cutting the unit loose from its loop is asked about first: one of many alike. */
+  static boolean asksBeforeOwn(final Optional<AttachmentsXml.LoopPart> part) {
+    return part.filter(p -> p.of() > MANY_MADE).isPresent();
+  }
+
+  /** Which of the loop's elements made it, eg " (for Orc × Black Pool, one of 384)". */
+  static String partWords(final AttachmentsXml.LoopPart part) {
+    return " (for " + String.join(" × ", part.elements()) + ", one of " + part.of() + ")";
   }
 
   /** The sections and what is below them, anew: for another unit, or what the search finds. */

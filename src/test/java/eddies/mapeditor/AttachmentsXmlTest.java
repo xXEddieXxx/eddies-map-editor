@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import games.strategy.triplea.Constants;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -75,6 +76,47 @@ final class AttachmentsXmlTest {
         .isEmpty();
     assertThat(GameVariables.kindOf(game, List.of("Russians")))
         .contains(GameVariables.Kind.NATIONS);
+  }
+
+  @DisplayName("A loop over a pair says which pair made a thing's attachment, and how many in all")
+  @Test
+  void tellsThePairOfALoop() throws Exception {
+    // given: a unit attachment for each pair of nation and land unit, attached to the unit
+    final Game withVariables =
+        GameRulesXml.withVariable(
+            GameRulesXml.withVariable(
+                givenMinimap().game(), "Land", List.of("infantry", "armour", "artillery")),
+            "Sides",
+            List.of("Russians", "Italians"));
+    final Game game =
+        withLoop(
+            withVariables, "UnitAttachment", "unitAttachment", "Land",
+            option("attack", "2"));
+    final Attachment written = AttachmentsXml.attachments(game).getLast();
+    final Attachment loop =
+        Builders.toBuilder(written).foreach("$Sides$^$Land$").attachTo("@Land@").build();
+
+    // when
+    final Optional<AttachmentsXml.LoopPart> armour =
+        AttachmentsXml.partOf(game, loop, "unitAttachment", "armour");
+
+    // then
+    assertThat(armour)
+        .as("of two pairs for the armour the last counts; 2 nations × 3 units made")
+        .contains(new AttachmentsXml.LoopPart(List.of("Italians", "armour"), 6));
+    assertThat(AttachmentsXml.partOf(game, loop, "unitAttachment", "fighter"))
+        .as("none for a fighter")
+        .isEmpty();
+    assertThat(armour.map(UnitsEditor::partWords))
+        .as("Units says it beside the loop")
+        .contains(" (for Italians × armour, one of 6)");
+    assertThat(
+            List.of(
+                UnitsEditor.asksBeforeOwn(Optional.of(new AttachmentsXml.LoopPart(List.of(), 20))),
+                UnitsEditor.asksBeforeOwn(Optional.of(new AttachmentsXml.LoopPart(List.of(), 21))),
+                UnitsEditor.asksBeforeOwn(Optional.empty())))
+        .as("cutting one of more than 20 alike loose is asked about first")
+        .containsExactly(false, true, false);
   }
 
   @DisplayName("An attachment written for each element of a variable reads as one per element")
