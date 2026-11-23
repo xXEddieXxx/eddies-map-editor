@@ -5,10 +5,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import games.strategy.triplea.attachments.RulesAttachment;
 import java.awt.Color;
 import java.awt.Dimension;
+import java.awt.Graphics2D;
 import java.awt.Image;
 import java.awt.Point;
 import java.awt.Polygon;
 import java.awt.Rectangle;
+import java.awt.geom.Area;
 import java.awt.image.BufferedImage;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -18,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.Set;
 import javax.imageio.ImageIO;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -26,6 +29,7 @@ import org.triplea.map.data.elements.Game;
 import org.triplea.map.game.notes.GameNotes;
 import org.triplea.util.PointFileReaderWriter;
 import eddies.mapeditor.MapChecks.Problem;
+import eddies.mapeditor.MapFiles.Group;
 import eddies.mapeditor.MapFiles.Redrawn;
 import eddies.mapeditor.MapFiles.UnitPicture;
 import eddies.mapeditor.MapFiles.UnitPicture.Coloring;
@@ -459,7 +463,8 @@ final class MapProjectTest {
         new DetectedTerritory("East", false, area.outlines(), area.center());
 
     final Optional<List<String>> named =
-        project.takeRedrawn(from, redrawn, new RedrawChoices(Map.of(area, east), Map.of()));
+        project.takeRedrawn(
+            from, redrawn, new RedrawChoices(Map.of(area, east), Map.of(), Set.of()));
 
     assertThat(named).as("taken, nothing still named").contains(List.of());
     assertThat(MapXml.territories(project.game())).as("added").contains("East");
@@ -485,7 +490,10 @@ final class MapProjectTest {
     final DetectedTerritory area = redrawn.merged().keySet().iterator().next();
 
     final Optional<List<String>> named =
-        project.takeRedrawn(from, redrawn, new RedrawChoices(Map.of(), Map.of(area, TOP_RIGHT)));
+        project.takeRedrawn(
+            from,
+            redrawn,
+            new RedrawChoices(Map.of(), Map.of(area, TOP_RIGHT), Set.of()));
 
     assertThat(named).as("taken, nothing still named").contains(List.of());
     assertThat(MapXml.territories(project.game())).as("the first is gone").doesNotContain(TOP_LEFT);
@@ -498,6 +506,413 @@ final class MapProjectTest {
     assertThat(MapXml.neighbors(project.game(), TOP_RIGHT))
         .as("and the removed one's neighbour below it")
         .contains("Territory 3");
+  }
+
+  @DisplayName("A merge through a gap kept as it was: both territories exactly as before; one step")
+  @Test
+  void keepsMergedAreaAsItWas() throws Exception {
+    // given: a gap in the border between the two top territories runs them together
+    final MapProject project = givenSavedMapWithRed();
+    final MapFiles from = project.getFiles();
+    final Redrawn redrawn = givenRedrawn(from, MapFilesTest.givenPictureWithGap());
+
+    // when
+    project.takeRedrawn(from, redrawn, keeping(redrawn.groups()));
+
+    // then
+    assertThat(redrawn.groups()).as("the merge is one change").hasSize(1);
+    assertThat(MapXml.territories(project.game()))
+        .as("none removed")
+        .contains(TOP_LEFT, TOP_RIGHT);
+    for (final String member : List.of(TOP_LEFT, TOP_RIGHT)) {
+      assertThat(project.getFiles().polygons().get(member))
+          .as("the old outline of " + member)
+          .isEqualTo(from.polygons().get(member));
+      assertThat(project.getFiles().centers().get(member))
+          .as("the old center of " + member)
+          .isEqualTo(from.centers().get(member));
+      assertThat(project.getFiles().places().units().get(member))
+          .as("the old unit places of " + member)
+          .isEqualTo(from.places().units().get(member));
+    }
+    assertThat(project.getFiles().picture()).as("the picture as drawn").isPresent();
+    project.undo();
+    assertThat(project.getFiles()).as("one undo gives back the files before").isSameAs(from);
+  }
+
+  @DisplayName("A bite out of the middle of a side is a change; kept, the outline is the old one")
+  @Test
+  void keepsBiteAsItWas() throws Exception {
+    // given: a box drawn against the bottom of the top left territory, its bounds the same
+    final MapProject project = givenSavedMapWithRed();
+    final MapFiles from = project.getFiles();
+    final BufferedImage bitten = MapPictureTest.givenPicture();
+    final Graphics2D g = bitten.createGraphics();
+    g.setColor(Color.BLACK);
+    g.fillRect(70, 60, 60, 3);
+    g.fillRect(70, 60, 3, 50);
+    g.fillRect(127, 60, 3, 50);
+    g.dispose();
+    final Redrawn redrawn = givenRedrawn(from, bitten);
+    final List<String> before = MapXml.territories(project.game());
+
+    // when
+    project.takeRedrawn(from, redrawn, keeping(redrawn.groups()));
+
+    // then
+    assertThat(redrawn.groups())
+        .as("the bitten territory and the bite are one change")
+        .singleElement()
+        .matches(group -> group.territories().contains(TOP_LEFT), "with the top left one")
+        .matches(group -> group.added().size() == 1, "and the bite");
+    assertThat(project.getFiles().polygons().get(TOP_LEFT))
+        .as("kept: exactly the old outline")
+        .isEqualTo(from.polygons().get(TOP_LEFT));
+    assertThat(MapXml.territories(project.game()))
+        .as("nothing added")
+        .containsExactlyElementsOf(before);
+  }
+
+  @DisplayName("A merge and a moved border beside it are two changes; either kept: no hole")
+  @Test
+  void keepsMergeOrNeighbour() throws Exception {
+    // given: the top border rubbed out and the bottom border between land moved to x 250
+    final MapProject project = givenSavedMapWithRed();
+    final MapFiles from = project.getFiles();
+    final Redrawn redrawn = givenRedrawn(from, givenPictureMergedAndMoved());
+
+    // then
+    assertThat(redrawn.groups())
+        .as("no land moves between the merge and the moved border: two changes")
+        .hasSize(2);
+    for (final Group kept : redrawn.groups()) {
+      // when one is kept, the other taken
+      project.takeRedrawn(from, redrawn, keeping(List.of(kept)));
+
+      // then
+      assertThat(kept.territories())
+          .as("the kept one exactly as before")
+          .allMatch(t -> project.getFiles().polygons().get(t).equals(from.polygons().get(t)));
+      final Area uncovered = union(from);
+      uncovered.subtract(union(project.getFiles()));
+      assertThat(isThickerThanALine(uncovered))
+          .as("the territories cover the map as before: no hole")
+          .isFalse();
+      assertThat(widestOverlap(project.getFiles()))
+          .as("they overlap only along the lines between them")
+          .isLessThanOrEqualTo(4);
+      project.undo();
+    }
+  }
+
+  @DisplayName("A new area reaching from beyond the old map into a territory joins it: no hole")
+  @Test
+  void straddlingAreaJoinsTerritory() throws Exception {
+    // given: the old sea zone only from x 50, and a new line across the sea at x 100
+    final MapProject project = givenSavedMapWithRed();
+    project.editFiles(
+        files ->
+            files.withOutlines(
+                "Sea Zone 1",
+                List.of(
+                    new Polygon(
+                        new int[] {50, 400, 400, 50}, new int[] {220, 220, 300, 300}, 4))));
+    final MapFiles from = project.getFiles();
+    final BufferedImage picture = MapPictureTest.givenPicture();
+    final Graphics2D g = picture.createGraphics();
+    g.setColor(Color.BLACK);
+    g.fillRect(100, 222, 3, 78);
+    g.dispose();
+    final Redrawn redrawn = givenRedrawn(from, picture);
+    final DetectedTerritory west = redrawn.added().getFirst();
+
+    // then
+    assertThat(redrawn.groups())
+        .as("the area and the sea zone it was cut from are one change")
+        .singleElement()
+        .matches(group -> group.territories().contains("Sea Zone 1"), "the sea zone")
+        .matches(group -> group.added().contains(west), "the area");
+    for (final boolean keep : List.of(true, false)) {
+      // when
+      project.takeRedrawn(
+          from,
+          redrawn,
+          keep
+              ? keeping(redrawn.groups())
+              : new RedrawChoices(
+                  Map.of(west, new DetectedTerritory("West", true, west.outlines(), west.center())),
+                  Map.of(),
+                  Set.of()));
+
+      // then
+      final Area uncovered = union(from);
+      uncovered.subtract(union(project.getFiles()));
+      assertThat(isThickerThanALine(uncovered)).as("no hole, kept " + keep).isFalse();
+      assertThat(widestOverlap(project.getFiles()))
+          .as("no overlap, kept " + keep)
+          .isLessThanOrEqualTo(4);
+      project.undo();
+    }
+  }
+
+  @DisplayName("A merged area no territory took that runs into another is one change with it")
+  @Test
+  void mergeRunningIntoAnotherIsOneChange() throws Exception {
+    // given: five strips over a bottom band; the strips' lines rubbed out, and through a gap in
+    // the line below them they take the top of the band, cut off by a new line
+    final MapProject project =
+        MapProject.newMap("Strips", givenStrips(), List.of("Red"), folder.resolve("strips"))
+            .project();
+    final MapFiles from = project.getFiles();
+    final BufferedImage picture = givenStripsRunningIntoBand();
+    final Redrawn redrawn = givenRedrawn(from, picture);
+
+    // then
+    assertThat(redrawn.merged().values())
+        .as("the five strips are one area none of them took")
+        .singleElement()
+        .matches(members -> members.size() == 5, "five");
+    assertThat(redrawn.groups())
+        .as("the band, which lost its top to the merge, is in the same change")
+        .singleElement()
+        .matches(group -> group.territories().size() == 6, "all six")
+        .matches(group -> !group.moves().isEmpty(), "the band's top moving");
+    for (final boolean keep : List.of(true, false)) {
+      // when
+      project.takeRedrawn(
+          from, redrawn, keep ? keeping(redrawn.groups()) : RedrawChoices.none());
+
+      // then
+      final Area uncovered = union(from);
+      uncovered.subtract(union(project.getFiles()));
+      assertThat(isThickerThanALine(uncovered)).as("no hole, kept " + keep).isFalse();
+      assertThat(widestOverlap(project.getFiles()))
+          .as("no overlap, kept " + keep)
+          .isLessThanOrEqualTo(4);
+      project.undo();
+    }
+  }
+
+  /** Five strips of 100 px over a band, 500 x 200, drawn with black lines. */
+  private static BufferedImage givenStrips() {
+    final BufferedImage picture = new BufferedImage(500, 200, BufferedImage.TYPE_INT_RGB);
+    final Graphics2D g = picture.createGraphics();
+    g.setColor(new Color(230, 180, 180));
+    g.fillRect(0, 0, 500, 150);
+    g.setColor(new Color(240, 230, 150));
+    g.fillRect(0, 150, 500, 50);
+    g.setColor(Color.BLACK);
+    for (int x = 99; x < 500; x += 100) {
+      g.fillRect(x, 0, 3, 150);
+    }
+    g.fillRect(0, 149, 500, 3);
+    g.dispose();
+    return picture;
+  }
+
+  /** The strips' lines rubbed out, a gap below them and a new line across the band at y 175. */
+  private static BufferedImage givenStripsRunningIntoBand() {
+    final BufferedImage picture = givenStrips();
+    final Graphics2D g = picture.createGraphics();
+    g.setColor(new Color(230, 180, 180));
+    g.fillRect(0, 0, 500, 149);
+    g.fillRect(220, 149, 20, 3);
+    g.setColor(Color.BLACK);
+    g.fillRect(0, 175, 500, 3);
+    g.dispose();
+    return picture;
+  }
+
+  @DisplayName("A merge and a changed neighbour taken: the merge and the new border as before")
+  @Test
+  void takesMergeWithNeighbour() throws Exception {
+    // given
+    final MapProject project = givenSavedMapWithRed();
+    final MapFiles from = project.getFiles();
+    final Redrawn redrawn = givenRedrawn(from, givenPictureMergedAndMoved());
+    final DetectedTerritory area = redrawn.merged().keySet().iterator().next();
+
+    // when
+    project.takeRedrawn(from, redrawn, RedrawChoices.none());
+
+    // then
+    assertThat(MapXml.territories(project.game()))
+        .as("the second of the merge is gone")
+        .doesNotContain(redrawn.merged().get(area).getLast());
+    assertThat(project.getFiles().polygons().get(redrawn.merged().get(area).getFirst()))
+        .as("the first has the merged area")
+        .isEqualTo(area.outlines());
+    assertThat(project.getFiles().polygons().get("Territory 4"))
+        .as("the moved border is taken")
+        .isEqualTo(redrawn.files().polygons().get("Territory 4"));
+  }
+
+  @DisplayName("Two changes apart are two groups: one kept as it was, the other taken")
+  @Test
+  void keepsOneGroupTakesAnother() throws Exception {
+    // given: a new line in the top left territory and one in the bottom right territory
+    final MapProject project = givenSavedMapWithRed();
+    final MapFiles from = project.getFiles();
+    final BufferedImage picture = MapFilesTest.givenPictureWithNewBorder();
+    final Graphics2D g = picture.createGraphics();
+    g.setColor(Color.BLACK);
+    g.fillRect(60, 0, 3, 110);
+    g.dispose();
+    final Redrawn redrawn = givenRedrawn(from, picture);
+    final Group topLeft =
+        redrawn.groups().stream()
+            .filter(gr -> gr.territories().contains(TOP_LEFT))
+            .findFirst()
+            .orElseThrow();
+    final Group bottomRight =
+        redrawn.groups().stream().filter(gr -> gr != topLeft).findFirst().orElseThrow();
+    final DetectedTerritory east = bottomRight.added().getFirst();
+
+    // when
+    project.takeRedrawn(
+        from,
+        redrawn,
+        new RedrawChoices(
+            Map.of(east, new DetectedTerritory("East", false, east.outlines(), east.center())),
+            Map.of(),
+            Set.of(topLeft)));
+
+    // then
+    assertThat(redrawn.groups()).as("two changes apart").hasSize(2);
+    assertThat(project.getFiles().polygons().get(TOP_LEFT))
+        .as("kept as it was")
+        .isEqualTo(from.polygons().get(TOP_LEFT));
+    assertThat(project.getFiles().polygons().get("East")).as("taken: added").isNotNull();
+    assertThat(project.getFiles().polygons().get("Territory 4"))
+        .as("taken: its new border")
+        .isEqualTo(redrawn.files().polygons().get("Territory 4"));
+  }
+
+  @DisplayName("A border 5 px off beside a split kept as it was joins it: no hole, no overlap")
+  @Test
+  void keepsShiftBesideSplit() throws Exception {
+    // given: a new line in the top left territory, its border with the top right one 5 px off
+    final MapProject project = givenSavedMapWithRed();
+    final MapFiles from = project.getFiles();
+    final BufferedImage picture = MapFilesTest.givenPictureWithBorderAt(204);
+    final Graphics2D g = picture.createGraphics();
+    g.setColor(Color.BLACK);
+    g.fillRect(60, 0, 3, 110);
+    g.dispose();
+    final Redrawn redrawn = givenRedrawn(from, picture);
+    final Group split =
+        redrawn.groups().stream()
+            .filter(group -> group.territories().contains(TOP_LEFT))
+            .findFirst()
+            .orElseThrow();
+
+    // when
+    project.takeRedrawn(from, redrawn, keeping(List.of(split)));
+
+    // then
+    assertThat(split.territories()).as("the shifted neighbour is in it").contains(TOP_RIGHT);
+    final Area uncovered = union(from);
+    uncovered.subtract(union(project.getFiles()));
+    assertThat(isThickerThanALine(uncovered)).as("no hole").isFalse();
+    assertThat(widestOverlap(project.getFiles()))
+        .as("no overlap beyond the lines")
+        .isLessThanOrEqualTo(4);
+  }
+
+  @DisplayName("A moved border kept as it was stays old on both sides: no hole, no overlap")
+  @Test
+  void keepsMovedBorder() throws Exception {
+    // given: the border between the two top territories moved to x 299
+    final MapProject project = givenSavedMapWithRed();
+    final MapFiles from = project.getFiles();
+    final Redrawn redrawn = givenRedrawn(from, MapFilesTest.givenPictureWithBorderAt(299));
+
+    // when
+    project.takeRedrawn(from, redrawn, keeping(redrawn.groups()));
+
+    // then
+    assertThat(redrawn.groups())
+        .as("both sides one change")
+        .singleElement()
+        .matches(group -> group.territories().containsAll(List.of(TOP_LEFT, TOP_RIGHT)), "both");
+    assertThat(project.getFiles().polygons().get(TOP_LEFT))
+        .as("its old outline")
+        .isEqualTo(from.polygons().get(TOP_LEFT));
+    assertThat(project.getFiles().polygons().get(TOP_RIGHT))
+        .as("and the other's")
+        .isEqualTo(from.polygons().get(TOP_RIGHT));
+    assertThat(widestOverlap(project.getFiles()))
+        .as("no overlap beyond the lines")
+        .isLessThanOrEqualTo(4);
+    project.undo();
+    assertThat(project.getFiles()).as("one step").isSameAs(from);
+  }
+
+  private static Redrawn givenRedrawn(final MapFiles from, final BufferedImage picture) {
+    return from.withBordersFrom(picture, MapPicture.detect(picture));
+  }
+
+  private static RedrawChoices keeping(final List<Group> groups) {
+    return new RedrawChoices(Map.of(), Map.of(), Set.copyOf(groups));
+  }
+
+  /** The top border rubbed out, and the border between the bottom land moved to x 250. */
+  private static BufferedImage givenPictureMergedAndMoved() {
+    final BufferedImage picture = MapFilesTest.givenPictureWithBorderAt(500);
+    final Graphics2D g = picture.createGraphics();
+    g.setColor(new Color(240, 230, 150));
+    g.fillRect(199, 112, 3, 107);
+    g.setColor(Color.BLACK);
+    g.fillRect(250, 112, 3, 107);
+    g.dispose();
+    return picture;
+  }
+
+  private static Area union(final MapFiles files) {
+    final Area all = new Area();
+    files.polygons().values().forEach(outlines -> outlines.forEach(o -> all.add(new Area(o))));
+    return all;
+  }
+
+  /** Whether the area is 3 px across somewhere: a pixel of it with all 8 around it in it too. */
+  private static boolean isThickerThanALine(final Area area) {
+    final BufferedImage mask = new BufferedImage(400, 300, BufferedImage.TYPE_BYTE_BINARY);
+    final Graphics2D g = mask.createGraphics();
+    g.setColor(Color.WHITE);
+    g.fill(area);
+    g.dispose();
+    for (int y = 1; y < 299; y++) {
+      for (int x = 1; x < 399; x++) {
+        boolean all = true;
+        for (int dy = -1; dy <= 1 && all; dy++) {
+          for (int dx = -1; dx <= 1 && all; dx++) {
+            all = (mask.getRGB(x + dx, y + dy) & 0xFFFFFF) != 0;
+          }
+        }
+        if (all) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /** The widest overlap of two territories, across its narrow side. */
+  private static int widestOverlap(final MapFiles files) {
+    final List<String> names = List.copyOf(files.polygons().keySet());
+    int widest = 0;
+    for (int i = 0; i < names.size(); i++) {
+      for (int j = i + 1; j < names.size(); j++) {
+        final Area overlap = new Area();
+        files.polygons().get(names.get(i)).forEach(o -> overlap.add(new Area(o)));
+        final Area other = new Area();
+        files.polygons().get(names.get(j)).forEach(o -> other.add(new Area(o)));
+        overlap.intersect(other);
+        final Rectangle box = overlap.getBounds();
+        widest = Math.max(widest, overlap.isEmpty() ? 0 : Math.min(box.width, box.height));
+      }
+    }
+    return widest;
   }
 
   @DisplayName("A merged territory the rules still name stays with its old border and is told")
@@ -675,7 +1090,8 @@ final class MapProjectTest {
         redrawn,
         new RedrawChoices(
             Map.of(area, new DetectedTerritory("West", false, area.outlines(), area.center())),
-            Map.of()));
+            Map.of(),
+            Set.of()));
 
     // then
     assertThat(from.polygons().get(TOP_LEFT))
@@ -708,6 +1124,111 @@ final class MapProjectTest {
         .containsEntry("South", "Desert");
   }
 
+  @DisplayName("Each line drawn or erased is kept with its kind; undo and redo follow")
+  @Test
+  void keepsStrokes() throws Exception {
+    // given
+    final MapProject project = givenSavedMapWithRed();
+
+    // when
+    project.drawBorder(givenBorder(100, 110, 100, 220));
+    project.eraseBorders(List.of(new Point(200, 20), new Point(200, 90)), 9);
+    final List<MapProject.Stroke> both = project.drawnStrokes();
+    project.undo();
+    final List<MapProject.Stroke> first = project.drawnStrokes();
+    project.redo();
+
+    // then
+    assertThat(both)
+        .as("the pencil line, then the eraser")
+        .extracting(MapProject.Stroke::kind)
+        .containsExactly(MapProject.Kind.DRAWN, MapProject.Kind.ERASED);
+    assertThat(both.getFirst().area().contains(100, 150)).as("where it was drawn").isTrue();
+    assertThat(first).as("undo takes the eraser back").hasSize(1);
+    assertThat(project.drawnStrokes()).as("redo brings it").hasSize(2);
+  }
+
+  @DisplayName("A whole border erased with a click is kept as erased, its pixels as the stroke")
+  @Test
+  void keepsErasedBorder() throws Exception {
+    // given
+    final MapProject project = givenSavedMapWithRed();
+
+    // when
+    project.eraseBorder(project.getFiles().sharedBorderAt(new Point(200, 50), 3).orElseThrow());
+
+    // then
+    assertThat(project.drawnStrokes())
+        .as("one stroke, erased, on the border")
+        .singleElement()
+        .matches(stroke -> stroke.kind() == MapProject.Kind.ERASED, "erased")
+        .matches(stroke -> stroke.area().contains(200.5, 50.5), "on the border");
+  }
+
+  @DisplayName("A resize scales the lines drawn with the map")
+  @Test
+  void resizeScalesStrokes() throws Exception {
+    // given
+    final MapProject project = givenSavedMapWithRed();
+    project.drawBorder(givenBorder(100, 110, 100, 220));
+    final MapFiles from = project.getFiles();
+
+    // when
+    project.takeResized(from, from.resized(2), 2);
+
+    // then
+    assertThat(project.drawnStrokes())
+        .as("twice as far out")
+        .singleElement()
+        .matches(stroke -> stroke.area().contains(200, 300), "on the line, scaled")
+        .matches(stroke -> stroke.region().contains(200, 300), "its region too");
+  }
+
+  @DisplayName("Lines go when all changes are taken or a picture is loaded; kept ones stay")
+  @Test
+  void forgetsStrokesOnlyWhenTaken() throws Exception {
+    // given: lines splitting the top left territory and the bottom right one
+    final MapProject project = givenSavedMapWithRed();
+    project.drawBorder(givenBorder(60, 0, 60, 110));
+    project.drawBorder(givenBorder(330, 110, 330, 220));
+    final MapFiles from = project.getFiles();
+    final BufferedImage picture = from.picture().orElseThrow();
+    final Redrawn redrawn = from.withBordersFrom(picture, MapPicture.detect(picture));
+    final Group topLeft =
+        redrawn.groups().stream()
+            .filter(group -> group.territories().contains(TOP_LEFT))
+            .findFirst()
+            .orElseThrow();
+
+    // when one change is kept
+    project.takeRedrawn(from, redrawn, keeping(List.of(topLeft)));
+
+    // then
+    assertThat(project.drawnStrokes())
+        .as("the line of the change kept stays")
+        .singleElement()
+        .matches(stroke -> stroke.area().contains(60, 50), "the top left one");
+    assertThat(project.drawnRegion())
+        .as("so Make territories looks there again")
+        .hasValueSatisfying(r -> assertThat(r.contains(60, 50)).as("around it").isTrue());
+
+    // when all are taken
+    final MapFiles again = project.getFiles();
+    final BufferedImage now = again.picture().orElseThrow();
+    project.takeRedrawn(
+        again, again.withBordersFrom(now, MapPicture.detect(now)), RedrawChoices.none());
+
+    // then
+    assertThat(project.drawnStrokes()).as("all taken: none left").isEmpty();
+
+    // when a picture is loaded after a line
+    project.drawBorder(givenBorder(100, 110, 100, 220));
+    project.loadPicture(MapPictureTest.givenPicture());
+
+    // then
+    assertThat(project.drawnStrokes()).as("a new picture forgets them").isEmpty();
+  }
+
   @DisplayName("A split drawn into the held picture counts as drawn for Make territories")
   @Test
   void splitLineIsDrawnRegion() throws Exception {
@@ -722,6 +1243,11 @@ final class MapProjectTest {
         "Territory 4", cut, "South", Optional.of(new MapProject.BorderLine(line, 3, Color.BLACK)));
 
     // then
+    assertThat(project.drawnStrokes())
+        .as("the cut line, drawn")
+        .singleElement()
+        .matches(stroke -> stroke.kind() == MapProject.Kind.DRAWN, "drawn")
+        .matches(stroke -> stroke.area().contains(300, 160), "on the line");
     assertThat(project.drawnRegion())
         .as("around the cut line")
         .hasValueSatisfying(

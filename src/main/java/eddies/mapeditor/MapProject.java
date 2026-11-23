@@ -13,7 +13,7 @@ import java.awt.Image;
 import java.awt.Point;
 import java.awt.Polygon;
 import java.awt.Rectangle;
-import java.awt.Stroke;
+import java.awt.geom.AffineTransform;
 import java.awt.geom.Area;
 import java.awt.geom.Path2D;
 import java.awt.image.BufferedImage;
@@ -56,6 +56,7 @@ import org.triplea.java.ColorUtils;
 import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.Info;
 import eddies.mapeditor.MapChecks.Problem;
+import eddies.mapeditor.MapFiles.Group;
 import eddies.mapeditor.MapFiles.Marker;
 import eddies.mapeditor.MapFiles.NationUnit;
 import eddies.mapeditor.MapFiles.Redrawn;
@@ -140,6 +141,8 @@ final class MapProject {
       Map.of(
           "baseTiles", "tile", "reliefTiles", "relief tile", "flags", "flag", "units",
           "unit picture");
+  // how much wider than a line its stroke counts, so one ending on a border line reaches it
+  private static final int STROKE_MARGIN = 4;
   // pixels around a line drawn or erased in place that are cut out with it
   private static final int IN_PLACE_MARGIN = 64;
   // a resized picture: the picture it was made from, so a save writes its tiles and leaves the
@@ -183,10 +186,10 @@ final class MapProject {
 
   /**
    * One step: the game, the map's files, which change together when a territory is renamed, the
-   * texts beside them, and where borders were drawn into the picture since territories were last
-   * made from it.
+   * texts beside them, and the lines drawn into the picture since territories were last made
+   * from it.
    */
-  private record State(Game game, MapFiles files, MapTexts texts, Optional<Rectangle> drawn) {
+  private record State(Game game, MapFiles files, MapTexts texts, Optional<Drawn> drawn) {
 
     State(final Game game, final MapFiles files, final MapTexts texts) {
       this(game, files, texts, Optional.empty());
@@ -195,6 +198,121 @@ final class MapProject {
     /** The pictures the step holds in memory: the map's and its relief, as far as held. */
     List<BufferedImage> pictures() {
       return Stream.concat(files.picture().stream(), files.relief().stream()).toList();
+    }
+  }
+
+  /**
+   * The lines drawn or erased in the picture since territories were last made: where Make
+   * territories looks, and each stroke, which tells it what the map maker meant to change.
+   */
+  record Drawn(List<Stroke> strokes) {
+
+    Drawn {
+      strokes = List.copyOf(strokes);
+    }
+
+    /** Where Make territories looks: every stroke's region. */
+    Rectangle region() {
+      return strokes.stream()
+          .map(Stroke::region)
+          .reduce(Rectangle::union)
+          .orElseGet(Rectangle::new);
+    }
+
+    Drawn with(final Drawn more) {
+      return new Drawn(Stream.concat(strokes.stream(), more.strokes().stream()).toList());
+    }
+
+    Drawn scaled(final double factor) {
+      return new Drawn(strokes.stream().map(stroke -> stroke.scaled(factor)).toList());
+    }
+  }
+
+  /** Whether a stroke drew a line into the picture (pencil, circle, split) or erased lines. */
+  enum Kind {
+    DRAWN,
+    ERASED
+  }
+
+  /**
+   * A line drawn or erased in the picture.
+   *
+   * @param area what it covered, a little wider than the line
+   * @param region its bounds grown to reach the territories it touches
+   */
+  record Stroke(Kind kind, Area area, Rectangle region) {
+
+    Stroke {
+      area = new Area(area);
+      region = new Rectangle(region);
+    }
+
+    @Override
+    public Area area() {
+      return new Area(area);
+    }
+
+    @Override
+    public Rectangle region() {
+      return new Rectangle(region);
+    }
+
+    /**
+     * Whether the stroke lets the territory take land that was the other's: erased, it reaches
+     * both, eg the eraser on the line between them; not a pencil line, nor a gap in an old line.
+     */
+    boolean lets(final MapFiles.Move move, final MapFiles from) {
+      return kind == Kind.ERASED
+          && crosses(from.polygons().getOrDefault(move.into(), List.of()))
+          && crosses(from.polygons().getOrDefault(move.from(), List.of()));
+    }
+
+    Stroke scaled(final double factor) {
+      // both corners outward, so the region still holds the line
+      final int left = (int) Math.floor(region.x * factor);
+      final int top = (int) Math.floor(region.y * factor);
+      return new Stroke(
+          kind,
+          area.createTransformedArea(AffineTransform.getScaleInstance(factor, factor)),
+          new Rectangle(
+              left,
+              top,
+              (int) Math.ceil((region.x + region.width) * factor) - left,
+              (int) Math.ceil((region.y + region.height) * factor) - top));
+    }
+
+    /**
+     * Whether the stroke crosses the change anywhere, so the map maker touched it: an old or new
+     * outline of a territory in it, a merge's too, or a new area.
+     */
+    boolean crosses(final Group group, final MapFiles from, final Redrawn redrawn) {
+      return crosses(outlinesOf(group.territories(), group.added(), from, redrawn));
+    }
+
+    private static List<Polygon> outlinesOf(
+        final List<String> territories,
+        final List<DetectedTerritory> added,
+        final MapFiles from,
+        final Redrawn redrawn) {
+      final List<Polygon> outlines = new ArrayList<>();
+      territories.forEach(
+          t -> {
+            outlines.addAll(from.polygons().getOrDefault(t, List.of()));
+            outlines.addAll(redrawn.files().polygons().getOrDefault(t, List.of()));
+          });
+      added.forEach(area -> outlines.addAll(area.outlines()));
+      return outlines;
+    }
+
+    private boolean crosses(final List<Polygon> outlines) {
+      return outlines.stream()
+          .filter(outline -> outline.getBounds().intersects(region))
+          .anyMatch(
+              outline -> {
+                final Area common = new Area(outline);
+                common.intersect(area);
+                return !common.isEmpty();
+              });
     }
   }
 
@@ -1057,19 +1175,7 @@ final class MapProject {
             // a scaled relief is no longer as made here: a part made anew would not fit
             resized.withProperty(ReliefMaker.Look.KEY, ""),
             current.texts(),
-            current
-                .drawn()
-                .map(
-                    r -> {
-                      // both corners outward, so the region still holds every line drawn
-                      final int left = (int) Math.floor(r.x * factor);
-                      final int top = (int) Math.floor(r.y * factor);
-                      return new Rectangle(
-                          left,
-                          top,
-                          (int) Math.ceil((r.x + r.width) * factor) - left,
-                          (int) Math.ceil((r.y + r.height) * factor) - top);
-                    })));
+            current.drawn().map(d -> d.scaled(factor))));
     return true;
   }
 
@@ -1094,7 +1200,7 @@ final class MapProject {
     if (files.drawsInPlace()) {
       return changeInPlace(
           reachOf(border),
-          regionOf(border),
+          drawnOf(border, Kind.DRAWN),
           (part, at) -> Optional.of(withLine(part, moved(border, at), Optional.empty())));
     }
     step(
@@ -1102,7 +1208,7 @@ final class MapProject {
             game(),
             files.withPicture(drawn(files.picture().orElseThrow(), border, Optional.empty())),
             current.texts(),
-            drawnWith(border)));
+            withDrawn(drawnOf(border, Kind.DRAWN))));
     return true;
   }
 
@@ -1116,7 +1222,7 @@ final class MapProject {
       final BorderLine band = new BorderLine(stroke, width, Color.BLACK);
       return changeInPlace(
           reachOf(band),
-          regionOf(band),
+          drawnOf(band, Kind.ERASED),
           (part, at) -> MapPicture.withoutLines(part, moved(band, at).line(), width));
     }
     final Optional<BufferedImage> picture = current.files().picture();
@@ -1131,7 +1237,7 @@ final class MapProject {
             game(),
             current.files().withPicture(erased.get()),
             current.texts(),
-            drawnWith(new BorderLine(stroke, width, Color.BLACK))));
+            withDrawn(drawnOf(new BorderLine(stroke, width, Color.BLACK), Kind.ERASED))));
     return true;
   }
 
@@ -1145,11 +1251,7 @@ final class MapProject {
       final Rectangle box = border.box();
       return changeInPlace(
           box,
-          regionOf(
-              new BorderLine(
-                  List.of(box.getLocation(), new Point(box.x + box.width, box.y + box.height)),
-                  1,
-                  Color.BLACK)),
+          drawnOf(border),
           (part, at) ->
               MapPicture.withoutLines(
                   part,
@@ -1163,18 +1265,42 @@ final class MapProject {
       return false;
     }
     drawnOn.put(erased.get(), firstOf(picture.orElseThrow()));
-    final Rectangle box = border.box();
     step(
         new State(
             game(),
             current.files().withPicture(erased.get()),
             current.texts(),
-            drawnWith(
-                new BorderLine(
-                    List.of(box.getLocation(), new Point(box.x + box.width, box.y + box.height)),
-                    1,
-                    Color.BLACK))));
+            withDrawn(drawnOf(border))));
     return true;
+  }
+
+  /** The border erased as drawn: its box's region, its pixels as the stroke. */
+  private static Drawn drawnOf(final MapFiles.SharedBorder border) {
+    final Rectangle box = border.box();
+    final Path2D pixels = new Path2D.Float();
+    for (int y = 0; y < box.height; y++) {
+      int start = -1;
+      for (int x = 0; x <= box.width; x++) {
+        final boolean in = x < box.width && border.between()[y * box.width + x];
+        if (in && start < 0) {
+          start = x;
+        } else if (!in && start >= 0) {
+          pixels.append(new Rectangle(box.x + start, box.y + y, x - start, 1), false);
+          start = -1;
+        }
+      }
+    }
+    return new Drawn(
+        List.of(
+            new Stroke(
+                Kind.ERASED,
+                new Area(pixels),
+                regionOf(
+                    new BorderLine(
+                        List.of(
+                            box.getLocation(), new Point(box.x + box.width, box.y + box.height)),
+                        1,
+                        Color.BLACK)))));
   }
 
   /** A border line to draw into the map's picture: where, how wide in pixels, in which color. */
@@ -1185,14 +1311,38 @@ final class MapProject {
    * territories to look only there; empty when none were.
    */
   Optional<Rectangle> drawnRegion() {
-    return current.drawn().map(Rectangle::new);
+    return current.drawn().map(Drawn::region);
   }
 
-  /** The region drawn in with the line's, wide enough to reach the territories it touches. */
-  private Optional<Rectangle> drawnWith(final BorderLine border) {
-    final Rectangle region = regionOf(border);
-    current.drawn().ifPresent(region::add);
-    return Optional.of(region);
+  /**
+   * Each line drawn or erased in the picture since territories were last made, so Make
+   * territories knows which changes the map maker drew.
+   */
+  List<Stroke> drawnStrokes() {
+    return current.drawn().map(Drawn::strokes).orElse(List.of());
+  }
+
+  /** What is drawn with this. */
+  private Optional<Drawn> withDrawn(final Drawn more) {
+    return Optional.of(current.drawn().map(d -> d.with(more)).orElse(more));
+  }
+
+  /** The line as drawn or erased: its region and, a little wider than it, the area it covers. */
+  private static Drawn drawnOf(final BorderLine border, final Kind kind) {
+    final Path2D path = new Path2D.Float();
+    path.moveTo(border.line().getFirst().x, border.line().getFirst().y);
+    border.line().forEach(p -> path.lineTo(p.x, p.y));
+    return new Drawn(
+        List.of(
+            new Stroke(
+                kind,
+                new Area(
+                    new BasicStroke(
+                            border.width() + STROKE_MARGIN,
+                            BasicStroke.CAP_ROUND,
+                            BasicStroke.JOIN_ROUND)
+                        .createStrokedShape(path)),
+                regionOf(border))));
   }
 
   private static Rectangle regionOf(final BorderLine border) {
@@ -1250,7 +1400,7 @@ final class MapProject {
    */
   private boolean changeInPlace(
       final Rectangle around,
-      final Rectangle region,
+      final Drawn drawn,
       final BiFunction<BufferedImage, Point, Optional<BufferedImage>> change) {
     final BufferedImage picture = current.files().picture().orElseThrow();
     final Rectangle grown = new Rectangle(around);
@@ -1304,7 +1454,7 @@ final class MapProject {
                     s.game(),
                     s.files().again(),
                     s.texts(),
-                    Optional.of(s.drawn().map(r -> r.union(region)).orElse(region))));
+                    Optional.of(s.drawn().map(d -> d.with(drawn)).orElse(drawn))));
     listeners.forEach(Runnable::run);
     return true;
   }
@@ -1347,7 +1497,7 @@ final class MapProject {
       final List<Polygon> within = files.polygons().getOrDefault(territory, List.of());
       changeInPlace(
           reachOf(drawn.get()),
-          regionOf(drawn.get()),
+          drawnOf(drawn.get(), Kind.DRAWN),
           (part, at) ->
               Optional.of(
                   withLine(
@@ -1401,7 +1551,9 @@ final class MapProject {
                 .withOutlines(newName, cut.split())
                 .withTexture(newName, Optional.ofNullable(files.textures().get(territory))),
             current.texts(),
-            pictured == files ? current.drawn() : drawnWith(drawn.orElseThrow())));
+            pictured == files
+                ? current.drawn()
+                : withDrawn(drawnOf(drawn.orElseThrow(), Kind.DRAWN))));
     return true;
   }
 
@@ -1431,7 +1583,7 @@ final class MapProject {
     g.drawImage(picture, 0, 0, null);
     final Area inside = new Area();
     final Area reached = new Area();
-    final Stroke reach = new BasicStroke(border.width() * 2f + 2);
+    final BasicStroke reach = new BasicStroke(border.width() * 2f + 2);
     within.ifPresent(
         outlines ->
             outlines.forEach(
@@ -1695,7 +1847,9 @@ final class MapProject {
    * Takes borders redrawn from a picture, {@link MapFiles#withBordersFrom}, as one step, if the
    * files they were redrawn from are still the map's; a change meanwhile keeps it. Each merged
    * area goes to its keeper, the others in it are removed, their neighbours going to the keeper;
-   * each chosen new area becomes a territory, connected as in the picture.
+   * each chosen new area becomes a territory, connected as in the picture. A group of changes
+   * kept as it was ({@link Redrawn#groups}) gives its territories their old outlines, centers and
+   * places back, with no merge.
    *
    * @return empty when not taken, else for each territory to go that rules still name, so it
    *     stays with its old border, "territory: where"
@@ -1710,7 +1864,17 @@ final class MapProject {
     final List<String> named = new ArrayList<>();
     final Map<String, String> areaOf = new HashMap<>();
     redrawn.takenBy().forEach((area, territory) -> areaOf.put(area.name(), territory));
+    final Set<DetectedTerritory> notMerged = new HashSet<>();
+    for (final Group group : choices.asItWas()) {
+      for (final String territory : group.territories()) {
+        f = f.withBorderOf(from, territory);
+      }
+      notMerged.addAll(group.merged());
+    }
     for (final Map.Entry<DetectedTerritory, List<String>> merge : redrawn.merged().entrySet()) {
+      if (notMerged.contains(merge.getKey())) {
+        continue;
+      }
       final String keeper =
           choices.keepers().getOrDefault(merge.getKey(), merge.getValue().getFirst());
       f = f.withOutlines(keeper, merge.getKey().outlines());
@@ -1746,8 +1910,22 @@ final class MapProject {
       }
       f = f.withOutlines(chosen.name(), chosen.outlines());
     }
-    // the territories are made from the borders drawn
-    step(new State(g, f, current.texts()));
+    // the territories are made from the lines drawn; those of a change kept as it was stay drawn
+    // strokes of a picture loaded instead belong to the one replaced
+    final List<Stroke> left =
+        (redrawn.files().picture().equals(from.picture()) ? drawnStrokes() : List.<Stroke>of())
+            .stream()
+            .filter(
+                stroke ->
+                    choices.asItWas().stream()
+                        .anyMatch(group -> stroke.crosses(group, from, redrawn)))
+            .toList();
+    step(
+        new State(
+            g,
+            f,
+            current.texts(),
+            left.isEmpty() ? Optional.empty() : Optional.of(new Drawn(left))));
     return Optional.of(List.copyOf(named));
   }
 
@@ -1767,17 +1945,20 @@ final class MapProject {
   }
 
   /**
-   * What the map maker chose for borders redrawn with new or merged areas.
+   * What the map maker chose for borders redrawn with new or merged areas or changed borders.
    *
    * @param added the new areas to add, each as detected and as named in the dialog, its name and
    *     water chosen there
    * @param keepers the territory keeping each merged area; one not given goes to its first
+   * @param asItWas the groups of changes not taken: their territories as they were
    */
   record RedrawChoices(
-      Map<DetectedTerritory, DetectedTerritory> added, Map<DetectedTerritory, String> keepers) {
+      Map<DetectedTerritory, DetectedTerritory> added,
+      Map<DetectedTerritory, String> keepers,
+      Set<Group> asItWas) {
 
     static RedrawChoices none() {
-      return new RedrawChoices(Map.of(), Map.of());
+      return new RedrawChoices(Map.of(), Map.of(), Set.of());
     }
   }
 

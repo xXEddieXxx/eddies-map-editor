@@ -186,6 +186,75 @@ final class MapFilesTest {
     assertThat(redrawn.added()).as("no area is new").isEmpty();
   }
 
+  /** The picture with a gap of 20 px in the border between the two top territories. */
+  static BufferedImage givenPictureWithGap() {
+    final BufferedImage picture = MapPictureTest.givenPicture();
+    final Graphics2D g = picture.createGraphics();
+    g.setColor(new Color(230, 180, 180));
+    g.fillRect(199, 40, 3, 20);
+    g.dispose();
+    return picture;
+  }
+
+  @DisplayName("Redrawn from the same picture, outlines a pixel or two off are no change")
+  @Test
+  void samePictureHasNoChanges() {
+    // given
+    final MapFiles files = givenFilesOfPicture();
+    final BufferedImage same = MapPictureTest.givenPicture();
+
+    // when
+    final Redrawn redrawn = files.withBordersFrom(same, MapPicture.detect(same));
+
+    // then
+    assertThat(redrawn.groups()).as("nothing to take or keep").isEmpty();
+  }
+
+  @DisplayName("Territories in no change keep their outlines and centers exactly")
+  @Test
+  void untouchedKeepOutlines() {
+    // given
+    final MapFiles files = givenFilesOfPicture();
+    final BufferedImage split = givenPictureWithNewBorder();
+
+    // when
+    final Redrawn redrawn = files.withBordersFrom(split, MapPicture.detect(split));
+
+    // then
+    for (final String territory : List.of(TOP_LEFT, TOP_RIGHT, UNCHANGED, "Sea Zone 1")) {
+      assertThat(redrawn.files().polygons().get(territory))
+          .as("the old outlines of " + territory)
+          .isSameAs(files.polygons().get(territory));
+      assertThat(redrawn.files().centers().get(territory))
+          .as("the old center of " + territory)
+          .isEqualTo(files.centers().get(territory));
+      assertThat(redrawn.files().places().units().get(territory))
+          .as("the old unit places of " + territory)
+          .isEqualTo(files.places().units().get(territory));
+    }
+  }
+
+  @DisplayName("A border 2 px off joins no change; one beside a real change stays out of it")
+  @Test
+  void slightShiftJoinsNothing() {
+    // given: the top border 2 px off, and a new border in the bottom right territory
+    final MapFiles files = givenFilesOfPicture();
+    final BufferedImage picture = givenPictureWithBorderAt(201);
+    final Graphics2D g = picture.createGraphics();
+    g.setColor(Color.BLACK);
+    g.fillRect(330, 110, 3, 110);
+    g.dispose();
+
+    // when
+    final Redrawn redrawn = files.withBordersFrom(picture, MapPicture.detect(picture));
+
+    // then
+    assertThat(redrawn.groups())
+        .as("only the new border is a change, the top two not in it")
+        .singleElement()
+        .matches(group -> group.territories().equals(List.of("Territory 4")), "Territory 4");
+  }
+
   /** The picture with a border drawn through the bottom right area, at x = 330. */
   static BufferedImage givenPictureWithNewBorder() {
     final BufferedImage picture = MapPictureTest.givenPicture();

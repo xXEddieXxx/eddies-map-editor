@@ -57,7 +57,14 @@ chosen territory in place of the list.
     2. Draw across the picture. A line joins existing borders where it ends near them. The
        **Eraser** takes a line away where you drag.
     3. Press **Make territories**. The territories enclosed by the new lines are found; the rest
-       stay as they were.
+       stay as they were. A dialog lists the changes, each with a **Take** tick: what it
+       splits, merges or moves, and the names of new territories. A change your lines cross
+       starts ticked (a merge, or land moving to a neighbour, only where you used the Eraser);
+       one they do not touch, or that runs through a gap in an old line, starts unticked and
+       says why, as does an area outside the old map.
+       A new area of a change taken is added under the name you give it.
+       A change not taken stays as it was. Cancel keeps your lines, so you can close a gap
+       first.
     4. Save. Only the tiles the lines touched are written, their first version kept in Backups.
 
     !!! tip
@@ -151,5 +158,7 @@ chosen territory in place of the list.
     - Draw across the picture. A line joins existing borders where it ends near them. The Eraser
       takes a line away where you drag.
     - Choose Make territories. The territories enclosed by the new lines are found; the rest
-      stay as they were. New territories are named by number; rename them in the list.
+      stay as they were. New territories are named by number; rename them in the list. The
+      dialog before lets you leave out a change, which then stays as it was; changes your
+      lines do not touch start left out.
     - Save. Only the tiles the lines touched are written, their first version kept in Backups.

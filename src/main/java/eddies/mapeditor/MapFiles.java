@@ -19,6 +19,7 @@ import java.awt.Shape;
 import java.awt.geom.Area;
 import java.awt.geom.Path2D;
 import java.awt.image.BufferedImage;
+import java.awt.image.DataBufferByte;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.StringReader;
@@ -189,10 +190,8 @@ record MapFiles(
   private static final String MAP_PROPERTIES = "map.properties";
   private static final String WIDTH = "map.width";
   private static final String HEIGHT = "map.height";
-  // a redrawn border whose bounds overlap the old ones less than this changed noticeably
-  private static final double SAME_BORDER = 0.9;
-  // nor one whose bounds moved this few pixels, as found outlines reach into the border line
-  private static final int SAME_BORDER_PIXELS = 3;
+  // outlines this far apart somewhere differ, less is a line followed a pixel or two off
+  private static final int DIFFERS_PIXELS = 2;
   // 50 million pixels, 200 MB: a picture in tiles bigger than this is not held to draw into
   static final long MAX_HELD_PICTURE = 50_000_000L;
   // a held picture of more pixels is drawn into itself, with no copy per line for undo
@@ -877,11 +876,28 @@ record MapFiles(
     // an area none took, as each holds too little of it, is a merge of two or more
     merged.values().removeIf(members -> members.size() < 2);
     merged.replaceAll((area, members) -> List.copyOf(members));
+    final List<DetectedTerritory> added =
+        detected.territories().stream()
+            .filter(a -> !takenBy.containsKey(a) && !held.contains(a))
+            .toList();
+    final List<Group> groups = groups(outlines, merged, added);
+    // a territory in no change only follows its line a pixel or two off: it keeps its outline,
+    // so a save does not write it anew
+    final Set<String> grouped = new HashSet<>();
+    groups.forEach(group -> grouped.addAll(group.territories()));
+    for (final String territory : List.copyOf(outlines.keySet())) {
+      if (!grouped.contains(territory)) {
+        outlines.put(territory, polygons.get(territory));
+        Optional.ofNullable(centers.get(territory))
+            .ifPresentOrElse(c -> middles.put(territory, c), () -> middles.remove(territory));
+      }
+    }
     final MapFiles pictured = withPicture(image);
     final List<String> changed =
         outlines.keySet().stream()
+            .filter(grouped::contains)
             .filter(t -> !kept.contains(t))
-            .filter(t -> !isSameBorder(polygons.get(t), outlines.get(t)))
+            .filter(t -> !samePoints(polygons.get(t), outlines.get(t)))
             .toList();
     return new Redrawn(
         new MapFiles(
@@ -901,19 +917,246 @@ record MapFiles(
         detected,
         Map.copyOf(takenBy),
         Collections.unmodifiableMap(merged),
-        Set.copyOf(held));
+        Set.copyOf(held),
+        groups);
+  }
+
+  /**
+   * The changes to take or keep as a whole: the territories whose outlines really changed ({@link
+   * #reallyDiffers}), the territories of each merged area and the new areas, joined only where
+   * land moves between them: one territory's new outline over another's old one, more than a
+   * line's width, or a new or merged area over a territory's old outline. So a group kept as it
+   * was meets the rest without hole or overlap, as no land moved between it and the rest; two
+   * that only share a line left as it was are apart. A new area over no old outline, eg a frame
+   * or a legend box, is a group of its own.
+   */
+  private List<Group> groups(
+      final Map<String, List<Polygon>> outlines,
+      final Map<DetectedTerritory, List<String>> merged,
+      final List<DetectedTerritory> added) {
+    final Map<String, String> mergedWith = new HashMap<>();
+    merged.forEach((area, members) -> members.forEach(m -> mergedWith.put(m, members.getFirst())));
+    final List<String> territories = new ArrayList<>();
+    final Map<String, Area> before = new HashMap<>();
+    final Map<String, Area> after = new HashMap<>();
+    outlines.forEach(
+        (territory, now) -> {
+          final List<Polygon> old = polygons.getOrDefault(territory, List.of());
+          if (mergedWith.containsKey(territory) || reallyDiffers(old, now)) {
+            territories.add(territory);
+            before.put(territory, areaOf(old));
+            after.put(territory, areaOf(now));
+          }
+        });
+    final Map<String, Set<String>> groupOf = new LinkedHashMap<>();
+    final Map<String, DetectedTerritory> areaOf = new HashMap<>();
+    territories.forEach(t -> groupOf.put(t, new LinkedHashSet<>(List.of(t))));
+    for (int i = 0; i < added.size(); i++) {
+      final String key = "\u0000" + i;
+      areaOf.put(key, added.get(i));
+      groupOf.put(key, new LinkedHashSet<>(List.of(key)));
+    }
+    final List<Move> moves = new ArrayList<>();
+    merged.values().forEach(m -> m.forEach(t -> join(groupOf, m.getFirst(), t)));
+    for (final String into : territories) {
+      for (final String from : territories) {
+        if (!into.equals(from)
+            && !(mergedWith.containsKey(into)
+                && mergedWith.get(into).equals(mergedWith.get(from)))
+            && overlaps(after.get(into), before.get(from))) {
+          moves.add(new Move(into, from));
+          join(groupOf, into, from);
+        }
+      }
+    }
+    areaOf.forEach(
+        (key, area) -> {
+          // land a new area holds was a territory's, which so changed too
+          final Area found = areaOf(area.outlines());
+          territories.stream()
+              .filter(territory -> overlaps(found, before.get(territory)))
+              .forEach(territory -> join(groupOf, key, territory));
+        });
+    // a merged area may hold land of a territory beyond it too, eg through a gap, also where no
+    // territory of it took it and each keeps its outline until the merge is taken
+    merged.forEach(
+        (area, members) -> {
+          final Area found = areaOf(area.outlines());
+          territories.stream()
+              .filter(territory -> !members.contains(territory))
+              .filter(territory -> overlaps(found, before.get(territory)))
+              .filter(
+                  territory ->
+                      moves.stream()
+                          .noneMatch(
+                              m -> members.contains(m.into()) && m.from().equals(territory)))
+              .forEach(
+                  territory -> {
+                    moves.add(new Move(members.getFirst(), territory));
+                    join(groupOf, members.getFirst(), territory);
+                  });
+        });
+    return groupOf.values().stream()
+        .distinct()
+        .map(
+            group ->
+                new Group(
+                    territories.stream().filter(group::contains).toList(),
+                    groupOf.keySet().stream()
+                        .filter(group::contains)
+                        .filter(areaOf::containsKey)
+                        .map(areaOf::get)
+                        .toList(),
+                    merged.keySet().stream()
+                        .filter(area -> group.contains(merged.get(area).getFirst()))
+                        .toList(),
+                    moves.stream().filter(m -> group.contains(m.into())).toList()))
+        .toList();
+  }
+
+  private static void join(
+      final Map<String, Set<String>> groupOf, final String one, final String other) {
+    final Set<String> first = groupOf.get(one);
+    final Set<String> second = groupOf.get(other);
+    if (first != second) {
+      first.addAll(second);
+      second.forEach(part -> groupOf.put(part, first));
+    }
+  }
+
+  /** Whether the areas overlap more than a line's width: land of one lies in the other. */
+  private static boolean overlaps(final Area one, final Area other) {
+    if (!one.getBounds().intersects(other.getBounds())) {
+      return false;
+    }
+    final Area common = new Area(one);
+    common.intersect(other);
+    return isThick(common, 1);
+  }
+
+  /**
+   * Whether the outlines really differ: somewhere the old and the new one lie at least 3 px apart,
+   * eg a bite out of a side; one that only follows the line a pixel or two off does not.
+   */
+  private static boolean reallyDiffers(final List<Polygon> before, final List<Polygon> after) {
+    if (samePoints(before, after)) {
+      return false;
+    }
+    final Rectangle a = boundsOf(before);
+    final Rectangle b = boundsOf(after);
+    if (Math.abs(a.x - b.x) > DIFFERS_PIXELS
+        || Math.abs(a.y - b.y) > DIFFERS_PIXELS
+        || Math.abs(a.x + a.width - b.x - b.width) > DIFFERS_PIXELS
+        || Math.abs(a.y + a.height - b.y - b.height) > DIFFERS_PIXELS) {
+      return true;
+    }
+    final Area differing = areaOf(before);
+    differing.exclusiveOr(areaOf(after));
+    // a band 3 px across has a pixel with no pixel outside it in the 3 x 3 around it
+    return isThick(differing, 1);
+  }
+
+  private static Area areaOf(final List<Polygon> outlines) {
+    final Area area = new Area();
+    outlines.forEach(outline -> area.add(new Area(outline)));
+    return area;
+  }
+
+  /** Whether the area holds a pixel with none outside it within so many pixels across or down. */
+  private static boolean isThick(final Area area, final int within) {
+    final Rectangle box = area.getBounds();
+    if (box.isEmpty()) {
+      return false;
+    }
+    box.grow(within + 1, within + 1);
+    final BufferedImage mask =
+        new BufferedImage(box.width, box.height, BufferedImage.TYPE_BYTE_GRAY);
+    final Graphics2D g = mask.createGraphics();
+    g.translate(-box.x, -box.y);
+    g.setColor(Color.WHITE);
+    g.fill(area);
+    g.dispose();
+    final byte[] gray = ((DataBufferByte) mask.getRaster().getDataBuffer()).getData();
+    final boolean[] outside = new boolean[gray.length];
+    for (int p = 0; p < gray.length; p++) {
+      outside[p] = gray[p] == 0;
+    }
+    final boolean[] nearOutside = MapPicture.dilated(outside, box.width, within);
+    for (int p = 0; p < gray.length; p++) {
+      if (!nearOutside[p]) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static boolean samePoints(final List<Polygon> before, final List<Polygon> after) {
+    if (before.size() != after.size()) {
+      return false;
+    }
+    for (int i = 0; i < before.size(); i++) {
+      final Polygon a = before.get(i);
+      final Polygon b = after.get(i);
+      if (a.npoints != b.npoints
+          || !Arrays.equals(a.xpoints, 0, a.npoints, b.xpoints, 0, b.npoints)
+          || !Arrays.equals(a.ypoints, 0, a.npoints, b.ypoints, 0, b.npoints)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Changes of a redraw that are taken or kept as they were together, {@link #groups}.
+   *
+   * @param territories the territories it changes
+   * @param added the new areas in it
+   * @param merged the merged areas in it
+   * @param moves where a territory in it takes land of another's old outline, not of a merge
+   */
+  record Group(
+      List<String> territories,
+      List<DetectedTerritory> added,
+      List<DetectedTerritory> merged,
+      List<Move> moves) {}
+
+  /** A territory taking land that was another's: into's new outline over from's old one. */
+  record Move(String into, String from) {}
+
+  /**
+   * The files with the territory's outlines, center and places as the other files have them, eg a
+   * redrawn border not taken.
+   */
+  MapFiles withBorderOf(final MapFiles other, final String territory) {
+    final Map<String, List<Polygon>> outlined = new LinkedHashMap<>(polygons);
+    outlined.put(territory, other.polygons.getOrDefault(territory, List.of()));
+    final Map<String, Point> middles = new LinkedHashMap<>(centers);
+    Optional.ofNullable(other.centers.get(territory))
+        .ifPresentOrElse(c -> middles.put(territory, c), () -> middles.remove(territory));
+    return new MapFiles(
+        folder,
+        outlined,
+        middles,
+        properties,
+        picture,
+        unitPictures,
+        nationUnitPictures,
+        relief,
+        places.withPlacesOf(other.places, territory),
+        tiles);
   }
 
   /**
    * Files with borders redrawn, {@link #withBordersFrom}.
    *
-   * @param changed the territories whose border changed noticeably, to look at
+   * @param changed the territories of a change whose outline is new, to look at
    * @param kept the territories with an outline that kept its border
    * @param detected the areas of the picture
    * @param takenBy the territory that took each area
    * @param merged the areas a rubbed-out border made of territories, with them: the one that took
    *     it first, if one did
    * @param held the areas holding most of an outline that kept its border: old land, not new
+   * @param groups the changes to take or keep as they were, each as a whole
    */
   record Redrawn(
       MapFiles files,
@@ -922,7 +1165,8 @@ record MapFiles(
       DetectedMap detected,
       Map<DetectedTerritory, String> takenBy,
       Map<DetectedTerritory, List<String>> merged,
-      Set<DetectedTerritory> held) {
+      Set<DetectedTerritory> held,
+      List<Group> groups) {
 
     /** The areas no territory took, eg drawn in as new ones, in the picture's order. */
     List<DetectedTerritory> added() {
@@ -1012,24 +1256,6 @@ record MapFiles(
       }
     }
     return inside;
-  }
-
-  /** Whether two territories' bounds are the same within a few pixels or mostly overlap. */
-  private static boolean isSameBorder(final List<Polygon> before, final List<Polygon> after) {
-    final Rectangle a = boundsOf(before);
-    final Rectangle b = boundsOf(after);
-    final boolean near =
-        Math.abs(a.x - b.x) <= SAME_BORDER_PIXELS
-            && Math.abs(a.y - b.y) <= SAME_BORDER_PIXELS
-            && Math.abs(a.x + a.width - b.x - b.width) <= SAME_BORDER_PIXELS
-            && Math.abs(a.y + a.height - b.y - b.height) <= SAME_BORDER_PIXELS;
-    return near || overlap(a, b) >= SAME_BORDER;
-  }
-
-  private static double overlap(final Rectangle a, final Rectangle b) {
-    final Rectangle common = a.intersection(b);
-    final double shared = common.isEmpty() ? 0 : (double) common.width * common.height;
-    return shared / ((double) a.width * a.height + (double) b.width * b.height - shared);
   }
 
   private static Rectangle boundsOf(final List<Polygon> outlines) {
@@ -2041,6 +2267,25 @@ record MapFiles(
           Map.copyOf(moved),
           decorations,
           unread);
+    }
+
+    /** With the territory's places as the other places have them, none where they have none. */
+    Places withPlacesOf(final Places other, final String territory) {
+      final Map<Marker, Map<String, List<Point>>> taken = new EnumMap<>(Marker.class);
+      taken.putAll(markers);
+      other.markers.keySet().forEach(marker -> taken.putIfAbsent(marker, Map.of()));
+      taken.replaceAll(
+          (marker, points) -> withValueOf(points, other.markers(marker), territory));
+      return new Places(
+          withValueOf(units, other.units, territory), Map.copyOf(taken), decorations, unread);
+    }
+
+    private static <T> Map<String, T> withValueOf(
+        final Map<String, T> values, final Map<String, T> other, final String territory) {
+      final Map<String, T> taken = new LinkedHashMap<>(values);
+      Optional.ofNullable(other.get(territory))
+          .ifPresentOrElse(v -> taken.put(territory, v), () -> taken.remove(territory));
+      return Collections.unmodifiableMap(taken);
     }
 
     /** Without the places of these territories, so they are found again. */

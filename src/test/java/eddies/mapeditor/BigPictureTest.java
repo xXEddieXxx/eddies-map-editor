@@ -107,6 +107,27 @@ final class BigPictureTest {
     assertThat(project.canUndo()).as("still no step").isFalse();
   }
 
+  @DisplayName("A line drawn in place is kept in every step holding the picture")
+  @Test
+  void inPlaceStrokeInEveryStep() throws Exception {
+    // given: a step that holds the same picture
+    givenPicturesOverTheLimit();
+    final MapProject project = givenMapWithPictureHeld();
+    project.setNationColor("Red", Color.BLUE);
+
+    // when
+    project.drawBorder(LINE);
+    final int now = project.drawnStrokes().size();
+    project.undo();
+
+    // then
+    assertThat(now).as("the line").isEqualTo(1);
+    assertThat(project.drawnStrokes())
+        .as("also in the step before, which holds the same picture")
+        .singleElement()
+        .matches(stroke -> stroke.kind() == MapProject.Kind.DRAWN, "drawn");
+  }
+
   @DisplayName("Work in the background on the picture as it was is refused after a line")
   @Test
   void lineChangesTheMapForBackgroundWork() throws Exception {

@@ -79,7 +79,6 @@ import org.triplea.map.data.elements.Game;
 import org.triplea.swing.FileChooser;
 import eddies.mapeditor.MakerIcon.Glyph;
 import eddies.mapeditor.MapChecks.Problem;
-import eddies.mapeditor.MapPicture.DetectedTerritory;
 import eddies.mapeditor.MapProject.NewMap;
 import eddies.mapeditor.MapProject.RedrawChoices;
 import eddies.mapeditor.Theme.Status;
@@ -930,10 +929,11 @@ public final class MapMakerWindow extends JFrame {
             tellMapChangedWhileRedrawing();
             return;
           }
+          final boolean asked = !redrawn.groups().isEmpty();
           final Optional<RedrawChoices> choices =
-              redrawn.added().isEmpty() && redrawn.merged().isEmpty()
-                  ? Optional.of(RedrawChoices.none())
-                  : RedrawDialog.ask(this, redrawing, from, redrawn);
+              asked
+                  ? RedrawDialog.ask(this, redrawing, from, redrawn)
+                  : Optional.of(RedrawChoices.none());
           if (choices.isEmpty()) {
             return;
           }
@@ -947,7 +947,6 @@ public final class MapMakerWindow extends JFrame {
           final boolean reliefStays =
               region.isPresent() && redrawing.getFiles().reliefStaysAsItIs();
           region.ifPresent(r -> remakeRelief(redrawing, r));
-          final List<String> territories = MapXml.territories(redrawing.game());
           // a removed territory takes the canals through it along
           final List<CanalXml.Canal> canalsAfter = CanalXml.canals(redrawing.game());
           final List<String> canalsGone =
@@ -955,49 +954,19 @@ public final class MapMakerWindow extends JFrame {
                   .filter(c -> !canalsAfter.contains(c))
                   .map(CanalXml.Canal::name)
                   .toList();
-          final List<String> changed =
-              redrawn.changed().stream().filter(territories::contains).toList();
-          final List<String> mergedInto = new ArrayList<>();
-          redrawn
-              .merged()
-              .forEach(
-                  (area, members) -> {
-                    final String keeper =
-                        choices.get().keepers().getOrDefault(area, members.getFirst());
-                    members.stream()
-                        .filter(m -> !m.equals(keeper) && !territories.contains(m))
-                        .forEach(m -> mergedInto.add(m + " into " + keeper));
-                  });
-          final List<String> added =
-              choices.get().added().values().stream().map(DetectedTerritory::name).toList();
-          final List<String> merged =
-              redrawn.merged().values().stream().flatMap(List::stream).toList();
-          // a merged territory is told below: it was removed, or kept its border as still named
-          final List<String> kept =
-              redrawn.kept().stream().filter(t -> !merged.contains(t)).toList();
-          Dialogs.warn(
-              this,
-              "Redraw borders",
-              (changed.isEmpty()
-                      ? "No border changed noticeably."
-                      : "Borders changed: " + names(changed) + ".")
-                  + (added.isEmpty() ? "" : "\n\nAdded: " + names(added) + ".")
-                  + (mergedInto.isEmpty() ? "" : "\n\nMerged: " + names(mergedInto) + ".")
-                  + (canalsGone.isEmpty()
-                      ? ""
-                      : "\n\nCanals removed with them: " + names(canalsGone) + ".")
-                  + (stillNamed.get().isEmpty()
-                      ? ""
-                      : "\n\nKept their old border, still named: "
-                          + names(stillNamed.get())
-                          + ".")
-                  + (kept.isEmpty()
-                      ? ""
-                      : "\n\nThese kept their border, as the picture has no area there of"
-                          + " their own: "
-                          + names(kept)
-                          + ".")
-                  + "\n\nLook at them on the map; Undo takes it all back.");
+          final List<String> territories = MapXml.territories(redrawing.game());
+          if (asked) {
+            final RedrawDialog.News news =
+                RedrawDialog.news(
+                    redrawn, choices.get(), territories, stillNamed.get(), canalsGone);
+            Dialogs.toast(this, news.toast(), "Undo", this::undo);
+            news.warning().ifPresent(text -> Dialogs.warn(this, "Redraw borders", text));
+          } else {
+            Dialogs.warn(
+                this,
+                "Redraw borders",
+                RedrawDialog.report(redrawn, territories, stillNamed.get(), canalsGone));
+          }
           if (reliefStays) {
             offerCreateRelief("Territories made");
           }
@@ -1303,7 +1272,7 @@ public final class MapMakerWindow extends JFrame {
   }
 
   /** The names for a message, at most a screen's worth. */
-  private static String names(final List<String> names) {
+  static String names(final List<String> names) {
     final int shown = Math.min(names.size(), 30);
     return String.join(", ", names.subList(0, shown))
         + (names.size() > shown ? " and " + (names.size() - shown) + " more" : "");

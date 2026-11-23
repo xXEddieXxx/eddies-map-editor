@@ -56,7 +56,8 @@ the map's toolbar, and the two above the territories list.
       is cut into tiles on the next save.
     - **Redraw borders from a picture…** takes a picture with changed borders, drawn in a paint
       program, and redraws the territories from it: they keep their names, owners and units, new
-      areas become territories, merged ones are joined.
+      areas become territories, merged ones are joined; each change starts ticked (but an
+      area outside the old map, eg a frame) and can be left out.
     - **Make territories again…** looks for territories in the whole picture again. Only a
       picture loaded here can be searched; a map opened from its folder has tiles instead.
     - **Resize map…** is described under [Map look](map-look.md).
