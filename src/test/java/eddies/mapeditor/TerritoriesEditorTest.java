@@ -215,6 +215,47 @@ final class TerritoriesEditorTest {
         b -> b.getToolTipText() != null && b.getToolTipText().startsWith(tip) && shows(b));
   }
 
+  @DisplayName("Land the random start hands out says so under its owner; owned land does not")
+  @Test
+  void saysNeutralLandIsHandedOut() throws Exception {
+    // given: the minimap without owners and with a random start; red south 2 emptied of units,
+    // red north 1 given to the Russians
+    final MapProject project =
+        new MapProject(
+            folder.resolve("random.xml"), MapGuideTest.givenRandomStart(), MapFiles.none());
+    project.edit(
+        game -> {
+          Game emptied = MapXml.withOwner(game, NORTH, "Russians");
+          for (final var placed : MapXml.units(game, EMPTIED)) {
+            emptied =
+                MapXml.withUnits(emptied, EMPTIED, placed.getOwner(), placed.getUnitType(), 0);
+          }
+          return emptied;
+        });
+    final TerritoriesEditor editor = new TerritoriesEditor(project, givenMap(project));
+
+    // when
+    editor.show(EMPTIED);
+    final boolean neutral = noteShown(editor);
+    editor.show(NORTH);
+    final boolean owned = noteShown(editor);
+
+    // then
+    assertThat(neutral).as("handed out at the start").isTrue();
+    assertThat(owned).as("owned land keeps its owner").isFalse();
+  }
+
+  private static final String EMPTIED = "red south 2";
+
+  private static boolean noteShown(final TerritoriesEditor editor) {
+    return all((Container) editor.page())
+        .anyMatch(
+            c ->
+                c instanceof JLabel label
+                    && label.getText() != null
+                    && label.getText().contains("may go to a nation when the game starts"));
+  }
+
   @DisplayName("Show its name on the map, unticked, lists the territory as not drawn, one step")
   @Test
   void hidesNameOnMap() throws Exception {

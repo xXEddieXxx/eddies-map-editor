@@ -68,6 +68,8 @@ class RulesEditors {
   // the variables' list at most this high, so the options above stay in sight
   private static final int VARIABLES_HEIGHT = 240;
 
+  static final String GAME_OPTIONS = "Game options";
+
   /**
    * The game's options, eg "Low Luck", each with the value the game starts with, of its kind; the
    * sides of the dice; and the variables, lists of names that attachments are made for each of.
@@ -77,7 +79,7 @@ class RulesEditors {
     return new Editor() {
       @Override
       public String title() {
-        return "Game options";
+        return GAME_OPTIONS;
       }
 
       @Override

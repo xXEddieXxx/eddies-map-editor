@@ -233,6 +233,7 @@ final class HomeEditor implements Editor {
     final List<Problem> all =
         Stream.of(
                 unitRoomNote().stream(),
+                MapChecks.randomStartNote(project.game()).stream(),
                 MapChecks.notes(project.game()).stream(),
                 pictureNotes.stream())
             .flatMap(s -> s)

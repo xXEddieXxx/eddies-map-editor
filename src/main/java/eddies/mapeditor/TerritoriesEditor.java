@@ -2251,6 +2251,14 @@ final class TerritoriesEditor implements Editor {
     owners.addActionListener(
         e -> project.edit(g -> MapXml.withOwner(g, territory, chosenOwner(owners))));
     inspector.field("Owner", owners);
+    // land TripleA's random start hands out: passable, neutral and without units
+    if (owner.isEmpty()
+        && !MapXml.isWater(game, territory)
+        && !MapXml.isImpassable(game, territory)
+        && MapXml.units(game, territory).isEmpty()
+        && !GameRulesXml.pickingLand(game).isEmpty()) {
+      inspector.note("Neutral: may go to a nation when the game starts.");
+    }
     final JSpinner value =
         Form.newNumber(
             MapXml.production(game, territory),

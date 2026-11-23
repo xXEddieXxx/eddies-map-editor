@@ -445,6 +445,16 @@ class MapChecks {
   }
 
   /**
+   * Worth a look on Home: a game that hands out its neutral land when it starts
+   * ({@link GameRulesXml#pickingLand}), so a game's owners and units differ from the file's there.
+   */
+  static Optional<Problem> randomStartNote(final Game game) {
+    return GameRulesXml.pickingLand(game).isEmpty()
+        ? Optional.empty()
+        : Optional.of(Problem.in(RulesEditors.GAME_OPTIONS, GameRulesXml.landAtStart(game)));
+  }
+
+  /**
    * Worth a look: the units are big for the map, when half of its land territories cannot hold
    * even one unit wholly inside at the units' size now ({@link MapFiles#unitRoom}); smaller units
    * or a bigger map, both in Map look, give them room. Finished maps with tight land, eg Pacific

@@ -340,7 +340,11 @@ class MapGuide {
     final Set<String> known = Set.copyOf(territories);
     final Set<String> owners = MapXml.nationsWithLand(game, known);
     final List<String> playing = nations.stream().filter(n -> MapXml.takesTurns(game, n)).toList();
-    final List<String> withoutLand = withoutLand(playing, owners);
+    // nations that get neutral land when the game starts need none in the file
+    final Set<String> picking = GameRulesXml.pickingLand(game);
+    final List<String> landless = withoutLand(playing, owners);
+    final long getting = landless.stream().filter(picking::contains).count();
+    final List<String> withoutLand = landless.stream().filter(n -> !picking.contains(n)).toList();
     final Set<String> withCapital = MapXml.nationsWithCapital(game, known);
     final List<String> landed = nations.stream().filter(owners::contains).toList();
     final List<String> withoutCapital = withoutCapital(project);
@@ -387,10 +391,11 @@ class MapGuide {
                 ? "No nations yet: add them first"
                 : playing.isEmpty()
                     ? "No nation takes turns yet"
-                    : (playing.size() - withoutLand.size())
+                    : (playing.size() - landless.size())
                         + " of "
                         + playing.size()
                         + (playing.size() == 1 ? " nation has land" : " nations have land")
+                        + (getting == 0 ? "" : " · " + getting + PICKING)
                         + without(withoutLand)),
         new Step(
             Id.CAPITALS,
@@ -486,6 +491,9 @@ class MapGuide {
   private static List<String> withoutLand(final List<String> playing, final Set<String> owners) {
     return playing.stream().filter(n -> !owners.contains(n)).toList();
   }
+
+  // after the count of nations with land: those without that get theirs when the game starts
+  static final String PICKING = " more at the start";
 
   /** What a click of the Capital brush does, for its banner too. */
   static final String CAPITAL_HOW_TO =

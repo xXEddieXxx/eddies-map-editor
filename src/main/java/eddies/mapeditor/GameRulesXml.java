@@ -13,8 +13,10 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -28,6 +30,7 @@ import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.GamePlay;
 import org.triplea.map.data.elements.GamePlay.Delegate;
 import org.triplea.map.data.elements.GamePlay.Sequence.Step;
+import org.triplea.map.data.elements.Initialize.UnitInitialize.HeldUnits;
 import org.triplea.map.data.elements.PropertyList;
 import org.triplea.map.data.elements.PropertyList.Property;
 import org.triplea.map.data.elements.VariableList;
@@ -139,6 +142,40 @@ class GameRulesXml {
                         ? option(game, next.next()).orElse(p)
                         : p)
             .toList());
+  }
+
+  static final String RANDOM_TERRITORIES = "Territories Are Assigned Randomly";
+
+  /**
+   * The nations that get neutral land when the game starts: with a step of TripleA's
+   * RandomStartDelegate (Pregame Nation Placements), each nation that holds units takes neutral,
+   * passable land without units and places what it holds there, at random with the option
+   * Territories Are Assigned Randomly, else picking in turns; owned land and capitals stay as the
+   * file has them. Empty without such a step.
+   */
+  static Set<String> pickingLand(final Game game) {
+    final boolean step =
+        RulesXml.steps(game).stream()
+            .flatMap(s -> kindOf(game, s).stream())
+            .anyMatch(kind -> kind.javaClass().endsWith("RandomStartDelegate"));
+    return step
+        ? MapXml.heldUnits(game).stream()
+            .filter(held -> held.getQuantity() > 0)
+            .map(HeldUnits::getPlayer)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toCollection(TreeSet::new))
+        : Set.of();
+  }
+
+  /** How the nations get their land at the start, eg "Neutral land is handed out at random". */
+  static String landAtStart(final Game game) {
+    return "Neutral land is handed out "
+        + (optionValue(game, RANDOM_TERRITORIES)
+                .map(value -> Boolean.parseBoolean(value.strip()))
+                .orElse(false)
+            ? "at random"
+            : "in turns")
+        + " when the game starts, with the units the nations hold";
   }
 
   /** The game option's value as TripleA reads it; empty when the game does not have it. */

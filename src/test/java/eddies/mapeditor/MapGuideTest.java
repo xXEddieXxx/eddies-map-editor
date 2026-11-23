@@ -3,6 +3,9 @@ package eddies.mapeditor;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -12,6 +15,7 @@ import lombok.experimental.ExtensionMethod;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.triplea.generic.xml.reader.XmlMapper;
 import org.triplea.map.data.elements.Game;
 import eddies.mapeditor.MapChecks.Problem;
 import eddies.mapeditor.MapGuide.Next;
@@ -86,6 +90,85 @@ final class MapGuideTest {
       }
     }
     return MapProject.open(content.resolve("games/island_wars.xml"));
+  }
+
+  @DisplayName("Nations holding units with a random start step need no land; capitals as ever")
+  @Test
+  void randomStartHandsOutNeutralLand(@TempDir final Path folder) throws Exception {
+    // given: the minimap without owners, with TripleA's random start step and 3 infantry the
+    // Russians hold, then also with the option that makes it random
+    final Game inTurns = givenRandomStart();
+    final Game atRandom = givenRandomStartAtRandom();
+
+    // when
+    final List<Step> steps =
+        MapGuide.steps(new MapProject(folder.resolve("random.xml"), inTurns, MapFiles.none()));
+
+    // then
+    assertThat(GameRulesXml.pickingLand(inTurns))
+        .as("the nations holding units, with the step alone")
+        .containsExactly("Russians");
+    assertThat(GameRulesXml.pickingLand(givenMinimapWithoutOwners())).as("no step: none").isEmpty();
+    assertThat(steps)
+        .as("the Russians get land at the start, the Italians still need some; capitals as ever")
+        .filteredOn(s -> s.id() == Step.Id.LAND || s.id() == Step.Id.CAPITALS)
+        .extracting(Step::progress)
+        .containsExactly(
+            "0 of 2 nations have land · 1" + MapGuide.PICKING + " · without: Italians",
+            "No nation has land yet");
+    assertThat(MapChecks.randomStartNote(inTurns))
+        .as("Home says how")
+        .hasValueSatisfying(note -> assertThat(note.text()).contains("handed out in turns"));
+    assertThat(MapChecks.randomStartNote(atRandom))
+        .as("at random with the option")
+        .hasValueSatisfying(note -> assertThat(note.text()).contains("handed out at random"));
+  }
+
+  static Game givenRandomStart() throws Exception {
+    return givenGame(givenRandomStartXml());
+  }
+
+  private static Game givenRandomStartAtRandom() throws Exception {
+    return givenGame(
+        givenRandomStartXml()
+            .replace(
+                "<propertyList>",
+                "<propertyList><property name=\"Territories Are Assigned Randomly\" value=\"true\""
+                    + " editable=\"false\"><boolean/></property>"));
+  }
+
+  private static String givenRandomStartXml() throws Exception {
+    return
+        givenMinimapXmlWithoutOwners()
+            .replace(
+                "<delegate name=\"initDelegate\"",
+                "<delegate name=\"randomStart\""
+                    + " javaClass=\"games.strategy.triplea.delegate.RandomStartDelegate\""
+                    + " display=\"Pregame Nation Placements\"/><delegate name=\"initDelegate\"")
+            .replace(
+                "<step name=\"gameInitDelegate\"",
+                "<step name=\"randomStartDelegate\" delegate=\"randomStart\" maxRunCount=\"1\"/>"
+                    + "<step name=\"gameInitDelegate\"")
+            .replace(
+                "</unitInitialize>",
+                "<heldUnits unitType=\"infantry\" player=\"Russians\" quantity=\"3\"/>"
+                    + "</unitInitialize>");
+  }
+
+  private static Game givenMinimapWithoutOwners() throws Exception {
+    return givenGame(givenMinimapXmlWithoutOwners());
+  }
+
+  private static String givenMinimapXmlWithoutOwners() throws Exception {
+    try (InputStream in = MapGuideTest.class.getClassLoader().getResourceAsStream("minimap.xml")) {
+      return new String(in.readAllBytes(), StandardCharsets.UTF_8)
+          .replaceAll("<territoryOwner [^>]*/>", "");
+    }
+  }
+
+  private static Game givenGame(final String xml) throws Exception {
+    return new XmlMapper(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)))
+        .mapXmlToObject(Game.class);
   }
 
   @DisplayName("The next steps are done as the map grows: territories and nations, not yet land")
