@@ -19,6 +19,9 @@ import javax.swing.JTabbedPane;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.triplea.map.data.elements.AttachmentList.Attachment;
+import org.triplea.map.data.elements.AttachmentList.Attachment.Option;
+import org.triplea.map.data.elements.Game;
 import eddies.mapeditor.MapTexts.Kind;
 
 /** Texts: a tab per file, the banner for another game's objectives, the preview of HTML. */
@@ -39,6 +42,77 @@ final class TextsEditorTest {
             + FOREIGN + "TABLEGROUP.01;Russians=objectiveAttachment_Russians_1_Hold_Moscow\n");
     Files.writeString(folder.resolve("notifications.properties"), "Welcome=<b>Hello</b>\n");
     return MapProject.open(xml);
+  }
+
+  @DisplayName("An objective's text says what the objective pays, with the way to Objectives")
+  @Test
+  void objectiveTextSaysWhatItPays() throws Exception {
+    // given: G40 with a text for an objective and one for a group
+    final Game game = GameRulesXmlTest.givenG40();
+    final String trade = MapTexts.objectiveKey(game, "Germans", TRADE);
+    final String group = MapTexts.objectivesPrefix(game) + "TABLEGROUP.01;Germans";
+    final MapProject project = givenG40WithTexts(trade + "=Trade\n" + group + "=" + TRADE + "\n");
+    final TextsEditor texts = new TextsEditor(project);
+
+    // when
+    choose(texts, 0, trade);
+    final boolean linkForObjective = showsObjectivesLink(texts);
+    choose(texts, 0, group);
+    final boolean linkForGroup = showsObjectivesLink(texts);
+
+    // then
+    assertThat(linkForObjective).as("an objective's text links to it").isTrue();
+    assertThat(linkForGroup).as("a group's text is no objective's").isFalse();
+    assertThat(TextsEditor.pays(givenObjective(game, TRADE)))
+        .as("its PUs, every time")
+        .isEqualTo("Pays +5 PUs · in");
+    assertThat(TextsEditor.pays(givenObjective(game, NOVGOROD)))
+        .as("a check that counts each territory")
+        .isEqualTo("Pays +5 PUs each · in");
+    assertThat(TextsEditor.pays(givenPenalty()))
+        .as("a penalty, at most once")
+        .isEqualTo("Pays −2 PUs · at most 1 time · in");
+  }
+
+  private static final String TRADE = "objectiveAttachment_Germans_1_Trade_with_Russia";
+  private static final String NOVGOROD =
+      "objectiveAttachment_Germans_2_Control_Novgorod_Or_Volgograd_Or_Russia";
+
+  private MapProject givenG40WithTexts(final String objectives) throws Exception {
+    final Path xml = folder.resolve("ww2global40.xml");
+    try (InputStream original =
+        TextsEditorTest.class.getClassLoader().getResourceAsStream("ww2global40.xml")) {
+      Files.copy(original, xml);
+    }
+    Files.writeString(folder.resolve("objectives.properties"), objectives);
+    return MapProject.open(xml);
+  }
+
+  private static boolean showsObjectivesLink(final TextsEditor texts) {
+    return all(texts.page(), AbstractButton.class).stream()
+        .anyMatch(b -> "Objectives ›".equals(b.getText()));
+  }
+
+  private static ObjectiveXml.Objective givenObjective(final Game game, final String name) {
+    return ObjectiveXml.objectives(game).stream()
+        .filter(o -> o.name().equals(name))
+        .findFirst()
+        .orElseThrow();
+  }
+
+  private static ObjectiveXml.Objective givenPenalty() {
+    return new ObjectiveXml.Objective(
+        0,
+        Attachment.builder()
+            .name("objectiveAttachment_Germans_9_Penalty")
+            .attachTo("Germans")
+            .javaClass("games.strategy.triplea.attachments.RulesAttachment")
+            .type("player")
+            .options(
+                List.of(
+                    Option.builder().name("objectiveValue").value("-2").build(),
+                    Option.builder().name("uses").value("1").build()))
+            .build());
   }
 
   @DisplayName("A tab per file but sounds, in their order, each titled with its count")

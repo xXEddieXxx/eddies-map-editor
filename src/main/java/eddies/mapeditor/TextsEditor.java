@@ -383,6 +383,13 @@ final class TextsEditor implements Editor {
                 page.getFontMetrics(Theme.newSecondaryLabel("").getFont()),
                 NOTE_WIDTH))
         .note(SearchList.escape(MapTexts.explain(kind, key, game)));
+    if (kind == Kind.OBJECTIVES) {
+      // what the objective pays, as its text is read beside it in the game's objectives tab
+      ObjectiveXml.objectives(game).stream()
+          .filter(o -> MapTexts.objectiveKey(game, o.nation(), o.name()).equals(key))
+          .findFirst()
+          .ifPresent(o -> inspector.row(Help.link(pays(o), ObjectivesEditor.TITLE, o.name())));
+    }
     if (!value.get().equals(text.getText())) {
       text.setText(value.get());
       text.setCaretPosition(0);
@@ -414,6 +421,16 @@ final class TextsEditor implements Editor {
     inspector.remove("Remove text…", this::removeChosen).end();
     inspector.revalidate();
     inspector.repaint();
+  }
+
+  /** What an objective pays, eg "Pays +5 PUs · at most 1 time · in", before "Objectives ›". */
+  static String pays(final ObjectiveXml.Objective objective) {
+    return "Pays "
+        + ObjectiveXml.reward(objective.attachment())
+        + ObjectiveXml.uses(objective.attachment())
+            .map(uses -> " · at most " + uses + (uses == 1 ? " time" : " times"))
+            .orElse("")
+        + " · in";
   }
 
   /** A label drawn as the look and feel draws a tool tip: its font, colors and border. */
