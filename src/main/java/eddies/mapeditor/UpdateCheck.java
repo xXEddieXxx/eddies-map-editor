@@ -6,6 +6,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
@@ -43,12 +45,22 @@ class UpdateCheck {
   private static final Preferences PREFERENCES = Preferences.userNodeForPackage(UpdateCheck.class);
 
   /**
-   * A release: its version without the v, its page with the downloads, and its Windows installer
-   * where it has one.
+   * A release: its version without the v, its page with the downloads, its Windows installer
+   * where it has one, and what is new in it: the titles of its notes' entries, its section of
+   * CHANGELOG.md, eg "Random starts".
    */
-  record Release(String version, String page, Optional<Updater.Installer> installer) {
+  record Release(
+      String version, String page, Optional<Updater.Installer> installer, List<String> news) {
+    Release {
+      news = List.copyOf(news);
+    }
+
     Release(final String version, final String page) {
       this(version, page, Optional.empty());
+    }
+
+    Release(final String version, final String page, final Optional<Updater.Installer> installer) {
+      this(version, page, installer, List.of());
     }
   }
 
@@ -102,6 +114,7 @@ class UpdateCheck {
     }
     final String msi = preferences.get(KNOWN + "Msi", "");
     final String sha = preferences.get(KNOWN + "MsiSha", "");
+    final String news = preferences.get(KNOWN + "News", "");
     return Optional.of(
         new Release(
             version,
@@ -111,7 +124,8 @@ class UpdateCheck {
                         msi,
                         preferences.getLong(KNOWN + "MsiSize", 0),
                         Optional.of(sha).filter(told -> !told.isEmpty())))
-                .filter(Updater.Installer::isOwn)));
+                .filter(Updater.Installer::isOwn),
+            news.isEmpty() ? List.of() : List.of(news.split("\n"))));
   }
 
   /** Keeps the release for {@link #known}, in these preferences. */
@@ -123,6 +137,7 @@ class UpdateCheck {
         KNOWN + "MsiSize", release.installer().map(Updater.Installer::size).orElse(0L));
     preferences.put(
         KNOWN + "MsiSha", release.installer().flatMap(Updater.Installer::sha256).orElse(""));
+    preferences.put(KNOWN + "News", String.join("\n", release.news()));
   }
 
   /**
@@ -192,7 +207,75 @@ class UpdateCheck {
     if (!tag.find() || !page.find()) {
       return Optional.empty();
     }
-    return Optional.of(new Release(tag.group(1), page.group(1), installer(json)));
+    return Optional.of(new Release(tag.group(1), page.group(1), installer(json), news(json)));
+  }
+
+  // an entry of the notes, "- **Its title** (#53). What it does"
+  private static final Pattern ENTRY = Pattern.compile("(?m)^- \\*\\*(.+?)\\*\\*");
+  // as many as a preference keeps well and a dialog shows
+  private static final int MOST_NEWS = 12;
+
+  /**
+   * The titles of the entries of the release's notes, before the "---" the downloads follow, eg
+   * "Random starts"; none for notes without such entries, eg a release before 0.2.7.
+   */
+  static List<String> news(final String json) {
+    final String notes = body(json).map(UpdateCheck::unescaped).orElse("").split("\n---", 2)[0];
+    final List<String> titles = new ArrayList<>();
+    final Matcher entry = ENTRY.matcher(notes);
+    while (entry.find() && titles.size() < MOST_NEWS) {
+      titles.add(entry.group(1).replace("`", "").strip());
+    }
+    return List.copyOf(titles);
+  }
+
+  // the "body" string of the answer as written, up to its closing quote: scanned, not matched by
+  // a pattern, as notes are thousands of characters long
+  private static Optional<String> body(final String json) {
+    final Matcher key = BODY_KEY.matcher(json);
+    if (!key.find()) {
+      return Optional.empty();
+    }
+    for (int i = key.end(); i < json.length(); i++) {
+      final char c = json.charAt(i);
+      if (c == '\\') {
+        i++;
+      } else if (c == '"') {
+        return Optional.of(json.substring(key.end(), i));
+      }
+    }
+    return Optional.empty();
+  }
+
+  private static final Pattern BODY_KEY = Pattern.compile("\"body\"\\s*:\\s*\"");
+
+  // a JSON string's text: its escapes as the characters they stand for
+  private static String unescaped(final String text) {
+    final StringBuilder plain = new StringBuilder(text.length());
+    for (int i = 0; i < text.length(); i++) {
+      final char c = text.charAt(i);
+      if (c != '\\' || i + 1 == text.length()) {
+        plain.append(c);
+        continue;
+      }
+      final char next = text.charAt(++i);
+      switch (next) {
+        case 'n' -> plain.append('\n');
+        case 'r' -> plain.append('\r');
+        case 't' -> plain.append('\t');
+        case 'u' -> {
+          final String hex = i + 4 < text.length() ? text.substring(i + 1, i + 5) : "";
+          if (hex.matches("[0-9a-fA-F]{4}")) {
+            plain.append((char) Integer.parseInt(hex, 16));
+            i += 4;
+          } else {
+            plain.append('u');
+          }
+        }
+        default -> plain.append(next);
+      }
+    }
+    return plain.toString();
   }
 
   // the release's Windows installer, when it has one that is a file of the editor's releases: the

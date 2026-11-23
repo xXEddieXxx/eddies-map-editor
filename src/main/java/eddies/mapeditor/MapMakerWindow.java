@@ -291,7 +291,8 @@ public final class MapMakerWindow extends JFrame {
    */
   private void offerUpdate(final UpdateCheck.Release release) {
     final String title = "Eddie's Map Editor " + release.version() + " is out";
-    final String own = "This is version " + EddiesMapEditor.version() + ".";
+    final String own =
+        "This is version " + EddiesMapEditor.version() + "." + newsLines(release.news());
     final Optional<Path> installed = release.installer().flatMap(installer -> Updater.installedAt());
     if (installed.isPresent()) {
       if (Dialogs.confirm(
@@ -311,6 +312,18 @@ public final class MapMakerWindow extends JFrame {
         "Open the page")) {
       openPage(release);
     }
+  }
+
+  /** What is new in a release for its offer, a line per entry, at most six; empty for none. */
+  static String newsLines(final List<String> news) {
+    if (news.isEmpty()) {
+      return "";
+    }
+    final int shown = Math.min(6, news.size());
+    return "\nNew in it:\n• "
+        + String.join("\n• ", news.subList(0, shown))
+        + (news.size() > shown ? "\n… and more on the release's page" : "")
+        + "\n";
   }
 
   private void openPage(final UpdateCheck.Release release) {

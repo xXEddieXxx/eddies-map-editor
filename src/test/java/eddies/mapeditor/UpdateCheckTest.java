@@ -2,6 +2,10 @@ package eddies.mapeditor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.prefs.Preferences;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -27,6 +31,80 @@ final class UpdateCheckTest {
             new UpdateCheck.Release(
                 "0.2.2", "https://github.com/xXEddieXxx/eddies-map-editor/releases/tag/v0.2.2"));
     assertThat(UpdateCheck.parse("{\"message\": \"Not Found\"}")).as("no release").isEmpty();
+  }
+
+  @DisplayName("What is new: the titles of the notes' entries, from CHANGELOG.md, kept and offered")
+  @Test
+  void readsWhatIsNew() {
+    // given: notes as the release workflow writes them, the downloads after the "---"
+    final String answer =
+        """
+        {
+          "html_url": "https://github.com/xXEddieXxx/eddies-map-editor/releases/tag/v0.2.7",
+          "tag_name": "v0.2.7",
+          "body": "## What's new in 0.2.7\\r\\n\\r\\n### Fixed\\r\\n\\r\\n- **Loops\
+         (`foreach`) were read only in Units** (#43). Territories\\r\\n  show defaults.\\r\\n\
+        - **Random starts** (#53). On a map\\u2026\\r\\n\\r\\n---\\r\\n\\r\\n\
+        - **Windows:** the setup"
+        }
+        """;
+    final Preferences preferences =
+        Preferences.userRoot().node("UpdateCheckTest/" + System.nanoTime());
+
+    // when
+    final UpdateCheck.Release release = UpdateCheck.parse(answer).orElseThrow();
+    UpdateCheck.keep(release, preferences);
+
+    // then
+    assertThat(release.news())
+        .as("the entries' titles, without the downloads after ---")
+        .containsExactly("Loops (foreach) were read only in Units", "Random starts");
+    assertThat(UpdateCheck.known("0.2.6", preferences).map(UpdateCheck.Release::news))
+        .as("kept for the next start")
+        .contains(release.news());
+    assertThat(MapMakerWindow.newsLines(release.news()))
+        .as("in the offer, a line each")
+        .isEqualTo(
+            "\nNew in it:\n• Loops (foreach) were read only in Units\n• Random starts\n");
+    assertThat(MapMakerWindow.newsLines(List.of())).as("an older release: nothing").isEmpty();
+  }
+
+  @DisplayName("Notes as long as a real release's are read on the check's own thread")
+  @Test
+  void readsLongNotes() throws Exception {
+    // given: the 0.2.7 section of CHANGELOG.md, a title with \ and ", and the downloads, as JSON
+    final String changelog = Files.readString(Path.of("CHANGELOG.md"));
+    final String section =
+        changelog.substring(changelog.indexOf("## 0.2.7"), changelog.indexOf("## 0.2.6"));
+    final String notes =
+        "## What's new in 0.2.7\n\n- **A \"quoted\" C:\\maps title** (#1).\n"
+            + section
+            + "\n---\n\n"
+            + "x".repeat(4000);
+    final String json =
+        "{\"html_url\": \"https://github.com/xXEddieXxx/eddies-map-editor/releases/tag/v0.2.7\","
+            + " \"tag_name\": \"v0.2.7\", \"body\": \""
+            + notes.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\r\\n")
+            + "\"}";
+    final List<List<String>> read = new ArrayList<>();
+
+    // when: on a thread of its own, as the check asks
+    final Thread check =
+        new Thread(() -> read.add(UpdateCheck.parse(json).orElseThrow().news()));
+    check.start();
+    check.join();
+
+    // then
+    assertThat(json.length()).as("given: as long as a real release's answer").isGreaterThan(8000);
+    assertThat(read)
+        .as("read, the first titles, the downloads left out")
+        .singleElement()
+        .satisfies(
+            news ->
+                assertThat(news)
+                    .startsWith(
+                        "A \"quoted\" C:\\maps title", "Loops (foreach) were read only in Units")
+                    .hasSize(12));
   }
 
   @DisplayName("A release with the Windows installer gives its link, size and SHA-256; one of"

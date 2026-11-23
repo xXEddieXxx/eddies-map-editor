@@ -76,7 +76,8 @@ GitHub issue.
   off, eg to see the picture under them. Territories' Places now says **Unit places** for
   place.txt, and *Reload all places from the files* what it reads.
 - **Release notes from the changelog** (#29): each release's page starts with its section here,
-  which is now split by release, each with its date.
+  which is now split by release, each with its date, and the editor's offer of a new version
+  lists what is new in it.
 - **Random starts** (#53). On a map whose game hands out neutral land when it starts, as 11 Rings
   of Power does, the guide asks no land of the nations that get theirs then, Home says how it is
   handed out, and a failed Check says another start may go otherwise. A unit a loop makes says
