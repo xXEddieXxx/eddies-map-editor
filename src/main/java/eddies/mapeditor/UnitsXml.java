@@ -29,6 +29,7 @@ class UnitsXml {
   private static final String UNIT = Constants.UNIT_ATTACHMENT_NAME;
   static final String SUPPORT_KIND = "UnitSupportAttachment";
   private static final String UNIT_KIND = "UnitAttachment";
+  static final String USED_UP = "consumesUnits";
 
   // ---- the unit's options
 
@@ -50,23 +51,105 @@ class UnitsXml {
   }
 
   /**
+   * Whether the unit type cannot move during combat move, as TripleA keeps it: isAA and
+   * isAAmovement set canNotMoveDuringCombatMove too, so of the three the last written counts.
+   */
+  static boolean cannotMoveInCombatMove(final Game game, final String unit) {
+    return options(game, unit).stream()
+        .filter(
+            o ->
+                Stream.of("isAA", "isAAmovement", "canNotMoveDuringCombatMove")
+                    .anyMatch(name -> AttachmentsXml.isOption(o, name)))
+        .map(o -> Boolean.parseBoolean(o.getValue()))
+        .reduce((first, last) -> last)
+        .orElse(false);
+  }
+
+  /**
    * The units one of the type uses up when it is placed (consumesUnits), eg "2 Material": to the
    * player a cost beside the rule's, though the game file has it as an option of the unit.
    */
   static List<String> usedUp(final Game game, final String unit) {
     return options(game, unit).stream()
-        .filter(o -> AttachmentsXml.isOption(o, "consumesUnits") && o.getValue() != null)
-        // "count:unit", the count also given apart
-        .map(
-            o ->
-                Optional.ofNullable(o.getCount())
-                    .filter(count -> !count.isEmpty())
-                    .map(count -> count + ":" + o.getValue())
-                    .orElse(o.getValue()))
-        .map(written -> written.split(":"))
-        .filter(parts -> parts.length == 2)
-        .map(parts -> parts[0].strip() + " " + parts[1].strip())
+        .flatMap(o -> UsedUp.read(o).stream())
+        .map(used -> used.count() + " " + used.unit())
         .toList();
+  }
+
+  /**
+   * So many units of a type that one of another uses up when placed: one consumesUnits option, of
+   * which a unit type may have several.
+   */
+  record UsedUp(int count, String unit) {
+    /** As TripleA reads the option; empty for another option or one that does not read so. */
+    static Optional<UsedUp> read(final Option option) {
+      if (!AttachmentsXml.isOption(option, USED_UP) || option.getValue() == null) {
+        return Optional.empty();
+      }
+      // "count:unit", the count also given apart
+      final String[] parts =
+          Optional.ofNullable(option.getCount())
+              .filter(count -> !count.isEmpty())
+              .map(count -> count + ":" + option.getValue())
+              .orElse(option.getValue())
+              .split(":");
+      try {
+        return parts.length == 2 && !parts[1].isBlank()
+            ? Optional.of(new UsedUp(Integer.parseInt(parts[0].strip()), parts[1].strip()))
+            : Optional.empty();
+      } catch (final NumberFormatException e) {
+        return Optional.empty();
+      }
+    }
+  }
+
+  /**
+   * The game with the unit type's consumesUnits option, the given one of them (0 for the first),
+   * saying this, in the form the map wrote it: the count apart or as "count:unit". Unchanged for
+   * one that says it already, and for one that does not read, which is changed among the unit's
+   * other options.
+   */
+  static Game withUsedUp(
+      final Game game, final String unit, final int occurrence, final UsedUp used) {
+    return optionAt(game, unit, USED_UP, occurrence)
+        // the same again, eg the unit type chosen once more, is no step
+        .filter(had -> UsedUp.read(had).filter(now -> !now.equals(used)).isPresent())
+        .map(
+            had -> {
+              final boolean counted =
+                  Optional.ofNullable(had.getCount()).filter(c -> !c.isEmpty()).isPresent();
+              return withOptionAt(
+                  game,
+                  unit,
+                  USED_UP,
+                  occurrence,
+                  Option.builder()
+                      .name(had.getName())
+                      .count(counted ? String.valueOf(used.count()) : null)
+                      .value(counted ? used.unit() : used.count() + ":" + used.unit())
+                      .build());
+            })
+        .orElse(game);
+  }
+
+  /**
+   * The game with the unit type using up one of one more unit type, the first it does not use up
+   * yet, to choose another from: a new option after its others. Unchanged when there is none.
+   */
+  static Game withNewUsedUp(final Game game, final String unit) {
+    final List<String> used =
+        options(game, unit).stream()
+            .flatMap(o -> UsedUp.read(o).stream())
+            .map(UsedUp::unit)
+            .toList();
+    return MapXml.unitTypes(game).stream()
+        .filter(type -> !type.equals(unit) && !used.contains(type))
+        .findFirst()
+        .map(
+            type ->
+                withNewOption(
+                    game, unit, Option.builder().name(USED_UP).value("1:" + type).build()))
+        .orElse(game);
   }
 
   /**
@@ -76,6 +159,15 @@ class UnitsXml {
    */
   static Optional<Attachment> loop(final Game game, final String unit) {
     return read(game, unit).flatMap(Read::loop);
+  }
+
+  /**
+   * The game with the unit type's unitAttachment written for it alone, with all its {@link #loop}
+   * gives it and behind it ({@link AttachmentsXml#withOwn}): then changed here like any other, and
+   * no longer following the loop. The same game for a unit type no loop makes.
+   */
+  static Game withOwn(final Game game, final String unit) {
+    return loop(game, unit).isPresent() ? AttachmentsXml.withOwn(game, UNIT, unit) : game;
   }
 
   /** A unit type's unitAttachment as the game reads it, and the loop that makes it, if one does. */

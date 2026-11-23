@@ -59,7 +59,7 @@ final class GameRulesXmlTest {
     final int notesAt =
         MapXml.properties(minimap).stream().map(Property::getName).toList().indexOf("notes");
 
-    final Game moved = GameRulesXml.withOptionMoved(minimap, "Low Luck", -1);
+    final Game moved = GameRulesXml.withOptionMoved(minimap, "Low Luck", -1, option -> "");
     final Game sorted = GameRulesXml.withOptionsSorted(minimap);
     final List<String> sortedNames =
         GameRulesXml.options(sorted).stream().map(Property::getName).toList();
@@ -74,10 +74,40 @@ final class GameRulesXmlTest {
     assertThat(MapXml.properties(sorted).stream().map(Property::getName).toList().indexOf("notes"))
         .as("the notes, no option, stay where they were")
         .isEqualTo(notesAt);
-    assertThat(GameRulesXml.withOptionMoved(minimap, was.getFirst(), -1))
+    assertThat(GameRulesXml.withOptionMoved(minimap, was.getFirst(), -1, option -> ""))
         .as("the first cannot go up: no change")
         .isSameAs(minimap);
     assertThat(GameRulesXml.withOptionsSorted(sorted)).as("sorted again is no change").isSameAs(sorted);
+  }
+
+  @DisplayName("An option moves past the next one of its section; the options between stay")
+  @Test
+  void movesOptionsWithinTheirSection() {
+    // given: two options of the Luck section with options of other sections between them
+    final Game g40 = givenG40();
+    final List<String> was = GameRulesXml.options(g40).stream().map(Property::getName).toList();
+    final String first = "Low Luck for Bombing and Territory Damage";
+    final String second = "Heavy Bomber Dice Rolls";
+    final List<String> swapped = new ArrayList<>(was);
+    swapped.set(was.indexOf(first), second);
+    swapped.set(was.indexOf(second), first);
+
+    // when
+    final Game moved = GameRulesXml.withOptionMoved(g40, first, 1, RulesEditors::group);
+
+    // then
+    assertThat(was.indexOf(second) - was.indexOf(first))
+        .as("the game has options of other sections between the two")
+        .isGreaterThan(1);
+    assertThat(GameRulesXml.options(moved).stream().map(Property::getName))
+        .as("the two swap places, every other option stays where it was")
+        .containsExactlyElementsOf(swapped);
+    assertThat(GameRulesXml.withOptionMoved(g40, "Low Luck", -1, RulesEditors::group))
+        .as("the section's first cannot go up, whatever is above it in the file")
+        .isSameAs(g40);
+    assertThat(GameRulesXml.withOptionMoved(g40, second, 1, RulesEditors::group))
+        .as("the section's last cannot go down")
+        .isSameAs(g40);
   }
 
   @DisplayName("Options are added of a kind, changed, made fixed and removed, and still load")

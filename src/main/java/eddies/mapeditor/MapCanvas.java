@@ -1808,7 +1808,7 @@ final class MapCanvas extends JComponent {
               project.isImpassable(t),
               MapXml.owner(game, t).orElse(null),
               values(game, t),
-              MapXml.units(game, t),
+              MapXml.unitsAsDrawn(game, t, project.getFiles().listed(MapFiles.UNDRAWN_UNITS)),
               project.isChanged(t),
               center(t));
         });

@@ -47,7 +47,7 @@ class TerritoryEffectsXml {
 
   /** The territories that have each effect, in one pass over the attachments of a big map. */
   static Map<String, List<String>> territoriesWith(final Game game) {
-    return AttachmentsXml.attachments(game).stream()
+    return AttachmentsXml.kept(game).stream()
         .filter(a -> AttachmentsXml.isNamed(a, Constants.TERRITORY_ATTACHMENT_NAME))
         .flatMap(
             a ->

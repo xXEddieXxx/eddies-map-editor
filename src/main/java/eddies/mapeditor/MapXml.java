@@ -7,7 +7,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -326,12 +326,16 @@ class MapXml {
             .build();
   }
 
-  /** The nation owning the territory at the start, empty for none (neutral). */
+  /**
+   * The nation owning the territory at the start, empty for none (neutral); of two lines for a
+   * territory the last, as TripleA sets the owner line by line.
+   */
   static Optional<String> owner(final Game game, final String territory) {
     return owners(game).stream()
         .filter(owner -> territory.equals(owner.getTerritory()))
         .map(TerritoryOwner::getOwner)
-        .findFirst();
+        .filter(Objects::nonNull)
+        .reduce((first, last) -> last);
   }
 
   /**
@@ -339,22 +343,23 @@ class MapXml {
    * owners read once, as a big map has hundreds of territories.
    */
   static Set<String> nationsWithLand(final Game game, final Set<String> territories) {
-    final Set<String> seen = new LinkedHashSet<>();
     final Set<String> nations = new LinkedHashSet<>();
-    for (final TerritoryOwner owner : owners(game)) {
-      if (territories.contains(owner.getTerritory()) && seen.add(owner.getTerritory())) {
-        Optional.ofNullable(owner.getOwner()).ifPresent(nations::add);
-      }
-    }
+    ownersByTerritory(game)
+        .forEach(
+            (territory, owner) -> {
+              if (territories.contains(territory)) {
+                nations.add(owner);
+              }
+            });
     return nations;
   }
 
   /** Each owned territory's owner at the start, as {@link #owner} finds it, read once. */
   static java.util.Map<String, String> ownersByTerritory(final Game game) {
-    final java.util.Map<String, String> owners = new HashMap<>();
+    final java.util.Map<String, String> owners = new LinkedHashMap<>();
     for (final TerritoryOwner owner : owners(game)) {
       if (owner.getTerritory() != null && owner.getOwner() != null) {
-        owners.putIfAbsent(owner.getTerritory(), owner.getOwner());
+        owners.put(owner.getTerritory(), owner.getOwner());
       }
     }
     return owners;
@@ -453,7 +458,7 @@ class MapXml {
   static Set<String> nationsWithCapital(final Game game, final Set<String> territories) {
     final Set<String> seen = new LinkedHashSet<>();
     final Set<String> nations = new LinkedHashSet<>();
-    for (final Attachment attachment : attachments(game)) {
+    for (final Attachment attachment : AttachmentsXml.kept(game)) {
       if (AttachmentsXml.isNamed(attachment, TERRITORY)
           && territories.contains(attachment.getAttachTo())) {
         for (final Option option :
@@ -472,7 +477,7 @@ class MapXml {
   /** The nation's capitals, as {@link #capitalOf} finds them; the attachments read once. */
   static List<String> capitalsOf(final Game game, final String nation) {
     final Set<String> capitals = new LinkedHashSet<>();
-    for (final Attachment attachment : attachments(game)) {
+    for (final Attachment attachment : AttachmentsXml.kept(game)) {
       if (AttachmentsXml.isNamed(attachment, TERRITORY)
           && Optional.ofNullable(attachment.getOptions()).orElse(List.of()).stream()
               .anyMatch(o -> AttachmentsXml.isOption(o, "capital") && nation.equals(o.getValue()))) {
@@ -694,15 +699,14 @@ class MapXml {
 
   /** The territory's effects, eg Forest, in the order the game draws them. */
   static List<String> territoryEffects(final Game game, final String territory) {
-    return attachments(game).stream()
-        .filter(a -> AttachmentsXml.isNamed(a, TERRITORY) && territory.equals(a.getAttachTo()))
+    return AttachmentsXml.kept(game, TERRITORY, territory).stream()
         .flatMap(MapXml::effectsOf)
         .toList();
   }
 
   /** Each territory's effects, as {@link #territoryEffects(Game, String)}, in one pass. */
   static java.util.Map<String, List<String>> territoryEffects(final Game game) {
-    return attachments(game).stream()
+    return AttachmentsXml.kept(game).stream()
         .filter(a -> AttachmentsXml.isNamed(a, TERRITORY) && a.getAttachTo() != null)
         .collect(
             Collectors.groupingBy(
@@ -785,6 +789,66 @@ class MapXml {
 
   static List<UnitPlacement> units(final Game game, final String territory) {
     return placements(game).stream().filter(p -> territory.equals(p.getTerritory())).toList();
+  }
+
+  /**
+   * The territory's stacks at the start in the order TripleA puts them on its unit places, the
+   * first on the first place (UnitSeparator.getComparatorUnitCategories, false before true): the
+   * territory owner's first, then owners not at war with it, then by the players' order; of one
+   * owner the unit types that cannot move, that cannot move in combat move (also isAA), sea units,
+   * air units at sea, land units; then by maxBuiltPerPlayer, attack and the unit types' order.
+   * Without the unit types the map does not draw; lines of one type and owner are one stack.
+   */
+  static List<UnitPlacement> unitsAsDrawn(
+      final Game game, final String territory, final Collection<String> undrawn) {
+    final java.util.Map<List<Object>, UnitPlacement> stacks = new LinkedHashMap<>();
+    units(game, territory).stream()
+        // a line of 0 units makes none in the game
+        .filter(unit -> unit.getQuantity() > 0 && !undrawn.contains(unit.getUnitType()))
+        .forEach(
+            unit ->
+                stacks.merge(
+                    // damaged ones are stacks of their own, as in the game
+                    Arrays.asList(
+                        unit.getOwner(),
+                        unit.getUnitType(),
+                        unit.getHitsTaken(),
+                        unit.getUnitDamage()),
+                    unit,
+                    (stack, more) ->
+                        stack.toBuilder()
+                            .quantity(stack.getQuantity() + more.getQuantity())
+                            .build()));
+    if (stacks.size() < 2) {
+      return List.copyOf(stacks.values());
+    }
+    final String landlord = owner(game, territory).orElse(null);
+    final boolean water = isWater(game, territory);
+    final List<String> nations = nations(game);
+    final List<String> types = unitTypes(game);
+    final int dice = GameRulesXml.diceSides(game);
+    // shortcut: movement and attack without a technology's bonus, which a nation has at the start
+    // only on maps that give it one; read the technologies when such a map shows a difference
+    return stacks.values().stream()
+        .sorted(
+            Comparator.<UnitPlacement, Boolean>comparing(
+                    unit -> !Objects.equals(unit.getOwner(), landlord))
+                .thenComparing(unit -> RulesXml.startAtWar(game, unit.getOwner(), landlord))
+                .thenComparing(
+                    unit -> unit.getOwner() == null ? -1 : nations.indexOf(unit.getOwner()))
+                .thenComparing(unit -> unitStat(game, unit.getUnitType(), "movement", 0) > 0)
+                .thenComparing(unit -> !UnitsXml.cannotMoveInCombatMove(game, unit.getUnitType()))
+                .thenComparing(unit -> !unitFlag(game, unit.getUnitType(), "isSea"))
+                .thenComparing(unit -> !(water && unitFlag(game, unit.getUnitType(), "isAir")))
+                .thenComparing(
+                    unit ->
+                        unitFlag(game, unit.getUnitType(), "isSea")
+                            || unitFlag(game, unit.getUnitType(), "isAir"))
+                .thenComparing(unit -> unitStat(game, unit.getUnitType(), "maxBuiltPerPlayer", -1))
+                .thenComparing(
+                    unit -> Math.clamp(unitStat(game, unit.getUnitType(), "attack", 0), 0, dice))
+                .thenComparing(unit -> types.indexOf(unit.getUnitType())))
+        .toList();
   }
 
   /** Every territory's units at the start, in the XML's order. */
@@ -1754,10 +1818,9 @@ class MapXml {
         Stream.concat(unitElements(game).stream(), Stream.of(Unit.builder().name(unitType).build()))
             .toList();
     final List<Attachment> attachments = new ArrayList<>(attachments(game));
-    attachments.stream()
-        .filter(a -> unitKey(like).matches(a))
-        .findFirst()
-        .map(a -> a.toBuilder().attachTo(unitType).build())
+    // as the game reads the other one, also what a loop gives it
+    AttachmentsXml.kept(game, UNIT, like)
+        .map(a -> a.toBuilder().attachTo(unitType).foreach(null).build())
         .ifPresent(attachments::add);
     final Game withUnit =
         game.toBuilder()
@@ -1951,32 +2014,16 @@ class MapXml {
         .orElse(List.of());
   }
 
-  /** The game with the unit costing this many PUs in its rule; nothing changes without one. */
-  static Game withUnitCost(final Game game, final String unitType, final int pus) {
-    final Optional<ProductionRule> changed = costRule(game, unitType);
-    if (changed.isEmpty()) {
-      return game;
-    }
-    final List<ProductionRule> rules =
-        productionRules(game).stream()
-            .map(
-                rule ->
-                    rule != changed.get()
-                        ? rule
-                        : rule.toBuilder()
-                            .costs(
-                                Optional.ofNullable(rule.getCosts()).orElse(List.of()).stream()
-                                    .map(
-                                        cost ->
-                                            PUS.equals(cost.getResource())
-                                                ? cost.toBuilder().quantity(pus).build()
-                                                : cost)
-                                    .toList())
-                            .build())
-            .toList();
-    return game.toBuilder()
-        .production(game.getProduction().toBuilder().productionRules(rules).build())
-        .build();
+  /**
+   * The game with the unit costing this much of the resource in the rule that sells it, as
+   * Production changes a rule ({@link ProductionXml#withCost}): 0 takes the resource out of the
+   * cost, a resource the rule does not cost yet is added. Nothing changes without a rule.
+   */
+  static Game withUnitCost(
+      final Game game, final String unitType, final String resource, final int quantity) {
+    return costRule(game, unitType)
+        .map(rule -> ProductionXml.withCost(game, rule.getName(), resource, quantity))
+        .orElse(game);
   }
 
   // ---- game options
@@ -2090,46 +2137,13 @@ class MapXml {
             .build();
   }
 
-  /** A game's attachments by name and thing, of two alike the last. */
-  private record Indexed(
-      java.lang.ref.WeakReference<Game> game, java.util.Map<String, Attachment> last) {}
-
-  // of the two games asked last: a tool asks for many things of one game, a big one has 35,000
-  // attachments, and a save asks the game and the saved one in turn. Held weakly, so a closed
-  // map's game goes
-  private static volatile List<Indexed> indexed = List.of();
-
   /**
-   * The attachment of this name on the thing; of two the last, as TripleA keeps one per name, eg
-   * G40's second territoryAttachment of Russia, which gives it its 3 PUs.
+   * The option's value in the attachment of this name on the thing, eg its "production": the one
+   * TripleA keeps, of two the last, also one a loop (foreach) makes.
    */
-  private static Optional<Attachment> lastAttachment(
-      final Game game, final String attachment, final String attachTo) {
-    final List<Indexed> known = indexed;
-    final Optional<Indexed> found =
-        known.stream().filter(i -> i.game().get() == game).findFirst();
-    final Indexed now;
-    if (found.isPresent()) {
-      now = found.get();
-    } else {
-      final java.util.Map<String, Attachment> last = new HashMap<>();
-      for (final Attachment a : attachments(game)) {
-        if (a.getName() != null) {
-          last.put(AttachmentsXml.readName(a.getName()) + '\n' + a.getAttachTo(), a);
-        }
-      }
-      now = new Indexed(new java.lang.ref.WeakReference<>(game), last);
-      // this one and the one asked before it
-      indexed = Stream.concat(Stream.of(now), known.stream().limit(1)).toList();
-    }
-    return Optional.ofNullable(
-        now.last().get(AttachmentsXml.readName(attachment) + '\n' + attachTo));
-  }
-
-  /** The option's value in the attachment of this name on the thing, eg its "production". */
   static Optional<String> option(
       final Game game, final String attachment, final String attachTo, final String option) {
-    return lastAttachment(game, attachment, attachTo).stream()
+    return AttachmentsXml.kept(game, attachment, attachTo).stream()
         .flatMap(a -> Optional.ofNullable(a.getOptions()).orElse(List.of()).stream())
         .filter(o -> AttachmentsXml.isOption(o, option))
         .map(Option::getValue)
@@ -2153,10 +2167,16 @@ class MapXml {
   /**
    * The game with the option set in the attachment, or taken out for null. A missing attachment is
    * added behind the last of its name ({@link AttachmentsXml#placeForNew}); options keep their
-   * place.
+   * place. Where a loop (foreach) makes the attachment, the thing first gets its own with all the
+   * loop gives it ({@link AttachmentsXml#withOwn}), unless the option has the value already.
    */
   static Game withOption(
-      final Game game, final AttachmentKey key, final String option, @Nullable final String value) {
+      final Game given, final AttachmentKey key, final String option, @Nullable final String value) {
+    final Game game = AttachmentsXml.withOwn(given, key.name(), key.attachTo());
+    if (game != given
+        && Objects.equals(option(given, key.name(), key.attachTo(), option).orElse(null), value)) {
+      return given;
+    }
     final List<Attachment> attachments = new ArrayList<>(attachments(game));
     // the last of the name, which is the one TripleA keeps and option() reads
     final int at = AttachmentsXml.lastIndexOf(attachments, key.name(), key.attachTo());

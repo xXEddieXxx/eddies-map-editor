@@ -43,6 +43,7 @@ import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -1451,8 +1452,10 @@ public final class MapMakerWindow extends JFrame {
     content.add(tools, BorderLayout.WEST);
     content.add(workspace, BorderLayout.CENTER);
     setContentPane(content);
+    final AtomicReference<Game> heard = new AtomicReference<>(opened.game());
     opened.onChange(
         () -> {
+          tellLeftLoops(AttachmentsXml.leftLoops(heard.getAndSet(opened.game()), opened.game()));
           // a Check was of the map before this change, unless it is that map still, eg after a
           // save (Home, which heard of the change first, knows)
           if (check != Check.RUNNING) {
@@ -1465,6 +1468,24 @@ public final class MapMakerWindow extends JFrame {
     showEditor(homeEditor);
     revalidate();
     repaint();
+  }
+
+  // a change of what a loop (foreach) makes is kept in a copy for that thing alone: never silently
+  private void tellLeftLoops(final List<String> things) {
+    if (!things.isEmpty()) {
+      // after the tool's own toast for the change, eg the Capital brush's, which this one replaces
+      SwingUtilities.invokeLater(
+          () ->
+              Dialogs.toast(
+                  this,
+                  (things.size() == 1
+                          ? things.getFirst() + " has its own attachment now and no longer follows"
+                          : things.size()
+                              + " things have their own attachments now and no longer follow")
+                      + " the loop (foreach)",
+                  "Undo",
+                  this::undo));
+    }
   }
 
   /** The open game's name, when the map has more than one game to tell apart. */

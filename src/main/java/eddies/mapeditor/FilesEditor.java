@@ -987,6 +987,13 @@ final class FilesEditor implements Editor {
     nameCell.setBorder(BorderFactory.createEmptyBorder(0, depth * INDENT, 0, 0));
     nameCell.add(markLabel, BorderLayout.WEST);
     nameCell.add(nameLabel, BorderLayout.CENTER);
+    // short of room GridBag lays out minimum sizes: the name stays whole, the purpose is cut
+    nameCell.setMinimumSize(nameCell.getPreferredSize());
+    final JLabel purposeLabel = Theme.newSecondaryLabel(purpose);
+    purposeLabel.setMinimumSize(new Dimension(0, purposeLabel.getPreferredSize().height));
+    purposeLabel.setToolTipText(purpose);
+    final JComponent linkCell = link.<JComponent>map(b -> b).orElseGet(JLabel::new);
+    linkCell.setMinimumSize(linkCell.getPreferredSize());
     final GridBagConstraints at = new GridBagConstraints();
     at.gridy = row;
     at.anchor = GridBagConstraints.WEST;
@@ -996,12 +1003,12 @@ final class FilesEditor implements Editor {
     rows.add(nameCell, at);
     at.weightx = 1;
     at.fill = GridBagConstraints.HORIZONTAL;
-    rows.add(Theme.newSecondaryLabel(purpose), at);
+    rows.add(purposeLabel, at);
     at.weightx = 0;
     at.fill = GridBagConstraints.NONE;
     at.anchor = GridBagConstraints.EAST;
     at.insets = new Insets(0, 0, 0, 0);
-    rows.add(link.<JComponent>map(b -> b).orElseGet(JLabel::new), at);
+    rows.add(linkCell, at);
   }
 
   private static JButton link(final String text, final Runnable action) {

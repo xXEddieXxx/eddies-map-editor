@@ -83,7 +83,8 @@ final class UnitsEditor implements Editor {
   private static final Set<String> KIND_SECTIONS = Set.of("Sea", "Air and anti-air", BOMBING);
   private static final String LOCKED =
       "Can't be changed here: the game file writes it once for several unit types (foreach)."
-          + " Change it in Attachments.";
+          + " Change it in Attachments, or use \"Change for this unit only\" above the options.";
+  private static final String OWN_ATTACHMENT = "Change for this unit only";
   // marks a part that lock leaves as it is
   private static final String OWN = "UnitsEditor.own";
   // the rows of Stacking limits, as RulesXml.STACKING_LIMITS and STACKING_COUNTS
@@ -98,6 +99,11 @@ final class UnitsEditor implements Editor {
           + " Territories (Units its factories place per turn), where a nation may place in"
           + " Nations (Placing units). A limit for several unit types together is in Nations,"
           + " Stacking limits.";
+  private static final String USES_UP = "Uses up units";
+  private static final String USES_UP_HELP =
+      "Placing one takes these units away from the territory it is placed in, eg a ship made"
+          + " from a hull, or a factory upgraded from a smaller one. They must be there, of the"
+          + " same nation. In the game's XML: consumesUnits.";
   private static final String TRIPLEA_NAME = "In the game's XML: ";
   private static final int STACKING_LABEL_WIDTH = 110;
   private static final int PICTURE_SIZE = 48;
@@ -475,15 +481,29 @@ final class UnitsEditor implements Editor {
     showHeader(game, unit);
     UnitsXml.loop(game, unit)
         .ifPresent(
-            loop ->
-                inspector.row(
-                    Help.link(
-                        "The grey options can't be changed here: the game file writes them once"
-                            + " for each element of "
-                            + loop.getForeach()
-                            + ". Change them in",
-                        "Attachments",
-                        loop.getName() + " of " + loop.getAttachTo())));
+            loop -> {
+              inspector.row(
+                  Help.link(
+                      "The grey options can't be changed here: the game file writes them once"
+                          + " for each element of "
+                          + loop.getForeach()
+                          + ". Change them in",
+                      "Attachments",
+                      loop.getName() + " of " + loop.getAttachTo()));
+              inspector.row(
+                  Help.with(
+                      newLink(
+                          OWN_ATTACHMENT,
+                          () -> {
+                            commit();
+                            project.edit(g -> UnitsXml.withOwn(g, unit));
+                          }),
+                      unit
+                          + " gets an attachment of its own with all the values it has now, written"
+                          + " after the loop, and is then changed here like any unit. It no longer"
+                          + " follows the loop: a later change there does not reach it. The loop"
+                          + " and its other unit types stay as they are. Undo takes it back."));
+            });
     inspector.row(leftAligned(optionSearch));
     inspector.row(grid);
     inspector.row(below);
@@ -736,44 +756,70 @@ final class UnitsEditor implements Editor {
     inspector.row(leftAligned(perNation, asIs));
   }
 
-  /** Cost, value, attack, defense, movement and hit points in one row, labels above. */
+  /**
+   * What it costs in each resource, value, attack, defense, movement and hit points in one row,
+   * labels above.
+   */
   private JComponent newEssentials(final Game game, final String unit) {
-    final JPanel cells = new JPanel(new GridLayout(2, 6, Theme.GAP_M, Theme.GAP_XS));
-    cells.setOpaque(false);
+    final List<String> labels = new ArrayList<>();
     final List<JComponent> fields = new ArrayList<>();
-    final Optional<Integer> cost = MapXml.unitCost(game, unit);
-    // what it costs besides PUs, which the field does not show
-    final Optional<List<Cost>> all = MapXml.unitCosts(game, unit);
-    final List<Cost> others =
-        all.orElse(List.of()).stream()
-            .filter(c -> !MapXml.PUS.equals(c.getResource()))
-            .toList();
-    if (cost.isPresent()) {
-      final JSpinner spinner =
-          Form.newNumber(
-              cost.get(), 999, value -> quietly(g -> MapXml.withUnitCost(g, unit, value)));
-      spinner.setToolTipText(
-          "PUs to buy one"
-              + (others.isEmpty() ? "" : "; also " + alsoCosts(others))
-              + alsoUses(game, unit));
-      fields.add(spinner);
-    } else {
+    final Optional<List<Cost>> costs = MapXml.unitCosts(game, unit);
+    if (costs.isEmpty()) {
       final JLabel none = new JLabel("–");
-      none.setToolTipText(
-          all.isEmpty()
-              ? "No rule sells it; add one in Production"
-              : others.isEmpty() ? "Costs no PUs" : "Costs no PUs: " + alsoCosts(others));
+      none.setToolTipText("No rule sells it; add one in Production");
+      labels.add("Cost");
       fields.add(none);
+    } else {
+      final List<String> resources = ProductionXml.resources(game);
+      // PUs also for a unit that costs none, then what else its rule costs
+      final List<String> shown =
+          Stream.concat(
+                  Stream.of(MapXml.PUS).filter(resources::contains),
+                  costs.get().stream().map(Cost::getResource))
+              .distinct()
+              .toList();
+      for (final String resource : shown) {
+        final boolean pus = MapXml.PUS.equals(resource);
+        final JSpinner spinner =
+            Form.newNumber(
+                costs.get().stream()
+                    .filter(cost -> resource.equals(cost.getResource()))
+                    .map(Cost::getQuantity)
+                    .findFirst()
+                    .orElse(0),
+                999,
+                value -> quietly(g -> MapXml.withUnitCost(g, unit, resource, value)));
+        spinner.setToolTipText(
+            resource
+                + " to buy one"
+                + (pus ? "" : "; 0 takes it out of the cost")
+                + alsoUses(game, unit));
+        labels.add(pus ? "Cost" : labels.isEmpty() ? "Cost: " + resource : resource);
+        fields.add(spinner);
+      }
+      final List<String> others = resources.stream().filter(r -> !shown.contains(r)).toList();
+      if (!others.isEmpty()) {
+        labels.add("");
+        fields.add(newAddCost(unit, others));
+      }
     }
+    final int ofCost = fields.size();
     UnitOptions.ESSENTIALS.forEach(
         name -> fields.add(newEssential(game, unit, UnitOptions.named(name))));
+    labels.addAll(List.of("Value", "Attack", "Defense", "Movement", "Hit points"));
     if (UnitsXml.loop(game, unit).isPresent()) {
       // not the cost, which a production rule gives
-      fields.stream().skip(1).forEach(UnitsEditor::lock);
+      fields.stream().skip(ofCost).forEach(UnitsEditor::lock);
     }
-    final List<String> labels =
-        List.of("Cost", "Value", "Attack", "Defense", "Movement", "Hit points");
+    final JPanel cells =
+        new JPanel(new GridLayout(2, fields.size(), Theme.GAP_M, Theme.GAP_XS));
+    cells.setOpaque(false);
     for (int i = 0; i < labels.size(); i++) {
+      if (labels.get(i).isEmpty()) {
+        // nothing above the +
+        cells.add(Box.createGlue());
+        continue;
+      }
       final JLabel label = new JLabel(labels.get(i));
       label.setLabelFor(fields.get(i));
       label.setToolTipText(fields.get(i).getToolTipText());
@@ -787,16 +833,34 @@ final class UnitsEditor implements Editor {
     return cells;
   }
 
+  /**
+   * "+" with the game's resources the unit does not cost yet: the one chosen costs 1, a step, and
+   * gets its field.
+   */
+  private JComponent newAddCost(final String unit, final List<String> resources) {
+    final JPopupMenu menu = new JPopupMenu();
+    resources.forEach(
+        resource ->
+            menu.add(resource)
+                .addActionListener(
+                    e -> {
+                      commit();
+                      project.edit(g -> MapXml.withUnitCost(g, unit, resource, 1));
+                    }));
+    final JButton button =
+        Theme.newIconButton("+", "Add a resource it costs: " + String.join(", ", resources), () -> {});
+    button.addActionListener(e -> menu.show(button, 0, button.getHeight()));
+    // by a right-click too
+    button.setComponentPopupMenu(menu);
+    return leftAligned(button);
+  }
+
   // a unit placed uses up others, which the field does not show either
   private static String alsoUses(final Game game, final String unit) {
     final List<String> used = UnitsXml.usedUp(game, unit);
     return used.isEmpty()
         ? ""
-        : ". Placing one uses up " + String.join(" + ", used) + ", set under More options";
-  }
-
-  private static String alsoCosts(final List<Cost> others) {
-    return MapXml.costWords(others) + ", changed in Production";
+        : ". Placing one uses up " + String.join(" + ", used) + ", set under " + USES_UP;
   }
 
   /** The number's field, or where it is set instead. */
@@ -885,6 +949,7 @@ final class UnitsEditor implements Editor {
       if (title.equals(UnitOptions.PRODUCTION)) {
         // the rest starts with Miscellaneous
         found += showStackingLimits(game, unit, filter);
+        found += showUsedUp(game, unit, filter);
       }
       before = title;
       final List<UnitOptions.UnitOption> all =
@@ -1079,6 +1144,86 @@ final class UnitsEditor implements Editor {
       grid.row(leftAligned(text, number, new JLabel("counting"), counting));
     }
     return shown.size();
+  }
+
+  /**
+   * A row per unit type one of this type uses up when it is placed: how many, which, and ×. Each
+   * is an option of its own, as the n-th consumesUnits; one that does not read stays under More
+   * options.
+   */
+  private int showUsedUp(final Game game, final String unit, final String filter) {
+    if (!(USES_UP + "\n" + UnitsXml.USED_UP).toLowerCase(Locale.ROOT).contains(filter)) {
+      return 0;
+    }
+    grid.section(USES_UP, USES_UP_HELP);
+    final List<String> types = MapXml.unitTypes(game);
+    final List<Option> written =
+        UnitsXml.options(game, unit).stream()
+            .filter(o -> AttachmentsXml.isOption(o, UnitsXml.USED_UP))
+            .toList();
+    for (int i = 0; i < written.size(); i++) {
+      final int occurrence = i;
+      UnitsXml.UsedUp.read(written.get(i))
+          .ifPresent(
+              used -> grid.row(newUsedUp(unit, occurrence, used, types)));
+    }
+    final JButton add =
+        Theme.newAddButton(
+            "Add a unit it uses up",
+            "One more unit type that placing one " + unit + " takes away; choose it in its row",
+            () -> {
+              commit();
+              project.edit(g -> UnitsXml.withNewUsedUp(g, unit));
+            });
+    add.setEnabled(UnitsXml.withNewUsedUp(game, unit) != game);
+    grid.row(leftAligned(add));
+    return 1;
+  }
+
+  private JComponent newUsedUp(
+      final String unit, final int occurrence, final UnitsXml.UsedUp used, final List<String> types) {
+    final List<String> choices = new ArrayList<>(types);
+    if (!choices.contains(used.unit())) {
+      // eg a variable, or a unit type the game does not list: kept readable
+      choices.add(used.unit());
+    }
+    final JComboBox<String> type = new JComboBox<>(choices.toArray(String[]::new));
+    type.setSelectedItem(used.unit());
+    type.setToolTipText("The unit type it uses up. " + TRIPLEA_NAME + UnitsXml.USED_UP);
+    type.getAccessibleContext().setAccessibleName(USES_UP + ", unit type");
+    final int[] count = {used.count()};
+    final Runnable write =
+        () ->
+            quietly(
+                g ->
+                    UnitsXml.withUsedUp(
+                        g,
+                        unit,
+                        occurrence,
+                        new UnitsXml.UsedUp(count[0], String.valueOf(type.getSelectedItem()))));
+    final JSpinner number =
+        Form.newNumber(
+            used.count(),
+            1,
+            999,
+            value -> {
+              count[0] = value;
+              write.run();
+            });
+    number.setToolTipText("How many of them one " + unit + " uses up");
+    number.getAccessibleContext().setAccessibleName(USES_UP + ", count");
+    number.setPreferredSize(new Dimension(ESSENTIAL_WIDTH, number.getPreferredSize().height));
+    type.addActionListener(e -> write.run());
+    return leftAligned(
+        number,
+        type,
+        Theme.newIconButton(
+            "×",
+            "No longer uses up " + used.unit(),
+            () -> {
+              commit();
+              project.edit(g -> UnitsXml.withoutOptionAt(g, unit, UnitsXml.USED_UP, occurrence));
+            }));
   }
 
   /**
@@ -1638,6 +1783,8 @@ final class UnitsEditor implements Editor {
                         limit ->
                             AttachmentsXml.isOption(o, limit)
                                 && UnitsXml.stackingLimit(game, unit, limit).isPresent()))
+        // as one that reads shows under Uses up units only
+        .filter(o -> UnitsXml.UsedUp.read(o).isEmpty())
         .filter(
             o ->
                 !UnitOptions.NAMES.contains(AttachmentsXml.optionName(o.getName()))

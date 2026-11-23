@@ -644,7 +644,7 @@ final class TechnologyEditor implements Editor {
     final List<String> kinds =
         Stream.concat(
                 Stream.of("AA"),
-                AttachmentsXml.attachments(game).stream()
+                AttachmentsXml.kept(game).stream()
                     .flatMap(a -> AttachmentsXml.options(a).stream())
                     .filter(o -> AttachmentsXml.isOption(o, "typeAA"))
                     .map(Option::getValue)

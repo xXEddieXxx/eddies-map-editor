@@ -702,7 +702,51 @@ final class UnitsEditorTest {
     assertThat(enabled)
         .as("its support is an attachment of its own and stays to change; no option is added")
         .contains("+ Add support")
-        .doesNotContain("+ Add option…", "Land", "Sea", "Air");
+        .doesNotContain("+ Add option…", "+ Add a unit it uses up", "Land", "Sea", "Air");
+    assertThat(buttons).as("what it uses up is shown, off").contains("+ Add a unit it uses up");
+  }
+
+  @DisplayName("Change for this unit only gives a loop's unit its own attachment: one step, unlocked")
+  @Test
+  void loopMadeUnitIsChangedAloneAfterTheButton() throws Exception {
+    // given
+    final MapProject project = givenG40();
+    project.edit(UnitsXmlTest::givenWalkersLoop);
+    final org.triplea.map.data.elements.Game loop = project.game();
+    final List<JSpinner> numbers = new ArrayList<>();
+    final List<String> buttons = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          try {
+            final Component page = givenEditor(project, "artillery", "none").page();
+            collect(page, AbstractButton.class).stream()
+                .filter(button -> "Change for this unit only".equals(button.getText()))
+                .findFirst()
+                .orElseThrow()
+                .doClick();
+            numbers.addAll(collect(page, JSpinner.class));
+            buttons.addAll(givenButtonTexts(page));
+          } catch (final Exception e) {
+            throw new IllegalStateException(e);
+          }
+        });
+    final org.triplea.map.data.elements.Game own = project.game();
+
+    // then
+    assertThat(UnitsXml.loop(own, "artillery")).as("its own attachment now").isEmpty();
+    assertThat(UnitsXml.options(own, "artillery"))
+        .as("with the loop's values")
+        .extracting(o -> o.getName() + "=" + o.getValue())
+        .containsExactly("attack=4", "hitPoints=2");
+    assertThat(UnitsXml.loop(own, "infantry")).as("the loop's other unit follows it").isPresent();
+    assertThat(numbers).as("every number is changed here now").allMatch(JSpinner::isEnabled);
+    assertThat(buttons)
+        .as("no loop, no button")
+        .doesNotContain("Change for this unit only", "Attachments ›");
+    project.undo();
+    assertThat(project.game()).as("one step to undo").isSameAs(loop);
   }
 
   @DisplayName("A change made while another tool shows reaches Units when it shows again")
@@ -752,48 +796,81 @@ final class UnitsEditorTest {
     return collect(editor.page(), JSpinner.class).stream().map(JSpinner::getValue).toList();
   }
 
-  @DisplayName("A unit that costs other resources shows them under its name and in the tool tip")
+  @DisplayName("Cost: a field per resource of the unit's rule, + adds one the game has; 0 takes it out")
   @Test
   void costInOtherResources() throws Exception {
-    // given: artillery for 4 PUs and 5 Fame, then for 5 Fame alone
+    // given: artillery for 4 PUs, in a game that also has Fame
     final MapProject project = givenG40();
-    final List<String> seen = new ArrayList<>();
+    project.edit(g -> ProductionXml.withResource(g, "Fame"));
+    final org.triplea.map.data.elements.Game before = project.game();
+    final List<Object> seen = new ArrayList<>();
 
     // when
     SwingUtilities.invokeAndWait(
         () -> {
           try {
-            project.edit(g -> ProductionXml.withCost(g, "buyArtillery", "Fame", 5));
-            final Component both = givenEditor(project, "artillery", "none").page();
-            seen.add(labelEndingIn(both, "Fame"));
+            final UnitsEditor editor = givenEditor(project, "artillery", "none");
+            givenResourcesToAdd(editor).stream()
+                .filter(item -> "Fame".equals(item.getText()))
+                .findFirst()
+                .orElseThrow()
+                .doClick();
+            seen.add(labelEndingIn(editor.page(), "Fame"));
+            project.undo();
+            seen.add(project.game() == before);
+            project.redo();
             seen.add(
-                collect(both, JSpinner.class).stream()
-                    .map(JSpinner::getToolTipText)
-                    .filter(tip -> tip != null && tip.startsWith("PUs to buy one"))
-                    .findFirst()
-                    .orElse(""));
-            project.edit(g -> ProductionXml.withCost(g, "buyArtillery", MapXml.PUS, 0));
-            final Component fameOnly = givenEditor(project, "artillery", "none").page();
-            seen.add(labelEndingIn(fameOnly, "Fame"));
-            seen.add(
-                collect(fameOnly, JLabel.class).stream()
-                    .filter(label -> "–".equals(label.getText()))
-                    .map(JLabel::getToolTipText)
-                    .findFirst()
-                    .orElse(""));
+                givenResourcesToAdd(editor).stream().map(AbstractButton::getText).toList());
+            givenCostField(editor, "Fame").setValue(5);
+            seen.add(labelEndingIn(editor.page(), "Fame"));
+            givenCostField(editor, "PUs").setValue(0);
+            seen.add(labelEndingIn(editor.page(), "Fame"));
+            final UnitsEditor again = givenEditor(project, "artillery", "none");
+            seen.add(givenCostField(again, "PUs").getValue());
+            seen.add(givenCostField(again, "Fame").getValue());
+            givenCostField(again, "Fame").setValue(0);
+            seen.add(labelEndingIn(again.page(), "free"));
           } catch (final Exception e) {
             throw new IllegalStateException(e);
           }
         });
+    final Path xml = folder.resolve("costs.xml");
+    org.triplea.map.xml.writer.GameXmlWriter.exportXml(project.game(), xml);
 
     // then
     assertThat(seen)
-        .as("the line under the name and the Cost field's tool tip, for both")
+        .as("+ gives 1 Fame, one step; + then offers the others; Fame typed; PUs at 0 leave"
+            + " the cost, their field stays, at 0; Fame at 0 too: free")
         .containsExactly(
+            "Land unit · 2-2-1 · 4 PUs + 1 Fame",
+            true,
+            List.of("techTokens", "SuicideAttackTokens"),
             "Land unit · 2-2-1 · 4 PUs + 5 Fame",
-            "PUs to buy one; also 5 Fame, changed in Production",
             "Land unit · 2-2-1 · 5 Fame",
-            "Costs no PUs: 5 Fame, changed in Production");
+            0,
+            5,
+            "Land unit · 2-2-1 · free");
+    assertThat(MapChecks.findError(xml)).as("TripleA loads the game").isEmpty();
+  }
+
+  // what the + beside the cost offers
+  private static List<javax.swing.JMenuItem> givenResourcesToAdd(final UnitsEditor editor) {
+    return List.of(
+            ((javax.swing.JComponent) givenButton(editor, "+"))
+                .getComponentPopupMenu()
+                .getComponents())
+        .stream()
+        .map(javax.swing.JMenuItem.class::cast)
+        .toList();
+  }
+
+  private static JSpinner givenCostField(final UnitsEditor editor, final String resource) {
+    return collect(editor.page(), JSpinner.class).stream()
+        .filter(
+            field ->
+                String.valueOf(field.getToolTipText()).startsWith(resource + " to buy one"))
+        .findFirst()
+        .orElseThrow();
   }
 
   private static String labelEndingIn(final Component in, final String end) {
@@ -873,7 +950,7 @@ final class UnitsEditorTest {
         .as("the line under the name and the Cost field's tool tip")
         .containsExactly(
             "Land unit · 2-2-1 · 4 PUs · uses 2 Material",
-            "PUs to buy one. Placing one uses up 2 Material, set under More options");
+            "PUs to buy one. Placing one uses up 2 Material, set under Uses up units");
   }
 
   @DisplayName("The sections come as battle, movement, the rest")
@@ -917,5 +994,74 @@ final class UnitsEditorTest {
             "Movement",
             "Transport and carrier",
             "Miscellaneous");
+  }
+
+  @DisplayName("Uses up units: a row per unit with count, type and ×, each change one step")
+  @Test
+  void usedUpUnitsAreRows() throws Exception {
+    // given: G40's factory_upgrade, placed on a factory_minor that it uses up
+    final MapProject project = givenG40();
+    final org.triplea.map.data.elements.Game before = project.game();
+    final List<Object> seen = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          try {
+            final UnitsEditor editor = givenEditor(project, "factory_upgrade", "none");
+            seen.add(givenUsedUpField(editor, JSpinner.class).getValue());
+            seen.add(givenUsedUpField(editor, JComboBox.class).getSelectedItem());
+            seen.add(
+                UnitsEditor.moreOptions(project.game(), "factory_upgrade").stream()
+                    .map(Option::getName)
+                    .anyMatch("consumesUnits"::equals));
+            givenUsedUpField(editor, JSpinner.class).setValue(2);
+            seen.add(UnitsXml.usedUp(project.game(), "factory_upgrade"));
+            project.undo();
+            seen.add(project.game() == before);
+            givenUsedUpField(editor, JComboBox.class).setSelectedItem("infantry");
+            seen.add(UnitsXml.usedUp(project.game(), "factory_upgrade"));
+            givenButton(editor, "+ Add a unit it uses up").doClick();
+            seen.add(UnitsXml.usedUp(project.game(), "factory_upgrade"));
+            givenButton(editor, "×").doClick();
+            seen.add(UnitsXml.usedUp(project.game(), "factory_upgrade"));
+          } catch (final Exception e) {
+            throw new IllegalStateException(e);
+          }
+        });
+
+    // then
+    assertThat(seen)
+        .as("the row as written and not again under More options; the count, undone in one step;"
+            + " the type; a second row of the first unit type not used yet; the first removed")
+        .containsExactly(
+            1,
+            "factory_minor",
+            false,
+            List.of("2 factory_minor"),
+            true,
+            List.of("1 infantry"),
+            List.of("1 infantry", "1 artillery"),
+            List.of("1 artillery"));
+  }
+
+  // the first row's field of the type
+  private static <T extends javax.swing.JComponent> T givenUsedUpField(
+      final UnitsEditor editor, final Class<T> type) {
+    return collect(editor.page(), type).stream()
+        .filter(
+            field ->
+                String.valueOf(field.getAccessibleContext().getAccessibleName())
+                    .startsWith("Uses up units, "))
+        .findFirst()
+        .orElseThrow();
+  }
+
+  // the first on the page: a used-up unit's × stands above those of More options
+  private static AbstractButton givenButton(final UnitsEditor editor, final String text) {
+    return collect(editor.page(), AbstractButton.class).stream()
+        .filter(button -> text.equals(button.getText()))
+        .findFirst()
+        .orElseThrow();
   }
 }

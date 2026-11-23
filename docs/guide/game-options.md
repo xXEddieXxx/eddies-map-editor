@@ -43,7 +43,7 @@ Victory, Bids, Luck, and More options for the rest.
 
     1. Press **⇅** to order the options A to Z in the game file, which is the order of TripleA's
        setup screen.
-    2. Or move one option with **▲ ▼** on its row.
+    2. Or move one option with **▲ ▼** on its row, past the next option of its section.
 
 ??? task "Every control"
 
@@ -51,7 +51,8 @@ Victory, Bids, Luck, and More options for the rest.
     - **Only what players may change** hides the fixed ones.
     - **+ Add option…** adds an option TripleA knows, for example Low Luck, or one the map's
       triggers read. **⇅** before it orders the options A to Z in the game file, which is the order
-      of TripleA's setup screen; **▲ ▼** on a row move one option, shown within its group here.
+      of TripleA's setup screen; **▲ ▼** on a row move one option past the next one of its
+      section.
     - A number option, for example **Dice sides**, has a field.
     - A yes/no option, for example **8 Capital Victory**, has a box.
     - **The lock** beside each option: open, players may change it before a game; closed, fixed by

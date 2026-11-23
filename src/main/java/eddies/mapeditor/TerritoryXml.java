@@ -50,9 +50,9 @@ class TerritoryXml {
    * option.
    */
   static List<String> values(final Game game, final AttachmentKey key, final String option) {
-    final List<Attachment> attachments = AttachmentsXml.attachments(game);
-    final int at = AttachmentsXml.lastIndexOf(attachments, key.name(), key.attachTo());
-    return (at < 0 ? List.<Option>of() : AttachmentsXml.options(attachments.get(at)))
+    return AttachmentsXml.kept(game, key.name(), key.attachTo())
+        .map(AttachmentsXml::options)
+        .orElse(List.of())
         .stream()
         .filter(o -> AttachmentsXml.isOption(o, option) && o.getValue() != null)
         .map(TriggerXml::joined)
@@ -62,13 +62,14 @@ class TerritoryXml {
   /**
    * The game with the option's values these: the first takes the place of the option's first, the
    * others follow it; none takes the option out. A missing attachment is added behind the last of
-   * its name.
+   * its name; one a loop makes is first written for the thing ({@link AttachmentsXml#withOwn}).
    */
   static Game withValues(
-      final Game game, final AttachmentKey key, final String option, final List<String> values) {
-    if (values(game, key, option).equals(values)) {
-      return game;
+      final Game given, final AttachmentKey key, final String option, final List<String> values) {
+    if (values(given, key, option).equals(values)) {
+      return given;
     }
+    final Game game = AttachmentsXml.withOwn(given, key.name(), key.attachTo());
     final List<Attachment> attachments = new ArrayList<>(AttachmentsXml.attachments(game));
     final int at = AttachmentsXml.lastIndexOf(attachments, key.name(), key.attachTo());
     if (at < 0) {

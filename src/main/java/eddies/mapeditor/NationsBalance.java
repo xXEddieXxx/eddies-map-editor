@@ -181,7 +181,7 @@ record NationsBalance(
               forAll.put(
                   type,
                   (int) Math.round(costs.stream().mapToInt(Integer::intValue).average().orElse(0))));
-      for (final Attachment attachment : AttachmentsXml.attachments(game)) {
+      for (final Attachment attachment : AttachmentsXml.kept(game)) {
         if (!AttachmentsXml.isNamed(attachment, Constants.UNIT_ATTACHMENT_NAME)) {
           continue;
         }

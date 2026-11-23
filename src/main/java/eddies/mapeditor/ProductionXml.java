@@ -420,7 +420,10 @@ class ProductionXml {
     return Optional.ofNullable(rule.getCosts()).map(List::copyOf).orElse(List.of());
   }
 
-  /** The game with the rule costing this much of the resource; 0 takes the cost out. */
+  /**
+   * The game with the rule costing this much of the resource; 0 takes the cost out, but a rule's
+   * only cost stays as 0, as TripleA does not load a rule without a cost.
+   */
   static Game withCost(
       final Game game, final String rule, final String resource, final int quantity) {
     return withRule(
@@ -440,6 +443,12 @@ class ProductionXml {
           }
           if (quantity != 0 && !placed) {
             costs.add(Cost.builder().resource(resource).quantity(quantity).build());
+          }
+          if (costs.isEmpty()) {
+            costs(r).stream()
+                .filter(isResource)
+                .findFirst()
+                .ifPresent(only -> costs.add(only.toBuilder().quantity(0).build()));
           }
           return r.toBuilder().costs(costs).build();
         });

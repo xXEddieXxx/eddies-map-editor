@@ -31,10 +31,11 @@ left shows each with its picture and its numbers; 2-3-1 means attack 2, defense 
 
 ??? task "Set what a unit costs and is worth"
 
-    1. **Cost** is the PUs to buy one. It comes from the purchase list that sells the unit; "–"
-       means no rule sells it for PUs.
-    2. Other resources a unit costs show under its name, for example "1 PU + 5 Fame". Change
-       them in [Production](production.md).
+    1. **Cost** is the PUs to buy one. It comes from the rule that sells the unit in
+       [Production](production.md); "–" means no rule sells it.
+    2. A unit that costs other resources too has a field for each beside Cost, named by the
+       resource, for example **Fame**. The **+** after them adds a resource of the game to the
+       cost; set a resource to 0 to take it out again.
     3. **Value** is the TUV, what the unit counts as for the AI and the battle calculator. Leave
        it empty to take the cost; the grey "its cost" says so.
 
@@ -74,10 +75,13 @@ left shows each with its picture and its numbers; 2-3-1 means attack 2, defense 
     - **Upload picture…** gives the unit its own picture, for every nation or tinted per nation;
       **Use the game's picture** takes it back. The list shows each unit's picture as the first
       nation shows it.
-    - **Cost**: PUs to buy one, from the purchase list that sells it; "–" when no rule sells it for PUs.
-      A unit that costs other resources too shows them all in the list and under its name, "1 PU +
-      5 Fame"; they are changed in Production. A unit that uses up other units when placed says
-      "· uses 2 Material" there; that is its option consumesUnits, under More options.
+    - **Cost**: PUs to buy one, from the rule that sells it in Production; "–" when no rule sells
+      it. A unit that costs other resources too has a field for each beside Cost, under the
+      resource's name, and shows them all in the list and under its name, "1 PU + 5 Fame". **+**
+      after the cost fields lists the game's resources the unit does not cost yet: the one chosen
+      costs 1, to change in its field. A resource set to 0 leaves the cost; the PUs field stays,
+      at 0. Production shows the same rule. A unit that uses up other units when placed says
+      "· uses 2 Material" there; that is set under **Uses up units**.
     - **Value** (TUV): what the unit is worth to the AI and the battle calculator. Left empty,
       shown as a grey "its cost", TripleA takes what the unit costs. Set it for a unit that costs 0
       or 1 but is strong; from a cost of 2 it is usually left empty. The "?" has a rule of thumb:
@@ -101,7 +105,7 @@ left shows each with its picture and its numbers; 2-3-1 means attack 2, defense 
     units" with the others; Production and infrastructure and Special, which are for no kind but
     rarer, wait in "More sections". The sections come in this order: what the unit does in a battle (Combat,
     Gives support, Air and anti-air, Bombing, Sea), how it moves (Movement, Transport and carrier),
-    then the rest (Miscellaneous, Production and infrastructure, Special).
+    then the rest (Miscellaneous, Uses up units, Production and infrastructure, Special).
 
     - **Combat**: Dice when attacking, Dice when defending, Fires first: its hits take no shot back,
       Artillery: supports infantry, Gets the support of artillery; more: Takes its best die instead of
@@ -126,6 +130,10 @@ left shows each with its picture and its numbers; 2-3-1 means attack 2, defense 
       placing**, **When moving in** and **When attacking**, each **counting** its owner's, its
       owner's and allies', or everyone's. Blank is no limit. Below, the nations' limits that count
       this unit, from Nations, each once with the nations it holds for.
+    - **Uses up units**: the units that placing one takes away from the territory, for example a
+      battleship made from a hull or 2 Material. A row per unit type with how many and which, × to
+      remove it; **+ Add a unit it uses up** adds a row with the first unit type not used yet, to
+      choose another in. In the game's XML this is consumesUnits, kept as the map wrote it.
     - **Not for land units**: the sections of the other kinds, folded, with their count.
     - **Air and anti-air**: Flies, Can intercept bombers, Needs an air base to intercept, Can escort
       bombers, Fights in air battles, Air battle attack and defense, Can scramble to sea battles,
@@ -156,4 +164,8 @@ left shows each with its picture and its numbers; 2-3-1 means attack 2, defense 
 
     A unit type whose options the game file writes once for every unit of a variable (`foreach`)
     shows them read-only, under a line with a link to **Attachments**: the loop is changed there,
-    for all its unit types at once. Its cost stays a field.
+    for all its unit types at once. Its cost stays a field. **Change for this unit only** below
+    that line gives the unit type an attachment of its own with all the values it has, written
+    after the loop: it is then changed here like any unit and no longer follows the loop, whose
+    other unit types stay as they are. A toast says so, with **Undo**. **Remove unit** is refused
+    while the loop's variable still names the unit type.

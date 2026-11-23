@@ -1726,7 +1726,7 @@ record MapFiles(
 
   /** Each territory's attachments as text, as an edit makes new ones also where nothing changed. */
   private static Map<String, List<String>> territoryAttachments(final Game game) {
-    return AttachmentsXml.attachments(game).stream()
+    return AttachmentsXml.kept(game).stream()
         .filter(a -> "territory".equals(a.getType()) && a.getAttachTo() != null)
         .collect(
             Collectors.groupingBy(

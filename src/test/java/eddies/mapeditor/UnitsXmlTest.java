@@ -334,6 +334,59 @@ final class UnitsXmlTest {
     assertThat(changed).as("the game as it was").isSameAs(game);
   }
 
+  @DisplayName("A loop's unit type gets its own attachment with all the loop gives it, and loads")
+  @Test
+  void loopMadeUnitGetsItsOwnAttachment() throws Exception {
+    // given
+    final MapProject project = givenGame("ww2global40.xml");
+    project.edit(UnitsXmlTest::givenWalkersLoop);
+    final Game loop = project.game();
+
+    // when
+    project.edit(g -> UnitsXml.withOwn(g, "infantry"));
+    final Game own = project.game();
+    project.edit(g -> UnitsXml.withValue(g, "infantry", givenOption("attack"), "9"));
+    final Game saved = saveAndReopen(project, "own.xml");
+
+    // then
+    assertThat(UnitsXml.loop(own, "infantry")).as("its own now, changed here").isEmpty();
+    assertThat(UnitsXml.options(own, "infantry"))
+        .as("all the loop gave it, nothing lost")
+        .extracting(Option::getName, Option::getValue)
+        .containsExactly(
+            org.assertj.core.groups.Tuple.tuple("attack", "4"),
+            org.assertj.core.groups.Tuple.tuple("hitPoints", "2"));
+    assertThat(AttachmentsXml.attachments(own))
+        .as("the loop as written stays, one attachment more")
+        .containsAll(AttachmentsXml.attachments(loop))
+        .hasSize(AttachmentsXml.attachments(loop).size() + 1);
+    assertThat(UnitsXml.value(saved, "infantry", givenOption("attack")))
+        .as("changed like any unit, as TripleA reads the saved game")
+        .isEqualTo("9");
+    assertThat(UnitsXml.value(saved, "infantry", givenOption("hitPoints")))
+        .as("the loop's other value stays")
+        .isEqualTo("2");
+    assertThat(UnitsXml.loop(saved, "artillery")).as("the loop's other unit follows it").isPresent();
+    assertThat(UnitsXml.value(saved, "artillery", givenOption("attack")))
+        .as("with the loop's value")
+        .isEqualTo("4");
+    assertThat(UnitsXml.withOwn(own, "fighter")).as("nothing for a unit no loop makes").isSameAs(own);
+  }
+
+  @DisplayName("A loop's unit type is not removed while the loop's variable names it")
+  @Test
+  void loopMadeUnitIsStillNamedByItsVariable() throws Exception {
+    // given
+    final Game game = givenWalkersLoop(givenGame("ww2global40.xml").game());
+
+    // when
+    final List<String> named =
+        RulesXml.whereNamed(MapXml.withoutUnitType(game, "artillery"), "artillery");
+
+    // then
+    assertThat(named).as("what Remove unit refuses with").contains("variable Walkers");
+  }
+
   /** G40 with a unitAttachment written for each of infantry and artillery, after their own. */
   static Game givenWalkersLoop(final Game g40) {
     return givenLoop(
@@ -406,5 +459,76 @@ final class UnitsXmlTest {
                 UnitsXml.value(game, "artillery", givenOption("attack"))))
         .as("one attachment per place, not per pair")
         .containsExactly("5", "6");
+  }
+
+  @DisplayName("Units used up are changed in the form the map wrote, added and removed, and load")
+  @Test
+  void usedUpUnitsKeepTheirForm() throws Exception {
+    // given: G40's factory_upgrade uses up "1:factory_minor"; artillery gets one, its count apart
+    final MapProject project = givenGame("ww2global40.xml");
+    project.edit(
+        g ->
+            UnitsXml.withNewOption(
+                g,
+                "artillery",
+                Option.builder().name("consumesUnits").count("2").value("infantry").build()));
+
+    // when
+    project.edit(
+        g -> UnitsXml.withUsedUp(g, "factory_upgrade", 0, new UnitsXml.UsedUp(2, "factory_minor")));
+    project.edit(g -> UnitsXml.withNewUsedUp(g, "factory_upgrade"));
+    project.edit(g -> UnitsXml.withUsedUp(g, "artillery", 0, new UnitsXml.UsedUp(3, "armour")));
+    final Game saved = saveAndReopen(project, "usedUp.xml");
+    final Game removed = UnitsXml.withoutOptionAt(saved, "factory_upgrade", "consumesUnits", 0);
+
+    // then
+    assertThat(UnitsXml.options(saved, "factory_upgrade"))
+        .as("count:unit stays count:unit; the new one, of the first unit type not used yet, last")
+        .filteredOn(o -> "consumesUnits".equals(o.getName()))
+        .extracting(Option::getCount, Option::getValue)
+        .containsExactly(
+            org.assertj.core.groups.Tuple.tuple(null, "2:factory_minor"),
+            org.assertj.core.groups.Tuple.tuple(null, "1:infantry"));
+    assertThat(UnitsXml.options(saved, "factory_upgrade"))
+        .as("the changed one keeps its place among the options")
+        .extracting(Option::getName)
+        .containsSubsequence("maxDamage", "consumesUnits", "whenCapturedChangesInto");
+    assertThat(UnitsXml.options(saved, "artillery"))
+        .as("a count written apart stays apart")
+        .filteredOn(o -> "consumesUnits".equals(o.getName()))
+        .extracting(Option::getCount, Option::getValue)
+        .containsExactly(org.assertj.core.groups.Tuple.tuple("3", "armour"));
+    assertThat(UnitsXml.usedUp(saved, "artillery")).as("read either way").containsExactly("3 armour");
+    assertThat(UnitsXml.usedUp(removed, "factory_upgrade"))
+        .as("the first removed, the second stays")
+        .containsExactly("1 infantry");
+  }
+
+  @DisplayName("A consumesUnits option that does not read as a count and a unit is left as it is")
+  @Test
+  void unreadUsedUpStays() throws Exception {
+    // given
+    final Game game =
+        UnitsXml.withNewOption(
+            givenGame("ww2global40.xml").game(),
+            "artillery",
+            Option.builder().name("consumesUnits").value("some:infantry").build());
+
+    // when
+    final Game changed = UnitsXml.withUsedUp(game, "artillery", 0, new UnitsXml.UsedUp(2, "armour"));
+
+    // then
+    assertThat(changed).as("changed among the raw options, not here").isSameAs(game);
+    final Game read = UnitsXml.withNewUsedUp(game, "infantry");
+    assertThat(
+            UnitsXml.withUsedUp(
+                read, "infantry", 0, UnitsXml.UsedUp.read(UnitsXml.options(read, "infantry").getLast()).orElseThrow()))
+        .as("what it says already: no step")
+        .isSameAs(read);
+    assertThat(UnitsXml.usedUp(game, "artillery")).as("not told as a cost").isEmpty();
+    assertThat(UnitsEditor.moreOptions(game, "artillery"))
+        .as("still a raw option under More options")
+        .extracting(Option::getName)
+        .contains("consumesUnits");
   }
 }

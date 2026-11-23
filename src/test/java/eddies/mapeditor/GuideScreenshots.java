@@ -24,6 +24,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
@@ -71,6 +72,10 @@ import org.triplea.map.data.elements.Game;
  * list of the controls it saw (build/guide-dump), to write the guide and a new shot from. It fails
  * for a control a shot names that is not there or not in view, and for a picture bigger than its
  * shot allows.
+ *
+ * <p>No picture shows a folder or the user's name of the computer that makes it ({@link
+ * GuidePrivacy}): labels, buttons, fields, tabs and tool tips get a neutral text instead, and a
+ * shot with one left elsewhere, eg in a list's row, fails without a picture.
  */
 @EnabledIfSystemProperty(named = "guide.screenshots", matches = "true")
 final class GuideScreenshots {
@@ -646,12 +651,19 @@ final class GuideScreenshots {
   private static List<String> cut(final Shot shot, final String name) throws IOException {
     final List<String> missed = new ArrayList<>();
     final JRootPane root = root();
-    // no folder of this computer in a picture, eg where the wizard puts a new map
-    final String home = System.getProperty("user.home");
-    for (final Component c : shown()) {
-      if (c instanceof JLabel label && String.valueOf(label.getText()).contains(home)) {
-        label.setText(label.getText().replace(home, "C:\\Users\\you"));
-      }
+    // no folder or name of this computer in a picture, eg where the wizard puts a new map
+    final GuidePrivacy own = GuidePrivacy.ofThisComputer();
+    shown().forEach(c -> makeNeutral(c, own));
+    final List<String> left =
+        shown().stream()
+            .flatMap(GuideScreenshots::textsOf)
+            .filter(own::shows)
+            .distinct()
+            .map(text -> name + ": shows a folder or name of this computer: " + oneLine(text))
+            .toList();
+    if (!left.isEmpty()) {
+      // no picture, as it would show them
+      return left;
     }
     final List<JPopupMenu> menus =
         Stream.of(MenuSelectionManager.defaultManager().getSelectedPath())
@@ -717,6 +729,74 @@ final class GuideScreenshots {
         "png",
         IMAGES.resolve(name + ".png").toFile());
     return missed;
+  }
+
+  /** The control's label, button, field, tab and tool tip texts without this computer's. */
+  private static void makeNeutral(final Component c, final GuidePrivacy own) {
+    // set only when another, as a text set tells its listeners
+    if (c instanceof JLabel label && label.getText() != null && own.shows(label.getText())) {
+      label.setText(own.neutral(label.getText()));
+    }
+    if (c instanceof AbstractButton b && b.getText() != null && own.shows(b.getText())) {
+      b.setText(own.neutral(b.getText()));
+    }
+    if (c instanceof JTextComponent t && t.getText() != null && own.shows(t.getText())) {
+      t.setText(own.neutral(t.getText()));
+    }
+    if (c instanceof JTabbedPane tabs) {
+      for (int i = 0; i < tabs.getTabCount(); i++) {
+        if (tabs.getTitleAt(i) != null && own.shows(tabs.getTitleAt(i))) {
+          tabs.setTitleAt(i, own.neutral(tabs.getTitleAt(i)));
+        }
+      }
+    }
+    if (c instanceof JComponent j && j.getToolTipText() != null && own.shows(j.getToolTipText())) {
+      j.setToolTipText(own.neutral(j.getToolTipText()));
+    }
+  }
+
+  /**
+   * Every text of the control, whole: what the dump has of it and its tabs, rows, entries and
+   * cells, which {@link #makeNeutral} does not change.
+   */
+  private static Stream<String> textsOf(final Component c) {
+    final List<Object> texts = new ArrayList<>();
+    texts.add(accessibleNameOf(c));
+    if (c instanceof AbstractButton b) {
+      texts.add(b.getText());
+    }
+    if (c instanceof JLabel l) {
+      texts.add(l.getText());
+    }
+    if (c instanceof JTextComponent t) {
+      texts.add(t.getText());
+    }
+    if (c instanceof JComponent j) {
+      texts.add(j.getToolTipText());
+    }
+    if (c instanceof JTabbedPane tabs) {
+      for (int i = 0; i < tabs.getTabCount(); i++) {
+        texts.add(tabs.getTitleAt(i));
+      }
+    }
+    if (c instanceof JList<?> list) {
+      for (int i = 0; i < list.getModel().getSize(); i++) {
+        texts.add(list.getModel().getElementAt(i));
+      }
+    }
+    if (c instanceof JComboBox<?> box) {
+      for (int i = 0; i < box.getItemCount(); i++) {
+        texts.add(box.getItemAt(i));
+      }
+    }
+    if (c instanceof JTable table) {
+      for (int row = 0; row < table.getRowCount(); row++) {
+        for (int column = 0; column < table.getColumnCount(); column++) {
+          texts.add(table.getValueAt(row, column));
+        }
+      }
+    }
+    return texts.stream().filter(Objects::nonNull).map(String::valueOf);
   }
 
   /** The dialog that is open, else the editor's window. */
