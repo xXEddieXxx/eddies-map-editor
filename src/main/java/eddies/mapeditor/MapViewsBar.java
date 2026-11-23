@@ -4,6 +4,7 @@ import java.awt.FlowLayout;
 import java.io.Serial;
 import java.util.function.Consumer;
 import javax.swing.JButton;
+import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JRadioButtonMenuItem;
@@ -18,11 +19,13 @@ final class MapViewsBar extends JPanel {
 
   private final JButton chooser = new JButton();
   private final transient Consumer<MapMode> chosen;
+  private final transient MapCanvas canvas;
   private MapMode shown;
 
-  MapViewsBar(final MapMode shown, final Consumer<MapMode> chosen) {
+  MapViewsBar(final MapMode shown, final Consumer<MapMode> chosen, final MapCanvas canvas) {
     super(new FlowLayout(FlowLayout.LEFT, 0, 0));
     this.chosen = chosen;
+    this.canvas = canvas;
     this.shown = shown;
     setOpaque(false);
     Theme.setMapToolStyle(chooser);
@@ -62,6 +65,20 @@ final class MapViewsBar extends JPanel {
       item.addActionListener(e -> choose(mode));
       menu.add(item);
     }
+    menu.addSeparator();
+    final JCheckBoxMenuItem units =
+        new JCheckBoxMenuItem("Units at the start", canvas.showsStartingUnits());
+    units.setToolTipText(
+        "The units each territory starts with, on their unit places, in the Game view");
+    units.addActionListener(
+        e -> {
+          if (units.isSelected()) {
+            canvas.showStartingUnits();
+          } else {
+            canvas.hideStartingUnits();
+          }
+        });
+    menu.add(units);
     return menu;
   }
 

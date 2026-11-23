@@ -78,6 +78,8 @@ the map's toolbar, and the two above the territories list.
     - **Political** each territory in its owner's alliance colour.
     - **Values** each territory's PUs per turn, capital and victory city, at its center. Where
       the game draws the number is set in Territories' Places › PUs.
+    - **Units at the start**, below the views, shows or hides the units each territory starts
+      with in the Game view, eg to see the map's picture under them.
 
     The Connections tool has no view button: there the map always shows which territories are
     neighbours, as lines.
@@ -109,11 +111,11 @@ the map's toolbar, and the two above the territories list.
     **Places ▾** above the map in Territories. What the game draws on every territory, shown to
     drag. A right click on a place offers more.
 
-    - **Units**, **Capitals**, **Centers**, **Comments**, **Decorations**, **Names**, **PUs**,
+    - **Unit places**, **Capitals**, **Centers**, **Comments**, **Decorations**, **Names**, **PUs**,
       **Terrain effects**, **Victory cities**, **Blockades**, **Convoys**, **Kamikaze**: each
       ticks one kind of place on or off. The tool tip names the file it is kept in, for example
-      place.txt for units and name_place.txt for names. "(none)" means the map has none of that
-      kind.
+      place.txt for unit places and name_place.txt for names. "(none)" means the map has none of
+      that kind.
     - A place shows what the game draws there: the name or PU value in the map's font, the PU
       picture, the capital's large flag, the victory city marker, a sea zone's convoy flag, each
       with an outline and a dot on the point the file keeps, which is the text's left end on its
@@ -126,7 +128,7 @@ the map's toolbar, and the two above the territories list.
       territory, and whether units beyond the places go on beside the last place.
     - **Create missing places** adds a place of a kind for every territory that lacks one, for
       example names for territories without a line in name_place.txt.
-    - **Reload places from the files** reads place.txt, the marker files and decorations.txt
+    - **Reload all places from the files** reads place.txt, the marker files and decorations.txt
       again, for a map changed by hand or with another program while it is open.
     - A click in the chosen territory adds a unit place.
     - A right click on a unit place offers **Add a unit place here**, **Remove this unit

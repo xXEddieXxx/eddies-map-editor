@@ -1135,7 +1135,7 @@ final class TerritoriesEditorTest {
         .as("units, the kinds by name, the sea zones' own, the two menus, the reload; (none) only"
             + " for kinds no territory shows, found places count")
         .containsExactly(
-            "Units",
+            "Unit places",
             "Capitals (none)",
             "Centers",
             "Comments (none)",
@@ -1151,7 +1151,7 @@ final class TerritoriesEditorTest {
             "—",
             "Lay out unit places",
             "Create missing places",
-            "Reload places from the files");
+            "Reload all places from the files");
     assertThat(tips.get(0)).as("the file only in the tool tip").endsWith("place.txt");
     assertThat(tips.get(5)).as("the names' file").endsWith("name_place.txt");
     assertThat(tips.get(6))
@@ -1165,7 +1165,7 @@ final class TerritoriesEditorTest {
             "In rows below the center — in all territories");
     assertThat(create)
         .as("how many are missing per kind: 5 territories, none with a value or capital")
-        .startsWith("Units — 5 missing", "Names — 5 missing", "PUs — none missing")
+        .startsWith("Unit places — 5 missing", "Names — 5 missing", "PUs — none missing")
         .endsWith("All kinds — 10 missing");
     assertThat(disabled)
         .as("nothing to create: off")
@@ -1373,8 +1373,8 @@ final class TerritoriesEditorTest {
     assertThat(seen)
         .as("the units' kind says so; no places to create over lines that are not known")
         .containsExactly(
-            "Units (not read)",
-            "Units — file does not read",
+            "Unit places (not read)",
+            "Unit places — file does not read",
             false,
             "place.txt does not read, eg for a name twice: open it in Files to put it right");
   }

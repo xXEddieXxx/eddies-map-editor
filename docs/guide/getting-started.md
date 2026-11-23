@@ -65,8 +65,8 @@ numbers are not drawn into the picture, the game draws them itself.
        without units. In **Units at the start** click **+ Add units**, pick infantry and type 2.
        Do that for each land territory, or do one and paint the rest: Paint → Units → Copy units
        of the chosen one, then drag across the others; the units turn to each territory's owner.
-       Where the game draws them is a place; drag a unit place with Places → Units if it sits
-       badly.
+       Where the game draws them is a place; drag a unit place with Places → Unit places if it
+       sits badly.
     5. **Check which territories border each other.** The step opens Connections. The wizard
        found the neighbours from the picture: every territory touches the sea zone, and the
        three of each island touch each other. Click a territory to see its lines in red; click a

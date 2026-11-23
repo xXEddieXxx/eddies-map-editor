@@ -541,7 +541,7 @@ final class TerritoriesEditor implements Editor {
    */
   JPopupMenu placesMenu() {
     final JPopupMenu menu = new JPopupMenu();
-    menu.add(placesItem("Units", MapFiles.PLACEMENTS, PlaceKind.UNITS));
+    menu.add(placesItem("Unit places", MapFiles.PLACEMENTS, PlaceKind.UNITS));
     menu.add(placesItem(Marker.IN_MENUS.get(0)));
     menu.add(placesItem("Centers", MapFiles.CENTERS, PlaceKind.CENTERS));
     menu.add(placesItem(Marker.IN_MENUS.get(1)));
@@ -576,7 +576,7 @@ final class TerritoriesEditor implements Editor {
     menu.addSeparator();
     menu.add(layOutMenu());
     menu.add(createMissingMenu());
-    final JMenuItem reload = new JMenuItem("Reload places from the files");
+    final JMenuItem reload = new JMenuItem("Reload all places from the files");
     reload.setToolTipText(
         "Reads place.txt, the marker files and decorations.txt again, eg changed by hand or with"
             + " another program while the map is open");
@@ -591,7 +591,7 @@ final class TerritoriesEditor implements Editor {
     if (project.hasUnsavedPlaces()
         && !Dialogs.confirm(
             page,
-            "Reload places from the files",
+            "Reload all places from the files",
             "Places changed here are not saved yet. Reloading shows the files' places instead;"
                 + " Undo brings yours back.",
             "Reload")) {
@@ -814,7 +814,7 @@ final class TerritoriesEditor implements Editor {
       final String file = kind instanceof Marker marker ? marker.getFile() : MapFiles.PLACEMENTS;
       final JMenuItem item =
           createMissingItem(
-              kind instanceof Marker marker ? placesName(marker) : "Units",
+              kind instanceof Marker marker ? placesName(marker) : "Unit places",
               missing,
               "Each territory without a line in "
                   + file
@@ -1220,7 +1220,7 @@ final class TerritoriesEditor implements Editor {
     switch (mode) {
       case SELECT -> {
         map.stopEditingPlaces();
-        // with the Places menu's Units shown, a click in the chosen territory adds a place
+        // with the Places menu's Unit places shown, a click in the chosen territory adds a place
         map.addUnitPlacesByClick();
         map.hideBanner();
       }

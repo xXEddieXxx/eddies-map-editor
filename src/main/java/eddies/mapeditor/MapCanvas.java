@@ -523,6 +523,23 @@ final class MapCanvas extends JComponent {
     repaint();
   }
 
+  // the Game view's units at the start, which the View menu switches off and on
+  private boolean startingUnits = true;
+
+  boolean showsStartingUnits() {
+    return startingUnits;
+  }
+
+  void showStartingUnits() {
+    startingUnits = true;
+    repaint();
+  }
+
+  void hideStartingUnits() {
+    startingUnits = false;
+    repaint();
+  }
+
   void showPicture() {
     showPicture = true;
     repaint();
@@ -2280,7 +2297,7 @@ final class MapCanvas extends JComponent {
     final int y = (int) (look.center().y * zoom);
     // the map's unit size, as its place.txt is laid out for units of that size
     final int size = (int) Math.round(unitSize.width * zoom);
-    if (mode == MapMode.GAME && size >= MIN_UNIT_SIZE) {
+    if (mode == MapMode.GAME && startingUnits && size >= MIN_UNIT_SIZE) {
       paintUnits(g, territory, look.units(), size);
     } else if (mode == MapMode.VALUES) {
       paintBadge(g, look.values(), x, y);

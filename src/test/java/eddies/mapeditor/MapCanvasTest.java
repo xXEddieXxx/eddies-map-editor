@@ -239,12 +239,17 @@ final class MapCanvasTest {
           canvas.setSize(400, 300);
           canvas.setMode(MapMode.GAME);
           magenta.add(magentaPixels(shown(canvas)));
+          // the View menu's Units at the start, off and on again
+          canvas.hideStartingUnits();
+          magenta.add(magentaPixels(shown(canvas)));
+          canvas.showStartingUnits();
+          magenta.add(magentaPixels(shown(canvas)));
         });
 
     // then
     assertThat(magenta)
-        .as("20 x 28 pixels of it, not the 48 x 48 of the map's unit size")
-        .containsExactly(20 * 28);
+        .as("20 x 28 pixels of it, not the 48 x 48 of the map's unit size; none while switched off")
+        .containsExactly(20 * 28, 0, 20 * 28);
   }
 
   @DisplayName("Faintly marked territories, eg the other canals, show in the mark's color")

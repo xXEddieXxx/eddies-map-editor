@@ -3,11 +3,14 @@ package eddies.mapeditor;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.awt.Component;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
 import javax.swing.AbstractButton;
+import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JMenuItem;
+import javax.swing.JRadioButtonMenuItem;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -22,7 +25,9 @@ final class MapViewsBarTest {
 
     // when
     SwingUtilities.invokeAndWait(
-        () -> buttons.addAll(shownButtons(new MapViewsBar(MapMode.GAME, mode -> {}))));
+        () ->
+            buttons.addAll(
+                shownButtons(new MapViewsBar(MapMode.GAME, mode -> {}, givenCanvas()))));
 
     // then
     assertThat(buttons.stream().map(AbstractButton::getText))
@@ -46,7 +51,8 @@ final class MapViewsBarTest {
     // when
     SwingUtilities.invokeAndWait(
         () -> {
-          final List<JMenuItem> entries = entries(new MapViewsBar(MapMode.OWNERS, mode -> {}));
+          final List<JMenuItem> entries =
+              entries(new MapViewsBar(MapMode.OWNERS, mode -> {}, givenCanvas()));
           seen.add(
               entries.stream().map(e -> e.getAccessibleContext().getAccessibleName()).toList());
           seen.add(entries.stream().allMatch(e -> e.getIcon() != null));
@@ -76,7 +82,7 @@ final class MapViewsBarTest {
     // when
     SwingUtilities.invokeAndWait(
         () -> {
-          final MapViewsBar bar = new MapViewsBar(MapMode.GAME, reported::add);
+          final MapViewsBar bar = new MapViewsBar(MapMode.GAME, reported::add, givenCanvas());
           entries(bar).get(MapMode.CHOICES.indexOf(MapMode.VALUES)).doClick();
           shown.add(shownButtons(bar).getFirst().getText());
           bar.showChosen(MapMode.OWNERS);
@@ -91,7 +97,50 @@ final class MapViewsBarTest {
   }
 
   private static List<JMenuItem> entries(final MapViewsBar bar) {
-    return Stream.of(bar.viewsMenu().getComponents()).map(JMenuItem.class::cast).toList();
+    return Stream.of(bar.viewsMenu().getComponents())
+        .filter(JRadioButtonMenuItem.class::isInstance)
+        .map(JMenuItem.class::cast)
+        .toList();
+  }
+
+  private static MapCanvas givenCanvas() {
+    return new MapCanvas(
+        new MapProject(Path.of("minimap.xml"), MapXmlTest.givenMinimap(), MapFiles.none()));
+  }
+
+  @DisplayName("Below the views, Units at the start switches the Game view's units off and on")
+  @Test
+  void switchesStartingUnits() throws Exception {
+    // given
+    final List<Boolean> shown = new ArrayList<>();
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final MapCanvas canvas = givenCanvas();
+          final MapViewsBar bar = new MapViewsBar(MapMode.GAME, mode -> {}, canvas);
+          final JCheckBoxMenuItem units = unitsSwitch(bar);
+          shown.add(units.isSelected());
+          units.doClick();
+          shown.add(canvas.showsStartingUnits());
+          shown.add(unitsSwitch(bar).isSelected());
+          unitsSwitch(bar).doClick();
+          shown.add(canvas.showsStartingUnits());
+        });
+
+    // then
+    assertThat(shown)
+        .as("on at first, off at a click, the menu says so when opened again, on again")
+        .containsExactly(true, false, false, true);
+  }
+
+  private static JCheckBoxMenuItem unitsSwitch(final MapViewsBar bar) {
+    return Stream.of(bar.viewsMenu().getComponents())
+        .filter(JCheckBoxMenuItem.class::isInstance)
+        .map(JCheckBoxMenuItem.class::cast)
+        .filter(item -> "Units at the start".equals(item.getText()))
+        .findFirst()
+        .orElseThrow();
   }
 
   private static List<AbstractButton> shownButtons(final MapViewsBar bar) {

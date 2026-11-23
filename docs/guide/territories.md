@@ -37,7 +37,7 @@ chosen territory in place of the list.
 
 ??? task "Move where the game draws units and names"
 
-    1. Press **Places ▾** above the map and tick a kind, for example **Units** or **Names**.
+    1. Press **Places ▾** above the map and tick a kind, for example **Unit places** or **Names**.
     2. Drag a place to where the game should draw it.
     3. Right click a unit place for more, for example **Remove this unit place**.
     4. For every territory at once, choose **Lay out unit places** or **Create missing places**

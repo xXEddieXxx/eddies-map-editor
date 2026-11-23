@@ -167,7 +167,7 @@ final class MapView extends JPanel {
                 fitOnce();
               }
             });
-    views = new MapViewsBar(MapMode.GAME, this::showMode);
+    views = new MapViewsBar(MapMode.GAME, this::showMode, canvas);
     legend = new MapLegend(project);
     goal = new GoalStrip(project);
     final JButton zoomShown = new JButton();
