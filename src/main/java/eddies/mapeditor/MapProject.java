@@ -71,8 +71,8 @@ import eddies.mapeditor.MapPicture.Neighbours;
  */
 final class MapProject {
   private static final String UNTITLED = "Untitled map";
-  // distinct colors for new nations, before any made up
-  private static final List<Color> NATION_COLORS =
+  // distinct colors for new nations, before any made up; also the colors Nations suggests
+  static final List<Color> NATION_COLORS =
       List.of(
           new Color(0xC0392B),
           new Color(0x2E86C1),
@@ -82,6 +82,30 @@ final class MapProject {
           new Color(0x17A589),
           new Color(0x7F8C8D),
           new Color(0xF1C40F));
+
+  // greys apart from each other and from the main colors' grey (0x7F8C8D), for minor nations
+  static final List<Color> MINOR_COLORS =
+      List.of(new Color(0x2C3E50), new Color(0xBDC3C7), new Color(0xE5E7E9));
+
+  /**
+   * The colors of the palette that are not alike any of the others, eg the other nations':
+   * suggestions that stand apart on the map.
+   */
+  static List<Color> freeColors(final List<Color> palette, final Collection<Color> others) {
+    return palette.stream()
+        .filter(c -> others.stream().noneMatch(o -> distance(c, o) < ALIKE))
+        .toList();
+  }
+
+  // below this distance in RGB two colors are hard to tell apart on the map
+  private static final double ALIKE = 60;
+
+  private static double distance(final Color a, final Color b) {
+    return Math.sqrt(
+        Math.pow(a.getRed() - b.getRed(), 2)
+            + Math.pow(a.getGreen() - b.getGreen(), 2)
+            + Math.pow(a.getBlue() - b.getBlue(), 2));
+  }
 
   // TripleA's colors for nations without one in map.properties, in its order (PlayerColors)
   private static final List<Color> GAME_COLORS =

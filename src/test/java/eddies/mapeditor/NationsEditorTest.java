@@ -20,6 +20,7 @@ import java.util.stream.Stream;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JCheckBoxMenuItem;
+import javax.swing.JColorChooser;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
@@ -34,6 +35,30 @@ import org.junit.jupiter.api.io.TempDir;
 import org.triplea.map.data.elements.Game;
 
 final class NationsEditorTest {
+  @DisplayName("The color chooser suggests colors apart from the other nations', a click takes one")
+  @Test
+  void suggestsColorsApart() {
+    // given: another nation in a red close to the first suggestion
+    final List<Color> others = List.of(new Color(0xC8402F));
+    final JColorChooser chooser = new JColorChooser(Color.WHITE);
+
+    // when
+    final List<Color> main = MapProject.freeColors(MapProject.NATION_COLORS, others);
+    final List<Color> minor = MapProject.freeColors(MapProject.MINOR_COLORS, others);
+    final List<JButton> swatches =
+        find((Container) NationsEditor.suggestions(chooser, main, minor), JButton.class).toList();
+    swatches.getFirst().doClick();
+
+    // then
+    assertThat(main)
+        .as("not the red alike the other nation's")
+        .doesNotContain(MapProject.NATION_COLORS.getFirst())
+        .hasSize(MapProject.NATION_COLORS.size() - 1);
+    assertThat(minor).as("greys for minor nations").isEqualTo(MapProject.MINOR_COLORS);
+    assertThat(swatches).as("a button per color").hasSize(main.size() + minor.size());
+    assertThat(chooser.getColor()).as("a click takes it").isEqualTo(main.getFirst());
+  }
+
   @TempDir Path folder;
 
   private MapProject givenG40() throws Exception {

@@ -665,11 +665,55 @@ final class NationsEditor implements Editor {
   private void changeColor(final String nation) {
     final JColorChooser chooser = new JColorChooser(project.nationColor(nation));
     chooser.getSelectionModel().addChangeListener(e -> map.previewColor(nation, chooser.getColor()));
-    final boolean chosen = Dialogs.ask(page, "Color of " + nation, chooser, "Choose");
+    final List<Color> others =
+        MapXml.nations(project.game()).stream()
+            .filter(n -> !n.equals(nation))
+            .map(project::nationColor)
+            .toList();
+    final JPanel content = new JPanel(new BorderLayout(0, Theme.GAP_S));
+    final List<Color> main = MapProject.freeColors(MapProject.NATION_COLORS, others);
+    final List<Color> minor = MapProject.freeColors(MapProject.MINOR_COLORS, others);
+    if (!main.isEmpty() || !minor.isEmpty()) {
+      content.add(suggestions(chooser, main, minor), BorderLayout.NORTH);
+    }
+    content.add(chooser, BorderLayout.CENTER);
+    final boolean chosen = Dialogs.ask(page, "Color of " + nation, content, "Choose");
     map.endPreview();
     if (chosen) {
       project.setNationColor(nation, chooser.getColor());
     }
+  }
+
+  /**
+   * A row of colors to pick at a click, none alike another nation's: clear ones for main nations,
+   * greys for minor ones.
+   */
+  static JComponent suggestions(
+      final JColorChooser chooser, final List<Color> main, final List<Color> minor) {
+    final JPanel row = new JPanel(new FlowLayout(FlowLayout.LEADING, Theme.GAP_XS, 0));
+    row.setOpaque(false);
+    if (!main.isEmpty()) {
+      row.add(Theme.newSecondaryLabel("Apart from the other nations:"));
+      main.forEach(color -> row.add(swatchButton(chooser, color)));
+    }
+    if (!minor.isEmpty()) {
+      if (!main.isEmpty()) {
+        row.add(Box.createHorizontalStrut(Theme.GAP_M));
+      }
+      row.add(Theme.newSecondaryLabel("For minor nations:"));
+      minor.forEach(color -> row.add(swatchButton(chooser, color)));
+    }
+    return row;
+  }
+
+  private static JButton swatchButton(final JColorChooser chooser, final Color color) {
+    final JButton button = new JButton(new MapLegend.Swatch(color));
+    Theme.setTertiaryButtonStyle(button);
+    final String hex = String.format("#%06X", color.getRGB() & 0xFFFFFF);
+    button.setToolTipText(hex);
+    button.getAccessibleContext().setAccessibleName("Color " + hex);
+    button.addActionListener(e -> chooser.setColor(color));
+    return button;
   }
 
   /** "+ label", as every add action. */
