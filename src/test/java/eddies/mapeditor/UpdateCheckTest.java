@@ -2,8 +2,6 @@ package eddies.mapeditor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.prefs.Preferences;
@@ -72,13 +70,22 @@ final class UpdateCheckTest {
   @DisplayName("Notes as long as a real release's are read on the check's own thread")
   @Test
   void readsLongNotes() throws Exception {
-    // given: the 0.2.7 section of CHANGELOG.md, a title with \ and ", and the downloads, as JSON
-    final String changelog = Files.readString(Path.of("CHANGELOG.md"));
-    final String section =
-        changelog.substring(changelog.indexOf("## 0.2.7"), changelog.indexOf("## 0.2.6"));
+    // given: notes of a release's length, made here so they do not follow CHANGELOG.md: a title
+    // with \ and ", 20 entries of a few lines each, then the downloads, as JSON
+    final StringBuilder entries = new StringBuilder();
+    for (int n = 1; n <= 20; n++) {
+      entries
+          .append("- **Change ")
+          .append(n)
+          .append("** (#")
+          .append(n)
+          .append("). ")
+          .append("What it does, in a few lines. ".repeat(12))
+          .append("\n");
+    }
     final String notes =
-        "## What's new in 0.2.7\n\n- **A \"quoted\" C:\\maps title** (#1).\n"
-            + section
+        "## What's new in 0.2.8\n\n### Fixed\n\n- **A \"quoted\" C:\\maps title** (#1).\n"
+            + entries
             + "\n---\n\n"
             + "x".repeat(4000);
     final String json =
@@ -102,8 +109,7 @@ final class UpdateCheckTest {
         .satisfies(
             news ->
                 assertThat(news)
-                    .startsWith(
-                        "A \"quoted\" C:\\maps title", "Loops (foreach) were read only in Units")
+                    .startsWith("A \"quoted\" C:\\maps title", "Change 1")
                     .hasSize(12));
   }
 
