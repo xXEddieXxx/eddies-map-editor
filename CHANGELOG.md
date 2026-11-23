@@ -3,7 +3,20 @@
 What changed for map makers, release by release. The GitHub release of each version carries the
 downloads; this file carries the words.
 
-## 0.2.8
+## 0.2.9
+
+### Changed
+
+- **Make territories lets you choose each change** (#69). On a map with badly drawn borders, eg
+  1911 Theatre of Empires, a gap in an old line used to merge territories you never meant to
+  merge. The dialog now lists every change as a row to take or keep as it was: a split, a new
+  border, a merge, a new territory. What a line you drew made starts ticked; territories merge
+  only where you erased their border; anything else, eg a gap in an old line or an island the
+  search missed, starts unticked and says why ("Alsace would take part of Champagne through a gap
+  in the line"). Changes that move land between them are one row, so no choice leaves a hole or
+  an overlap, and territories you did not change keep their outlines exactly.
+
+## 0.2.8 · 2026-11-23
 
 From a map maker's feedback on 0.2.6 and 0.2.7, tried with 11 Rings of Power, 1941 Global
 Command Decision, Greyhawk Wars and Total World War; each change under its GitHub issue.
