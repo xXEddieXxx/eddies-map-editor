@@ -495,6 +495,38 @@ final class SearchListTest {
         .isLessThanOrEqualTo(360);
   }
 
+  @DisplayName("A tool's own tool tip of a row comes first, else the title and line")
+  @Test
+  void ownToolTips() {
+    // given: an own tip for infantry only
+    final SearchList searchList =
+        new SearchList(
+                "unit", "units", () -> List.of("infantry", "armour"), n -> n, n -> "", n -> {})
+            .withToolTips(
+                n ->
+                    n.equals("infantry")
+                        ? Optional.of("<html>1 | 2 | 1</html>")
+                        : Optional.empty());
+    final JList<?> list = listIn(searchList);
+    list.setSize(200, 400);
+
+    // when
+    final List<String> tips =
+        IntStream.range(0, 2)
+            .mapToObj(
+                i -> {
+                  final Rectangle row = list.getCellBounds(i, i);
+                  return list.getToolTipText(
+                      new MouseEvent(
+                          list, MouseEvent.MOUSE_MOVED, 0, 0, row.x + 4, row.y + 4, 0, false));
+                })
+            .toList();
+
+    // then
+    assertThat(tips.get(0)).as("its own").isEqualTo("<html>1 | 2 | 1</html>");
+    assertThat(tips.get(1)).as("the usual one without").contains("<b>armour</b>");
+  }
+
   @DisplayName("A row's tool tip leaves out the key when its title or line already tells it")
   @Test
   void toolTipSaysNothingTwice() {

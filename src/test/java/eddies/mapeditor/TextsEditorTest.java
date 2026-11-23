@@ -135,6 +135,23 @@ final class TextsEditorTest {
     assertThat(rows).as("a row per action").containsExactly("▸ Truce (2)", "▸ War (1)");
   }
 
+  @DisplayName("Opened for a key, eg from Units, it shows the text, or a new tool tip's tab")
+  @Test
+  void showsAKey() throws Exception {
+    // given
+    final TextsEditor texts = new TextsEditor(givenMinimapWithTexts());
+    final JTabbedPane tabs = all(texts.page(), JTabbedPane.class).getFirst();
+
+    // when
+    texts.show("Welcome");
+    final int message = tabs.getSelectedIndex();
+    texts.show("tooltip.unit.infantry");
+
+    // then
+    assertThat(message).as("the message's tab").isEqualTo(1);
+    assertThat(tabs.getSelectedIndex()).as("a tool tip not there yet: its tab").isEqualTo(2);
+  }
+
   @DisplayName("A tab per file but sounds, in their order, each titled with its count")
   @Test
   void tabsWithCounts() throws Exception {

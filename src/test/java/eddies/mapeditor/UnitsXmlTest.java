@@ -17,6 +17,32 @@ import org.triplea.map.data.elements.Game;
 import org.triplea.map.xml.writer.GameXmlWriter;
 
 final class UnitsXmlTest {
+  @DisplayName("A unit's tool tip is the game's: TripleA's stats, the map's own text, or both")
+  @Test
+  void gameToolTips(@TempDir final Path folder) throws Exception {
+    // given: an own text for the armour, an appended one for the artillery
+    Files.writeString(
+        folder.resolve("tooltips.properties"),
+        "tooltip.unit.armour=<b>Tanks</b>\n"
+            + "tooltip.unit.artillery.append=<br>* Supports infantry\n");
+    final Game game = MapXmlTest.givenMinimap();
+
+    // when
+    final java.util.Map<String, String> tips =
+        UnitsXml.gameToolTips(game, MapTexts.read(folder), java.util.Optional.empty());
+
+    // then
+    assertThat(tips.get("infantry"))
+        .as("TripleA's stats: kind and attack, defense, movement")
+        .contains("Land")
+        .contains("1 | 2 | 1");
+    assertThat(tips.get("armour")).as("the map's own text instead").isEqualTo("<b>Tanks</b>");
+    assertThat(tips.get("artillery"))
+        .as("an appended text after the stats")
+        .contains("Land")
+        .endsWith("<br>* Supports infantry");
+  }
+
   @TempDir Path folder;
 
   private MapProject givenGame(final String resource) throws Exception {

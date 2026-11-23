@@ -1,7 +1,13 @@
 package eddies.mapeditor;
 
+import games.strategy.engine.data.GameData;
+import games.strategy.engine.data.UnitType;
+import games.strategy.engine.data.gameparser.GameParser;
 import games.strategy.triplea.Constants;
 import games.strategy.triplea.attachments.UnitSupportAttachment;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -17,6 +23,8 @@ import lombok.experimental.UtilityClass;
 import org.triplea.map.data.elements.AttachmentList.Attachment;
 import org.triplea.map.data.elements.AttachmentList.Attachment.Option;
 import org.triplea.map.data.elements.Game;
+import org.triplea.map.xml.writer.GameXmlWriter;
+import org.triplea.util.LocalizeHtml;
 
 /**
  * A unit type's options and the support it gives, as they stand in the game's XML. Every change
@@ -26,6 +34,58 @@ import org.triplea.map.data.elements.Game;
 // toBuilder() also with TripleA versions whose model has none
 @ExtensionMethod(Builders.class)
 class UnitsXml {
+  private static final String TOOLTIP = "tooltip.unit.";
+
+  /**
+   * Per unit type the text of the tool tip the game shows on the map, without its first line
+   * (TooltipProperties.getTooltip): the map's own text for it, else TripleA's stats of it
+   * (UnitAttachment.toStringShortAndOnlyImportantDifferences, for no nation) and an ".append"
+   * text after them; pictures found in the map's doc/images. Asks TripleA to load the game from a
+   * file, so it takes a moment: empty when the game does not load.
+   */
+  static Map<String, String> gameToolTips(
+      final Game game, final MapTexts texts, final Optional<Path> mapFolder) {
+    final GameData data;
+    try {
+      final Path xml = Files.createTempFile("map-maker-units", ".xml");
+      try {
+        GameXmlWriter.exportXml(game, xml);
+        data = GameParser.parse(xml, false).orElse(null);
+      } finally {
+        Files.deleteIfExists(xml);
+      }
+    } catch (final IOException | RuntimeException e) {
+      return Map.of();
+    }
+    if (data == null) {
+      return Map.of();
+    }
+    final Map<String, String> tips = new HashMap<>();
+    for (final UnitType type : data.getUnitTypeList().getAllUnitTypes()) {
+      final Optional<String> own = texts.value(MapTexts.Kind.TOOLTIPS, TOOLTIP + type.getName());
+      final String text;
+      try {
+        text =
+            own.orElseGet(
+                () ->
+                    type.getUnitAttachment()
+                            .toStringShortAndOnlyImportantDifferences(
+                                data.getPlayerList().getNullPlayer())
+                        + texts
+                            .value(MapTexts.Kind.TOOLTIPS, TOOLTIP + type.getName() + ".append")
+                            .orElse(""));
+      } catch (final RuntimeException e) {
+        continue;
+      }
+      tips.put(
+          type.getName(),
+          mapFolder
+              .map(folder -> LocalizeHtml.localizeImgLinksInHtml(text, folder))
+              .orElse(text));
+    }
+    return Map.copyOf(tips);
+  }
+
   private static final String UNIT = Constants.UNIT_ATTACHMENT_NAME;
   static final String SUPPORT_KIND = "UnitSupportAttachment";
   private static final String UNIT_KIND = "UnitAttachment";

@@ -13,6 +13,7 @@ import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
+import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.Serial;
@@ -29,6 +30,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -56,6 +58,8 @@ import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPopupMenu;
 import javax.swing.SwingConstants;
+import javax.swing.SwingWorker;
+import javax.swing.ToolTipManager;
 import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JRadioButton;
@@ -133,6 +137,10 @@ final class UnitsEditor implements Editor {
   private final SearchList list;
   // the list's pictures, read once per change of the map: the renderer asks at every repaint
   private final Map<String, Icon> listIcons = new HashMap<>();
+  // the game's tool tip per unit type for this game, and the game being loaded for it
+  private Map<String, String> toolTips = Map.of();
+  private @Nullable Game toolTipsFor;
+  private @Nullable Game toolTipsLoading;
   private final Form inspector = new Form(280).dense();
   // the sections, side by side when wide enough
   private final Form grid = new Form(280).dense();
@@ -159,6 +167,7 @@ final class UnitsEditor implements Editor {
                 this::detail,
                 this::choose)
             .withIcons(this::listIcon, LIST_PICTURE_SIZE)
+            .withToolTips(this::gameToolTip)
             .withTools(
                 Theme.newIconButton(
                     "▲", "Move the unit up, where TripleA lists the units", () -> move(-1)),
@@ -608,7 +617,8 @@ final class UnitsEditor implements Editor {
       part.setAlignmentX(Component.LEFT_ALIGNMENT);
       lineAndLinks.add(part);
     }
-    final Optional<JComponent> picture = project.unitPicture(unit).map(UnitsEditor::newPicture);
+    final Optional<JComponent> picture =
+        project.unitPicture(unit).map(image -> newPicture(unit, image));
     // at the top, beside the name, not in the middle of the lines beside it
     picture.ifPresent(p -> ((JLabel) p).setVerticalAlignment(SwingConstants.TOP));
     inspector.row(Details.header(picture, unit, lineAndLinks, List.of()));
@@ -630,6 +640,14 @@ final class UnitsEditor implements Editor {
                         ? f.withoutListed(MapFiles.UNDRAWN_UNITS, unit)
                         : f.withListed(MapFiles.UNDRAWN_UNITS, unit)));
     inspector.row(leftAligned(drawn));
+    final String tip = "tooltip.unit." + unit;
+    inspector.row(
+        Help.link(
+            project.texts().value(MapTexts.Kind.TOOLTIPS, tip).isPresent()
+                ? "Its tool tip on the map has a text of its own, in"
+                : "Its tool tip on the map shows these numbers; a text of its own is written in",
+            TextsEditor.TITLE,
+            tip));
   }
 
   /**
@@ -694,9 +712,66 @@ final class UnitsEditor implements Editor {
     inspector.row(Help.link("The color is set per nation in", "Nations"));
   }
 
-  /** At most 48 px, never blown up, so a small picture stays sharp. */
-  private static JComponent newPicture(final Image image) {
-    return new JLabel(scaledIcon(image, PICTURE_SIZE));
+  /** At most 48 px, never blown up, so a small picture stays sharp; its tool tip the game's. */
+  private JComponent newPicture(final String unit, final Image image) {
+    final JLabel picture =
+        new JLabel(scaledIcon(image, PICTURE_SIZE)) {
+          @Serial private static final long serialVersionUID = 1L;
+
+          @Override
+          public @Nullable String getToolTipText(final MouseEvent event) {
+            return gameToolTip(unit).orElse(null);
+          }
+        };
+    ToolTipManager.sharedInstance().registerComponent(picture);
+    return picture;
+  }
+
+  /**
+   * The unit's tool tip as the game shows it on the map: its name in bold, then the map's text or
+   * TripleA's stats ({@link UnitsXml#gameToolTips}); worked out in the background once per game,
+   * so empty, the list's own line, until it is there or when the game does not load.
+   */
+  private Optional<String> gameToolTip(final String unit) {
+    final Game game = project.game();
+    if (game != toolTipsFor) {
+      loadToolTips(game);
+      return Optional.empty();
+    }
+    return Optional.ofNullable(toolTips.get(unit))
+        .map(text -> "<html><b>" + SearchList.escape(unit) + "</b><br />" + text + "</html>");
+  }
+
+  private void loadToolTips(final Game game) {
+    if (game == toolTipsLoading) {
+      return;
+    }
+    toolTipsLoading = game;
+    final MapTexts texts = project.texts();
+    final Optional<Path> folder = project.getFolder();
+    new SwingWorker<Map<String, String>, Void>() {
+      @Override
+      protected Map<String, String> doInBackground() {
+        return UnitsXml.gameToolTips(game, texts, folder);
+      }
+
+      @Override
+      protected void done() {
+        if (game != toolTipsLoading) {
+          return;
+        }
+        toolTipsLoading = null;
+        try {
+          toolTips = get();
+        } catch (final InterruptedException e) {
+          Thread.currentThread().interrupt();
+          toolTips = Map.of();
+        } catch (final ExecutionException e) {
+          toolTips = Map.of();
+        }
+        toolTipsFor = game;
+      }
+    }.execute();
   }
 
   /** The picture at most so many px wide and high, never blown up, so a small one stays sharp. */

@@ -225,9 +225,11 @@ final class TextsEditor implements Editor {
             });
   }
 
+  static final String TITLE = "Texts";
+
   @Override
   public String title() {
-    return "Texts";
+    return TITLE;
   }
 
   @Override
@@ -332,6 +334,22 @@ final class TextsEditor implements Editor {
   static String actionOf(final String key) {
     final int dot = key.lastIndexOf('.');
     return dot <= 0 ? key : key.substring(0, dot);
+  }
+
+  /**
+   * Chooses the text of this key, eg a unit's tool tip from Units; for a tool tip not there yet,
+   * its tab.
+   */
+  @Override
+  public void show(final String key) {
+    final Optional<Kind> kind =
+        KINDS.stream().filter(k -> project.texts().value(k, key).isPresent()).findFirst();
+    final Kind tab = kind.orElse(key.startsWith("tooltip.unit.") ? Kind.TOOLTIPS : kind());
+    tabs.setSelectedIndex(KINDS.indexOf(tab));
+    if (kind.isPresent()) {
+      lists.get(tab).choose(key);
+      choose(key);
+    }
   }
 
   private void choose(final String key) {

@@ -88,6 +88,7 @@ final class SearchList extends JPanel {
   private final Map<String, Integer> groupSizes = new HashMap<>();
   // what a name is called in the map's files, found by the search and told by the tool tip
   private transient Optional<Function<String, String>> ids = Optional.empty();
+  private transient Optional<Function<String, Optional<String>>> toolTips = Optional.empty();
   private final Optional<String> noun;
   private final Optional<String> nounPlural;
   private final JLabel count = Theme.newSecondaryLabel("");
@@ -310,6 +311,12 @@ final class SearchList extends JPanel {
     return Collections.list(shown.elements()).stream()
         .map(value -> isGroup(value) ? row.header(value) : value)
         .toList();
+  }
+
+  /** A row's tool tip of the tool's own, HTML, where it has one; else the title and line. */
+  SearchList withToolTips(final Function<String, Optional<String>> toolTip) {
+    toolTips = Optional.of(toolTip);
+    return this;
   }
 
   /** The names' ids in the map's files: a search finds a name by it, its tool tip tells it. */
@@ -594,6 +601,10 @@ final class SearchList extends JPanel {
       final String name = getModel().getElementAt(index);
       if (isGroup(name)) {
         return null;
+      }
+      final Optional<String> own = toolTips.flatMap(t -> t.apply(name));
+      if (own.isPresent()) {
+        return own.get();
       }
       final String id = ids.map(i -> i.apply(name)).orElse("");
       final String first = title.apply(name);
