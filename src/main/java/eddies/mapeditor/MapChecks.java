@@ -660,7 +660,8 @@ class MapChecks {
         return findError(
                 xml,
                 data ->
-                    GameStart.whyNot(data, files.folder().orElse(null)).map(e -> NOT_STARTED + e))
+                    GameStart.whyNot(data, files.folder().orElse(null))
+                        .map(e -> notStarted(game, e)))
             .map(error -> error.startsWith(NOT_STARTED) ? error : "The game does not load: " + error);
       } finally {
         Files.deleteIfExists(xml);
@@ -668,6 +669,19 @@ class MapChecks {
     } catch (final IOException e) {
       return Optional.of("The game does not load: could not write it to check it: " + e.getMessage());
     }
+  }
+
+  /**
+   * Why the loaded game does not start; with land handed out at the start
+   * ({@link GameRulesXml#pickingLand}) said too, as another start, and so another Check, may go
+   * otherwise.
+   */
+  static String notStarted(final Game game, final String why) {
+    return NOT_STARTED
+        + why
+        + (GameRulesXml.pickingLand(game).isEmpty()
+            ? ""
+            : " (" + GameRulesXml.landAtStart(game) + ": another start may go otherwise)");
   }
 
   /**

@@ -124,6 +124,25 @@ final class MapGuideTest {
         .hasValueSatisfying(note -> assertThat(note.text()).contains("handed out at random"));
   }
 
+  @DisplayName("A start that fails with land handed out says that another start may go otherwise")
+  @Test
+  void startFailureNamesTheRandomStart() throws Exception {
+    // when
+    final String random = MapChecks.notStarted(givenRandomStart(), "gamePlayer is null");
+    final String fixed = MapChecks.notStarted(givenMinimapWithoutOwners(), "gamePlayer is null");
+
+    // then
+    assertThat(random)
+        .as("the reason, then how land is handed out")
+        .isEqualTo(
+            "The game does not start: gamePlayer is null (Neutral land is handed out in turns when"
+                + " the game starts, with the units the nations hold: another start may go"
+                + " otherwise)");
+    assertThat(fixed)
+        .as("a fixed start: the reason alone")
+        .isEqualTo("The game does not start: gamePlayer is null");
+  }
+
   static Game givenRandomStart() throws Exception {
     return givenGame(givenRandomStartXml());
   }

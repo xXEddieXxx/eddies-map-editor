@@ -21,7 +21,7 @@ import eddies.mapeditor.TriggerXml.Spec;
 import eddies.mapeditor.TriggerXml.Trigger;
 
 final class TriggerXmlTest {
-  @DisplayName("A chance reads in plain words: x in y with its share, and when it is always or never")
+  @DisplayName("A chance reads in plain words: x in y with its share, or always, or never")
   @Test
   void chanceInWords() {
     assertThat(TriggerXml.chanceWords(2, 6)).as("a share").isEqualTo("2 in 6, about 33 %");
