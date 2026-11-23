@@ -457,4 +457,36 @@ final class SearchListTest {
         .isGreaterThan(240)
         .isLessThanOrEqualTo(360);
   }
+
+  @DisplayName("A row's tool tip leaves out the key when its title or line already tells it")
+  @Test
+  void toolTipSaysNothingTwice() {
+    // given: rows as Texts lists political action texts
+    final String key = "Axis_To_War.BUTTON";
+    final SearchList searchList =
+        new SearchList(
+            "text",
+            "texts",
+            () -> List.of(key),
+            n -> "Axis_To_War · Button",
+            n -> "politicalActionAxisWar of Germans",
+            n -> {});
+    final JList<?> list = listIn(searchList);
+    list.setSize(200, 400);
+    final Rectangle row = list.getCellBounds(0, 0);
+
+    // when
+    final String tip =
+        list.getToolTipText(
+            new MouseEvent(list, MouseEvent.MOUSE_MOVED, 0, 0, row.x + 4, row.y + 4, 0, false));
+    final boolean prefixed =
+        SearchList.saysName("Game.Germans;Hold_Rome", "Germans · Hold Rome", "Germans;Hold_Rome");
+    final boolean untold =
+        SearchList.saysName("tooltip.unit.infantry", "Tool tip of infantry", "");
+
+    // then
+    assertThat(tip).as("title and line, not the key again").doesNotContain(key);
+    assertThat(prefixed).as("a line that is the key after its prefix tells it").isTrue();
+    assertThat(untold).as("a key the title does not tell stays").isFalse();
+  }
 }

@@ -174,7 +174,10 @@ final class ActionsXmlTest {
     final String explained = MapTexts.explain(Kind.POLITICS, button, project.game());
     project.undo();
 
-    assertThat(explained).as("the key is the action's button").contains(name);
+    assertThat(explained)
+        .as("the key is the action's button, which the row's title says, not its line again")
+        .contains(name)
+        .doesNotContain("BUTTON");
     assertThat(ActionsXml.actions(project.game())).as("the action is gone").isEmpty();
     assertThat(project.texts().value(Kind.POLITICS, button)).as("and its text").isEmpty();
     assertThat(RulesXml.relationshipTypes(project.game()))

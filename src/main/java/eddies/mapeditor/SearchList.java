@@ -568,7 +568,7 @@ final class SearchList extends JPanel {
           + escape(first)
           + "</b>"
           + (line.isEmpty() ? "" : "<br>" + escape(line))
-          + (first.equals(name) || line.equals(name) || !id.isEmpty() ? "" : "<br>" + escape(name))
+          + (saysName(name, first, line) || !id.isEmpty() ? "" : "<br>" + escape(name))
           + (id.isEmpty() ? "" : "<br>id " + escape(id))
           + "</html>";
     }
@@ -577,6 +577,20 @@ final class SearchList extends JPanel {
     public boolean getScrollableTracksViewportWidth() {
       return true;
     }
+  }
+
+  /**
+   * Whether the title or line already tells the name: the same words (eg "Axis_To_War.BUTTON" as
+   * "Axis_To_War · Button"), or the name ends with the line (eg a key after its file's prefix).
+   */
+  static boolean saysName(final String name, final String title, final String line) {
+    return words(name).equals(words(title))
+        || words(name).equals(words(line))
+        || (!line.isBlank() && name.endsWith(line));
+  }
+
+  private static String words(final String text) {
+    return text.replaceAll("[^\\p{L}\\p{N}]+", " ").strip().toLowerCase(Locale.ROOT);
   }
 
   private final class HoverTracker extends MouseAdapter {

@@ -931,7 +931,7 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable, Map<String, Strin
             .toList();
     return actions.isEmpty()
         ? "No action of the game reads it"
-        : key.substring(dot + 1) + " of " + String.join(", ", actions);
+        : String.join(", ", actions);
   }
 
   /**
