@@ -40,7 +40,7 @@ GitHub issue.
   Compare nations read them now, and a change goes into that option.
 - **Technology did not show technologies a trigger gives** (#62), as 1941 Global Command Decision
   and Total World War give most of theirs. A nation's row now names the triggers and when they
-  fire. *PUs per roll* shows only with the game option *Tech Development* on; without it nations
+  fire, and a click opens one in Triggers. *PUs per roll* shows only with the game option *Tech Development* on; without it nations
   never roll, which a line says with a link to Game options.
 - **A unit's tool tip previewed other than in the game** (#58): other spacing, no pictures. The
   preview in Texts now looks like the game's tool tip, the unit and its owner in bold first,
