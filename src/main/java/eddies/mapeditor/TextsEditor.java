@@ -5,6 +5,7 @@ import games.strategy.engine.framework.ui.GameNotesView;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
 import java.util.EnumMap;
@@ -26,7 +27,9 @@ import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JTabbedPane;
+import javax.swing.SwingConstants;
 import javax.swing.Timer;
+import javax.swing.UIManager;
 import org.triplea.map.data.elements.Game;
 import org.triplea.swing.SwingComponents;
 import eddies.mapeditor.MakerIcon.Glyph;
@@ -42,6 +45,10 @@ import eddies.mapeditor.MapTexts.Kind;
 final class TextsEditor implements Editor {
   private static final int PAUSE_MILLIS = 1000;
   private static final int PREVIEW_HEIGHT = 160;
+  private static final String TOOLTIP_HTML =
+      "A tool tip takes simple HTML: <br> for a new line, <b>bold</b>, <i>italic</i>,"
+          + " &nbsp; for more spaces, <p style=\"color:green;\">a line in a color</p> (a name"
+          + " or #20B2AA), and <img src=\"name.png\"/> for a picture in the map's doc/images.";
   private static final int NOTE_WIDTH = 400;
   private static final String UNREADABLE = "unreadable";
   private static final String GROUP = "TABLEGROUP.";
@@ -61,6 +68,8 @@ final class TextsEditor implements Editor {
   private final Form inspector = new Form(NOTE_WIDTH);
   private final CodeArea text = new CodeArea();
   private final GameNotesView preview = new GameNotesView();
+  // a unit's tool tip in the look of a tool tip, as the game shows it on the map
+  private final JLabel tipPreview = newTipPreview();
   private final Timer pause = new Timer(PAUSE_MILLIS, e -> commit());
   private @Nullable String selected;
   // the file the text shown belongs to, as the tab changes before the text is kept
@@ -388,7 +397,15 @@ final class TextsEditor implements Editor {
     } else {
       inspector.field("Text", typed);
     }
-    if (previews(kind, key)) {
+    if (kind == Kind.TOOLTIPS) {
+      tipPreview.setText(MapTexts.tooltipAsShown(key, value.get(), game, project.getFolder()));
+      final JPanel tip = new JPanel(new FlowLayout(FlowLayout.LEADING, 0, 0));
+      tip.setOpaque(false);
+      tip.add(tipPreview);
+      final JComponent shown = SwingComponents.newJScrollPane(tip);
+      shown.setPreferredSize(new Dimension(0, PREVIEW_HEIGHT));
+      inspector.field("Preview", TOOLTIP_HTML, shown);
+    } else if (previews(kind, key)) {
       preview.setText(value.get());
       final JComponent shown = SwingComponents.newJScrollPane(preview);
       shown.setPreferredSize(new Dimension(0, PREVIEW_HEIGHT));
@@ -397,6 +414,18 @@ final class TextsEditor implements Editor {
     inspector.remove("Remove text…", this::removeChosen).end();
     inspector.revalidate();
     inspector.repaint();
+  }
+
+  /** A label drawn as the look and feel draws a tool tip: its font, colors and border. */
+  private static JLabel newTipPreview() {
+    final JLabel label = new JLabel();
+    label.setOpaque(true);
+    label.setVerticalAlignment(SwingConstants.TOP);
+    Optional.ofNullable(UIManager.getFont("ToolTip.font")).ifPresent(label::setFont);
+    Optional.ofNullable(UIManager.getColor("ToolTip.background")).ifPresent(label::setBackground);
+    Optional.ofNullable(UIManager.getColor("ToolTip.foreground")).ifPresent(label::setForeground);
+    Optional.ofNullable(UIManager.getBorder("ToolTip.border")).ifPresent(label::setBorder);
+    return label;
   }
 
   /** HTML the game shows: messages, tool tips and the texts of actions, not a message's sounds. */
@@ -467,7 +496,10 @@ final class TextsEditor implements Editor {
     }
     final String key = selected;
     final String typed = text.getText();
-    if (previews(shownKind, key)) {
+    if (shownKind == Kind.TOOLTIPS) {
+      tipPreview.setText(
+          MapTexts.tooltipAsShown(key, typed, project.game(), project.getFolder()));
+    } else if (previews(shownKind, key)) {
       Panels.showKeepingPlace(preview, typed);
     }
     if (project.texts().value(shownKind, key).filter(v -> !v.equals(typed)).isEmpty()) {

@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
@@ -20,6 +21,39 @@ import eddies.mapeditor.MapTexts.Entry;
 import eddies.mapeditor.MapTexts.Kind;
 
 final class MapTextsTest {
+  @DisplayName("A unit's tool tip previews as the game shows it: unit and owner, its pictures")
+  @Test
+  void tooltipAsShown(@TempDir final Path folder) throws Exception {
+    // given
+    final Game game = MapXmlTest.givenMinimap();
+    Files.createDirectories(folder.resolve("doc/images"));
+    Files.writeString(folder.resolve("doc/images/elf.png"), "");
+
+    // when
+    final String own =
+        MapTexts.tooltipAsShown(
+            "tooltip.unit.infantry.Italians",
+            "<img src=\"elf.png\"/><br>* Max 1",
+            game,
+            Optional.of(folder));
+    final String appended =
+        MapTexts.tooltipAsShown(
+            "tooltip.unit.infantry.append", "<br>* Heroic", game, Optional.empty());
+
+    // then
+    assertThat(own)
+        .as("the game's first line: the unit and the key's nation in bold")
+        .startsWith("<html><b>Infantry (Italians)</b><br />")
+        .as("the picture found in doc/images, as the game does")
+        .contains(folder.resolve("doc/images/elf.png").toUri().toString().replace("file:///", ""))
+        .endsWith("<br>* Max 1</html>");
+    assertThat(appended)
+        .as("without a nation the game's first; an appended text after the stats")
+        .isEqualTo(
+            "<html><b>Infantry (Russians)</b><br /><i>[the stats TripleA writes]</i><br>* Heroic"
+                + "</html>");
+  }
+
   @DisplayName("An internal name reads in plain words: no prefix of its kind, words apart")
   @Test
   void plainNames() {

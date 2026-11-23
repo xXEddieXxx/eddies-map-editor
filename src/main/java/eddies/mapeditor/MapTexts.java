@@ -31,6 +31,7 @@ import org.triplea.map.data.elements.AttachmentList.Attachment;
 import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.Info;
 import org.triplea.util.FileNameUtils;
+import org.triplea.util.LocalizeHtml;
 
 /**
  * The texts beside the game that the game reads by key: objectives.properties, notifications
@@ -842,6 +843,37 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable, Map<String, Strin
         .findFirst()
         .map(unit -> how + unit + " for " + rest.substring(unit.length() + 1))
         .orElse(key);
+  }
+
+  /**
+   * A unit's tool tip as the game shows it on the map (MapUnitTooltipManager): the unit and its
+   * owner in bold, the key's nation or else the game's first, then the text, pictures found in the
+   * map's doc/images; an ".append" text after the stats the game writes, here a stand-in.
+   */
+  static String tooltipAsShown(
+      final String key, final String value, final Game game, final Optional<Path> mapFolder) {
+    final boolean appended = key.endsWith(APPEND);
+    final String rest =
+        key.startsWith(TOOLTIP)
+            ? key.substring(TOOLTIP.length(), key.length() - (appended ? APPEND.length() : 0))
+            : key;
+    final List<String> nations = MapXml.nations(game);
+    final Optional<String> nation =
+        nations.stream().filter(n -> rest.endsWith("." + n)).findFirst();
+    final String unit =
+        nation.map(n -> rest.substring(0, rest.length() - n.length() - 1)).orElse(rest);
+    final String text =
+        mapFolder.map(folder -> LocalizeHtml.localizeImgLinksInHtml(value, folder)).orElse(value);
+    final String capitalized =
+        unit.isEmpty() ? unit : unit.substring(0, 1).toUpperCase(Locale.ROOT) + unit.substring(1);
+    return "<html><b>"
+        + capitalized
+        + " ("
+        + nation.or(() -> nations.stream().findFirst()).orElse("Neutral")
+        + ")</b><br />"
+        + (appended ? "<i>[the stats TripleA writes]</i>" : "")
+        + text
+        + "</html>";
   }
 
   /** What the key means to the game, in plain words. */
