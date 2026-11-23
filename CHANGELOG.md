@@ -75,6 +75,11 @@ GitHub issue.
   place.txt, and *Reload all places from the files* what it reads.
 - **Release notes from the changelog** (#29): each release's page starts with its section here,
   which is now split by release, each with its date.
+- **Random starts** (#53). On a map whose game hands out neutral land when it starts, as 11 Rings
+  of Power does, the guide asks no land of the nations that get theirs then, Home says how it is
+  handed out, and a failed Check says another start may go otherwise. A unit a loop makes says
+  which pair made it, eg "for Orc × Black Pool, one of 384". A chance reads in plain words, eg
+  "2 in 6, about 33 %".
 - **The map makers' forum** (#42) in Guides & links, the user guide and the README:
   https://forums.triplea-game.org/category/28/map-making
 
