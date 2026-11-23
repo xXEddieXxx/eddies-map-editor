@@ -491,7 +491,15 @@ record NationsBalance(
     }
     all.add(Box.createVerticalStrut(Theme.GAP_S));
     notes.forEach(
-        note -> all.add(leftAligned(Theme.newSecondaryLabel("<html>" + note + "</html>"))));
+        note ->
+            all.add(
+                leftAligned(
+                    Theme.newSecondaryLabel(
+                        "<html><div style='width:"
+                            + Theme.htmlWidth(NOTE_WIDTH)
+                            + "'>"
+                            + note
+                            + "</div></html>"))));
     if (!balance.withoutCost().isEmpty()) {
       final int count = balance.withoutCost().size();
       final JLabel without =
@@ -525,6 +533,9 @@ record NationsBalance(
     scroll.setBorder(BorderFactory.createLineBorder(Theme.getSeparatorColor()));
     return scroll;
   }
+
+  // the notes wrap at about the tables' width, so the dialog is no wider than a screen
+  private static final int NOTE_WIDTH = 860;
 
   private static JTable newTable(
       final MapProject project,

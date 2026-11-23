@@ -82,6 +82,8 @@ final class SearchList extends JPanel {
   private final Set<String> folded = new HashSet<>();
   // with groupFoldedBy: a group is folded when it first shows, so many groups read as a short list
   private boolean foldsAtFirst;
+  // with groupFoldedBy: the groups' noun and plural, which the count names first
+  private Optional<List<String>> groupNouns = Optional.empty();
   private final Set<String> seenGroups = new HashSet<>();
   private final Map<String, Integer> groupSizes = new HashMap<>();
   // what a name is called in the map's files, found by the search and told by the tool tip
@@ -274,13 +276,16 @@ final class SearchList extends JPanel {
   void groupBy(final Optional<Function<String, String>> group) {
     groups = group;
     foldsAtFirst = false;
+    groupNouns = Optional.empty();
     folded.clear();
     seenGroups.clear();
     refill();
   }
 
   /** As groupBy, each group folded when it first shows: a row per group, opened at a click. */
-  SearchList groupFoldedBy(final Function<String, String> group) {
+  SearchList groupFoldedBy(
+      final Function<String, String> group, final String groupNoun, final String groupPlural) {
+    groupNouns = Optional.of(List.of(groupNoun, groupPlural));
     groups = Optional.of(group);
     foldsAtFirst = true;
     folded.clear();
@@ -372,6 +377,17 @@ final class SearchList extends JPanel {
     final List<String> filtered =
         filter.isEmpty() ? all : all.stream().filter(name -> matches(name, filter)).toList();
     showCount(filtered.size(), all.size());
+    groupNouns.ifPresent(
+        nouns -> {
+          final long many =
+              filtered.stream().map(name -> groups.orElseThrow().apply(name)).distinct().count();
+          count.setText(
+              many
+                  + " "
+                  + (many == 1 ? nouns.get(0) : nouns.get(1))
+                  + " · "
+                  + count.getText());
+        });
     showCard(filter, all.isEmpty(), filtered.isEmpty());
     final List<String> rows = grouped(filtered, !filter.isEmpty());
     if (rows.equals(Collections.list(shown.elements()))) {

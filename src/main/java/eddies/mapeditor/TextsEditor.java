@@ -162,7 +162,7 @@ final class TextsEditor implements Editor {
             .withEmpty(Panels.empty(Glyph.TEXTS, "No " + plural + " yet", kind.getHelp()));
     if (kind == Kind.POLITICS || kind == Kind.ACTIONS) {
       // an action has up to 7 texts, eg BUTTON and DESCRIPTION: a row per action, opened at a click
-      list.groupFoldedBy(TextsEditor::actionOf);
+      list.groupFoldedBy(TextsEditor::actionOf, "action", "actions");
     }
     lists.put(kind, list);
     final JPanel column = new JPanel(new BorderLayout(0, Theme.GAP_S));
@@ -466,9 +466,12 @@ final class TextsEditor implements Editor {
   }
 
   private static final Pattern BREAK = Pattern.compile("(?i)(<br\\s*/?>)(?!\n)");
-  private static final Pattern PARAGRAPH = Pattern.compile("(?i)(?<=[^\n])(?=<p[\\s>])");
+  // before a <p and the <b>, <i> or <u> right in front of it, as in <b><p style=...>
+  private static final Pattern PARAGRAPH =
+      Pattern.compile("(?i)(?<=[^\n])(?<!<[biu]>)(?=(?:<[biu]>)*<p[\\s>])");
   private static final Pattern BREAK_LINE = Pattern.compile("(?i)(<br\\s*/?>)\n");
-  private static final Pattern PARAGRAPH_LINE = Pattern.compile("(?i)\n(?=<p[\\s>])");
+  private static final Pattern PARAGRAPH_LINE =
+      Pattern.compile("(?i)\n(?=(?:<[biu]>)*<p[\\s>])");
 
   /**
    * A one-line HTML value to read: a line after each &lt;br&gt; and before each &lt;p, as long

@@ -236,7 +236,7 @@ final class SearchListTest {
         new ArrayList<>(List.of("Truce.BUTTON", "Truce.DESCRIPTION", "War.BUTTON"));
     final SearchList searchList =
         new SearchList("text", "texts", () -> keys, n -> n, n -> "", n -> {})
-            .groupFoldedBy(TextsEditor::actionOf);
+            .groupFoldedBy(TextsEditor::actionOf, "action", "actions");
     final JList<?> list = listIn(searchList);
     list.setSize(300, 400);
     final List<String> atFirst = searchList.rows();
@@ -249,6 +249,9 @@ final class SearchListTest {
 
     // then
     assertThat(atFirst).as("a row per action").containsExactly("▸ Truce (2)", "▸ War (1)");
+    assertThat(labelsIn(searchList))
+        .as("the count names the actions first, with the one added")
+        .contains("3 actions · 4 texts");
     assertThat(opened)
         .as("a click shows its texts")
         .containsExactly("▾ Truce (2)", "Truce.BUTTON", "Truce.DESCRIPTION", "▸ War (1)");

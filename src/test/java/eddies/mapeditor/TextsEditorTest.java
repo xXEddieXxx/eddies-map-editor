@@ -211,6 +211,12 @@ final class TextsEditorTest {
     assertThat(TextsEditor.oneLine(TextsEditor.withLines("x<P>y")))
         .as("a <P> in capitals too")
         .isEqualTo("x<P>y");
+    assertThat(TextsEditor.withLines("a<br><b><p>Duel</p></b><b><p>Command</p></b>"))
+        .as("a <b> before a <p> goes onto its line")
+        .isEqualTo("a<br>\n<b><p>Duel</p></b>\n<b><p>Command</p></b>");
+    assertThat(TextsEditor.oneLine(TextsEditor.withLines("a<b><p>x</p></b><br><b><p>y</p></b>")))
+        .as("and back as it was")
+        .isEqualTo("a<b><p>x</p></b><br><b><p>y</p></b>");
   }
 
   @DisplayName("A line typed after a <br> stays, also over the next step, and nothing else changes")
