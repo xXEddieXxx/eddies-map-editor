@@ -258,6 +258,8 @@ final class TriggerAssistant {
   private final JSpinner chanceHit = Form.newNumber(1, 0, 120, n -> changed());
   private final JLabel chanceIn = new JLabel("in");
   private final JSpinner chanceSides = Form.newNumber(6, 1, 120, n -> changed());
+  // the chance in plain words beside its numbers, eg "about 33 %"
+  private final JLabel chanceSays = Theme.newSecondaryLabel("");
   private boolean filling = true;
   // set when only the checks show in another tool: it is told each change instead
   private final Optional<Runnable> outside;
@@ -730,7 +732,7 @@ final class TriggerAssistant {
         .section("How often")
         .row(row(once, times, timesCount, rounds, always))
         .row(Theme.newSecondaryLabel("A use is taken at the end of a round in which it fired."))
-        .row(row(chanceOn, chanceHit, chanceIn, chanceSides))
+        .row(row(chanceOn, chanceHit, chanceIn, chanceSides, chanceSays))
         .end();
   }
 
@@ -1212,7 +1214,10 @@ final class TriggerAssistant {
     timesCount.setVisible(times.isSelected());
     rounds.setVisible(times.isSelected());
     times.setText(times.isSelected() ? "In" : "In several rounds");
-    Stream.of(chanceHit, chanceIn, chanceSides).forEach(c -> c.setVisible(chanceOn.isSelected()));
+    Stream.of(chanceHit, chanceIn, chanceSides, chanceSays)
+        .forEach(c -> c.setVisible(chanceOn.isSelected()));
+    chanceSays.setText(
+        TriggerXml.chanceWords((Integer) chanceHit.getValue(), (Integer) chanceSides.getValue()));
     Optional.ofNullable(content).ifPresent(c -> {
       c.revalidate();
       c.repaint();

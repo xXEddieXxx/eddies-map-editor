@@ -21,6 +21,14 @@ import eddies.mapeditor.TriggerXml.Spec;
 import eddies.mapeditor.TriggerXml.Trigger;
 
 final class TriggerXmlTest {
+  @DisplayName("A chance reads in plain words: x in y with its share, and when it is always or never")
+  @Test
+  void chanceInWords() {
+    assertThat(TriggerXml.chanceWords(2, 6)).as("a share").isEqualTo("2 in 6, about 33 %");
+    assertThat(TriggerXml.chanceWords(6, 6)).as("the whole die").isEqualTo("always (6 in 6)");
+    assertThat(TriggerXml.chanceWords(0, 8)).as("no side").isEqualTo("never (0 in 8)");
+  }
+
   private static final String G40 = "ww2global40.xml";
   private static final String MINIMAP = "minimap.xml";
 

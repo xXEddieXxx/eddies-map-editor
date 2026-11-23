@@ -1194,9 +1194,24 @@ class TriggerXml {
         : uses == 0 ? "Used up: fires only when another trigger fires it."
         : uses == 1 ? "In 1 round." : "In " + uses + " rounds.";
     return times + value(attachment, "chance").map(c -> c.split(":"))
-        .filter(c -> c.length == 2)
-        .map(c -> " Chance " + c[0] + " in " + c[1] + ".")
+        .filter(c -> c.length == 2 && INTEGER.matcher(c[0]).matches()
+            && INTEGER.matcher(c[1]).matches())
+        .map(c -> " Chance " + chanceWords(Integer.parseInt(c[0]), Integer.parseInt(c[1])) + ".")
         .orElse("");
+  }
+
+  /**
+   * A chance, TripleA's "hits:sides" (a roll of a die with that many sides, at most hits),
+   * in plain words: "2 in 6, about 33 %", "always (6 in 6)" or "never (0 in 6)".
+   */
+  static String chanceWords(final int hits, final int sides) {
+    if (sides <= 0 || hits >= sides) {
+      return "always (" + hits + " in " + sides + ")";
+    }
+    if (hits <= 0) {
+      return "never (0 in " + sides + ")";
+    }
+    return hits + " in " + sides + ", about " + Math.round(100.0 * hits / sides) + " %";
   }
 
   /** What the condition checks, eg "Germans own France and have units in Egypt". */

@@ -34,6 +34,7 @@ import javax.swing.JPanel;
 import javax.swing.JRadioButton;
 import javax.swing.JSpinner;
 import javax.swing.JTextField;
+import javax.swing.event.ChangeListener;
 import org.triplea.map.data.elements.AttachmentList.Attachment;
 import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.ResourceList;
@@ -741,7 +742,14 @@ final class ActionsEditor implements Editor {
                 numberEdit(setChance, n);
               }
             });
-    form.field("Succeeds on a roll of", leftAligned(hits, new JLabel("of"), of));
+    // what the numbers mean, eg "2 in 6, about 33 %"; 6 of 6 is always
+    final JLabel says = Theme.newSecondaryLabel(TriggerXml.chanceWords(odds[0], odds[1]));
+    final ChangeListener odd =
+        e -> says.setText(
+            TriggerXml.chanceWords((Integer) hits.getValue(), (Integer) of.getValue()));
+    hits.addChangeListener(odd);
+    of.addChangeListener(odd);
+    form.field("Succeeds on a roll of", leftAligned(hits, new JLabel("of"), of, says));
     final int attempts =
         parse(ActionsXml.value(game, action, ActionsXml.ATTEMPTS_PER_TURN).orElse("1"), 1);
     // label above, as the costs' and the chance's: one column of numbers
