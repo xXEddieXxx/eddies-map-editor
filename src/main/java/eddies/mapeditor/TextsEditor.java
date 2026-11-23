@@ -156,6 +156,10 @@ final class TextsEditor implements Editor {
             .stripSharedPrefix()
             .withAdd("Add text…", add, () -> addEntry(kind))
             .withEmpty(Panels.empty(Glyph.TEXTS, "No " + plural + " yet", kind.getHelp()));
+    if (kind == Kind.POLITICS || kind == Kind.ACTIONS) {
+      // an action has up to 7 texts, eg BUTTON and DESCRIPTION: a row per action, opened at a click
+      list.groupFoldedBy(TextsEditor::actionOf);
+    }
     lists.put(kind, list);
     final JPanel column = new JPanel(new BorderLayout(0, Theme.GAP_S));
     column.add(list, BorderLayout.CENTER);
@@ -307,9 +311,23 @@ final class TextsEditor implements Editor {
               + " <font color="
               + hex
               + ">"
-              + (unreadable ? "!" : project.texts().entries(each).size())
+              + (unreadable ? "!" : count(each))
               + "</font></html>");
     }
+  }
+
+  /** The texts of the kind, for action texts the actions they are for. */
+  private long count(final Kind kind) {
+    final var entries = project.texts().entries(kind).stream().map(MapTexts.Entry::key);
+    return kind == Kind.POLITICS || kind == Kind.ACTIONS
+        ? entries.map(TextsEditor::actionOf).distinct().count()
+        : entries.count();
+  }
+
+  /** The action text key a key is a part of, eg "Axis_To_War" of "Axis_To_War.BUTTON". */
+  static String actionOf(final String key) {
+    final int dot = key.lastIndexOf('.');
+    return dot <= 0 ? key : key.substring(0, dot);
   }
 
   private void choose(final String key) {

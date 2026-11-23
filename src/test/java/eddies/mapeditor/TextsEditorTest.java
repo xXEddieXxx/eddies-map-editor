@@ -115,6 +115,26 @@ final class TextsEditorTest {
             .build());
   }
 
+  @DisplayName("The political action texts' tab counts actions, each a row of its own")
+  @Test
+  void countsActions() throws Exception {
+    // given: two actions, one with two texts
+    final MapProject project = givenMinimapWithTexts();
+    Files.writeString(
+        folder.resolve("politicstext.properties"),
+        "Truce.BUTTON=Truce\nTruce.DESCRIPTION=Make peace\nWar.BUTTON=War\n");
+    final TextsEditor texts =
+        new TextsEditor(MapProject.open(project.getXmlFile().orElseThrow()));
+
+    // when
+    final JTabbedPane tabs = all(texts.page(), JTabbedPane.class).getFirst();
+    final List<String> rows = all(texts.page(), SearchList.class).get(3).rows();
+
+    // then
+    assertThat(tabs.getTitleAt(3)).as("two actions, not three texts").contains("Political", ">2<");
+    assertThat(rows).as("a row per action").containsExactly("▸ Truce (2)", "▸ War (1)");
+  }
+
   @DisplayName("A tab per file but sounds, in their order, each titled with its count")
   @Test
   void tabsWithCounts() throws Exception {

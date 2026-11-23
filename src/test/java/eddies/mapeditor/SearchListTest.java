@@ -228,6 +228,40 @@ final class SearchListTest {
     Stream.of(list.getMouseListeners()).forEach(listener -> listener.mouseClicked(click));
   }
 
+  @DisplayName("Groups folded at first: a row each, a click opens one, a new group comes folded")
+  @Test
+  void groupsFoldedAtFirst() {
+    // given: two actions' texts, then a third action's
+    final List<String> keys =
+        new ArrayList<>(List.of("Truce.BUTTON", "Truce.DESCRIPTION", "War.BUTTON"));
+    final SearchList searchList =
+        new SearchList("text", "texts", () -> keys, n -> n, n -> "", n -> {})
+            .groupFoldedBy(TextsEditor::actionOf);
+    final JList<?> list = listIn(searchList);
+    list.setSize(300, 400);
+    final List<String> atFirst = searchList.rows();
+
+    // when
+    click(list, 0);
+    final List<String> opened = searchList.rows();
+    keys.add("Peace.BUTTON");
+    searchList.refresh();
+
+    // then
+    assertThat(atFirst).as("a row per action").containsExactly("▸ Truce (2)", "▸ War (1)");
+    assertThat(opened)
+        .as("a click shows its texts")
+        .containsExactly("▾ Truce (2)", "Truce.BUTTON", "Truce.DESCRIPTION", "▸ War (1)");
+    assertThat(searchList.rows())
+        .as("the opened one stays open, a new one comes folded")
+        .containsExactly(
+            "▾ Truce (2)", "Truce.BUTTON", "Truce.DESCRIPTION", "▸ War (1)", "▸ Peace (1)");
+    searchList.choose("War.BUTTON");
+    assertThat(searchList.rows())
+        .as("choosing a text, eg one just added, opens its folded group")
+        .containsSequence("▾ War (1)", "War.BUTTON");
+  }
+
   @DisplayName("Groups show under header rows, ▾ Group (n); a click folds one, a search opens all")
   @Test
   void groupsUnderFoldableHeaders() {

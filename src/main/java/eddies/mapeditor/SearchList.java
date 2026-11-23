@@ -80,6 +80,9 @@ final class SearchList extends JPanel {
   // the group a name is listed under, behind a header row that folds it
   private transient Optional<Function<String, String>> groups = Optional.empty();
   private final Set<String> folded = new HashSet<>();
+  // with groupFoldedBy: a group is folded when it first shows, so many groups read as a short list
+  private boolean foldsAtFirst;
+  private final Set<String> seenGroups = new HashSet<>();
   private final Map<String, Integer> groupSizes = new HashMap<>();
   // what a name is called in the map's files, found by the search and told by the tool tip
   private transient Optional<Function<String, String>> ids = Optional.empty();
@@ -270,8 +273,20 @@ final class SearchList extends JPanel {
    */
   void groupBy(final Optional<Function<String, String>> group) {
     groups = group;
+    foldsAtFirst = false;
     folded.clear();
+    seenGroups.clear();
     refill();
+  }
+
+  /** As groupBy, each group folded when it first shows: a row per group, opened at a click. */
+  SearchList groupFoldedBy(final Function<String, String> group) {
+    groups = Optional.of(group);
+    foldsAtFirst = true;
+    folded.clear();
+    seenGroups.clear();
+    refill();
+    return this;
   }
 
   private void toggle(final String group) {
@@ -395,6 +410,9 @@ final class SearchList extends JPanel {
     byGroup.forEach(
         (group, members) -> {
           groupSizes.put(group, members.size());
+          if (foldsAtFirst && seenGroups.add(group)) {
+            folded.add(group);
+          }
           rows.add(GROUP + group);
           if (searching || !folded.contains(group)) {
             rows.addAll(members);
