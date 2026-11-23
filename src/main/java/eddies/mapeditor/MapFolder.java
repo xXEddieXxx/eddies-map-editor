@@ -95,6 +95,16 @@ class MapFolder {
   static final int DESCRIPTION_MAX_LENGTH = 3000;
 
   /**
+   * Where a chooser of pictures for one of the map's folders starts: in that folder, else the
+   * map's, else the home folder for a map not saved yet.
+   */
+  static Path chooserStart(final Optional<Path> mapFolder, final String folder) {
+    return mapFolder
+        .map(map -> Files.isDirectory(map.resolve(folder)) ? map.resolve(folder) : map)
+        .orElseGet(() -> Path.of(System.getProperty("user.home")));
+  }
+
+  /**
    * A copy of the game XML under a new name beside it, listed in the map's map.yml so that it shows
    * among the games.
    *

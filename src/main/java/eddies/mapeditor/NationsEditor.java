@@ -595,7 +595,7 @@ final class NationsEditor implements Editor {
     MapMakerWindow.chooseFileToOpen(
             page,
             "Choose a flag picture for " + nation,
-            Path.of(System.getProperty("user.home")),
+            MapFolder.chooserStart(folder, "flags"),
             "png",
             "gif",
             "jpg",
@@ -1024,11 +1024,7 @@ final class NationsEditor implements Editor {
         MapMakerWindow.chooseFolder(
             page,
             "Choose a folder with unit pictures for " + nation,
-            project
-                .getFolder()
-                .map(f -> f.resolve("units"))
-                .filter(Files::isDirectory)
-                .orElseGet(() -> Path.of(System.getProperty("user.home"))));
+            MapFolder.chooserStart(project.getFolder(), "units"));
     if (folder.isEmpty()) {
       return;
     }

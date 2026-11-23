@@ -75,6 +75,26 @@ games:
         .isInstanceOf(IOException.class);
   }
 
+  @DisplayName("A picture chooser starts in the map's folder it fills, else the map's, else home")
+  @Test
+  void choosersStartInTheMap() throws IOException {
+    // given
+    final Path map = givenMap();
+    Files.createDirectories(map.resolve("flags"));
+
+    // when
+    final Path flags = MapFolder.chooserStart(Optional.of(map), "flags");
+    final Path units = MapFolder.chooserStart(Optional.of(map), "units");
+    final Path unsaved = MapFolder.chooserStart(Optional.empty(), "units");
+
+    // then
+    assertThat(flags).as("the flags folder").isEqualTo(map.resolve("flags"));
+    assertThat(units).as("no units folder yet: the map's").isEqualTo(map);
+    assertThat(unsaved)
+        .as("a map not saved yet")
+        .isEqualTo(Path.of(System.getProperty("user.home")));
+  }
+
   @DisplayName("A new game takes the template's notes file, as the game file holds no notes")
   @Test
   void newGameKeepsNotes() throws IOException {

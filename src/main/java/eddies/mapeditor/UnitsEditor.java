@@ -2085,7 +2085,13 @@ final class UnitsEditor implements Editor {
   private Optional<Picture> readPicture(final String title) {
     final Optional<Path> file =
         MapMakerWindow.chooseFileToOpen(
-            page, title, Path.of(System.getProperty("user.home")), "png", "gif", "jpg", "jpeg");
+            page,
+            title,
+            MapFolder.chooserStart(project.getFolder(), "units"),
+            "png",
+            "gif",
+            "jpg",
+            "jpeg");
     if (file.isEmpty()) {
       return Optional.empty();
     }
