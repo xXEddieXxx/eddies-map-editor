@@ -1,20 +1,25 @@
 package eddies.mapeditor;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 import java.awt.Component;
 import java.awt.Container;
+import java.awt.GraphicsEnvironment;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
 import javax.swing.AbstractButton;
 import javax.swing.JLabel;
+import javax.swing.JList;
 import javax.swing.JSplitPane;
+import javax.swing.JWindow;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -257,6 +262,54 @@ final class TriggersEditorTest {
     // then
     assertThat(buttons).as("the way to a first trigger").contains("Add trigger…");
     assertThat(labels).as("no reading screen").noneMatch(text -> text != null && text.startsWith("Reading"));
+  }
+
+  @Test
+  @DisplayName("Opened for a trigger by name, eg from Technology, it chooses it once listed")
+  void showsATriggerByName() throws Exception {
+    assumeFalse(GraphicsEnvironment.isHeadless(), "the list is read only while the tool shows");
+    // given: the tool showing, far off the screen and never focused
+    final MapProject project =
+        new MapProject(Path.of("g40.xml"), GameRulesXmlTest.givenG40(), MapFiles.none());
+    final List<TriggersEditor> editors = new ArrayList<>();
+    final List<JWindow> windows = new ArrayList<>();
+    SwingUtilities.invokeAndWait(
+        () -> {
+          final JWindow window = new JWindow();
+          window.setFocusableWindowState(false);
+          window.setBounds(-20000, -20000, 1200, 800);
+          final TriggersEditor editor = new TriggersEditor(project);
+          window.add(editor.page());
+          window.setVisible(true);
+          editors.add(editor);
+          windows.add(window);
+        });
+
+    // when
+    SwingUtilities.invokeAndWait(
+        () -> editors.getFirst().show("triggerAttachment_Chinese_Loses_Burma_Road"));
+    final List<Object> chosen = new ArrayList<>(List.of(""));
+    for (int tries = 0; tries < 200 && "".equals(chosen.getFirst()); tries++) {
+      Thread.sleep(50);
+      SwingUtilities.invokeAndWait(
+          () ->
+              chosen.set(
+                  0,
+                  all(editors.getFirst().page())
+                      .filter(JList.class::isInstance)
+                      .map(list -> ((JList<?>) list).getSelectedValue())
+                      .filter(Objects::nonNull)
+                      .findFirst()
+                      .map(String::valueOf)
+                      .orElse("")));
+    }
+    SwingUtilities.invokeAndWait(() -> windows.getFirst().dispose());
+
+    // then
+    assertThat(chosen.getFirst())
+        .as("chosen in the list once the triggers are read")
+        .asString()
+        .contains("Burma");
   }
 
   @Test

@@ -99,6 +99,8 @@ final class TriggersEditor implements Editor {
   private @Nullable Game loading;
   // a trigger to choose once it is listed, eg a copy just made
   private Optional<Attachment> wanted = Optional.empty();
+  // a trigger another tool asked for by name, chosen once the list is there
+  private Optional<String> wantedName = Optional.empty();
   private boolean filling;
 
   /**
@@ -112,6 +114,8 @@ final class TriggersEditor implements Editor {
       Map<String, String> does,
       Map<String, String> whens,
       Map<String, String> ids) {}
+
+  static final String TITLE = "Triggers";
 
   TriggersEditor(final MapProject project) {
     this.project = project;
@@ -218,7 +222,7 @@ final class TriggersEditor implements Editor {
 
   @Override
   public String title() {
-    return "Triggers";
+    return TITLE;
   }
 
   @Override
@@ -303,6 +307,10 @@ final class TriggersEditor implements Editor {
         }
         fillNations();
         list.refresh();
+        wantedName.ifPresent(name -> {
+          wantedName = Optional.empty();
+          keyOf(name).ifPresent(TriggersEditor.this::reveal);
+        });
         wanted.ifPresent(w -> {
           wanted = Optional.empty();
           listing.triggers().entrySet().stream()
@@ -458,6 +466,25 @@ final class TriggersEditor implements Editor {
   private void choose(@Nullable final String key) {
     selected = key;
     showInspector();
+  }
+
+  /** Chooses the trigger of this name, eg from Technology; once listed, if it is not yet. */
+  @Override
+  public void show(final String trigger) {
+    if (listed == project.game() && keyOf(trigger).isPresent()) {
+      reveal(keyOf(trigger).orElseThrow());
+    } else {
+      wantedName = Optional.of(trigger);
+      refresh();
+    }
+  }
+
+  // the list's key of the trigger of this name, the first of several nations'
+  private Optional<String> keyOf(final String trigger) {
+    return listing.triggers().entrySet().stream()
+        .filter(e -> e.getValue().name().equals(trigger))
+        .map(Map.Entry::getKey)
+        .findFirst();
   }
 
   /** Chooses the trigger in the list too, showing all nations if the filter hides it. */

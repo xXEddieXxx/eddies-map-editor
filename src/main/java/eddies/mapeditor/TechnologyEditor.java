@@ -4,8 +4,10 @@ import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.Point;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
+import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.io.Serial;
 import java.util.ArrayList;
@@ -27,6 +29,7 @@ import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JRadioButton;
 import javax.swing.JSpinner;
 import javax.swing.JTable;
@@ -57,7 +60,8 @@ final class TechnologyEditor implements Editor {
   private static final String COST_TIP =
       "What one research roll costs this nation, in PUs, for every technology. 5 when not set.";
   private static final String GIVEN_TIP =
-      "Triggers that give the nation this technology, with when they fire; changed in Triggers.";
+      "Triggers that give the nation this technology, with when they fire; a click opens one in"
+          + " Triggers.";
   private static final String AT_START = "Has it at start";
   private static final String GIVEN = "Given by trigger";
   private static final String COST = "PUs per roll";
@@ -358,8 +362,19 @@ final class TechnologyEditor implements Editor {
     // a tick or a number needs little room, the chart and the triggers more
     for (int column = 2; column < table.getColumnCount(); column++) {
       if (GIVEN.equals(table.getColumnName(column))) {
-        // the triggers whole as tool tip, as the cell cuts them
+        // the triggers whole as tool tip, as the cell cuts them; a click opens one in Triggers
         table.getColumnModel().getColumn(column).setCellRenderer(new WholeAsToolTip());
+        final int given = column;
+        table.addMouseListener(
+            new MouseAdapter() {
+              @Override
+              public void mouseClicked(final MouseEvent e) {
+                final int row = table.rowAtPoint(e.getPoint());
+                if (row >= 0 && table.columnAtPoint(e.getPoint()) == given) {
+                  openTrigger(table, e.getPoint(), ((NationsTable) table.getModel()).triggers(row));
+                }
+              }
+            });
         continue;
       }
       table.getColumnModel().getColumn(column).setPreferredWidth(120);
@@ -717,6 +732,21 @@ final class TechnologyEditor implements Editor {
     }
   }
 
+  /** Opens the trigger in Triggers; of several, the one chosen from a menu at the click. */
+  static void openTrigger(final JTable table, final Point at, final List<String> triggers) {
+    if (triggers.size() == 1) {
+      MapMakerWindow.openTool(table, TriggersEditor.TITLE, triggers.getFirst());
+    } else if (triggers.size() > 1) {
+      final JPopupMenu menu = new JPopupMenu();
+      triggers.forEach(
+          trigger ->
+              menu.add(trigger)
+                  .addActionListener(
+                      e -> MapMakerWindow.openTool(table, TriggersEditor.TITLE, trigger)));
+      menu.show(table, at.x, at.y);
+    }
+  }
+
   /** A cell whose text shows whole as its tool tip. */
   private static final class WholeAsToolTip extends DefaultTableCellRenderer {
     @Serial private static final long serialVersionUID = 1L;
@@ -770,6 +800,13 @@ final class TechnologyEditor implements Editor {
     private final String tech;
     private final transient Optional<String> builtIn;
     private final transient Map<String, List<String>> given;
+
+    /** The names of the triggers that give the row's nation the technology. */
+    List<String> triggers(final int row) {
+      return given.getOrDefault(nations().get(row), List.of()).stream()
+          .map(text -> text.contains(" (") ? text.substring(0, text.indexOf(" (")) : text)
+          .toList();
+    }
     private final List<String> columns = new ArrayList<>(List.of("Nation", "Research chart"));
 
     NationsTable(
