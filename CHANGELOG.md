@@ -3,31 +3,13 @@
 What changed for map makers, release by release. The GitHub release of each version carries the
 downloads; this file carries the words.
 
-## 0.2.7
+## 0.2.8
 
-Fixes and wishes from the work on 0.2.6 and a map maker's feedback on it, tried with 11 Rings of
-Power, 1941 Global Command Decision, Greyhawk Wars and Total World War; each change under its
-GitHub issue.
+From a map maker's feedback on 0.2.6 and 0.2.7, tried with 11 Rings of Power, 1941 Global
+Command Decision, Greyhawk Wars and Total World War; each change under its GitHub issue.
 
 ### Fixed
 
-- **Loops (`foreach`) were read only in Units** (#43). Territories, Nations, Technology,
-  Politics and the other tools showed defaults (PUs 0, no capital) where a map writes its
-  attachments in a loop, as 11 Rings of Power, mega_new_elk or D-Day do, and a change there
-  replaced everything the loop gave that thing. Every tool now reads them as TripleA does. A
-  change of something a loop makes gives it an attachment of its own with all the loop's values,
-  written after the loop, so nothing is lost; a toast says so, with Undo.
-- **Units sat on other unit places than in the game** (#30). The Game view took a territory's
-  units in the file's order; it now sorts them as TripleA does (the owner's first, then allies,
-  units that cannot move, sea, air, land, attack, …), so a map that keeps its first place for
-  one kind of unit, eg a flag on the name plate, looks as in the game.
-- **Of two owner lines for one territory the editor took the first**; TripleA takes the last.
-  Now the last counts everywhere.
-- **Game options: ▲ ▼ across a section's border seemed to do nothing** (#48). They now move an
-  option within its section, are off at its ends and while a search or the tick hides options,
-  and say why.
-- **Files cut every file name** in the folder overview at 1280 px (#47). The names stay whole;
-  the purpose is cut instead and shows whole in its tool tip.
 - **The game's notes were saved twice** (#56), in the game file and in its notes file, and only
   the notes file is what the game shows. A save now keeps them in the notes file alone; notes an
   old map had only in its game file move there with the next save, and *New game from this one…*
@@ -54,13 +36,6 @@ GitHub issue.
 
 ### New
 
-- **Change for this unit only** (#44): a unit whose options a loop writes gets its own
-  attachment with all the loop's values in one step, and is then changed in Units like any unit.
-- **Uses up units** (#45): a section in Units, a row per used-up unit with its count and unit
-  type, + to add one (`consumesUnits`).
-- **A cost per resource** (#46): beside PUs a Cost field for each resource the unit's rule
-  costs, and + for another one, eg Fame. A rule's only cost stays as 0, as TripleA loads no rule
-  without a cost.
 - **PUs from units and Upkeep** (#61) in Compare nations, where a map's units make or cost PUs
   each turn (`createsResourcesList`, eg factories, oil fields, upkeep), as TripleA pays them.
 - **Action texts a row per action** (#63). Texts' political and user actions list one folded row
@@ -83,6 +58,40 @@ GitHub issue.
   handed out, and a failed Check says another start may go otherwise. A unit a loop makes says
   which pair made it, eg "for Orc × Black Pool, one of 384". A chance reads in plain words, eg
   "2 in 6, about 33 %".
+
+## 0.2.7 · 2026-11-23
+
+Fixes and wishes from the work on 0.2.6, each under its GitHub issue.
+
+### Fixed
+
+- **Loops (`foreach`) were read only in Units** (#43). Territories, Nations, Technology,
+  Politics and the other tools showed defaults (PUs 0, no capital) where a map writes its
+  attachments in a loop, as 11 Rings of Power, mega_new_elk or D-Day do, and a change there
+  replaced everything the loop gave that thing. Every tool now reads them as TripleA does. A
+  change of something a loop makes gives it an attachment of its own with all the loop's values,
+  written after the loop, so nothing is lost; a toast says so, with Undo.
+- **Units sat on other unit places than in the game** (#30). The Game view took a territory's
+  units in the file's order; it now sorts them as TripleA does (the owner's first, then allies,
+  units that cannot move, sea, air, land, attack, …), so a map that keeps its first place for
+  one kind of unit, eg a flag on the name plate, looks as in the game.
+- **Of two owner lines for one territory the editor took the first**; TripleA takes the last.
+  Now the last counts everywhere.
+- **Game options: ▲ ▼ across a section's border seemed to do nothing** (#48). They now move an
+  option within its section, are off at its ends and while a search or the tick hides options,
+  and say why.
+- **Files cut every file name** in the folder overview at 1280 px (#47). The names stay whole;
+  the purpose is cut instead and shows whole in its tool tip.
+
+### New
+
+- **Change for this unit only** (#44): a unit whose options a loop writes gets its own
+  attachment with all the loop's values in one step, and is then changed in Units like any unit.
+- **Uses up units** (#45): a section in Units, a row per used-up unit with its count and unit
+  type, + to add one (`consumesUnits`).
+- **A cost per resource** (#46): beside PUs a Cost field for each resource the unit's rule
+  costs, and + for another one, eg Fame. A rule's only cost stays as 0, as TripleA loads no rule
+  without a cost.
 - **The map makers' forum** (#42) in Guides & links, the user guide and the README:
   https://forums.triplea-game.org/category/28/map-making
 
