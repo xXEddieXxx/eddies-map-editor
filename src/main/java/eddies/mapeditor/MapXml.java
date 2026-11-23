@@ -422,13 +422,42 @@ class MapXml {
 
   /** The PUs the territory gives its owner each turn. */
   static int production(final Game game, final String territory) {
-    return intOption(game, TERRITORY, territory, "production");
+    return intOption(game, TERRITORY, territory, productionOption(game, territory));
+  }
+
+  private static final String PRODUCTION_ONLY = "productionOnly";
+
+  /**
+   * The option that gives the territory's PUs: "production", or "productionOnly", which sets them
+   * without the unit production (eg House of Habsburg); of the two the last counts, as in TripleA.
+   */
+  private static String productionOption(final Game game, final String territory) {
+    return AttachmentsXml.kept(game, TERRITORY, territory).map(AttachmentsXml::options).orElse(List.of())
+        .stream()
+        .filter(
+            o -> AttachmentsXml.isOption(o, "production") || AttachmentsXml.isOption(o, PRODUCTION_ONLY))
+        .reduce((first, last) -> last)
+        .filter(o -> AttachmentsXml.isOption(o, PRODUCTION_ONLY))
+        .map(o -> PRODUCTION_ONLY)
+        .orElse("production");
   }
 
   static Game withProduction(final Game game, final String territory, final int production) {
+    if (productionOption(game, territory).equals(PRODUCTION_ONLY)) {
+      // kept at 0 too: taken out, a "production" before it would count again
+      return withTerritoryOption(game, territory, PRODUCTION_ONLY, String.valueOf(production));
+    }
+    // 0 is written beside a productionOnly before it, which taken out would count again
+    final boolean writeZero =
+        AttachmentsXml.kept(game, TERRITORY, territory).map(AttachmentsXml::options).orElse(List.of())
+            .stream()
+            .anyMatch(o -> AttachmentsXml.isOption(o, PRODUCTION_ONLY));
     final Game changed =
         withTerritoryOption(
-            game, territory, "production", production == 0 ? null : String.valueOf(production));
+            game,
+            territory,
+            "production",
+            production == 0 && !writeZero ? null : String.valueOf(production));
     // the game's "production" sets the unit production too: an own one must stay after it
     final List<String> units =
         TerritoryXml.values(changed, territory, TerritoryXml.UNIT_PRODUCTION);

@@ -528,6 +528,66 @@ final class MapXmlTest {
         .contains("free");
   }
 
+  @DisplayName("PUs set by productionOnly are read and changed there; of it and production the last")
+  @Test
+  void readsProductionOnly() throws Exception {
+    // given: blue capitol's PUs as House of Habsburg writes them
+    final String xml;
+    try (InputStream minimap = MapXmlTest.class.getClassLoader().getResourceAsStream("minimap.xml")) {
+      xml =
+          new String(minimap.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+              .replace(
+                  "<option name=\"production\" value=\"10\"/>",
+                  "<option name=\"production\" value=\"10\"/>"
+                      + "<option name=\"productionOnly\" value=\"3\"/>");
+    }
+    final Game game =
+        new XmlMapper(
+                new java.io.ByteArrayInputStream(xml.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+            .mapXmlToObject(Game.class);
+
+    // when
+    final Game changed = MapXml.withProduction(game, "blue capitol", 7);
+
+    // then
+    assertThat(MapXml.production(game, "blue capitol")).as("the last of the two").isEqualTo(3);
+    assertThat(MapXml.production(changed, "blue capitol")).as("changed").isEqualTo(7);
+    assertThat(TerritoryXml.values(changed, "blue capitol", "productionOnly"))
+        .as("in the option that counts, else it would stay 3 in the game")
+        .containsExactly("7");
+    assertThat(TerritoryXml.values(changed, "blue capitol", "production"))
+        .as("the other as it was")
+        .containsExactly("10");
+  }
+
+  @DisplayName("0 PUs stay 0 where a productionOnly comes before production")
+  @Test
+  void zeroBesideProductionOnly() throws Exception {
+    // given
+    final String xml;
+    try (InputStream minimap = MapXmlTest.class.getClassLoader().getResourceAsStream("minimap.xml")) {
+      xml =
+          new String(minimap.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+              .replace(
+                  "<option name=\"production\" value=\"10\"/>",
+                  "<option name=\"productionOnly\" value=\"3\"/>"
+                      + "<option name=\"production\" value=\"10\"/>");
+    }
+    final Game game =
+        new XmlMapper(
+                new java.io.ByteArrayInputStream(xml.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+            .mapXmlToObject(Game.class);
+
+    // when
+    final Game changed = MapXml.withProduction(game, "blue capitol", 0);
+
+    // then
+    assertThat(MapXml.production(game, "blue capitol")).as("given: production, the last").isEqualTo(10);
+    assertThat(MapXml.production(changed, "blue capitol"))
+        .as("not the productionOnly before it")
+        .isZero();
+  }
+
   @DisplayName("Of two owner lines for a territory the last counts, as in TripleA")
   @Test
   void lastOwnerLineCounts() throws Exception {
