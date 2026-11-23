@@ -24,9 +24,18 @@ final class TriggerXmlTest {
   @DisplayName("A chance reads in plain words: x in y with its share, or always, or never")
   @Test
   void chanceInWords() {
-    assertThat(TriggerXml.chanceWords(2, 6)).as("a share").isEqualTo("2 in 6, about 33 %");
-    assertThat(TriggerXml.chanceWords(6, 6)).as("the whole die").isEqualTo("always (6 in 6)");
-    assertThat(TriggerXml.chanceWords(0, 8)).as("no side").isEqualTo("never (0 in 8)");
+    // when
+    final List<String> words =
+        List.of(
+            TriggerXml.chanceWords(2, 6),
+            TriggerXml.chanceWords(6, 6),
+            TriggerXml.chanceWords(0, 8),
+            TriggerXml.chanceWords(8, 6));
+
+    // then
+    assertThat(words)
+        .as("a share, the whole die, no side, and more hits than sides, which the game refuses")
+        .containsExactly("2 in 6, about 33 %", "always (6 in 6)", "never (0 in 8)", "8 in 6");
   }
 
   private static final String G40 = "ww2global40.xml";

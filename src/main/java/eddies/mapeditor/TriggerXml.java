@@ -1202,10 +1202,15 @@ class TriggerXml {
 
   /**
    * A chance, TripleA's "hits:sides" (a roll of a die with that many sides, at most hits),
-   * in plain words: "2 in 6, about 33 %", "always (6 in 6)" or "never (0 in 6)".
+   * in plain words: "2 in 6, about 33 %", "always (6 in 6)" or "never (0 in 6)"; more hits than
+   * sides, which the game refuses, as the numbers alone.
    */
   static String chanceWords(final int hits, final int sides) {
-    if (sides <= 0 || hits >= sides) {
+    if (hits > sides && sides > 0) {
+      // TripleA takes no such chance: the numbers alone, the check says why
+      return hits + " in " + sides;
+    }
+    if (sides <= 0 || hits == sides) {
       return "always (" + hits + " in " + sides + ")";
     }
     if (hits <= 0) {
