@@ -7,6 +7,7 @@ import games.strategy.engine.data.GameData;
 import games.strategy.engine.data.GamePlayer;
 import games.strategy.engine.data.UnitType;
 import games.strategy.engine.data.gameparser.GameParser;
+import games.strategy.engine.stats.ProductionStat;
 import java.io.InputStream;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
@@ -148,6 +149,111 @@ final class NationsBalanceTest {
       assertThat(row.resources().getFirst()).as("%s: starting PUs", nation).isEqualTo(pus);
     }
     assertThat(balance.resources()).as("PUs first").startsWith("PUs");
+  }
+
+  @DisplayName("Income is TripleA's Production at the start; contested land gives none if so set")
+  @Test
+  void incomeIsWhatTripleaCollects() throws Exception {
+    // given
+    final GameData data = givenG40Loaded();
+    final Game game = GameRulesXmlTest.givenG40();
+    final Game contested =
+        GameRulesXml.withOptionValue(
+            MapXml.withUnits(game, "Poland", "British", "infantry", 1),
+            "Contested Territories Produce No Income",
+            "true");
+
+    // when
+    final NationsBalance balance = NationsBalance.of(game);
+    final int germans = rowOf(NationsBalance.of(contested).nations(), "Germans").income();
+
+    // then
+    for (final Row row : balance.nations()) {
+      assertThat(row.income())
+          .as("%s: as TripleA's Players tab says", row.name())
+          .isEqualTo(
+              (int)
+                  new ProductionStat()
+                      .getValue(data.getPlayerList().getPlayerId(row.name()), data, null));
+    }
+    assertThat(germans)
+        .as("Poland, with a British unit in it, gives the Germans nothing")
+        .isEqualTo(
+            rowOf(balance.nations(), "Germans").income() - MapXml.production(game, "Poland"));
+  }
+
+  @DisplayName("Income leaves out sea zones first owned by others and cut convoys, times Multiply")
+  @Test
+  void incomeOfSeaZonesAndConvoys() throws Exception {
+    // given: on the minimap, Russians own two sea zones, one first the Italians'; red north 1
+    // lies on a convoy route of an Italian zone, red north 2 on one of a Russian zone
+    final String route =
+        "attachTo=\"red north %d\" javaClass=\"games.strategy.triplea.attachments.TerritoryAttachment\""
+            + " type=\"territory\">";
+    final String zone =
+        "<attachment name=\"territoryAttachment\" attachTo=\"sea zone %d\""
+            + " javaClass=\"games.strategy.triplea.attachments.TerritoryAttachment\" type=\"territory\">"
+            + "<option name=\"production\" value=\"%d\"/>%s</attachment>";
+    final String xml;
+    try (InputStream minimap =
+        NationsBalanceTest.class.getClassLoader().getResourceAsStream("minimap.xml")) {
+      xml =
+          new String(minimap.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+              .replace(
+                  route.formatted(1),
+                  route.formatted(1)
+                      + "<option name=\"convoyRoute\" value=\"true\"/>"
+                      + "<option name=\"convoyAttached\" value=\"sea zone 3\"/>")
+              .replace(
+                  route.formatted(2),
+                  route.formatted(2)
+                      + "<option name=\"convoyRoute\" value=\"true\"/>"
+                      + "<option name=\"convoyAttached\" value=\"sea zone 2\"/>")
+              .replace(
+                  "</attachmentList>",
+                  zone.formatted(1, 3, "<option name=\"originalOwner\" value=\"Italians\"/>")
+                      + zone.formatted(2, 4, "<option name=\"convoyRoute\" value=\"true\"/>")
+                      + zone.formatted(3, 0, "<option name=\"convoyRoute\" value=\"true\"/>")
+                      + "</attachmentList>")
+              .replace(
+                  "<territoryOwner territory=\"red capitol\" owner=\"Russians\"/>",
+                  "<territoryOwner territory=\"red capitol\" owner=\"Russians\"/>"
+                      + "<territoryOwner territory=\"sea zone 1\" owner=\"Russians\"/>"
+                      + "<territoryOwner territory=\"sea zone 2\" owner=\"Russians\"/>"
+                      + "<territoryOwner territory=\"sea zone 3\" owner=\"Italians\"/>")
+              .replace(
+                  "<propertyList>",
+                  "<propertyList><property name=\"Multiply PUs\" value=\"2\" editable=\"false\">"
+                      + "<number min=\"1\" max=\"10\"/></property>");
+    }
+    final Path file = folder.resolve("convoys.xml");
+    Files.writeString(file, xml);
+    final GameData data = GameParser.parse(file, false).orElseThrow();
+    final Game game;
+    try (InputStream read = Files.newInputStream(file)) {
+      game = new org.triplea.generic.xml.reader.XmlMapper(read).mapXmlToObject(Game.class);
+    }
+
+    // when
+    final NationsBalance balance = NationsBalance.of(game);
+
+    // then
+    for (final String nation : List.of("Russians", "Italians")) {
+      assertThat(rowOf(balance.nations(), nation).income())
+          .as("%s: as TripleA's Players tab says", nation)
+          .isEqualTo(
+              (int)
+                  new ProductionStat()
+                      .getValue(data.getPlayerList().getPlayerId(nation), data, null));
+    }
+    assertThat(rowOf(balance.nations(), "Russians").income())
+        .as("given: the zones and routes make a difference")
+        .isNotEqualTo(
+            2
+                * MapXml.ownersByTerritory(game).entrySet().stream()
+                    .filter(e -> "Russians".equals(e.getValue()))
+                    .mapToInt(e -> MapXml.production(game, e.getKey()))
+                    .sum());
   }
 
   @DisplayName("Units are worth what TripleA's own calculator says, so the TUV is TripleA's")

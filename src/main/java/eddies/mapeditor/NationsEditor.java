@@ -715,7 +715,7 @@ final class NationsEditor implements Editor {
             MapXml.startingResource(game, nation, MapXml.PUS),
             9999,
             value -> quietly(nation, MapXml.PUS, value)));
-    final int income = NationsBalance.income(game, owned(game, nation));
+    final int income = NationsBalance.income(game, nation, owned(game, nation));
     start.note("Its territories are worth " + income + " PUs per turn.");
     addNoCapital(game, nation);
   }

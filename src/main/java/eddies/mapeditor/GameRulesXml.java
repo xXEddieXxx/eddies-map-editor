@@ -141,6 +141,11 @@ class GameRulesXml {
             .toList());
   }
 
+  /** The game option's value as TripleA reads it; empty when the game does not have it. */
+  static Optional<String> optionValue(final Game game, final String name) {
+    return option(game, name).map(GameRulesXml::value);
+  }
+
   private static Optional<Property> option(final Game game, final String name) {
     return options(game).stream().filter(p -> name.equals(p.getName())).findFirst();
   }

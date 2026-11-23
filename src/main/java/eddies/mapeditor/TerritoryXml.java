@@ -173,9 +173,12 @@ class TerritoryXml {
     return withValues(without, territory, UNIT_PRODUCTION, wanted);
   }
 
-  /** The nation that owned the territory first, for liberation; empty for the one at the start. */
+  /**
+   * The nation that owned the territory first, for liberation; empty for the one at the start. Of
+   * two the last, as TripleA reads it.
+   */
   static Optional<String> originalOwner(final Game game, final String territory) {
-    return values(game, territory, ORIGINAL_OWNER).stream().findFirst();
+    return values(game, territory, ORIGINAL_OWNER).stream().reduce((first, last) -> last);
   }
 
   static Game withOriginalOwner(

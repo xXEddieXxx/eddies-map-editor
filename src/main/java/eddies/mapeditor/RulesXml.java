@@ -303,6 +303,30 @@ class RulesXml {
                     MapXml.alliances(game, nation), MapXml.alliances(game, other)));
   }
 
+  /**
+   * Whether the two are allies when the game starts (a nation is its own); TripleA's neutral
+   * player, null, is no one's. A pair without a relationship goes by alliance.
+   */
+  static boolean startAllied(
+      final Game game, @Nullable final String nation, @Nullable final String other) {
+    if (nation == null || other == null) {
+      return false;
+    }
+    if (nation.equals(other)) {
+      return true;
+    }
+    return relationship(game, nation, other)
+        .map(
+            type ->
+                Constants.RELATIONSHIP_TYPE_DEFAULT_ALLIED.equals(type)
+                    || Constants.RELATIONSHIP_ARCHETYPE_ALLIED.equalsIgnoreCase(
+                        archetype(game, type)))
+        .orElseGet(
+            () ->
+                !Collections.disjoint(
+                    MapXml.alliances(game, nation), MapXml.alliances(game, other)));
+  }
+
   private static boolean isPair(final Relationship r, final String nation, final String other) {
     return (nation.equals(r.getPlayer1()) && other.equals(r.getPlayer2()))
         || (nation.equals(r.getPlayer2()) && other.equals(r.getPlayer1()));

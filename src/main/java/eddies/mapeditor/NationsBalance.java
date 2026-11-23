@@ -18,6 +18,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.function.Consumer;
+import java.util.stream.Stream;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
@@ -116,7 +117,7 @@ record NationsBalance(
               nation,
               MapXml.alliances(game, nation),
               lands.size(),
-              income(slim, lands),
+              income(game, slim, nation, lands),
               resources.stream().map(r -> MapXml.startingResource(game, nation, r)).toList(),
               units,
               tuv));
@@ -145,9 +146,83 @@ record NationsBalance(
     return new UnitCosts(game).of(nation, unitType);
   }
 
-  /** The PUs these territories give each turn: what Nations says a nation's land is worth. */
-  static int income(final Game game, final List<String> territories) {
-    return territories.stream().mapToInt(t -> MapXml.production(game, t)).sum();
+  /** The PUs the nation collects from these territories of its own in its first turn. */
+  static int income(final Game game, final String nation, final List<String> territories) {
+    return income(game, game, nation, territories);
+  }
+
+  /**
+   * As TripleA's Production counts them (Matches.territoryCanCollectIncomeFrom, times Multiply
+   * PUs): not from a sea zone another nation owned first, a convoy route none of whose zones
+   * the nation or an ally holds, nor, with Contested Territories Produce No Income, a territory
+   * with enemy units; triggers that change owners at the start are not counted.
+   *
+   * @param attachments the game, or one with only its territory attachments, for speed
+   */
+  private static int income(
+      final Game game, final Game attachments, final String nation, final List<String> territories) {
+    final boolean contestedGiveNothing =
+        GameRulesXml.optionValue(game, Constants.CONTESTED_TERRITORIES_PRODUCE_NO_INCOME)
+            .map(value -> Boolean.parseBoolean(value.strip()))
+            .orElse(false);
+    final Map<String, String> owners = MapXml.ownersByTerritory(game);
+    final Set<String> enemiesIn = new HashSet<>();
+    if (contestedGiveNothing) {
+      final Set<String> mine = Set.copyOf(territories);
+      MapXml.placements(game).stream()
+          .filter(p -> mine.contains(p.getTerritory()) && p.getQuantity() > 0)
+          .filter(p -> RulesXml.startAtWar(game, nation, p.getOwner()))
+          .forEach(p -> enemiesIn.add(p.getTerritory()));
+    }
+    final int production =
+        territories.stream()
+            .filter(t -> !enemiesIn.contains(t))
+            .filter(
+                t ->
+                    !MapXml.isWater(game, t)
+                        || TerritoryXml.originalOwner(attachments, t)
+                            .map(nation::equals)
+                            .orElse(true))
+            .filter(t -> holdsConvoy(game, attachments, nation, owners, t))
+            .mapToInt(t -> MapXml.production(attachments, t))
+            .sum();
+    return production * puMultiplier(game);
+  }
+
+  /** Whether a convoy route's land pays: a zone of its route the nation or an ally holds. */
+  private static boolean holdsConvoy(
+      final Game game,
+      final Game attachments,
+      final String nation,
+      final Map<String, String> owners,
+      final String territory) {
+    if (!MapXml.hasTerritoryFlag(attachments, territory, CONVOY_ROUTE)) {
+      return true;
+    }
+    final List<String> zones =
+        TerritoryXml.values(attachments, territory, "convoyAttached").stream()
+            .flatMap(value -> Stream.of(value.split(":")))
+            .map(String::strip)
+            .filter(zone -> !zone.isEmpty())
+            .toList();
+    return zones.isEmpty()
+        || zones.stream()
+            .anyMatch(
+                zone ->
+                    RulesXml.startAllied(game, nation, owners.get(zone))
+                        && MapXml.hasTerritoryFlag(attachments, zone, CONVOY_ROUTE));
+  }
+
+  private static final String CONVOY_ROUTE = "convoyRoute";
+
+  private static int puMultiplier(final Game game) {
+    try {
+      return GameRulesXml.optionValue(game, Constants.PU_MULTIPLIER)
+          .map(value -> Integer.parseInt(value.strip()))
+          .orElse(1);
+    } catch (final NumberFormatException e) {
+      return 1;
+    }
   }
 
   /**
@@ -321,7 +396,10 @@ record NationsBalance(
     all.add(scrolled(alliances, 6));
     final List<String> notes = new ArrayList<>();
     notes.add(
-        "Income: the PUs of the territories a nation starts with. TUV: its units at the start,"
+        "Income: the PUs a nation collects in its first turn, as TripleA's Production counts"
+            + " them, times Multiply PUs: none from contested land, a sea zone another nation"
+            + " owned first or a convoy route without a convoy zone held;"
+            + " triggers that change owners at the start are not counted. TUV: its units at the start,"
             + " held ones too, each at what it costs to buy, as TripleA's battle calculator"
             + " counts them.");
     if (balance.nations().stream().anyMatch(r -> r.alliances().size() > 1)) {
