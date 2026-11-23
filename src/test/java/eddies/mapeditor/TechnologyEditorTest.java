@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import javax.swing.AbstractButton;
 import javax.swing.JLabel;
@@ -52,7 +53,9 @@ final class TechnologyEditorTest {
         g ->
             TechXml.withUnitNumberAdded(
                 TechXml.withUnitNumberAdded(
-                    g, "superSub", new UnitNumber("attackBonus", 2, "submarine")),
+                    GameRulesXml.withOptionValue(g, "Tech Development", "true"),
+                    "superSub",
+                    new UnitNumber("attackBonus", 2, "submarine")),
                 "superSub",
                 new UnitNumber("attackBonus", 1, "battleship")));
     final TechnologyEditor editor = new TechnologyEditor(project);
@@ -136,6 +139,57 @@ final class TechnologyEditorTest {
         .toList();
   }
 
+  @DisplayName("A trigger that gives the technology shows by its nation; no cost without rolls")
+  @Test
+  void showsWhatTriggersGive(@TempDir final Path folder) {
+    // given: a trigger gives the Russians super subs after their first turn
+    final MapProject project = givenMinimap(folder);
+    final MapXml.AttachmentKey trigger =
+        new MapXml.AttachmentKey(
+            "triggerAttachment_Russians_Subs",
+            "games.strategy.triplea.attachments.TriggerAttachment",
+            "player",
+            "Russians");
+    project.edit(
+        g ->
+            MapXml.withOption(
+                MapXml.withOption(g, trigger, "tech", "superSub"),
+                trigger,
+                "when",
+                "after:Russians1EndTurn"));
+    final TechnologyEditor editor = new TechnologyEditor(project);
+
+    // when
+    choose(editor, "superSub");
+    final JTable nations = find(editor.page(), JTable.class).getFirst();
+    final List<String> columns =
+        IntStream.range(0, nations.getColumnCount()).mapToObj(nations::getColumnName).toList();
+
+    // then
+    assertThat(columns)
+        .as("Tech Development is off in the minimap: no roll, so no cost")
+        .contains("Given by trigger")
+        .doesNotContain("PUs per roll");
+    final List<String> all = MapXml.nations(project.game());
+    final int given = columns.indexOf("Given by trigger");
+    assertThat(nations.getValueAt(all.indexOf("Russians"), given))
+        .as("the trigger and when it fires")
+        .asString()
+        .startsWith("triggerAttachment_Russians_Subs (after ");
+    assertThat(nations.getValueAt(all.indexOf("Italians"), given))
+        .as("not to the others")
+        .isEqualTo("");
+    assertThat(
+            all(editor.page())
+                .anyMatch(
+                    c ->
+                        c instanceof JLabel label
+                            && label.getText() != null
+                            && label.getText().startsWith("No research rolls")))
+        .as("and says why")
+        .isTrue();
+  }
+
   @DisplayName("Standard technologies link to Game options, where WW2V3 Tech Model picks them")
   @Test
   void standardLinksToGameOptions(@TempDir final Path folder) throws Exception {
@@ -160,6 +214,11 @@ final class TechnologyEditorTest {
   private static boolean givenGameOptionsLinkShown(final TechnologyEditor editor) {
     return all(editor.page())
         .filter(c -> c instanceof AbstractButton b && "Game options ›".equals(b.getText()))
+        .filter(
+            c ->
+                all(c.getParent())
+                    .anyMatch(
+                        l -> l instanceof JLabel label && "Chosen in".equals(label.getText())))
         .anyMatch(c -> c.getParent().isVisible());
   }
 

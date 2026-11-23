@@ -11,11 +11,14 @@ import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -186,6 +189,65 @@ class TechXml {
 
   static List<String> techNames(final Game game) {
     return techs(game).stream().map(TechName::getName).toList();
+  }
+
+  /**
+   * Per nation the triggers that give it the technology, each as its name and when it fires in
+   * brackets: a trigger whose tech option names it gives it to the trigger's players, else to the
+   * nation it is attached to, as TripleA's triggerTechChange; loops (foreach) read. TripleA finds
+   * the name as a technology's property (its built-in, or its name) or as its shown name, eg
+   * "Super subs" for a built-in listed by its property alone.
+   *
+   * <p>shortcut: a name one technology has as its property and another as its name counts for
+   * both, where TripleA takes the property's; upgrade if a map does that.
+   */
+  static Map<String, List<String>> givenByTriggers(final Game game, final TechName tech) {
+    final Set<String> names = new HashSet<>();
+    names.add(tech.getName());
+    Optional.ofNullable(tech.getTech())
+        .filter(t -> !t.isBlank())
+        .ifPresentOrElse(
+            names::add,
+            () -> Optional.ofNullable(SHOWN_NAMES.get(tech.getName())).ifPresent(names::add));
+    final Map<String, List<String>> given = new HashMap<>();
+    TriggerXml.Names steps = null;
+    for (final Attachment trigger : AttachmentsXml.kept(game)) {
+      if (!TriggerXml.TRIGGER.equals(AttachmentsXml.kind(trigger))
+          || triggerParts(trigger, "tech").stream().noneMatch(names::contains)) {
+        continue;
+      }
+      if (steps == null) {
+        steps = TriggerXml.names(game);
+      }
+      final List<String> players = triggerParts(trigger, "players");
+      final String fires = TriggerXml.when(trigger, steps);
+      final String when = fires.isEmpty() ? "" : " (" + fires + ")";
+      for (final String nation :
+          players.isEmpty() ? List.of(Objects.toString(trigger.getAttachTo(), "")) : players) {
+        given.computeIfAbsent(nation, n -> new ArrayList<>()).add(trigger.getName() + when);
+      }
+    }
+    return given.entrySet().stream()
+        .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, e -> List.copyOf(e.getValue())));
+  }
+
+  /** The names in a trigger's option, eg "tech", which lists them with colons, also repeated. */
+  private static List<String> triggerParts(final Attachment trigger, final String option) {
+    return TriggerXml.values(trigger, option).stream()
+        .flatMap(value -> Stream.of(value.split(":")))
+        .map(String::strip)
+        .filter(part -> !part.isEmpty())
+        .toList();
+  }
+
+  /**
+   * Whether nations roll for technology: TripleA's technology step asks for no roll without the
+   * game option Tech Development, so what a roll costs means nothing then.
+   */
+  static boolean rollsForTech(final Game game) {
+    return GameRulesXml.optionValue(game, Constants.TECH_DEVELOPMENT)
+        .map(value -> Boolean.parseBoolean(value.strip()))
+        .orElse(false);
   }
 
   /** The built-in technology it is, eg "jetPower"; empty for one whose effects attachments give. */

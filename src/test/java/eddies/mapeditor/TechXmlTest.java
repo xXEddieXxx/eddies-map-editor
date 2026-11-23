@@ -25,10 +25,88 @@ import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.PropertyList;
 import org.triplea.map.data.elements.PropertyList.Property;
 import org.triplea.map.data.elements.PropertyList.Property.Value;
+import org.triplea.map.data.elements.Technology.Technologies.TechName;
 import eddies.mapeditor.TechXml.UnitNumber;
 
 @ExtensionMethod(Builders.class)
 final class TechXmlTest {
+  private static final TechName SUPER_SUBS = TechName.builder().name("superSub").build();
+
+  private static final String ACTIVATED = " (when technology is activated)";
+
+  private static Game givenTrigger(
+      final Game game, final String attachTo, final Option... options) {
+    final Game added =
+        AttachmentsXml.withNewAttachment(
+            game, "TriggerAttachment", "triggerAttachmentGift", attachTo);
+    final int last = AttachmentsXml.attachments(added).size() - 1;
+    return AttachmentsXml.withAttachment(
+        added,
+        last,
+        Builders.toBuilder(AttachmentsXml.attachments(added).get(last))
+            .options(List.of(options))
+            .build());
+  }
+
+  private static Option givenOption(final String name, final String value) {
+    return Option.builder().name(name).value(value).build();
+  }
+
+  @DisplayName("A trigger gives its players the technology, named or by its shown name")
+  @Test
+  void triggersGiveTheirPlayers() {
+    // given: attached to the Russians, for the Italians; the shown name of super subs
+    final Game game =
+        givenTrigger(
+            MapXmlTest.givenMinimap(),
+            "Russians",
+            givenOption("tech", "Super subs"),
+            givenOption("players", "Italians"));
+
+    // when
+    final Map<String, List<String>> given = TechXml.givenByTriggers(game, SUPER_SUBS);
+
+    // then
+    assertThat(given.keySet())
+        .as("its players, not the one it is attached to")
+        .containsOnly("Italians");
+    assertThat(given.get("Italians"))
+        .as("by its name, with when it fires")
+        .containsExactly("triggerAttachmentGift" + ACTIVATED);
+    assertThat(TechXml.givenByTriggers(game, TechName.builder().name("jetPower").build()))
+        .as("no other technology")
+        .isEmpty();
+  }
+
+  @DisplayName("A trigger a loop makes gives the technology to each nation of the loop")
+  @Test
+  void triggersOfLoopsGive() throws Exception {
+    // given: one trigger per nation of a variable
+    final Game withVariable =
+        GameRulesXml.withVariable(
+            MapXmlTest.givenMinimap(), "Sides", List.of("Russians", "Italians"));
+    final Game added =
+        AttachmentsXml.withNewAttachment(
+            withVariable, "TriggerAttachment", "triggerAttachment_@Sides@_Subs", "@Sides@");
+    final int last = AttachmentsXml.attachments(added).size() - 1;
+    final Game game =
+        AttachmentsXml.withAttachment(
+            added,
+            last,
+            Builders.toBuilder(AttachmentsXml.attachments(added).get(last))
+                .foreach("$Sides$")
+                .options(List.of(givenOption("tech", "superSub")))
+                .build());
+
+    // when
+    final Map<String, List<String>> given = TechXml.givenByTriggers(game, SUPER_SUBS);
+
+    // then
+    assertThat(given)
+        .as("each nation by the trigger the loop makes for it")
+        .containsEntry("Russians", List.of("triggerAttachment_Russians_Subs" + ACTIVATED))
+        .containsEntry("Italians", List.of("triggerAttachment_Italians_Subs" + ACTIVATED));
+  }
   private static final String JETS = "Air drops";
   private static final String AIR = "Air Advances";
   private final Game minimap = MapXmlTest.givenMinimap();

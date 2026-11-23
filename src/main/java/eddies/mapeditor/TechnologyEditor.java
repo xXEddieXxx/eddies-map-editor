@@ -33,6 +33,7 @@ import javax.swing.JTable;
 import javax.swing.JTextField;
 import javax.swing.ToolTipManager;
 import javax.swing.table.AbstractTableModel;
+import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.JTableHeader;
 import org.triplea.map.data.elements.AttachmentList.Attachment.Option;
 import org.triplea.map.data.elements.Game;
@@ -55,6 +56,11 @@ final class TechnologyEditor implements Editor {
       "Only TripleA's built-in technologies can be given at the start.";
   private static final String COST_TIP =
       "What one research roll costs this nation, in PUs, for every technology. 5 when not set.";
+  private static final String GIVEN_TIP =
+      "Triggers that give the nation this technology, with when they fire; changed in Triggers.";
+  private static final String AT_START = "Has it at start";
+  private static final String GIVEN = "Given by trigger";
+  private static final String COST = "PUs per roll";
   private static final int TABLE_WIDTH = 620;
   // what TripleA gives a built-in technology that has no techAbilityAttachment
   // (TechAbilityAttachment.setDefaultTechnologyAttachments)
@@ -317,7 +323,13 @@ final class TechnologyEditor implements Editor {
                             .count()
                         + " have it at the start")
             .orElse("Own technology · researched by " + researching + " nations"));
-    details.row(nationsTable(name, builtIn));
+    details.row(nationsTable(tech.get(), builtIn));
+    if (!TechXml.rollsForTech(project.game())) {
+      details.row(
+          Help.link(
+              "No research rolls, so no cost per roll: Tech Development is off in",
+              "Game options"));
+    }
     details.section(
         "What it gives",
         "What a nation gets once it has researched the technology. Saved as the technology's"
@@ -329,7 +341,7 @@ final class TechnologyEditor implements Editor {
     details.repaint();
   }
 
-  private JComponent nationsTable(final String tech, final Optional<String> builtIn) {
+  private JComponent nationsTable(final TechName tech, final Optional<String> builtIn) {
     final JTable table = new JTable(new NationsTable(this, tech, builtIn));
     table.setTableHeader(new AtStartHeader(table));
     table.setRowHeight(table.getRowHeight() + Theme.GAP_S);
@@ -343,8 +355,13 @@ final class TechnologyEditor implements Editor {
         .distinct()
         .forEach(charts::addItem);
     Details.comboColumn(table, 1, charts);
-    // a tick or a number needs little room, the chart more
+    // a tick or a number needs little room, the chart and the triggers more
     for (int column = 2; column < table.getColumnCount(); column++) {
+      if (GIVEN.equals(table.getColumnName(column))) {
+        // the triggers whole as tool tip, as the cell cuts them
+        table.getColumnModel().getColumn(column).setCellRenderer(new WholeAsToolTip());
+        continue;
+      }
       table.getColumnModel().getColumn(column).setPreferredWidth(120);
       table.getColumnModel().getColumn(column).setMaxWidth(150);
     }
@@ -700,6 +717,25 @@ final class TechnologyEditor implements Editor {
     }
   }
 
+  /** A cell whose text shows whole as its tool tip. */
+  private static final class WholeAsToolTip extends DefaultTableCellRenderer {
+    @Serial private static final long serialVersionUID = 1L;
+
+    @Override
+    public Component getTableCellRendererComponent(
+        final JTable table,
+        final Object value,
+        final boolean selected,
+        final boolean focused,
+        final int row,
+        final int column) {
+      super.getTableCellRendererComponent(table, value, selected, focused, row, column);
+      final String text = String.valueOf(value);
+      setToolTipText(text.isBlank() ? null : text);
+      return this;
+    }
+  }
+
   /** The header: why only built-in ones have "Has it at start", and what "PUs per roll" is. */
   private static final class AtStartHeader extends JTableHeader {
     @Serial private static final long serialVersionUID = 1L;
@@ -712,28 +748,43 @@ final class TechnologyEditor implements Editor {
     @Override
     public String getToolTipText(final MouseEvent event) {
       final int column = columnAtPoint(event.getPoint());
-      if (column == getColumnModel().getColumnCount() - 1) {
-        return COST_TIP;
-      }
-      return column == 2 ? AT_START_TIP : null;
+      return column < 0
+          ? null
+          : switch (String.valueOf(getColumnModel().getColumn(column).getHeaderValue())) {
+            case COST -> COST_TIP;
+            case AT_START -> AT_START_TIP;
+            case GIVEN -> GIVEN_TIP;
+            default -> null;
+          };
     }
   }
 
   /**
-   * A row per nation: the chart it researches the technology in, whether it has it, and what a
-   * research roll costs it (the same for every technology).
+   * A row per nation: the chart it researches the technology in, whether it has it, the triggers
+   * that give it (when any do) and what a research roll costs it (the same for every technology,
+   * only when nations roll). Made anew at every change, as the details are.
    */
   private static final class NationsTable extends AbstractTableModel {
     @Serial private static final long serialVersionUID = 1L;
     private final transient TechnologyEditor editor;
     private final String tech;
     private final transient Optional<String> builtIn;
+    private final transient Map<String, List<String>> given;
+    private final List<String> columns = new ArrayList<>(List.of("Nation", "Research chart"));
 
     NationsTable(
-        final TechnologyEditor editor, final String tech, final Optional<String> builtIn) {
+        final TechnologyEditor editor, final TechName tech, final Optional<String> builtIn) {
       this.editor = editor;
-      this.tech = tech;
+      this.tech = tech.getName();
       this.builtIn = builtIn;
+      given = TechXml.givenByTriggers(editor.project.game(), tech);
+      builtIn.ifPresent(b -> columns.add(AT_START));
+      if (!given.isEmpty()) {
+        columns.add(GIVEN);
+      }
+      if (TechXml.rollsForTech(editor.project.game())) {
+        columns.add(COST);
+      }
     }
 
     private List<String> nations() {
@@ -747,41 +798,38 @@ final class TechnologyEditor implements Editor {
 
     @Override
     public int getColumnCount() {
-      return builtIn.isPresent() ? 4 : 3;
-    }
-
-    // the last column, after "Has it at start" where there is one
-    private boolean isCost(final int column) {
-      return column == getColumnCount() - 1;
+      return columns.size();
     }
 
     @Override
     public String getColumnName(final int column) {
-      return isCost(column)
-          ? "PUs per roll"
-          : List.of("Nation", "Research chart", "Has it at start").get(column);
+      return columns.get(column);
     }
 
     @Override
     public Class<?> getColumnClass(final int column) {
-      return isCost(column) ? Integer.class : column == 2 ? Boolean.class : String.class;
+      return switch (columns.get(column)) {
+        case COST -> Integer.class;
+        case AT_START -> Boolean.class;
+        default -> String.class;
+      };
     }
 
     @Override
     public boolean isCellEditable(final int row, final int column) {
-      return column > 0;
+      return column > 0 && !GIVEN.equals(columns.get(column));
     }
 
     @Override
     public Object getValueAt(final int row, final int column) {
       final String nation = nations().get(row);
-      if (isCost(column)) {
-        return TechXml.techCost(editor.project.game(), nation);
-      }
-      return switch (column) {
-        case 0 -> nation;
-        case 1 -> TechXml.categoryOf(editor.listed(), nation, tech).orElse(NOT_RESEARCHED);
-        default -> TechXml.hasAtStart(editor.project.game(), nation, builtIn.orElseThrow());
+      return switch (columns.get(column)) {
+        case COST -> TechXml.techCost(editor.project.game(), nation);
+        case AT_START -> TechXml.hasAtStart(editor.project.game(), nation, builtIn.orElseThrow());
+        case GIVEN -> String.join(", ", given.getOrDefault(nation, List.of()));
+        case "Research chart" ->
+            TechXml.categoryOf(editor.listed(), nation, tech).orElse(NOT_RESEARCHED);
+        default -> nation;
       };
     }
 
@@ -791,12 +839,13 @@ final class TechnologyEditor implements Editor {
         return;
       }
       final String nation = nations().get(row);
-      if (isCost(column)) {
+      final String name = columns.get(column);
+      if (COST.equals(name)) {
         // the game refuses a cost below 0
         editor.project.edit(g -> TechXml.withTechCost(g, nation, Math.max(0, (Integer) value)));
       } else if (column == 1) {
         editor.setChart(nation, tech, String.valueOf(value));
-      } else {
+      } else if (AT_START.equals(name)) {
         final String engineTech = builtIn.orElseThrow();
         editor.project.edit(
             g ->
