@@ -3,6 +3,46 @@
 What changed for map makers, release by release. The GitHub release of each version carries the
 downloads; this file carries the words.
 
+## 0.2.7
+
+Fixes and wishes from the work on 0.2.6, each under its GitHub issue.
+
+### Fixed
+
+- **Loops (`foreach`) were read only in Units** (#43). Territories, Nations, Technology,
+  Politics and the other tools showed defaults (PUs 0, no capital) where a map writes its
+  attachments in a loop, as 11 Rings of Power, mega_new_elk or D-Day do, and a change there
+  replaced everything the loop gave that thing. Every tool now reads them as TripleA does. A
+  change of something a loop makes gives it an attachment of its own with all the loop's values,
+  written after the loop, so nothing is lost; a toast says so, with Undo.
+- **Units sat on other unit places than in the game** (#30). The Game view took a territory's
+  units in the file's order; it now sorts them as TripleA does (the owner's first, then allies,
+  units that cannot move, sea, air, land, attack, …), so a map that keeps its first place for
+  one kind of unit, eg a flag on the name plate, looks as in the game.
+- **Of two owner lines for one territory the editor took the first**; TripleA takes the last.
+  Now the last counts everywhere.
+- **Game options: ▲ ▼ across a section's border seemed to do nothing** (#48). They now move an
+  option within its section, are off at its ends and while a search or the tick hides options,
+  and say why.
+- **Files cut every file name** in the folder overview at 1280 px (#47). The names stay whole;
+  the purpose is cut instead and shows whole in its tool tip.
+
+### New
+
+- **Change for this unit only** (#44): a unit whose options a loop writes gets its own
+  attachment with all the loop's values in one step, and is then changed in Units like any unit.
+- **Uses up units** (#45): a section in Units, a row per used-up unit with its count and unit
+  type, + to add one (`consumesUnits`).
+- **A cost per resource** (#46): beside PUs a Cost field for each resource the unit's rule
+  costs, and + for another one, eg Fame. A rule's only cost stays as 0, as TripleA loads no rule
+  without a cost.
+- **The map makers' forum** (#42) in Guides & links, the user guide and the README:
+  https://forums.triplea-game.org/category/28/map-making
+
+### User guide
+
+- Its pictures no longer show folder paths or the user name of the computer that made them (#52).
+
 ## 0.2.6
 
 From the feedback of a map maker on 0.2.5, tried with 11 Rings of Power and Total World War; each
