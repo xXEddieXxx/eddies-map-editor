@@ -75,6 +75,23 @@ games:
         .isInstanceOf(IOException.class);
   }
 
+  @DisplayName("A new game takes the template's notes file, as the game file holds no notes")
+  @Test
+  void newGameKeepsNotes() throws IOException {
+    // given
+    final Path map = givenMap();
+    Files.writeString(map.resolve("games/first.notes.html"), "<p>Take the islands.</p>");
+
+    // when
+    final Path xml = MapFolder.newGame(map.resolve("games/first.xml"), "Second");
+
+    // then
+    assertThat(MapProject.notesFile(xml))
+        .as("the new game's notes file, a copy")
+        .hasFileName("second.notes.html")
+        .hasContent("<p>Take the islands.</p>");
+  }
+
   @DisplayName("A new game keeps map.yml's other entries, and its first version as .bak")
   @Test
   void newGameKeepsMapYml() throws IOException {

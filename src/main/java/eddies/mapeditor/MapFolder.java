@@ -104,8 +104,12 @@ class MapFolder {
   static Path newGame(final Path template, final String gameName) throws IOException {
     final String fileName = safeName(gameName) + ".xml";
     final Path xml = template.resolveSibling(fileName);
-    if (Files.exists(xml)) {
-      throw new IOException("There is a game file " + fileName + " already");
+    // the game file holds no notes, the editor writes them into the notes file alone
+    final Path notes = MapProject.notesFile(xml);
+    for (final Path there : List.of(xml, notes)) {
+      if (Files.exists(there)) {
+        throw new IOException("There is a file " + there.getFileName() + " already");
+      }
     }
     final Optional<Path> yamlFile =
         FileUtils.findFileInParentFolders(template, MapDescriptionYaml.MAP_YAML_FILE_NAME);
@@ -113,6 +117,14 @@ class MapFolder {
     final Optional<Map<String, Object>> yaml =
         yamlFile.isPresent() ? Optional.of(readYaml(yamlFile.get())) : Optional.empty();
     Files.copy(template, xml);
+    try {
+      if (Files.exists(MapProject.notesFile(template))) {
+        Files.copy(MapProject.notesFile(template), notes);
+      }
+    } catch (final IOException e) {
+      Files.deleteIfExists(xml);
+      throw e;
+    }
     if (yamlFile.isPresent()) {
       final List<Object> games = new ArrayList<>();
       if (yaml.get().get("games") instanceof List<?> listed) {
@@ -129,6 +141,7 @@ class MapFolder {
       } catch (final IOException e) {
         // a game file map.yml does not list would only confuse: take it back
         Files.deleteIfExists(xml);
+        Files.deleteIfExists(notes);
         throw e;
       }
     }

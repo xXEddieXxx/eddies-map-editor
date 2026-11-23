@@ -23,6 +23,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.triplea.map.data.elements.Game;
+import org.triplea.map.game.notes.GameNotes;
 import org.triplea.util.PointFileReaderWriter;
 import eddies.mapeditor.MapChecks.Problem;
 import eddies.mapeditor.MapFiles.Redrawn;
@@ -86,6 +87,34 @@ final class MapProjectTest {
     assertThat(MapFolder.backupOf(notes))
         .as("the original stays as .bak, byte for byte")
         .hasBinaryContent(original);
+  }
+
+  @DisplayName("The notes are kept in the notes file alone: those only the game file had move there")
+  @Test
+  void keepsNotesOnce() throws Exception {
+    // given a map as old ones are: the notes in the game file, no notes file
+    final MapProject project = givenMinimapProject();
+    final Path xml = folder.resolve("minimap.xml");
+    final Path notes = MapProject.notesFile(xml);
+    final boolean before = Files.exists(notes);
+
+    // when
+    project.edit(game -> MapXml.withProduction(game, "red north 1", 9));
+    project.save();
+
+    // then
+    assertThat(before).as("given: no notes file").isFalse();
+    assertThat(GameNotes.loadGameNotes(xml))
+        .as("the notes the game shows, in their file")
+        .isEqualTo("A simple two player game.");
+    assertThat(Files.readString(xml))
+        .as("the game file holds no copy, which would go stale")
+        .doesNotContain("\"notes\"")
+        .doesNotContain("A simple two player game.");
+    assertThat(MapXml.notes(MapProject.open(xml).game()))
+        .as("opened again")
+        .isEqualTo("A simple two player game.");
+    assertThat(MapChecks.findError(xml)).as("the game still loads").isEmpty();
   }
 
   private MapProject givenSavedMapWithRed() throws Exception {

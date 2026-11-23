@@ -2091,6 +2091,13 @@ class MapXml {
     return withProperties(game, properties);
   }
 
+  /** The game without notes, for its file: the game shows the notes of the notes file alone. */
+  static Game withoutNotes(final Game game) {
+    final List<Property> others =
+        properties(game).stream().filter(p -> !NOTES.equalsIgnoreCase(p.getName())).toList();
+    return others.size() == properties(game).size() ? game : withProperties(game, others);
+  }
+
   /** The game with the name players choose it by; the map's folder stays the one it finds. */
   static Game withGameName(final Game game, final String name) {
     return game.toBuilder().info(Info.builder().name(name.strip()).build()).build();

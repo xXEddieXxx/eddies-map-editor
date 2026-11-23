@@ -2432,16 +2432,21 @@ final class MapProject {
         || !MapXml.nations(saving.game()).equals(MapXml.nations(before))) {
       writeUploadedUnitPictures(saving.game(), files, saved.files());
     }
+    // an unchanged game keeps its file as it is, so a save of other files leaves its formatting;
+    // a map made here has its name in the file since the first save
+    final boolean writesGame = firstSave || saving.game() != saved.game();
     final String notes = MapXml.notes(saving.game());
-    if (firstSave || !notes.equals(MapXml.notes(saved.game()))) {
+    // the game file is written without notes, so notes only it had move into the notes file first
+    if (firstSave
+        || !notes.equals(MapXml.notes(saved.game()))
+        || (writesGame && !notes.isBlank() && !Files.exists(notesFile(xml)))) {
       writeNotes(notesFile(xml), notes);
     }
     saving.texts().writeChanged(mapFolder, saved.texts());
-    // an unchanged game keeps its file as it is, so a save of other files leaves its formatting;
-    // a map made here has its name in the file since the first save
-    if (firstSave || saving.game() != saved.game()) {
+    if (writesGame) {
       final Game game =
-          mapName == null ? saving.game() : MapXml.withMapName(saving.game(), mapName);
+          MapXml.withoutNotes(
+              mapName == null ? saving.game() : MapXml.withMapName(saving.game(), mapName));
       // the file there is the last save: what TripleA's model does not hold is kept from it
       MapFolder.replace(xml, file -> GameXmlKeeper.export(game, xml, file));
     }
