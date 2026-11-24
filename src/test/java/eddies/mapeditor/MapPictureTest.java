@@ -78,8 +78,10 @@ final class MapPictureTest {
     final DetectedTerritory whole = topRightOf(MapPicture.detect(picture));
 
     // when
-    final DetectedMap boxed = MapPicture.detect(picture, new Rectangle(190, 0, 210, 125));
-    final DetectedMap outside = MapPicture.detect(picture, new Rectangle(500, 500, 10, 10));
+    final DetectedMap boxed =
+        MapPicture.detect(picture, new Rectangle(190, 0, 210, 125), List.of());
+    final DetectedMap outside =
+        MapPicture.detect(picture, new Rectangle(500, 500, 10, 10), List.of());
 
     // then
     final DetectedTerritory found = topRightOf(boxed);
@@ -360,6 +362,55 @@ final class MapPictureTest {
     assertThat(style.color())
         .as("dark as its core, not the grey of its smoothed edge")
         .matches(c -> c.getRed() + c.getGreen() + c.getBlue() < 3 * 64);
+  }
+
+  @DisplayName("A small island with a closed outline is found where the map has a territory's"
+      + " center; an islet without one stays the sea zone's")
+  @Test
+  void findsSmallIslandsTheMapKnows() {
+    // given: a sea on which areas under 100 pixels count as gaps, two islands of 81
+    final BufferedImage sea = givenSeaWithIslands(new Point(500, 500), new Point(1500, 500));
+    final Point island = new Point(505, 505);
+    // and a speck of 16 pixels with a point in it
+    final Graphics2D g = sea.createGraphics();
+    g.setColor(Color.WHITE);
+    g.fillRect(1000, 200, 5, 5);
+    g.setColor(Color.BLACK);
+    g.drawRect(1000, 200, 5, 5);
+    g.dispose();
+
+    // when
+    final DetectedMap plain = MapPicture.detect(sea);
+    final DetectedMap known = MapPicture.detect(sea, List.of(island, new Point(1002, 202)));
+    final DetectedMap boxed =
+        MapPicture.detect(sea, new Rectangle(400, 400, 300, 300), List.of(island));
+
+    // then
+    assertThat(plain.territories()).as("too small to be told from a gap: only the sea").hasSize(1);
+    assertThat(known.territories())
+        .as("the island the map has a center in, and the sea; not the other islet nor the speck")
+        .hasSize(2)
+        .filteredOn(t -> !t.water())
+        .singleElement()
+        .matches(t -> t.outlines().getFirst().contains(island));
+    assertThat(boxed.territories())
+        .as("also within a box, eg after drawing borders")
+        .anyMatch(t -> !t.water() && t.outlines().getFirst().contains(island));
+  }
+
+  static BufferedImage givenSeaWithIslands(final Point... islands) {
+    final BufferedImage image = new BufferedImage(2000, 1000, BufferedImage.TYPE_INT_RGB);
+    final Graphics2D g = image.createGraphics();
+    g.setColor(new Color(110, 170, 230));
+    g.fillRect(0, 0, 2000, 1000);
+    for (final Point at : islands) {
+      g.setColor(Color.WHITE);
+      g.fillRect(at.x, at.y, 10, 10);
+      g.setColor(Color.BLACK);
+      g.drawRect(at.x, at.y, 10, 10);
+    }
+    g.dispose();
+    return image;
   }
 
   private static BufferedImage givenWhite(final int width, final int height) {

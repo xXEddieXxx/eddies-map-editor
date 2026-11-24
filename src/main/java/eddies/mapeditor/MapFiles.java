@@ -604,7 +604,7 @@ record MapFiles(
     final Rectangle whole = new Rectangle(image.getWidth(), image.getHeight());
     Rectangle within = box.intersection(whole);
     while (true) {
-      final DetectedMap found = MapPicture.detect(image, within);
+      final DetectedMap found = MapPicture.detect(image, within, centers.values());
       // an area beyond the region is the territory's it lies in, so a new one gets it as neighbour
       final Map<DetectedTerritory, String> others = new HashMap<>();
       final List<DetectedTerritory> areas = new ArrayList<>();

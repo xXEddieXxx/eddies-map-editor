@@ -14,6 +14,7 @@ import java.awt.Dimension;
 import java.awt.FileDialog;
 import java.awt.FlowLayout;
 import java.awt.Frame;
+import java.awt.Point;
 import java.awt.Rectangle;
 import java.awt.event.ActionEvent;
 import java.awt.event.ComponentAdapter;
@@ -812,9 +813,11 @@ public final class MapMakerWindow extends JFrame {
     }
     final MapProject findingIn = project;
     final int edits = findingIn.pictureEdits();
+    // small islands of the map found again, where its centers are
+    final List<Point> known = List.copyOf(findingIn.getFiles().centers().values());
     inBackground(
         "Could not make the territories",
-        () -> MapPicture.detect(picture.get()),
+        () -> MapPicture.detect(picture.get(), known),
         detected -> {
           // a picture loaded meanwhile keeps its territories until Make territories is pressed
           // nor one a line was drawn into meanwhile
@@ -919,7 +922,7 @@ public final class MapMakerWindow extends JFrame {
           final BufferedImage image = picture.call();
           return region.isPresent()
               ? from.withBordersFrom(image, region.get())
-              : from.withBordersFrom(image, MapPicture.detect(image));
+              : from.withBordersFrom(image, MapPicture.detect(image, from.centers().values()));
         },
         redrawn -> {
           if (redrawing != project) {

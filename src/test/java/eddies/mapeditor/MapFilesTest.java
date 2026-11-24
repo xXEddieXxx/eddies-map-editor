@@ -281,6 +281,31 @@ final class MapFilesTest {
     assertThat(redrawn.merged()).as("nothing merged").isEmpty();
   }
 
+  @DisplayName("Drawing borders near a small island the map has keeps it: its center is passed, so"
+      + " it is not merged into the sea")
+  @Test
+  void keepsSmallIslandWhenRedrawingNearIt() {
+    // given: a map of a sea and an island too small to be told from a gap without its center
+    final BufferedImage sea = MapPictureTest.givenSeaWithIslands(new Point(500, 500));
+    final MapFiles files =
+        MapFiles.none().withPicture(sea, MapPicture.detect(sea, List.of(new Point(505, 505))));
+    final String island =
+        files.polygons().keySet().stream()
+            .filter(t -> bounds(files, t).width < 40)
+            .findFirst()
+            .orElseThrow();
+
+    // when: borders drawn around it
+    final Redrawn redrawn = files.withBordersFrom(sea, new Rectangle(480, 480, 50, 50));
+
+    // then
+    assertThat(redrawn.merged()).as("not merged into the sea zone").isEmpty();
+    assertThat(redrawn.kept()).as("found again, so not kept for lack of an area").isEmpty();
+    assertThat(redrawn.files().polygons().get(island))
+        .as("its outline as before")
+        .isEqualTo(files.polygons().get(island));
+  }
+
   @DisplayName("An island rubbed out of the picture keeps its border instead of taking the sea's")
   @Test
   void keepsIslandInsideSea() {

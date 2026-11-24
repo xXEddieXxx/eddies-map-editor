@@ -14,11 +14,15 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.imageio.ImageIO;
 
@@ -53,6 +57,8 @@ final class MapPicture {
   private static final int SMOOTH_STEP = 4;
   // how far, in pixels, areas grow into the dark line around them, so outlines lie on the line
   private static final int GROW = 2;
+  // a smaller area holding a known point is still kept, from this many pixels, not a speck
+  private static final int MIN_KNOWN_AREA = 30;
   // the 8 neighbours of a pixel, clockwise on the screen, starting west
   private static final int[] DX = {-1, -1, 0, 1, 1, 1, 0, -1};
   private static final int[] DY = {0, -1, -1, -1, 0, 1, 1, 1};
@@ -78,13 +84,16 @@ final class MapPicture {
   private final int[] labels;
   // smaller areas are dropped, eg gaps where a line nearly meets another
   private final int minArea;
+  // points of territories the map has, eg their centers: a smaller area holding one is kept
+  private final List<Point> known;
 
-  private MapPicture(final BufferedImage image, final int minArea) {
+  private MapPicture(final BufferedImage image, final int minArea, final List<Point> known) {
     width = image.getWidth();
     height = image.getHeight();
     rgb = image.getRGB(0, 0, width, height, null, 0, width);
     labels = new int[width * height];
     this.minArea = minArea;
+    this.known = List.copyOf(known);
   }
 
   private static int minArea(final BufferedImage image) {
@@ -579,15 +588,26 @@ final class MapPicture {
   }
 
   static DetectedMap detect(final BufferedImage image) {
-    return new MapPicture(image, minArea(image)).detect();
+    return detect(image, List.of());
+  }
+
+  /**
+   * As {@link #detect(BufferedImage)}, keeping also an area too small to be told from a gap in a
+   * line if one of the points is in it, eg a small island whose center the map has (1911 Theatre
+   * of Empires: Cyprus, Malta), while the islets a sea zone holds stay the sea zone's.
+   */
+  static DetectedMap detect(final BufferedImage image, final Collection<Point> known) {
+    return new MapPicture(image, minArea(image), List.copyOf(known)).detect();
   }
 
   /**
    * As {@link #detect(BufferedImage)}, only within the box, eg around borders drawn, which is faster
    * on a big picture; areas the box cuts end at its edge. Outlines and centers are the picture's,
-   * the areas as small as there are dropped.
+   * the areas as small as there are dropped, but one holding a known point, as {@link
+   * #detect(BufferedImage, Collection)}; the points in the picture's coordinates.
    */
-  static DetectedMap detect(final BufferedImage image, final Rectangle box) {
+  static DetectedMap detect(
+      final BufferedImage image, final Rectangle box, final Collection<Point> known) {
     final Rectangle within = box.intersection(new Rectangle(image.getWidth(), image.getHeight()));
     final Dimension size = new Dimension(image.getWidth(), image.getHeight());
     if (within.isEmpty()) {
@@ -596,7 +616,11 @@ final class MapPicture {
     final DetectedMap found =
         new MapPicture(
                 image.getSubimage(within.x, within.y, within.width, within.height),
-                minArea(image))
+                minArea(image),
+                known.stream()
+                    .filter(within::contains)
+                    .map(p -> new Point(p.x - within.x, p.y - within.y))
+                    .toList())
             .detect();
     return new DetectedMap(
         size,
@@ -663,17 +687,28 @@ final class MapPicture {
     for (int i = 0; i < rgb.length; i++) {
       labels[i] = lines[i] ? -1 : 0;
     }
-    final List<Region> kept = new ArrayList<>();
+    final List<Region> all = new ArrayList<>();
     final int[] stack = new int[labels.length];
     int next = 1;
     for (int start = 0; start < labels.length; start++) {
       if (labels[start] == 0) {
         final Region region = fill(start, next++, stack);
-        if (region.area() >= minArea) {
-          kept.add(region);
+        // a speck is never kept, so the list does not hold every one of a noisy picture
+        if (region.area() >= MIN_KNOWN_AREA) {
+          all.add(region);
         }
       }
     }
+    // shortcut: a point is any territory's center, so a sea zone's center on an islet keeps that
+    // islet as an area of its own; pass whether a point is sea if a map shows that
+    final Set<Integer> holdingKnown = new HashSet<>();
+    known.stream()
+        .filter(p -> p.x >= 0 && p.y >= 0 && p.x < width && p.y < height)
+        .forEach(p -> holdingKnown.add(labels[p.y * width + p.x]));
+    final List<Region> kept =
+        all.stream()
+            .filter(r -> r.area() >= minArea || holdingKnown.contains(r.label()))
+            .collect(Collectors.toCollection(ArrayList::new));
     final boolean[] isKept = new boolean[next];
     kept.forEach(r -> isKept[r.label()] = true);
     for (int i = 0; i < labels.length; i++) {

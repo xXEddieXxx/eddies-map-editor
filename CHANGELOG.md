@@ -25,6 +25,11 @@ downloads; this file carries the words.
   the objectives file gives a text, eg Path to Victory's Lend-Lease, as the game's Objectives tab
   does, with the way to Triggers and to their text. Removing a trigger or an attachment also
   removes its objectives text and group entry, which the game otherwise reports as an error.
+- **Small islands found again** (#70). Redraw borders, Make territories and drawing borders
+  found no island too small for the map's size, eg Cyprus, Malta and about 70 more territories
+  of 1911 Theatre of Empires, and offered to merge it into its sea zone. An area with the center
+  of one of the map's territories is now kept, however small; islets a sea zone holds stay part
+  of it.
 - **Disabled fields in the dark theme** (#71). A disabled text field, list box or label, eg in
   a change left unticked in Make territories, now looks clearly dimmer than an enabled one, as in
   the light theme.
