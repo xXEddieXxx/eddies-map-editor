@@ -2,12 +2,14 @@ package eddies.mapeditor;
 
 import jakarta.xml.bind.JAXBContext;
 import jakarta.xml.bind.JAXBException;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.InputStream;
+import java.lang.ref.SoftReference;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
@@ -18,6 +20,12 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
@@ -42,6 +50,7 @@ import org.w3c.dom.NamedNodeMap;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import org.w3c.dom.Text;
+import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 
 /**
@@ -52,6 +61,10 @@ import org.xml.sax.SAXException;
  * changed, as the difference between that and the game now.
  */
 final class GameXmlKeeper {
+  // asked for every attribute of the three trees, of few names
+  private static final Map<String, String> CANONICAL = new ConcurrentHashMap<>();
+  private static final Map<String, Integer> KEY_INDEX = new ConcurrentHashMap<>();
+
   // the attributes that tell elements of one name apart, eg territories or attachments
   private static final List<String> KEYS =
       Stream.of(
@@ -69,30 +82,96 @@ final class GameXmlKeeper {
           .map(GameXmlKeeper::canonical)
           .toList();
 
+  /** A game file's bytes and their model, read ahead for the next save over that file. */
+  private record ReadAhead(byte[] bytes, Future<Optional<Game>> model) {}
+
+  // reading a big map's model again takes long, eg 0.3 s of a save on 270BC Wars; soft, as it
+  // holds the file and a model (60 MB there) that a lack of memory may take: then it is read again
+  private static volatile SoftReference<ReadAhead> readAhead = new SoftReference<>(null);
+
   private GameXmlKeeper() {}
+
+  /** The model read from a game file's bytes, eg on open, so a save over it needs no read. */
+  static void remember(final byte[] bytes, final Game model) {
+    readAhead =
+        new SoftReference<>(
+            new ReadAhead(bytes, CompletableFuture.completedFuture(Optional.of(model))));
+  }
 
   /**
    * Writes the game to a file, with what the original has that TripleA's model does not hold; an
    * original that is missing or no XML keeps nothing.
    */
   static void export(final Game game, final Path original, final Path to) throws IOException {
-    final Document written = dom(game);
+    final Future<Document> written = inBackground(() -> dom(game));
     Optional<DocumentType> doctype = Optional.empty();
     if (Files.exists(original)) {
-      try {
-        final Document old = builder().parse(original.toFile());
-        final Game read;
-        try (InputStream in = Files.newInputStream(original)) {
-          read = new XmlMapper(in).mapXmlToObject(Game.class);
-        }
-        unnest(old.getDocumentElement());
-        keep(old, dom(read), written);
-        doctype = Optional.ofNullable(old.getDoctype());
-      } catch (final SAXException | XmlParsingException e) {
-        // a file TripleA cannot read has nothing the model dropped; its first version is the .bak
+      final byte[] bytes = Files.readAllBytes(original);
+      final Future<Optional<Document>> model = inBackground(() -> modelDom(bytes));
+      final Optional<Document> old = parsed(bytes, original);
+      final Optional<Document> read = result(model);
+      // a file TripleA cannot read has nothing the model dropped; its first version is the .bak
+      if (old.isPresent() && read.isPresent()) {
+        keep(old.get(), read.get(), result(written));
+        doctype = Optional.ofNullable(old.get().getDoctype());
       }
     }
-    write(written, doctype, to);
+    write(result(written), doctype, to);
+    final byte[] saved = Files.readAllBytes(to);
+    readAhead = new SoftReference<>(new ReadAhead(saved, inBackground(() -> read(saved))));
+  }
+
+  /** The old file with its nested elements brought out, none for no XML. */
+  private static Optional<Document> parsed(final byte[] bytes, final Path file)
+      throws IOException {
+    try {
+      final InputSource source = new InputSource(new ByteArrayInputStream(bytes));
+      // entities named relative to the file are found beside it
+      source.setSystemId(file.toUri().toString());
+      final Document old = builder().parse(source);
+      unnest(old.getDocumentElement());
+      return Optional.of(old);
+    } catch (final SAXException e) {
+      return Optional.empty();
+    }
+  }
+
+  /** The old file as TripleA's model writes it, none for no game. */
+  private static Optional<Document> modelDom(final byte[] bytes) throws IOException {
+    final Optional<Game> model = modelOf(bytes);
+    return model.isPresent() ? Optional.of(dom(model.get())) : Optional.empty();
+  }
+
+  /** The model of a file's bytes, the one read ahead when the bytes are those; none for no game. */
+  private static Optional<Game> modelOf(final byte[] bytes) throws IOException {
+    final Optional<ReadAhead> ahead =
+        Optional.ofNullable(readAhead.get()).filter(it -> Arrays.equals(it.bytes(), bytes));
+    return ahead.isPresent() ? result(ahead.get().model()) : read(bytes);
+  }
+
+  private static Optional<Game> read(final byte[] bytes) {
+    try {
+      return Optional.of(new XmlMapper(new ByteArrayInputStream(bytes)).mapXmlToObject(Game.class));
+    } catch (final XmlParsingException e) {
+      return Optional.empty();
+    }
+  }
+
+  private static <T> Future<T> inBackground(final Callable<T> work) {
+    final FutureTask<T> task = new FutureTask<>(work);
+    Thread.ofVirtual().start(task);
+    return task;
+  }
+
+  private static <T> T result(final Future<T> future) throws IOException {
+    try {
+      return future.get();
+    } catch (final InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new IOException("The save was interrupted", e);
+    } catch (final ExecutionException e) {
+      throw e.getCause() instanceof final IOException io ? io : new IOException(e.getCause());
+    }
   }
 
   /**
@@ -105,7 +184,16 @@ final class GameXmlKeeper {
   // written there again with each save; handle when a map has such a step
   private static void unnest(final Element element) {
     // the children's first: they come out beside them, then on from here
-    elements(element).forEach(GameXmlKeeper::unnest);
+    boolean nested = false;
+    for (Node child = element.getFirstChild(); child != null; child = child.getNextSibling()) {
+      if (child instanceof final Element inner) {
+        unnest(inner);
+        nested |= inner.getTagName().equals(element.getTagName());
+      }
+    }
+    if (!nested) {
+      return;
+    }
     final Node behind = element.getNextSibling();
     elements(element).stream()
         .filter(child -> child.getTagName().equals(element.getTagName()))
@@ -171,15 +259,17 @@ final class GameXmlKeeper {
    * element it was before, or at the end.
    */
   private static void keep(final Element old, final Element model, final Element written) {
-    final Map<String, String> modelAttributes = attributes(model);
-    final Map<String, String> writtenAttributes = attributes(written);
     final NamedNodeMap attributes = old.getAttributes();
     for (int i = 0; i < attributes.getLength(); i++) {
       final Attr attribute = (Attr) attributes.item(i);
       final String name = canonical(attribute.getName());
-      if (!modelAttributes.containsKey(name) && !writtenAttributes.containsKey(name)) {
+      if (!hasAttribute(model, name) && !hasAttribute(written, name)) {
         written.setAttribute(attribute.getName(), attribute.getValue());
       }
+    }
+    if (old.getFirstChild() == null) {
+      // most are, eg options: nothing of the old one's to keep inside
+      return;
     }
     final Document to = written.getOwnerDocument();
     final List<Element> writtenChildren = elements(written);
@@ -229,12 +319,14 @@ final class GameXmlKeeper {
     final Map<String, Deque<Element>> writtens = byKey(written);
     final List<Element> removed = new ArrayList<>();
     for (final Element child : elements(old)) {
-      poll(models, key(child))
+      final String key = key(child);
+      poll(models, key)
           .ifPresent(
               element -> {
                 inModel.put(child, element);
-                poll(writtens, key(child))
-                    .ifPresentOrElse(match -> inWritten.put(child, match), () -> removed.add(child));
+                poll(writtens, key)
+                    .ifPresentOrElse(
+                        match -> inWritten.put(child, match), () -> removed.add(child));
               });
     }
     final List<Element> added = writtens.values().stream().flatMap(Deque::stream).toList();
@@ -290,45 +382,74 @@ final class GameXmlKeeper {
     return Optional.ofNullable(byKey.get(key)).map(Deque::poll);
   }
 
+  // made for each element of the three trees, so without maps: a big map has 200,000 elements
   private static String key(final Element element) {
+    final String[] values = keyValues(element);
     final StringBuilder key = new StringBuilder(canonical(element.getTagName()));
-    keyAttributes(element)
-        .forEach((name, value) -> key.append(' ').append(name).append('=').append(value));
+    for (int i = 0; i < KEYS.size(); i++) {
+      if (values[i] != null) {
+        key.append(' ').append(KEYS.get(i)).append('=').append(values[i]);
+      }
+    }
     return key.toString();
   }
 
   /** The attributes that tell an element apart, in a fixed order. */
   private static Map<String, String> keyAttributes(final Element element) {
-    final Map<String, String> attributes = attributes(element);
+    final String[] values = keyValues(element);
     final Map<String, String> key = new LinkedHashMap<>();
-    for (final String name : KEYS) {
-      // TripleA reads an empty one as none, and writes none
-      Optional.ofNullable(attributes.get(name))
-          .filter(value -> !value.isEmpty())
-          .ifPresent(value -> key.put(name, value));
+    for (int i = 0; i < KEYS.size(); i++) {
+      if (values[i] != null) {
+        key.put(KEYS.get(i), values[i]);
+      }
     }
     return key;
   }
 
-  private static Map<String, String> attributes(final Element element) {
-    final Map<String, String> byName = new HashMap<>();
+  /** The key attributes' values in the order of {@link #KEYS}, null for none or empty. */
+  private static String[] keyValues(final Element element) {
+    final String[] values = new String[KEYS.size()];
     final NamedNodeMap attributes = element.getAttributes();
     for (int i = 0; i < attributes.getLength(); i++) {
-      byName.put(canonical(attributes.item(i).getNodeName()), attributes.item(i).getNodeValue());
+      final int at = keyIndex(attributes.item(i).getNodeName());
+      final String value = attributes.item(i).getNodeValue();
+      // TripleA reads an empty one as none, and writes none
+      if (at >= 0 && !value.isEmpty()) {
+        values[at] = value;
+      }
     }
-    return byName;
+    return values;
+  }
+
+  /** Where an attribute is in {@link #KEYS}, -1 for none. */
+  private static int keyIndex(final String name) {
+    return KEY_INDEX.computeIfAbsent(name, any -> KEYS.indexOf(canonical(name)));
+  }
+
+  private static boolean hasAttribute(final Element element, final String canonicalName) {
+    final NamedNodeMap attributes = element.getAttributes();
+    for (int i = 0; i < attributes.getLength(); i++) {
+      if (canonical(attributes.item(i).getNodeName()).equals(canonicalName)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** A name as TripleA reads it: tags in any case, "attatch" for "attach" in old maps. */
   private static String canonical(final String name) {
-    return name.toLowerCase(Locale.ROOT).replace("attatch", "attach");
+    return CANONICAL.computeIfAbsent(
+        name, any -> name.toLowerCase(Locale.ROOT).replace("attatch", "attach"));
   }
 
   private static List<Element> elements(final Element parent) {
-    return nodes(parent).stream()
-        .filter(Element.class::isInstance)
-        .map(Element.class::cast)
-        .toList();
+    final List<Element> elements = new ArrayList<>();
+    for (Node node = parent.getFirstChild(); node != null; node = node.getNextSibling()) {
+      if (node instanceof final Element element) {
+        elements.add(element);
+      }
+    }
+    return elements;
   }
 
   private static List<Node> nodes(final Node parent) {

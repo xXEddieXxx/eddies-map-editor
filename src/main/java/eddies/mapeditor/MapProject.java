@@ -17,6 +17,7 @@ import java.awt.geom.AffineTransform;
 import java.awt.geom.Area;
 import java.awt.geom.Path2D;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -415,8 +416,10 @@ final class MapProject {
 
   /** Opens the game; notes in a file of their own beside it count, as the game shows those. */
   static MapProject open(final Path xmlFile) throws IOException, XmlParsingException {
-    try (InputStream xml = Files.newInputStream(xmlFile)) {
+    final byte[] bytes = Files.readAllBytes(xmlFile);
+    try (InputStream xml = new ByteArrayInputStream(bytes)) {
       final Game game = new XmlMapper(xml).mapXmlToObject(Game.class);
+      GameXmlKeeper.remember(bytes, game);
       final Path notes = notesFile(xmlFile);
       return new MapProject(
           xmlFile,

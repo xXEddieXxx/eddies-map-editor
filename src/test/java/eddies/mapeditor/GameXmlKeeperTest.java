@@ -80,6 +80,30 @@ final class GameXmlKeeperTest {
     assertThat(MapChecks.findError(xml)).as("the game still loads in TripleA").isEmpty();
   }
 
+  @DisplayName("A save over a file changed by hand since the last save reads it anew")
+  @Test
+  void readsAFileChangedSinceTheLastSave() throws Exception {
+    final Path xml = givenMinimap();
+    final MapProject project = MapProject.open(xml);
+    project.edit(game -> MapXml.withOwner(game, NORTH, "Italians"));
+    project.save();
+    final String connection = "<connection t1=\"red capitol\" t2=\"blue capitol\"/>";
+    Files.writeString(
+        xml, Files.readString(xml).replace("<connection ", connection + "<connection "));
+
+    project.edit(game -> MapXml.withOwner(game, NORTH, "Germans"));
+    project.save();
+
+    final String saved = Files.readString(xml);
+    assertThat(saved)
+        .as("what the model drops is kept from the first save's file")
+        .contains("<!DOCTYPE game SYSTEM \"game.dtd\">")
+        .contains("version=\"1.7\"");
+    assertThat(saved)
+        .as("the model of the file as it is now, so the hand-made connection is the model's")
+        .doesNotContain(connection);
+  }
+
   @DisplayName("The comment before an element removed in the editor stays")
   @Test
   void keepsTheCommentOfARemovedElement() throws Exception {
