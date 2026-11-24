@@ -25,6 +25,9 @@ downloads; this file carries the words.
   the objectives file gives a text, eg Path to Victory's Lend-Lease, as the game's Objectives tab
   does, with the way to Triggers and to their text. Removing a trigger or an attachment also
   removes its objectives text and group entry, which the game otherwise reports as an error.
+- **Disabled fields in the dark theme** (#71). A disabled text field, list box or label, eg in
+  a change left unticked in Make territories, now looks clearly dimmer than an enabled one, as in
+  the light theme.
 
 ## 0.2.8 · 2026-11-23
 

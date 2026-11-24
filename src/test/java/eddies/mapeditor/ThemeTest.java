@@ -14,6 +14,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
 import java.util.Properties;
+import java.util.Set;
 import java.util.stream.Stream;
 import javax.swing.JButton;
 import javax.swing.JLabel;
@@ -106,6 +107,30 @@ final class ThemeTest {
         .isGreaterThanOrEqualTo(4.5);
   }
 
+  @DisplayName("A disabled field's text is clearly dimmer than an enabled one's in every theme")
+  @ParameterizedTest
+  @MethodSource("themes")
+  void disabledFieldsLookDisabled(final LookAndFeel theme, final String secondaryText)
+      throws UnsupportedLookAndFeelException {
+    Theme.install();
+
+    UIManager.setLookAndFeel(theme);
+
+    final double enabled =
+        DialogsTest.contrast(
+            UIManager.getColor("TextField.foreground"), UIManager.getColor("TextField.background"));
+    final double disabled =
+        DialogsTest.contrast(
+            UIManager.getColor("TextField.inactiveForeground"),
+            UIManager.getColor("TextField.disabledBackground"));
+    assertThat(disabled)
+        .as("at most half the contrast of enabled text, so an unused field shows at a glance")
+        .isLessThanOrEqualTo(enabled / 2);
+    assertThat(UIManager.getColor("ComboBox.disabledForeground"))
+        .as("a disabled list box's text as dim; its own background differs per theme")
+        .isEqualTo(UIManager.getColor("TextField.inactiveForeground"));
+  }
+
   @DisplayName("The Mac themes have the same colors as the light and dark themes")
   @Test
   void macThemesAreCopies() throws IOException {
@@ -117,9 +142,12 @@ final class ThemeTest {
 
     assertThat(macLight).as("Mac light is a copy of light").isEqualTo(light);
     assertThat(macDark).as("Mac dark is a copy of dark").isEqualTo(dark);
-    assertThat(dark.keySet())
-        .as("light and dark set the same keys, so no key is missing in one")
-        .isEqualTo(light.keySet());
+    final Set<Object> darkOnly =
+        Set.of("@disabledForeground", "Component.disabledBorderColor");
+    assertThat(dark.keySet().stream().filter(k -> !darkOnly.contains(k)).toList())
+        .as("light and dark set the same keys, so no key is missing in one; the disabled"
+            + " colors only dark, as Mac light's own differ from light's")
+        .containsExactlyInAnyOrderElementsOf(light.keySet());
   }
 
   @DisplayName("Without FlatLaf every color still has a value")
