@@ -16,6 +16,12 @@ downloads; this file carries the words.
   in the line"). Changes that move land between them are one row, so no choice leaves a hole or
   an overlap, and territories you did not change keep their outlines exactly.
 
+### Fixed
+
+- **Pictures in the preview of messages and other texts** (#72). Texts' preview now finds
+  `<img src="prologue.png"/>` in the map's doc/images, as the game does, eg 11 Rings of Power's
+  prologues.
+
 ## 0.2.8 · 2026-11-23
 
 From a map maker's feedback on 0.2.6 and 0.2.7, tried with 11 Rings of Power, 1941 Global

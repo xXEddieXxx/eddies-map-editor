@@ -33,6 +33,7 @@ import javax.swing.Timer;
 import javax.swing.UIManager;
 import org.triplea.map.data.elements.Game;
 import org.triplea.swing.SwingComponents;
+import org.triplea.util.LocalizeHtml;
 import eddies.mapeditor.MakerIcon.Glyph;
 import eddies.mapeditor.MapTexts.Entry;
 import eddies.mapeditor.MapTexts.Kind;
@@ -458,7 +459,7 @@ final class TextsEditor implements Editor {
       shown.setPreferredSize(new Dimension(0, PREVIEW_HEIGHT));
       inspector.field("Preview", TOOLTIP_HTML, shown);
     } else if (previews(kind, key)) {
-      preview.setText(value.get());
+      preview.setText(asShown(value.get()));
       final JComponent shown = SwingComponents.newJScrollPane(preview);
       shown.setPreferredSize(new Dimension(0, PREVIEW_HEIGHT));
       inspector.field("Preview", shown);
@@ -514,6 +515,13 @@ final class TextsEditor implements Editor {
     Optional.ofNullable(UIManager.getColor("ToolTip.foreground")).ifPresent(label::setForeground);
     Optional.ofNullable(UIManager.getBorder("ToolTip.border")).ifPresent(label::setBorder);
     return label;
+  }
+
+  // the text's pictures found in the map's doc/images, as the game shows it
+  private String asShown(final String value) {
+    return project.getFolder()
+        .map(folder -> LocalizeHtml.localizeImgLinksInHtml(value, folder))
+        .orElse(value);
   }
 
   /** HTML the game shows: messages, tool tips and the texts of actions, not a message's sounds. */
@@ -588,7 +596,7 @@ final class TextsEditor implements Editor {
       tipPreview.setText(
           MapTexts.tooltipAsShown(key, typed, project.game(), project.getFolder()));
     } else if (previews(shownKind, key)) {
-      Panels.showKeepingPlace(preview, typed);
+      Panels.showKeepingPlace(preview, asShown(typed));
     }
     if (project.texts().value(shownKind, key).filter(v -> !v.equals(typed)).isEmpty()) {
       return;

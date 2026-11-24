@@ -277,6 +277,25 @@ final class TextsEditorTest {
     assertThat(messagePreview).as("a message is HTML: previewed").isTrue();
   }
 
+  @DisplayName("A message's preview finds its pictures in the map's doc/images, as the game does")
+  @Test
+  void previewFindsPictures() throws Exception {
+    // given: a message with a picture the map has in doc/images
+    givenMinimapWithTexts();
+    Files.writeString(
+        folder.resolve("notifications.properties"), "Welcome=<img src\\=\"hello.png\"/>\n");
+    final TextsEditor texts = new TextsEditor(MapProject.open(folder.resolve("minimap.xml")));
+
+    // when
+    all(texts.page(), JTabbedPane.class).getFirst().setSelectedIndex(1);
+    choose(texts, 1, "Welcome");
+
+    // then
+    assertThat(all(texts.page(), GameNotesView.class).getFirst().getText())
+        .as("the link to the picture in doc/images")
+        .contains("doc/images/hello.png");
+  }
+
   @DisplayName("A group shows its conditions in words, its raw list of names only on request")
   @Test
   void groupReadsInWords() throws Exception {
