@@ -3,7 +3,10 @@
 What changed for map makers, release by release. The GitHub release of each version carries the
 downloads; this file carries the words.
 
-## 0.2.9
+## 0.2.9 · 2026-11-24
+
+From a map maker's feedback on 0.2.8, tried with 1911 Theatre of Empires, 11 Rings of Power,
+Path to Victory and 270BC Wars; each change under its GitHub issue.
 
 ### Changed
 
