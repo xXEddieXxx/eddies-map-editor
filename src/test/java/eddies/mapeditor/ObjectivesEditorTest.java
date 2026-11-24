@@ -16,15 +16,19 @@ import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JSpinner;
 import javax.swing.JTextArea;
+import lombok.experimental.ExtensionMethod;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.triplea.map.data.elements.AttachmentList.Attachment;
 import org.triplea.map.data.elements.Game;
 
+@ExtensionMethod(Builders.class)
 final class ObjectivesEditorTest {
   private static final String TRADE = "objectiveAttachment_Germans_1_Trade_with_Russia";
   private static final String TRADE_KEY =
       "World_War_II_Global_1940_Original.Germans;" + TRADE;
+  private static final String SUPPLIES = "triggerAttachment_Chinese_Artillery_Supplies";
+  private static final String G40 = "World_War_II_Global_1940_Original.";
 
   /** World War II Global 1940, with its nine objectives, without its map's files. */
   private static MapProject givenG40() {
@@ -371,6 +375,90 @@ final class ObjectivesEditorTest {
     assertThat(project.texts().value(Kind.OBJECTIVES, TRADE_KEY + "_copy"))
         .as("nor its text")
         .isEmpty();
+  }
+
+  /** A text and a group entry for one of G40's triggers, as Path to Victory's Lend-Lease. */
+  private static MapTexts givenSuppliesText() {
+    return new MapTexts(
+        Map.of(
+            Kind.OBJECTIVES,
+            G40 + "Chinese;" + SUPPLIES + "=<b>Artillery</b> from the Allies\n"
+                + G40 + "TABLEGROUP.01;Chinese=" + SUPPLIES + "\n"));
+  }
+
+  private static MapProject givenG40With(final MapTexts texts) {
+    final MapProject project = givenG40();
+    project.edit(g -> g, t -> texts);
+    return project;
+  }
+
+  private static int givenIndexOf(final Game game, final String name) {
+    final List<Attachment> attachments = AttachmentsXml.attachments(game);
+    return attachments.indexOf(
+        attachments.stream().filter(a -> name.equals(a.getName())).findFirst().orElseThrow());
+  }
+
+  @Test
+  @DisplayName("A trigger the objectives file gives a text is listed as the game's tab lists it,"
+      + " with the ways to Triggers and Texts")
+  void listsTriggersWithAText() {
+    // given
+    final MapTexts texts = givenSuppliesText();
+    final ObjectivesEditor editor = new ObjectivesEditor(givenG40With(texts));
+
+    // when
+    final Listing listing = ObjectivesEditor.listing(GameRulesXmlTest.givenG40(), texts);
+    editor.show(SUPPLIES);
+
+    // then
+    final String key = SUPPLIES + " · Chinese";
+    assertThat(listing.objectives()).as("listed with the objectives").containsKey(key);
+    assertThat(listing.others()).as("but no objective").containsExactly(key);
+    assertThat(ObjectivesEditor.title(listing, key))
+        .as("its text without HTML")
+        .isEqualTo("Artillery from the Allies");
+    assertThat(ObjectivesEditor.line(listing, key))
+        .as("whose and what it is")
+        .isEqualTo("Chinese · a trigger");
+    assertThat(givenAll(editor.page(), AbstractButton.class).map(AbstractButton::getText))
+        .as("the ways to where it and its text are changed")
+        .anyMatch(t -> t.startsWith("Triggers"))
+        .anyMatch(t -> t.startsWith("Texts"));
+  }
+
+  @Test
+  @DisplayName("Removing an attachment the objectives file lists takes its text and group entry"
+      + " in the same step; kept while one of its name stays, also another nation's")
+  void removingTakesItsObjectiveText() {
+    // given
+    final MapTexts texts = givenSuppliesText();
+    final MapProject project = givenG40With(texts);
+    final Game game = project.game();
+    final Attachment supplies = AttachmentsXml.attachments(game).get(givenIndexOf(game, SUPPLIES));
+    final Game withTwin =
+        AttachmentsXml.withAttachments(
+            game,
+            Stream.concat(
+                    AttachmentsXml.attachments(game).stream(),
+                    Stream.of(supplies.toBuilder().attachTo("Russians").build()))
+                .toList());
+
+    // when
+    project.removeAttachment(givenIndexOf(game, SUPPLIES));
+    final String removed = project.texts().text(Kind.OBJECTIVES);
+    project.undo();
+
+    // then
+    assertThat(removed).as("text and group entry gone with it").doesNotContain(SUPPLIES);
+    assertThat(project.texts().text(Kind.OBJECTIVES))
+        .as("one undo brings both back")
+        .contains(G40 + "Chinese;" + SUPPLIES, "TABLEGROUP.01;Chinese=" + SUPPLIES);
+    assertThat(
+            texts.withoutObjectiveTextOf(
+                AttachmentsXml.withoutAttachment(withTwin, givenIndexOf(withTwin, SUPPLIES)),
+                supplies))
+        .as("the Russians' of the name stays, which the game finds: nothing goes")
+        .isSameAs(texts);
   }
 
   @Test

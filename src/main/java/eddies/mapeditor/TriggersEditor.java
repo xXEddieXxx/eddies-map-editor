@@ -653,7 +653,7 @@ final class TriggersEditor implements Editor {
     if (Dialogs.confirmRemove(page, "Remove trigger", "Remove trigger “" + title
         + "”?\nIts conditions stay, as other triggers may use them.", List.of(), "Remove")) {
       selected = null;
-      project.edit(g -> without.get());
+      project.removeAttachment(trigger.index());
     }
   }
 

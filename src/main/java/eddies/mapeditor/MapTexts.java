@@ -16,6 +16,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
@@ -677,6 +678,18 @@ record MapTexts(Map<Kind, String> texts, Set<Kind> unreadable, Map<String, Strin
             + 1;
     return written.with(
         Kind.OBJECTIVES, groups + String.format("%02d", number) + ";" + nation, name);
+  }
+
+  /**
+   * Without the objective text of an attachment the game no longer has, eg a removed trigger that
+   * the objectives file lists, as the game reports a name it does not find; kept while any
+   * attachment of its name stays, as the game then finds that one, also another nation's.
+   */
+  MapTexts withoutObjectiveTextOf(final Game without, final Attachment removed) {
+    final String name = Objects.toString(removed.getName(), "");
+    return AttachmentsXml.attachments(without).stream().anyMatch(a -> name.equals(a.getName()))
+        ? this
+        : withoutObjectiveText(without, Objects.toString(removed.getAttachTo(), ""), name);
   }
 
   /** Without the objective's text, and without it in the groups that list it. */

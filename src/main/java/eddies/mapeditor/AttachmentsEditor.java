@@ -555,7 +555,7 @@ final class AttachmentsEditor implements Editor {
                   namedBy,
                   "Remove")) {
                 selected = null;
-                project.edit(g -> AttachmentsXml.withoutAttachment(g, e.index()));
+                project.removeAttachment(e.index());
               }
             });
   }

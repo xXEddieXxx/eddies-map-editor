@@ -53,6 +53,7 @@ import org.triplea.generic.xml.reader.XmlMapper;
 import org.triplea.generic.xml.reader.exceptions.XmlParsingException;
 import org.triplea.io.FileUtils;
 import org.triplea.java.ColorUtils;
+import org.triplea.map.data.elements.AttachmentList;
 import org.triplea.map.data.elements.Game;
 import org.triplea.map.data.elements.Info;
 import eddies.mapeditor.MapChecks.Problem;
@@ -559,6 +560,16 @@ final class MapProject {
     if (changed != current.game()) {
       step(state(changed, current.files()));
     }
+  }
+
+  /**
+   * Removes the attachment at the index with its objectives text and group entry, eg a trigger
+   * the objectives file lists, as one step (Triggers, Attachments).
+   */
+  void removeAttachment(final int index) {
+    final AttachmentList.Attachment removed = AttachmentsXml.attachments(game()).get(index);
+    final Game without = AttachmentsXml.withoutAttachment(game(), index);
+    edit(g -> without, texts -> texts.withoutObjectiveTextOf(without, removed));
   }
 
   /**

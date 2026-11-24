@@ -5,6 +5,7 @@ import eddies.mapeditor.TriggerXml.Group;
 import eddies.mapeditor.TriggerXml.Trigger;
 import games.strategy.triplea.Constants;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -71,6 +72,26 @@ class ObjectiveXml {
     return IntStream.range(0, attachments.size())
         .filter(i -> isObjective(attachments.get(i)))
         .mapToObj(i -> new Objective(i, attachments.get(i)))
+        .toList();
+  }
+
+  /**
+   * The triggers and conditions that are no objective but have a text in the objectives file, in
+   * the order of the file: the game's Objectives tab lists them too (ObjectivePanel), eg Path to
+   * Victory's Lend-Lease triggers, which pay PUs themselves.
+   */
+  static List<Objective> listedOnly(final Game game, final MapTexts texts) {
+    final Set<String> keys = new HashSet<>();
+    texts.entries(MapTexts.Kind.OBJECTIVES).forEach(e -> keys.add(e.key()));
+    final List<Attachment> attachments = AttachmentsXml.attachments(game);
+    return IntStream.range(0, attachments.size())
+        .mapToObj(i -> new Objective(i, attachments.get(i)))
+        .filter(o -> !isObjective(o.attachment()))
+        .filter(
+            o ->
+                List.of(TriggerXml.TRIGGER, TriggerXml.CONDITION)
+                    .contains(AttachmentsXml.kind(o.attachment())))
+        .filter(o -> keys.contains(MapTexts.objectiveKey(game, o.nation(), o.name())))
         .toList();
   }
 

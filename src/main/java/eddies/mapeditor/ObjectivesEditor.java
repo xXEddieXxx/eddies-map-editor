@@ -11,13 +11,17 @@ import java.awt.FlowLayout;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.UnaryOperator;
+import java.util.stream.Stream;
 import javax.annotation.Nullable;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -81,6 +85,8 @@ final class ObjectivesEditor implements Editor {
    * @param texts each key's text in objectives.properties, if it has one
    * @param conditions the game's conditions by name, for the plain words
    * @param nations the nations that have objectives, the filter's choices after "All nations"
+   * @param others the keys of triggers and conditions without PUs that the objectives file gives a
+   *     text, which the game's Objectives tab lists too, eg a trigger that pays; changed elsewhere
    */
   record Listing(
       Game game,
@@ -88,7 +94,8 @@ final class ObjectivesEditor implements Editor {
       Map<String, Objective> objectives,
       Map<String, String> texts,
       Map<String, Attachment> conditions,
-      List<String> nations) {}
+      List<String> nations,
+      Set<String> others) {}
 
   ObjectivesEditor(final MapProject project) {
     this.project = project;
@@ -105,7 +112,7 @@ final class ObjectivesEditor implements Editor {
                 Optional.ofNullable(listing().objectives().get(key))
                     .map(Objective::nation)
                     .orElse("")));
-    nationFilter.setToolTipText("Shows one nation's objectives");
+    nationFilter.setToolTipText("Shows one nation's objectives and listed texts");
     nationFilter.getAccessibleContext().setAccessibleName("Objectives of which nation");
     nationFilter.addActionListener(
         e -> {
@@ -242,13 +249,18 @@ final class ObjectivesEditor implements Editor {
    * the nation, as names may repeat; a key taken gets a number, so every objective is listed.
    */
   static Listing listing(final Game game, final MapTexts texts) {
-    final List<Objective> all = ObjectiveXml.objectives(game);
+    final List<Objective> listedOnly = ObjectiveXml.listedOnly(game, texts);
+    final List<Objective> all =
+        Stream.concat(ObjectiveXml.objectives(game).stream(), listedOnly.stream())
+            .sorted(Comparator.comparingInt(Objective::index))
+            .toList();
     final List<String> nations = new ArrayList<>(MapXml.nations(game));
     all.stream().map(Objective::nation).filter(n -> !nations.contains(n)).forEach(nations::add);
     final Map<String, String> byTextKey = new HashMap<>();
     texts.entries(TEXTS).forEach(e -> byTextKey.put(e.key(), e.value()));
     final Map<String, Objective> objectives = new LinkedHashMap<>();
     final Map<String, String> shown = new HashMap<>();
+    final Set<String> others = new HashSet<>();
     for (final String nation : nations) {
       for (final Objective objective : all) {
         if (!objective.nation().equals(nation)) {
@@ -259,6 +271,9 @@ final class ObjectivesEditor implements Editor {
           key = key(objective.name(), nation) + " (" + i + ")";
         }
         objectives.put(key, objective);
+        if (listedOnly.contains(objective)) {
+          others.add(key);
+        }
         final String text = byTextKey.get(MapTexts.objectiveKey(game, nation, objective.name()));
         if (text != null && !text.isBlank()) {
           shown.put(key, text);
@@ -267,7 +282,13 @@ final class ObjectivesEditor implements Editor {
     }
     nations.removeIf(n -> all.stream().noneMatch(o -> o.nation().equals(n)));
     return new Listing(
-        game, texts, objectives, shown, TriggerXml.conditionsByName(game), List.copyOf(nations));
+        game,
+        texts,
+        objectives,
+        shown,
+        TriggerXml.conditionsByName(game),
+        List.copyOf(nations),
+        Set.copyOf(others));
   }
 
   private static String key(final String name, final String nation) {
@@ -310,11 +331,21 @@ final class ObjectivesEditor implements Editor {
     return line(listing(), key);
   }
 
-  /** Eg "Germans · +5 PUs". */
+  /** Eg "Germans · +5 PUs", "Russians · a trigger". */
   static String line(final Listing listing, final String key) {
     return Optional.ofNullable(listing.objectives().get(key))
-        .map(o -> o.nation() + SEPARATOR + ObjectiveXml.reward(o.attachment()))
+        .map(
+            o ->
+                o.nation()
+                    + SEPARATOR
+                    + (listing.others().contains(key)
+                        ? (isTrigger(o) ? "a trigger" : "a condition")
+                        : ObjectiveXml.reward(o.attachment())))
         .orElse("");
+  }
+
+  private static boolean isTrigger(final Objective objective) {
+    return TriggerXml.TRIGGER.equals(AttachmentsXml.kind(objective.attachment()));
   }
 
   private void choose(@Nullable final String key) {
@@ -330,8 +361,11 @@ final class ObjectivesEditor implements Editor {
     showInspector();
   }
 
+  // the chosen objective, none for one of the others, which are changed in their own tool
   private Optional<Objective> chosen() {
-    return Optional.ofNullable(selected).map(listing().objectives()::get);
+    return Optional.ofNullable(selected)
+        .filter(key -> !listing().others().contains(key))
+        .map(listing().objectives()::get);
   }
 
   /**
@@ -533,6 +567,10 @@ final class ObjectivesEditor implements Editor {
     pendingTexts.clear();
     inspector.clear();
     checks = null;
+    if (selected != null && listing().others().contains(selected)) {
+      showOther(listing().objectives().get(selected));
+      return;
+    }
     final Optional<Objective> chosen = chosen();
     ((CardLayout) details.getLayout()).show(details, chosen.isEmpty() ? EMPTY : LIST);
     if (chosen.isEmpty()) {
@@ -594,6 +632,41 @@ final class ObjectivesEditor implements Editor {
         "objectives.more", 3 + others.size(), more -> showMore(more, objective, shown, others));
     inspector.remove("Remove objective", this::remove).end();
     showSummary();
+  }
+
+  /**
+   * A trigger or condition the objectives file lists: what it is, with the way to where it and
+   * its text are changed, as it pays (if at all) as a trigger, not as an objective.
+   */
+  private void showOther(final Objective other) {
+    ((CardLayout) details.getLayout()).show(details, LIST);
+    final boolean trigger = isTrigger(other);
+    final String key = Objects.toString(selected, "");
+    final JLabel title = Theme.newTitle(rowTitle(key));
+    title.setToolTipText(other.name());
+    inspector
+        .row(
+            Help.with(
+                title,
+                trigger
+                    ? "A trigger the game's Objectives tab lists with this text: it pays what the"
+                        + " trigger gives, whatever National Objectives says."
+                    : "A condition without PUs the game's Objectives tab lists with this text, to"
+                        + " show whether it holds."))
+        .row(Theme.newSecondaryLabel(rowLine(key) + SEPARATOR + "id " + other.name()))
+        .row(
+            Help.link(
+                trigger ? "What it does is changed in" : "Its checks are changed in",
+                trigger ? TriggersEditor.TITLE : "Attachments",
+                other.name()))
+        .row(
+            Help.link(
+                "Its text is changed in",
+                TextsEditor.TITLE,
+                MapTexts.objectiveKey(project.game(), other.nation(), other.name())))
+        .end();
+    inspector.revalidate();
+    inspector.repaint();
   }
 
   /**

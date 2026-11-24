@@ -21,6 +21,10 @@ downloads; this file carries the words.
 - **Pictures in the preview of messages and other texts** (#72). Texts' preview now finds
   `<img src="prologue.png"/>` in the map's doc/images, as the game does, eg 11 Rings of Power's
   prologues.
+- **Objectives that a trigger pays** (#73). Objectives also lists the triggers and conditions
+  the objectives file gives a text, eg Path to Victory's Lend-Lease, as the game's Objectives tab
+  does, with the way to Triggers and to their text. Removing a trigger or an attachment also
+  removes its objectives text and group entry, which the game otherwise reports as an error.
 
 ## 0.2.8 · 2026-11-23
 
