@@ -1769,7 +1769,7 @@ public final class MapMakerWindow extends JFrame {
 
   /**
    * Open, new, recent maps; a new game from this one (the way to a map's second game, after which
-   * the map's name is the menu of its games); export, Publish, the TripleA for Play, the folder;
+   * the map's name is the menu of its games); Find in the map; export, Publish, the TripleA for Play, the folder;
    * close.
    */
   JPopupMenu fileMenu() {
@@ -1787,6 +1787,9 @@ public final class MapMakerWindow extends JFrame {
             : "Save the map first");
     newGame.addActionListener(e -> newGame());
     menu.add("Rename map…").addActionListener(e -> renameMap());
+    menu.addSeparator();
+    menu.add(menuItem(MapSearch.TITLE + "…", KeyEvent.VK_K, InputEvent.CTRL_DOWN_MASK))
+        .addActionListener(e -> findInMap());
     menu.addSeparator();
     menu.add(menuItem("Export as zip…", KeyEvent.VK_F8, 0)).addActionListener(e -> export());
     menu.add("Publish…").addActionListener(e -> showTool(PublishEditor.TITLE));
@@ -2273,8 +2276,15 @@ public final class MapMakerWindow extends JFrame {
     bind("playtest", KeyStroke.getKeyStroke(KeyEvent.VK_F7, 0), this::playtest);
     bind("export", KeyStroke.getKeyStroke(KeyEvent.VK_F8, 0), this::export);
     bind("close", KeyStroke.getKeyStroke(KeyEvent.VK_W, ctrl), this::closeMap);
+    bind("find", KeyStroke.getKeyStroke(KeyEvent.VK_K, ctrl), this::findInMap);
     bindAlways("open", KeyStroke.getKeyStroke(KeyEvent.VK_O, ctrl), this::chooseAndOpen);
     bindAlways("new", KeyStroke.getKeyStroke(KeyEvent.VK_N, ctrl), this::createMap);
+  }
+
+  /** Find in the map: whatever a typed name finds, opened in its tool. */
+  private void findInMap() {
+    editors.values().forEach(Editor::commit);
+    MapSearch.show(this, project);
   }
 
   /** A key for an open map; the start page has no map to save, undo or test. */

@@ -22,6 +22,10 @@ the map's toolbar, and the two above the territories list.
       by, and the entries in map.yml that carried the old name. The folder keeps its name, which
       the game finds the map's files by. A name has at most 70 characters. Rename… beside the
       title on Home does the same.
+    - **Find in the map… (Ctrl+K)** finds what the map has by its name or id: territories,
+      nations, unit types, purchase lists and rules, game options, triggers, objectives,
+      actions, other attachments and texts, listed under the tool that edits them. Open shows
+      that tool with it chosen.
     - **Export as zip… (F8)** packs the map's folder, without the `.bak` files an older version
       of the editor left there, as the map server takes it; the map is saved first.
     - **Publish…** opens the [Publish](publish.md) tool.

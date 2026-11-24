@@ -102,6 +102,18 @@ class RulesEditors {
       public void commit() {
         options.commit();
       }
+
+      /** Searches the option of this name, eg from Find in the map; another changes nothing. */
+      @Override
+      public void show(final String option) {
+        if (GameRulesXml.options(project.game()).stream()
+            .anyMatch(o -> option.equals(o.getName()))) {
+          options.commit();
+          // a fixed option would be filtered out
+          options.onlyChangeable.setSelected(false);
+          options.search.setText(option);
+        }
+      }
     };
   }
 

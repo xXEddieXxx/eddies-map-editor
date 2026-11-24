@@ -199,6 +199,7 @@ show the map.
     | F7 | Play |
     | F8 | Export as zip |
     | Ctrl+W | Close map |
+    | Ctrl+K | Find in the map |
     | Alt+1 … Alt+9 | The first nine tools |
     | Ctrl+0 | Fit the map |
     | Ctrl+wheel | Zoom the map |

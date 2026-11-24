@@ -15,6 +15,9 @@ downloads; this file carries the words.
   search missed, starts unticked and says why ("Alsace would take part of Champagne through a gap
   in the line"). Changes that move land between them are one row, so no choice leaves a hole or
   an overlap, and territories you did not change keep their outlines exactly.
+- **Find in the map** (#50). File › *Find in the map…* or Ctrl+K finds territories, nations,
+  unit types, purchase lists and rules, game options, triggers, objectives, actions, other
+  attachments and texts by name or id, listed by the tool that edits them; Open shows it there.
 - **Faster save of big games** (#68). Saving a big game file takes about half the time, eg 0.55
   instead of 1.3 s on 270BC Wars; the saved file is the same as before.
 

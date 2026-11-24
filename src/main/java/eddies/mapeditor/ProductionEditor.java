@@ -117,6 +117,15 @@ final class ProductionEditor implements Editor {
     return page;
   }
 
+  /** Chooses the purchase list of this id in Buy, eg from Find in the map. */
+  @Override
+  public void show(final String frontier) {
+    if (ProductionXml.frontiers(buy.project.game()).contains(frontier)) {
+      page.setSelectedIndex(0);
+      buy.show(frontier);
+    }
+  }
+
   @Override
   public void commit() {
     buy.commit();
@@ -259,6 +268,12 @@ final class ProductionEditor implements Editor {
           .flatMap(frontier -> users(view(), frontier).stream().findFirst())
           .flatMap(nation -> project.unitPicture(nation, project.nationColor(nation), unit))
           .or(() -> project.unitPicture(unit));
+    }
+
+    void show(final String frontier) {
+      commit();
+      choose(frontier);
+      list.choose(frontier);
     }
 
     private void choose(final String frontier) {

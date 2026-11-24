@@ -2089,6 +2089,15 @@ final class UnitsEditor implements Editor {
     }
   }
 
+  /** Chooses the unit type of this name, eg from Find in the map; another changes nothing. */
+  @Override
+  public void show(final String unit) {
+    if (MapXml.unitTypes(project.game()).contains(unit)) {
+      choose(unit);
+      list.choose(unit);
+    }
+  }
+
   @Override
   public void commit() {
     if (typing != null) {

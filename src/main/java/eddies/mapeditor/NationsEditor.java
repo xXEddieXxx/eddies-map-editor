@@ -360,6 +360,16 @@ final class NationsEditor implements Editor {
     }
   }
 
+  /** Opens the nation of this name, eg from Find in the map; another name changes nothing. */
+  @Override
+  public void show(final String nation) {
+    if (MapXml.nations(project.game()).contains(nation)) {
+      commit();
+      choose(nation);
+      list.choose(nation);
+    }
+  }
+
   /** Opens the nation under "← All nations"; none shows the list. */
   void choose(@Nullable final String nation) {
     selected = nation;

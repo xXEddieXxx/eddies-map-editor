@@ -179,7 +179,7 @@ final class MapMakerWindowTest {
   }
 
   @DisplayName(
-      "The File menu: open, new, recent, new game, rename, export, publish, folder, close, new versions, version")
+      "The File menu: open, new, recent, new game, rename, find, export, publish, folder, close, new versions, version")
   @Test
   void fileMenuHoldsTheMapsActions() throws Exception {
     assumeFalse(GraphicsEnvironment.isHeadless(), "the window needs a screen");
@@ -231,6 +231,7 @@ final class MapMakerWindowTest {
             "Recent maps",
             "New game from this one…",
             "Rename map…",
+            "Find in the map… " + KeyEvent.VK_K,
             "Export as zip… " + KeyEvent.VK_F8,
             "Publish…",
             "Play with…",

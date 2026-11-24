@@ -535,7 +535,7 @@ class Dialogs {
    * Shows the pane in a modal dialog over the parent's window; the button chosen, empty when the
    * window was closed.
    */
-  private static Optional<JButton> show(
+  static Optional<JButton> show(
       @Nullable final Component parent, final String title, final Pane pane) {
     final Window owner =
         parent instanceof Window window
